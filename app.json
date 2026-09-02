@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "RestroZ",
+    "slug": "restroz",
+    "version": "1.0.0",
+    "orientation": "default",
+    "scheme": "restroz",
+    "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.restroz.pos",
+      "versionCode": 1,
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/icon.png"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "b432a10d-95f1-4958-a858-7322d8591bb0"
+      }
+    }
+  }
+}

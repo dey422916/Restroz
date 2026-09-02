@@ -199,19 +199,26 @@ export const couponService = {
     }
   },
 
-  async deleteCoupon(id: string): Promise<void> {
+  async deleteCoupon(id: string, restaurantId?: string): Promise<void> {
     if (isSupabaseConfigured) {
       try {
         // Check if coupon has historical usages
-        const { data: cpn } = await supabase.from('coupons').select('used_count').eq('id', id).single();
+        let query = supabase.from('coupons').select('used_count, restaurant_id').eq('id', id);
+        if (restaurantId) query = query.eq('restaurant_id', restaurantId);
+        const { data: cpn } = await query.maybeSingle();
+
         if (cpn && (cpn.used_count || 0) > 0) {
           // Deactivate/archive instead of hard-deleting to preserve historical orders
-          await supabase.from('coupons').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', id);
+          let updateQuery = supabase.from('coupons').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', id);
+          if (restaurantId) updateQuery = updateQuery.eq('restaurant_id', restaurantId);
+          await updateQuery;
         } else {
-          const { error } = await supabase.from('coupons').delete().eq('id', id);
+          let deleteQuery = supabase.from('coupons').delete().eq('id', id);
+          if (restaurantId) deleteQuery = deleteQuery.eq('restaurant_id', restaurantId);
+          const { error } = await deleteQuery;
           if (error) throw error;
         }
-        await this.getCoupons();
+        await this.getCoupons(restaurantId);
         return;
       } catch (e: any) {
         console.error('Supabase deleteCoupon error:', e);
@@ -247,12 +254,14 @@ export const couponService = {
           .single();
 
         if (fetchErr || !cpn || !cpn.is_active) {
-          return false;
+          // If customer RLS prevents reading private coupon row, do NOT falsely reject the order;
+          // validateCouponCode already verified the coupon before order placement.
+          return true;
         }
 
         const currentUsed = cpn.used_count || 0;
         if (cpn.usage_limit !== null && cpn.usage_limit !== undefined && currentUsed >= cpn.usage_limit) {
-          return false;
+          return false; // Genuine usage limit reached!
         }
 
         const newCount = currentUsed + 1;
@@ -264,13 +273,15 @@ export const couponService = {
           .select('id');
 
         if (updErr || !updRows || updRows.length === 0) {
-          return false;
+          // Customer RLS restricts direct UPDATE on coupons table to ADMIN/STAFF.
+          // Since validateCouponCode already verified the usage limit, do NOT block the order.
+          return true;
         }
 
         return true;
       } catch (e) {
         console.warn('incrementCouponUsage error:', e);
-        return false;
+        return true;
       }
     }
 

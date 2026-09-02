@@ -2,7 +2,8 @@ import { Order, OrderItem, Coupon } from '../types';
 import { roundToTwoDecimals } from './currency';
 
 export interface CalculationInput {
-  items: OrderItem[];
+  items?: OrderItem[];
+  subtotal?: number;
   discountType?: 'percentage' | 'fixed';
   discountValue?: number;
   coupon?: Partial<Coupon> | null;
@@ -31,6 +32,7 @@ export interface CalculationResult {
 export function calculateOrderTotals(input: CalculationInput): CalculationResult {
   const {
     items = [],
+    subtotal: customSubtotal,
     discountType,
     discountValue = 0,
     coupon,
@@ -40,9 +42,10 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
     isInterState = false,
   } = input;
 
-  const subtotal = roundToTwoDecimals(
+  const itemsSubtotal = roundToTwoDecimals(
     items.reduce((sum, item) => sum + (Number(item.unit_price) * Number(item.quantity)), 0)
   );
+  const subtotal = itemsSubtotal > 0 ? itemsSubtotal : roundToTwoDecimals(Number(customSubtotal || 0));
 
   let discountAmount = 0;
   if (discountType === 'percentage' && discountValue > 0) {
@@ -52,8 +55,8 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
   }
 
   let couponDiscount = 0;
-  if (directCouponDiscount !== undefined) {
-    couponDiscount = roundToTwoDecimals(directCouponDiscount);
+  if (directCouponDiscount !== undefined && directCouponDiscount !== null) {
+    couponDiscount = roundToTwoDecimals(Math.min(Number(directCouponDiscount), subtotal));
   } else if (coupon && subtotal >= (coupon.min_order_value || 0)) {
     if (coupon.discount_type === 'percentage') {
       const calcDiscount = (subtotal * (coupon.discount_value || 0)) / 100;
@@ -67,28 +70,38 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
   }
 
   const totalDiscounts = Math.min(discountAmount + couponDiscount, subtotal);
-  const taxableSubtotal = roundToTwoDecimals(subtotal - totalDiscounts);
+  const taxableSubtotal = roundToTwoDecimals(Math.max(0, subtotal - totalDiscounts));
 
   let totalCgst = 0;
   let totalSgst = 0;
   let totalIgst = 0;
 
   if (subtotal > 0 && taxableSubtotal > 0) {
-    const discountRatio = taxableSubtotal / subtotal;
+    if (items.length > 0) {
+      const discountRatio = taxableSubtotal / subtotal;
 
-    items.forEach((item) => {
-      const itemGross = Number(item.unit_price) * Number(item.quantity);
-      const itemTaxable = itemGross * discountRatio;
-      const taxRate = Number(item.tax_rate) || 5;
+      items.forEach((item) => {
+        const itemGross = Number(item.unit_price) * Number(item.quantity);
+        const itemTaxable = itemGross * discountRatio;
+        const taxRate = Number(item.tax_rate) || 5;
 
+        if (isInterState) {
+          totalIgst += (itemTaxable * taxRate) / 100;
+        } else {
+          const halfRate = taxRate / 2;
+          totalCgst += (itemTaxable * halfRate) / 100;
+          totalSgst += (itemTaxable * halfRate) / 100;
+        }
+      });
+    } else {
+      // Robust fallback if items array is missing/empty: compute 5% GST directly
       if (isInterState) {
-        totalIgst += (itemTaxable * taxRate) / 100;
+        totalIgst = (taxableSubtotal * 5.0) / 100;
       } else {
-        const halfRate = taxRate / 2;
-        totalCgst += (itemTaxable * halfRate) / 100;
-        totalSgst += (itemTaxable * halfRate) / 100;
+        totalCgst = (taxableSubtotal * 2.5) / 100;
+        totalSgst = (taxableSubtotal * 2.5) / 100;
       }
-    });
+    }
   }
 
   const cgstAmount = roundToTwoDecimals(totalCgst);

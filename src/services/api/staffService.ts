@@ -22,15 +22,32 @@ export const staffService = {
             role,
             is_active,
             created_at,
-            profile:profiles(id, full_name, email, phone),
             permissions:restaurant_member_permissions(*)
           `)
           .eq('restaurant_id', restaurantId)
           .order('created_at', { ascending: false });
 
         if (!error && data) {
+          const userIds = data.map((item: any) => item.user_id).filter(Boolean);
+          let profileMap: Record<string, any> = {};
+
+          if (userIds.length > 0) {
+            try {
+              const { data: profiles } = await supabase
+                .from('profiles')
+                .select('id, full_name, email, phone, role')
+                .in('id', userIds);
+
+              (profiles || []).forEach((p: any) => {
+                profileMap[p.id] = p;
+              });
+            } catch (pErr) {
+              console.warn('Failed to load member profiles:', pErr);
+            }
+          }
+
           return data.map((item: any) => {
-            const profile = item.profile || {};
+            const profile = profileMap[item.user_id] || {};
             const rawPerms = Array.isArray(item.permissions) ? item.permissions[0] : item.permissions;
             const perms: RestaurantMemberPermissions = rawPerms || {
               restaurant_member_id: item.id,
@@ -60,6 +77,7 @@ export const staffService = {
               email: profile.email || 'staff@example.com',
               phone: profile.phone || '',
               permissions: perms,
+              profile: profileMap[item.user_id] || undefined,
             };
           });
         }

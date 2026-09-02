@@ -309,6 +309,40 @@ export const marketplaceService = {
     } = await supabase.auth.getUser();
     if (!user) throw new Error('Please log in to place an order.');
 
+    // 0. Server-Side Idempotency & Rapid Double-Tap Protection
+    try {
+      const recentCutoff = new Date(Date.now() - 25000).toISOString();
+      const { data: recentOrders } = await supabase
+        .from('orders')
+        .select('*, items:order_items(*)')
+        .eq('customer_id', user.id)
+        .eq('restaurant_id', payload.restaurant_id)
+        .eq('order_type', 'delivery')
+        .gte('created_at', recentCutoff)
+        .order('created_at', { ascending: false })
+        .limit(3);
+
+      if (recentOrders && recentOrders.length > 0) {
+        for (const candidate of recentOrders) {
+          const isSameIdem = payload.idempotency_key && candidate.notes?.includes(payload.idempotency_key);
+          const isSameCouponAndRecent =
+            candidate.coupon_code === (payload.coupon_code || null) &&
+            (Date.now() - new Date(candidate.created_at).getTime() < 12000);
+
+          if (isSameIdem || isSameCouponAndRecent) {
+            console.log('Idempotent order detected. Returning existing order:', candidate.order_number);
+            return candidate as Order;
+          }
+        }
+      }
+    } catch (idemErr) {
+      console.warn('Idempotency pre-check warning:', idemErr);
+    }
+
+    const effectiveDeliveryNotes = payload.idempotency_key
+      ? (payload.delivery_notes ? `${payload.delivery_notes} [IDEM:${payload.idempotency_key}]` : `[IDEM:${payload.idempotency_key}]`)
+      : (payload.delivery_notes || null);
+
     // 1. Primary Path: Server-Side Atomic RPC
     try {
       const { data: rpcData, error: rpcErr } = await supabase.rpc(
@@ -321,7 +355,7 @@ export const marketplaceService = {
           p_customer_phone: payload.customer_phone,
           p_payment_method: payload.payment_method,
           p_coupon_code: payload.coupon_code || null,
-          p_delivery_notes: payload.delivery_notes || null,
+          p_delivery_notes: effectiveDeliveryNotes,
         }
       );
 
@@ -413,7 +447,7 @@ export const marketplaceService = {
         });
       }
 
-      // Server-side coupon validation and calculation
+      // 1. Server-side coupon validation and calculation BEFORE any order record insertion
       let serverCouponDiscount = 0;
       let validCoupon: any = null;
 
@@ -426,8 +460,38 @@ export const marketplaceService = {
         if (!valRes.isValid || !valRes.coupon) {
           throw new Error(valRes.message || 'Coupon validation failed.');
         }
+
+        // Strictly check usage limit before creating any records
+        if (
+          valRes.coupon.usage_limit !== null &&
+          valRes.coupon.usage_limit !== undefined &&
+          (valRes.coupon.used_count || 0) >= valRes.coupon.usage_limit
+        ) {
+          throw new Error('This coupon code has reached its maximum usage limit.');
+        }
+
         validCoupon = valRes.coupon;
         serverCouponDiscount = valRes.discountAmount;
+
+        // Atomically attempt to increment usage BEFORE inserting the order
+        const incrementSuccess = await couponService.incrementCouponUsage(
+          validCoupon.id,
+          payload.restaurant_id
+        );
+        if (!incrementSuccess) {
+          throw new Error('This coupon code has reached its maximum usage limit.');
+        }
+      }
+
+      // 2. Deduct product stock after coupon validation passes
+      for (const item of payload.items) {
+        const prod = prods.find((p) => p.id === item.product_id);
+        if (prod && prod.stock_quantity !== null && prod.stock_quantity !== undefined) {
+          await supabase
+            .from('products')
+            .update({ stock_quantity: Math.max(0, prod.stock_quantity - item.quantity) })
+            .eq('id', prod.id);
+        }
       }
 
       const discountedSubtotal = Math.max(0, subtotal - serverCouponDiscount);
@@ -447,6 +511,7 @@ export const marketplaceService = {
         addrText = String(payload.delivery_address || '');
       }
 
+      // 3. Insert confirmed order record
       const { data: newOrder, error: oErr } = await supabase
         .from('orders')
         .insert({
@@ -483,35 +548,31 @@ export const marketplaceService = {
         throw new Error(oErr?.message || 'Failed to create order record.');
       }
 
-      // Increment coupon usage atomically
-      if (validCoupon) {
-        const incrementSuccess = await couponService.incrementCouponUsage(
-          validCoupon.id,
-          payload.restaurant_id
-        );
-        if (!incrementSuccess) {
-          // If concurrent usage limit reached, rollback order
-          await supabase.from('orders').delete().eq('id', orderId);
-          throw new Error('This coupon code has reached its maximum usage limit.');
+      // 4. Insert order items immediately
+      if (orderItemsToInsert.length > 0) {
+        const { error: itemsErr } = await supabase.from('order_items').insert(orderItemsToInsert);
+        if (itemsErr) {
+          console.warn('Error inserting order items for delivery order:', itemsErr);
         }
       }
 
-      if (orderItemsToInsert.length > 0) {
-        await supabase.from('order_items').insert(orderItemsToInsert);
+      // 5. Record audit log
+      try {
+        await supabase.from('audit_logs').insert({
+          restaurant_id: payload.restaurant_id,
+          user_id: user.id,
+          action: 'CUSTOMER_ORDER_PLACED',
+          details: {
+            order_id: orderId,
+            order_number: orderNumber,
+            payable_amount: payableAmount,
+            payment_method: payload.payment_method,
+            coupon_code: validCoupon ? validCoupon.code : null,
+          },
+        });
+      } catch (aErr) {
+        console.warn('Failed to record audit log for customer order:', aErr);
       }
-
-      // Record audit log
-      await supabase.from('audit_logs').insert({
-        restaurant_id: payload.restaurant_id,
-        user_id: user.id,
-        action: 'CUSTOMER_ORDER_PLACED',
-        details: {
-          order_id: orderId,
-          order_number: orderNumber,
-          payable_amount: payableAmount,
-          payment_method: payload.payment_method,
-        },
-      });
 
       return newOrder as Order;
     } catch (fallbackErr: any) {

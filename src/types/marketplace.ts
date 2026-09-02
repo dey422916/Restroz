@@ -82,6 +82,7 @@ export interface DeliveryOrderPayload {
   payment_method: 'cod' | 'online';
   coupon_code?: string;
   delivery_notes?: string;
+  idempotency_key?: string;
 }
 
 export type CustomerOrderStage = 'ordered' | 'out_for_delivery' | 'delivered';

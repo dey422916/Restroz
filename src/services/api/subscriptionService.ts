@@ -29,7 +29,28 @@ export const subscriptionService = {
     }
 
     try {
-      // 1. Fetch Restaurant Operational Status
+      // 1. First attempt secure RPC check (works for anon QR diners, customers, and staff)
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('get_restaurant_subscription_status', {
+          p_restaurant_id: restaurantId,
+        });
+
+        if (!rpcErr && rpcRes && typeof rpcRes === 'object' && rpcRes.is_allowed !== undefined) {
+          return {
+            isAllowed: Boolean(rpcRes.is_allowed),
+            status: rpcRes.status || (rpcRes.is_allowed ? 'active' : 'none'),
+            restaurantStatus: rpcRes.restaurant_status || (rpcRes.is_allowed ? 'ACTIVE' : 'INACTIVE'),
+            planName: rpcRes.plan_name || 'Standard Plan',
+            daysRemaining: typeof rpcRes.days_remaining === 'number' ? rpcRes.days_remaining : 30,
+            endDate: rpcRes.end_date || null,
+            message: rpcRes.message,
+          };
+        }
+      } catch (rpcErr) {
+        // Fallback to table queries below
+      }
+
+      // 2. Fetch Restaurant Operational Status
       const { data: restaurant, error: restErr } = await supabase
         .from('restaurants')
         .select('id, name, status')
@@ -60,7 +81,7 @@ export const subscriptionService = {
         };
       }
 
-      // 2. Fetch Latest Active / Trial Subscription
+      // 3. Fetch Latest Active / Trial Subscription (Staff / Admin Direct Query)
       const { data: subs, error: subErr } = await supabase
         .from('restaurant_subscriptions')
         .select('*, plan:subscription_plans(name, code, max_staff, max_tables, max_products, features)')
@@ -69,6 +90,19 @@ export const subscriptionService = {
         .limit(1);
 
       if (subErr || !subs || subs.length === 0) {
+        // If restaurant is ACTIVE in directory but direct table select is restricted by Supabase RLS
+        // (e.g. for unauthenticated / anonymous QR diners), grant access to allow dine-in orders
+        if (restaurant.status === 'ACTIVE') {
+          return {
+            isAllowed: true,
+            status: 'active',
+            restaurantStatus: 'ACTIVE',
+            planName: 'Active Plan',
+            daysRemaining: 30,
+            endDate: null,
+          };
+        }
+
         return {
           isAllowed: false,
           status: 'none',

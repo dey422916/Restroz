@@ -24,7 +24,7 @@ export default function CouponsScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
-  const { user, isSuperAdmin, activeRestaurantId } = useAuth();
+  const { user, role, isAdmin: authIsAdmin, isSuperAdmin, activeRestaurantId } = useAuth();
 
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,8 +46,9 @@ export default function CouponsScreen() {
   const [expiryDate, setExpiryDate] = useState('');
   const [isActive, setIsActive] = useState(true);
 
-  // Role check: Admin or Super Admin only
-  const isAdmin = isSuperAdmin || (user as any)?.role === 'admin' || (user as any)?.role === 'admin_staff' || Boolean((user as any)?.is_super_admin);
+  // Authoritative Role check: Admin or Super Admin only
+  const normalizedRole = (role || user?.role || '').toUpperCase();
+  const isAdmin = isSuperAdmin || authIsAdmin || normalizedRole === 'ADMIN' || normalizedRole === 'SUPER_ADMIN';
 
   const loadCoupons = useCallback(async () => {
     if (!activeRestaurantId) return;
@@ -181,7 +182,7 @@ export default function CouponsScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await couponService.deleteCoupon(cpn.id);
+              await couponService.deleteCoupon(cpn.id, activeRestaurantId || undefined);
               loadCoupons();
             } catch (e: any) {
               Alert.alert('Error', e.message || 'Failed to remove coupon.');

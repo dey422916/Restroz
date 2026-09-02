@@ -511,20 +511,42 @@ export default function OrdersScreen() {
 
   const payTotals = useMemo(() => {
     if (!payOrderModal) return null;
+
+    const hasManualDiscount = payDiscountType !== 'none' && validatedPayDiscount > 0;
+
+    // If no manual discount is added, and the order already has persisted payable_amount > 0,
+    // read directly from the persisted order fields to ensure 100% fidelity with server order!
+    if (!hasManualDiscount && (payOrderModal.payable_amount || 0) > 0) {
+      const ordSub = payOrderModal.subtotal || paySubtotal;
+      const cpnDisc = payOrderModal.coupon_discount || 0;
+      const discAmt = payOrderModal.discount_amount || 0;
+      const taxable = Math.max(0, ordSub - cpnDisc - discAmt);
+      return {
+        subtotal: ordSub,
+        discountAmount: discAmt,
+        couponDiscount: cpnDisc,
+        taxableSubtotal: taxable,
+        cgstAmount: payOrderModal.cgst_amount || 0,
+        sgstAmount: payOrderModal.sgst_amount || 0,
+        igstAmount: payOrderModal.igst_amount || 0,
+        totalTax: (payOrderModal.cgst_amount || 0) + (payOrderModal.sgst_amount || 0) + (payOrderModal.igst_amount || 0),
+        serviceCharge: payOrderModal.service_charge || 0,
+        deliveryCharge: payOrderModal.delivery_charge || 0,
+        rawTotal: payOrderModal.grand_total || payOrderModal.payable_amount,
+        roundOff: payOrderModal.round_off || 0,
+        payableAmount: payOrderModal.payable_amount,
+      };
+    }
+
     return calculateOrderTotals({
       items: payOrderModal.items || [],
+      subtotal: paySubtotal,
       discountType: payDiscountType === 'none' ? undefined : payDiscountType,
       discountValue: validatedPayDiscount,
-      coupon: payOrderModal.coupon_code
-        ? {
-            code: payOrderModal.coupon_code,
-            discount_type: 'percentage',
-            discount_value: payOrderModal.coupon_discount || 0,
-          }
-        : undefined,
+      couponDiscount: payOrderModal.coupon_discount || 0,
       deliveryCharge: payOrderModal.delivery_charge || 0,
     });
-  }, [payOrderModal, payDiscountType, validatedPayDiscount]);
+  }, [payOrderModal, payDiscountType, validatedPayDiscount, paySubtotal]);
 
   // Close & Pay Order confirmation
   const handleConfirmCloseAndPay = async () => {

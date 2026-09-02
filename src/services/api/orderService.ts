@@ -1092,7 +1092,9 @@ export const orderService = {
     if (order.status === 'completed') throw new Error('Order is already completed and locked.');
     if (order.status === 'cancelled') throw new Error('Cannot close a cancelled order.');
 
-    const targetPayable = payableAmount !== undefined ? payableAmount : order.payable_amount;
+    const targetPayable = (payableAmount !== undefined && payableAmount > 0)
+      ? payableAmount
+      : (order.payable_amount > 0 ? order.payable_amount : (payableAmount ?? 0));
     const finalPaidAmount = paymentReceived ? (amountPaid ?? targetPayable) : 0;
     const finalPaymentStatus = paymentReceived ? 'paid' : 'unpaid';
     const finalOrderStatus: OrderStatus = 'completed';
@@ -1115,11 +1117,11 @@ export const orderService = {
     };
 
     if (discountAmount !== undefined) updatePayload.discount_amount = discountAmount;
-    if (cgstAmount !== undefined) updatePayload.cgst_amount = cgstAmount;
-    if (sgstAmount !== undefined) updatePayload.sgst_amount = sgstAmount;
-    if (grandTotal !== undefined) updatePayload.grand_total = grandTotal;
+    if (cgstAmount !== undefined && cgstAmount > 0) updatePayload.cgst_amount = cgstAmount;
+    if (sgstAmount !== undefined && sgstAmount > 0) updatePayload.sgst_amount = sgstAmount;
+    if (grandTotal !== undefined && (grandTotal > 0 || (order.grand_total || 0) <= 0)) updatePayload.grand_total = grandTotal;
     if (roundOff !== undefined) updatePayload.round_off = roundOff;
-    if (payableAmount !== undefined) updatePayload.payable_amount = payableAmount;
+    if (payableAmount !== undefined && (payableAmount > 0 || (order.payable_amount || 0) <= 0)) updatePayload.payable_amount = payableAmount;
 
     if (isSupabaseConfigured) {
       try {

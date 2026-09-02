@@ -100,7 +100,12 @@ export default function DeliveryCheckoutScreen() {
     }
   };
 
+  const isSubmittingRef = React.useRef(false);
+  const hasSucceededRef = React.useRef(false);
+
   const handlePlaceOrder = async () => {
+    if (isSubmittingRef.current || placingOrder || hasSucceededRef.current) return;
+
     if (!user) {
       Alert.alert('Login Required', 'Please log in to place a delivery order.', [
         { text: 'Log In', onPress: () => router.push('/(auth)/login') },
@@ -125,8 +130,10 @@ export default function DeliveryCheckoutScreen() {
       return;
     }
 
+    isSubmittingRef.current = true;
     setPlacingOrder(true);
     try {
+      const idempotencyKey = `idem-${user.id}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
       const orderPayload = {
         restaurant_id: cart.restaurantId,
         items: cart.items.map((i) => ({
@@ -140,17 +147,25 @@ export default function DeliveryCheckoutScreen() {
         payment_method: paymentMethod,
         coupon_code: cart.couponCode,
         delivery_notes: deliveryNotes.trim() || undefined,
+        idempotency_key: idempotencyKey,
       };
 
       const placed = await marketplaceService.placeDeliveryOrder(orderPayload);
+      hasSucceededRef.current = true;
       clearCart();
+      removeCoupon();
 
-      // Immediately navigate to Orders page to show the latest order
+      // Immediately navigate customer to My Orders page to view the placed order
       router.replace('/(marketplace)/orders');
     } catch (e: any) {
+      isSubmittingRef.current = false;
+      setPlacingOrder(false);
       Alert.alert('Order Failed', e.message || 'Could not complete order.');
     } finally {
-      setPlacingOrder(false);
+      if (!hasSucceededRef.current) {
+        isSubmittingRef.current = false;
+        setPlacingOrder(false);
+      }
     }
   };
 

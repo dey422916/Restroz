@@ -180,6 +180,38 @@ export const staffService = {
 
     if (isSupabaseConfigured) {
       try {
+        // 1. Attempt Server-Side Provisioning RPC (Bypasses SMTP email rate limits completely)
+        try {
+          const { data: rpcData, error: rpcErr } = await supabase.rpc('provision_privileged_user', {
+            p_restaurant_id: restaurantId,
+            p_email: cleanEmail,
+            p_password: staffData.password || (memberRole === 'ADMIN' ? 'Ratnadeep1@' : 'Staff12345!'),
+            p_full_name: cleanName,
+            p_phone: staffData.phone?.trim() || null,
+            p_role: memberRole,
+            p_preset: staffData.preset || null,
+            p_permissions: staffData.permissions ? staffData.permissions : null,
+          });
+
+          if (!rpcErr && rpcData?.user_id) {
+            return {
+              success: true,
+              member_id: rpcData.member_id,
+              message: `${memberRole} account provisioned immediately without email verification.`,
+            };
+          }
+          if (rpcErr && !rpcErr.message.includes('function') && !rpcErr.message.includes('not found')) {
+            if (rpcErr.message.includes('limit reached') || rpcErr.message.includes('already an active member')) {
+              throw new Error(rpcErr.message);
+            }
+          }
+        } catch (rpcEx: any) {
+          if (rpcEx.message?.includes('limit reached') || rpcEx.message?.includes('already an active member')) {
+            throw rpcEx;
+          }
+          console.warn('provision_privileged_user RPC fallback in staffService:', rpcEx?.message);
+        }
+
         // Find or check existing profile by email
         let targetUserId: string | null = null;
         const { data: existingProf } = await supabase
@@ -220,7 +252,7 @@ export const staffService = {
           if (signUpErr) {
             if (signUpErr.message.toLowerCase().includes('rate limit') || signUpErr.message.toLowerCase().includes('over_email_send_rate_limit')) {
               throw new Error(
-                'Email provisioning rate limit reached. Please provision via database migration or assign an existing registered user.'
+                'Supabase Email Rate Limit Exceeded. Please run the SQL Migration script (20260820000009_bypass_email_rate_limit_privileged_provisioning.sql) in your Supabase SQL Editor to enable zero-email direct provisioning.'
               );
             }
             if (!signUpErr.message.toLowerCase().includes('already registered') && !signUpErr.message.toLowerCase().includes('already exists')) {

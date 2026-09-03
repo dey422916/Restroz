@@ -209,27 +209,57 @@ export const authService = {
 
     let targetUserId: string | null = null;
 
-    // 1. Try Supabase Edge Function first if deployed
-    try {
-      const { data, error } = await supabase.functions.invoke('create-admin', {
-        body: {
-          email: cleanEmail,
-          password,
-          fullName: cleanName,
-          phone: cleanPhone,
-          role: targetRole,
-          restaurantId: restaurantId || null,
-        },
-      });
+    // 1. Attempt Server-Side Provisioning RPC (Bypasses SMTP email rate limits completely)
+    if (restaurantId) {
+      try {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('provision_privileged_user', {
+          p_restaurant_id: restaurantId,
+          p_email: cleanEmail,
+          p_password: password,
+          p_full_name: cleanName,
+          p_phone: cleanPhone || null,
+          p_role: targetRole,
+        });
 
-      if (!error && (data?.user_id || data?.user?.id)) {
-        targetUserId = data.user_id || data.user.id;
+        if (!rpcErr && rpcData?.user_id) {
+          targetUserId = rpcData.user_id;
+        }
+        if (rpcErr && !rpcErr.message.includes('function') && !rpcErr.message.includes('not found')) {
+          if (rpcErr.message.includes('limit reached') || rpcErr.message.includes('already an active member')) {
+            throw new Error(rpcErr.message);
+          }
+        }
+      } catch (rpcEx: any) {
+        if (rpcEx.message?.includes('limit reached') || rpcEx.message?.includes('already an active member')) {
+          throw rpcEx;
+        }
+        console.warn('provision_privileged_user RPC fallback in authService:', rpcEx?.message);
       }
-    } catch (edgeErr) {
-      console.warn('create-admin Edge Function invocation bypassed, utilizing direct provisioning:', edgeErr);
     }
 
-    // 2. Direct Provisioning Fallback (100% resilient across Web, iOS, Android)
+    // 2. Try Supabase Edge Function next if deployed
+    if (!targetUserId) {
+      try {
+        const { data, error } = await supabase.functions.invoke('create-admin', {
+          body: {
+            email: cleanEmail,
+            password,
+            fullName: cleanName,
+            phone: cleanPhone,
+            role: targetRole,
+            restaurantId: restaurantId || null,
+          },
+        });
+
+        if (!error && (data?.user_id || data?.user?.id)) {
+          targetUserId = data.user_id || data.user.id;
+        }
+      } catch (edgeErr) {
+        console.warn('create-admin Edge Function invocation bypassed, utilizing direct provisioning:', edgeErr);
+      }
+    }
+
+    // 3. Direct Provisioning Fallback (100% resilient across Web, iOS, Android)
     if (!targetUserId) {
       // Check if user already exists in profiles
       const { data: existingProf } = await supabase
@@ -265,6 +295,11 @@ export const authService = {
         });
 
         if (signUpErr) {
+          if (signUpErr.message.toLowerCase().includes('rate limit') || signUpErr.message.toLowerCase().includes('over_email_send_rate_limit')) {
+            throw new Error(
+              'Supabase Email Rate Limit Exceeded. Please run the SQL Migration script (20260820000009_bypass_email_rate_limit_privileged_provisioning.sql) in your Supabase SQL Editor to enable zero-email direct provisioning.'
+            );
+          }
           if (!signUpErr.message.toLowerCase().includes('already registered') && !signUpErr.message.toLowerCase().includes('already exists')) {
             throw new Error(signUpErr.message || 'Failed to create user account.');
           }

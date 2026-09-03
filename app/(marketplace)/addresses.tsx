@@ -15,6 +15,7 @@ import { useAuth } from '../../src/context/AuthContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { CustomerAddress } from '../../src/types';
 import { customerColors } from '../../src/utils/colors';
+import { isValidPhoneNumber } from '../../src/utils/phone';
 
 export default function CustomerAddressesScreen() {
   const router = useRouter();
@@ -84,16 +85,38 @@ export default function CustomerAddressesScreen() {
     setModalVisible(true);
   };
 
+  const handleSetDefault = async (id: string) => {
+    // 1. Optimistic UI update (0ms immediate feedback)
+    setAddresses((prev) =>
+      prev.map((a) => ({
+        ...a,
+        is_default: a.id === id,
+      }))
+    );
+
+    try {
+      await marketplaceService.setDefaultCustomerAddress(id);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to set default address.');
+      loadAddresses();
+    }
+  };
+
   const handleSave = async () => {
     if (!addressLine1.trim() || !fullName.trim() || !phone.trim()) {
       Alert.alert('Validation Error', 'Full Name, Phone, and Street Address are required.');
       return;
     }
 
+    if (!isValidPhoneNumber(phone)) {
+      Alert.alert('Invalid Phone Number', 'Please enter a valid 10-digit mobile number for this address.');
+      return;
+    }
+
     setSaving(true);
     try {
       if (editingId) {
-        await marketplaceService.updateCustomerAddress(editingId, {
+        const updated = await marketplaceService.updateCustomerAddress(editingId, {
           label,
           full_name: fullName.trim(),
           phone: phone.trim(),
@@ -104,8 +127,11 @@ export default function CustomerAddressesScreen() {
           postal_code: postalCode.trim(),
           is_default: isDefault,
         });
+        setAddresses((prev) =>
+          prev.map((a) => (a.id === editingId ? updated : isDefault ? { ...a, is_default: false } : a))
+        );
       } else {
-        await marketplaceService.createCustomerAddress({
+        const created = await marketplaceService.createCustomerAddress({
           label,
           full_name: fullName.trim(),
           phone: phone.trim(),
@@ -116,10 +142,10 @@ export default function CustomerAddressesScreen() {
           postal_code: postalCode.trim(),
           is_default: isDefault,
         });
+        setAddresses((prev) => [created, ...(isDefault ? prev.map((a) => ({ ...a, is_default: false })) : prev)]);
       }
 
       setModalVisible(false);
-      loadAddresses();
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Failed to save address.');
     } finally {
@@ -134,8 +160,13 @@ export default function CustomerAddressesScreen() {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          await marketplaceService.deleteCustomerAddress(id);
-          loadAddresses();
+          // Optimistic remove
+          setAddresses((prev) => prev.filter((a) => a.id !== id));
+          try {
+            await marketplaceService.deleteCustomerAddress(id);
+          } catch (e) {
+            loadAddresses();
+          }
         },
       },
     ]);
@@ -201,6 +232,14 @@ export default function CustomerAddressesScreen() {
                 </View>
 
                 <View style={styles.actionRow}>
+                  {!addr.is_default && (
+                    <TouchableOpacity
+                      style={styles.setDefaultBtn}
+                      onPress={() => handleSetDefault(addr.id)}
+                    >
+                      <Text style={styles.setDefaultBtnText}>★ Set Default</Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity
                     style={styles.editBtn}
                     onPress={() => openEditModal(addr)}
@@ -273,10 +312,17 @@ export default function CustomerAddressesScreen() {
               <TextInput
                 style={styles.input}
                 value={phone}
-                onChangeText={setPhone}
-                placeholder="Mobile number"
+                onChangeText={(v) => setPhone(v.replace(/[^\d+]/g, ''))}
+                placeholder="10-digit mobile number"
+                placeholderTextColor="#64748b"
                 keyboardType="phone-pad"
+                maxLength={13}
               />
+              {Boolean(phone && !isValidPhoneNumber(phone)) && (
+                <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: 3 }}>
+                  ⚠️ Invalid mobile number
+                </Text>
+              )}
 
               <Text style={styles.labelTitle}>Flat / House / Street Address *</Text>
               <TextInput
@@ -474,7 +520,21 @@ const styles = StyleSheet.create({
   },
   actionRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 6,
+  },
+  setDefaultBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  setDefaultBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#16A34A',
   },
   editBtn: {
     padding: 4,

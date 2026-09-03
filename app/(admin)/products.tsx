@@ -139,7 +139,10 @@ export default function ProductsScreen() {
   const handlePickImage = async () => {
     setUploadingImage(true);
     try {
-      const res = await storageService.pickAndUploadProductImage();
+      const res = await storageService.pickAndUploadProductImage({
+        restaurantId: activeRestaurantId,
+        productId: editingProduct?.id,
+      });
       if (res && res.url) {
         setFormImageUrl(res.url);
         Alert.alert('Photo Selected', 'Product image uploaded and attached.');
@@ -453,11 +456,12 @@ export default function ProductsScreen() {
                   key={prod.id}
                   style={[
                     styles.card,
+                    Platform.OS === 'web' && styles.cardWeb,
                     (!prod.is_active || isOutOfStock) && styles.cardDimmed,
                   ]}
                 >
                   {/* Image & Indicators */}
-                  <View style={styles.imgContainer}>
+                  <View style={[styles.imgContainer, Platform.OS === 'web' && styles.imgContainerWeb]}>
                     <Image
                       source={{
                         uri:
@@ -499,7 +503,7 @@ export default function ProductsScreen() {
                   {/* Body Content */}
                   <View style={styles.bodyDetails}>
                     <View style={styles.cardTopRow}>
-                      <Text style={styles.skuText}>SKU: {prod.sku}</Text>
+                      <Text style={styles.skuText} numberOfLines={1}>SKU: {prod.sku}</Text>
                       <View
                         style={[
                           styles.stockPill,
@@ -519,6 +523,7 @@ export default function ProductsScreen() {
                               ? styles.stockPillTextLow
                               : styles.stockPillTextGood,
                           ]}
+                          numberOfLines={1}
                         >
                           {isOutOfStock
                             ? 'OUT OF STOCK'
@@ -531,7 +536,7 @@ export default function ProductsScreen() {
                       {prod.name}
                     </Text>
 
-                    <Text style={styles.categoryMeta}>
+                    <Text style={styles.categoryMeta} numberOfLines={1}>
                       📁 {prod.category_name || 'General'} • {prod.unit || 'portion'} • Tax: {prod.tax_rate}%
                     </Text>
 
@@ -550,37 +555,78 @@ export default function ProductsScreen() {
                     </View>
 
                     {/* Action Buttons Row */}
-                    <View style={styles.actionsRow}>
-                      <TouchableOpacity
-                        style={styles.editBtn}
-                        onPress={() => openEditModal(prod)}
-                        testID="edit-product-btn"
-                      >
-                        <Text style={styles.editBtnText}>✏️ Edit</Text>
-                      </TouchableOpacity>
+                    <View style={[styles.actionsRow, Platform.OS === 'web' && styles.actionsRowWeb]}>
+                      {Platform.OS === 'web' ? (
+                        <>
+                          <View style={styles.actionBtnSubRow}>
+                            <TouchableOpacity
+                              style={styles.editBtn}
+                              onPress={() => openEditModal(prod)}
+                              testID="edit-product-btn"
+                            >
+                              <Text style={styles.editBtnText}>✏️ Edit</Text>
+                            </TouchableOpacity>
 
-                      <TouchableOpacity
-                        style={styles.stockAdjBtn}
-                        onPress={() => openStockModal(prod)}
-                      >
-                        <Text style={styles.stockAdjBtnText}>📦 Stock</Text>
-                      </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.stockAdjBtn}
+                              onPress={() => openStockModal(prod)}
+                            >
+                              <Text style={styles.stockAdjBtnText}>📦 Stock</Text>
+                            </TouchableOpacity>
+                          </View>
 
-                      <TouchableOpacity
-                        style={styles.toggleBtn}
-                        onPress={() => handleToggleActive(prod)}
-                      >
-                        <Text style={styles.toggleBtnText}>
-                          {prod.is_active ? 'Deactivate' : 'Activate'}
-                        </Text>
-                      </TouchableOpacity>
+                          <View style={styles.actionBtnSubRow}>
+                            <TouchableOpacity
+                              style={styles.toggleBtn}
+                              onPress={() => handleToggleActive(prod)}
+                            >
+                              <Text style={styles.toggleBtnText} numberOfLines={1}>
+                                {prod.is_active ? 'Deactivate' : 'Activate'}
+                              </Text>
+                            </TouchableOpacity>
 
-                      <TouchableOpacity
-                        style={styles.deleteBtn}
-                        onPress={() => handleDeleteProduct(prod)}
-                      >
-                        <Text style={styles.deleteBtnText}>🗑️</Text>
-                      </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.deleteBtn}
+                              onPress={() => handleDeleteProduct(prod)}
+                            >
+                              <Text style={styles.deleteBtnText}>🗑️</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </>
+                      ) : (
+                        <>
+                          <TouchableOpacity
+                            style={styles.editBtn}
+                            onPress={() => openEditModal(prod)}
+                            testID="edit-product-btn"
+                          >
+                            <Text style={styles.editBtnText}>✏️ Edit</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={styles.stockAdjBtn}
+                            onPress={() => openStockModal(prod)}
+                          >
+                            <Text style={styles.stockAdjBtnText}>📦 Stock</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={styles.toggleBtn}
+                            onPress={() => handleToggleActive(prod)}
+                          >
+                            <Text style={styles.toggleBtnText}>
+                              {prod.is_active ? 'Deactivate' : 'Activate'}
+                            </Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={styles.deleteBtn}
+                            onPress={() => handleDeleteProduct(prod)}
+                          >
+                            <Text style={styles.deleteBtnText}>🗑️</Text>
+                          </TouchableOpacity>
+                        </>
+                      )}
                     </View>
                   </View>
                 </View>
@@ -1089,11 +1135,14 @@ const styles = StyleSheet.create({
   list: {
     padding: 14,
     gap: 10,
+    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+    flexWrap: Platform.OS === 'web' ? 'wrap' : 'nowrap',
+    alignItems: 'stretch',
   },
   card: {
     flexDirection: 'row',
     backgroundColor: '#ffffff',
-    borderRadius: 18,
+    borderRadius: 16,
     padding: 12,
     borderWidth: 1,
     borderColor: '#e2e8f0',
@@ -1103,6 +1152,18 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 6,
+  },
+  cardWeb: {
+    flexDirection: 'column',
+    width: 'calc(16.666% - 8.4px)' as any,
+    maxWidth: 'calc(16.666% - 8.4px)' as any,
+    minWidth: 155,
+    flexGrow: 0,
+    flexShrink: 0,
+    justifyContent: 'space-between',
+    padding: 10,
+    borderRadius: 14,
+    gap: 8,
   },
   cardDimmed: {
     opacity: 0.7,
@@ -1115,6 +1176,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#f1f5f9',
     position: 'relative',
+  },
+  imgContainerWeb: {
+    width: '100%',
+    height: 110,
+    borderRadius: 10,
   },
   img: {
     width: '100%',
@@ -1226,6 +1292,16 @@ const styles = StyleSheet.create({
   actionsRow: {
     flexDirection: 'row',
     gap: 6,
+  },
+  actionsRowWeb: {
+    flexDirection: 'column',
+    gap: 5,
+    marginTop: 6,
+  },
+  actionBtnSubRow: {
+    flexDirection: 'row',
+    gap: 5,
+    width: '100%',
   },
   editBtn: {
     flex: 1,

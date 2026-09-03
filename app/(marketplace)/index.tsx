@@ -19,6 +19,8 @@ import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { Restaurant, RestaurantPublicProfile, CustomerAddress } from '../../src/types';
 import { customerColors } from '../../src/utils/colors';
 import { parseBannerUrls } from '../../src/utils/mediaUtils';
+import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
+import { OptimizedImage } from '../../src/components/common/OptimizedImage';
 
 const CUISINES = [
   'All',
@@ -53,34 +55,31 @@ export default function MarketplaceHomeScreen() {
   // Large desktop: 4 cards/row, Normal desktop/laptop: 3 cards/row, Tablet: 2 cards/row, Mobile: 1 card/row
   const numColumns = width >= 1300 ? 4 : width >= 960 ? 3 : width >= 640 ? 2 : 1;
 
-  const loadData = async (addr?: CustomerAddress | null) => {
+  const loadData = async (addr?: CustomerAddress | null, forceRefresh: boolean = false) => {
     try {
-      const activeAddr = addr !== undefined ? addr : selectedAddress;
-      const [restData, addrList] = await Promise.all([
-        marketplaceService.getMarketplaceRestaurants({
-          customerLat: activeAddr?.latitude != null ? Number(activeAddr.latitude) : null,
-          customerLng: activeAddr?.longitude != null ? Number(activeAddr.longitude) : null,
-          customerCity: activeAddr?.city || null,
-        }),
-        user ? marketplaceService.getCustomerAddresses().catch(() => []) : Promise.resolve([]),
-      ]);
+      // 1. Fetch saved addresses if user is logged in
+      let addrList: CustomerAddress[] = savedAddresses;
+      if (user && (savedAddresses.length === 0 || forceRefresh)) {
+        addrList = await marketplaceService.getCustomerAddresses().catch(() => []);
+        setSavedAddresses(addrList);
+      }
+
+      // 2. Resolve active address (passed param -> current state -> default address -> first address)
+      let activeAddr = addr !== undefined ? addr : selectedAddress;
+      if (!activeAddr && addrList.length > 0) {
+        activeAddr = addrList.find((a) => a.is_default) || addrList[0];
+        setSelectedAddress(activeAddr);
+      }
+
+      // 3. Fetch restaurants in a SINGLE optimized pass with active address coordinates
+      const restData = await marketplaceService.getMarketplaceRestaurants({
+        customerLat: activeAddr?.latitude != null ? Number(activeAddr.latitude) : null,
+        customerLng: activeAddr?.longitude != null ? Number(activeAddr.longitude) : null,
+        customerCity: activeAddr?.city || null,
+        forceRefresh,
+      });
 
       setRestaurants(restData);
-      setSavedAddresses(addrList);
-
-      if (user && addrList.length > 0 && !selectedAddress && addr === undefined) {
-        const def = (addrList as CustomerAddress[]).find((a: CustomerAddress) => a.is_default) || addrList[0];
-        setSelectedAddress(def);
-        // Reload restaurants with default address coordinates
-        if (def.latitude != null && def.longitude != null) {
-          const sorted = await marketplaceService.getMarketplaceRestaurants({
-            customerLat: Number(def.latitude),
-            customerLng: Number(def.longitude),
-            customerCity: def.city,
-          });
-          setRestaurants(sorted);
-        }
-      }
     } catch (e) {
       console.warn('Error loading marketplace data:', e);
     } finally {
@@ -93,16 +92,74 @@ export default function MarketplaceHomeScreen() {
     loadData();
   }, [user]);
 
+  // Supabase Realtime subscription on restaurant_public_profiles for live open/closed updates
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    const channelName = `marketplace_profiles_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'restaurant_public_profiles',
+        },
+        (payload) => {
+          if (payload.new && (payload.new as any).restaurant_id) {
+            const updatedRestId = (payload.new as any).restaurant_id;
+            const newIsOpen =
+              (payload.new as any).is_open !== false &&
+              (payload.new as any).marketplace_enabled !== false;
+            const newBanner = (payload.new as any).banner_url;
+            marketplaceService.clearRestaurantCache();
+            setRestaurants((prev) =>
+              prev.map((item) => {
+                if (item.id === updatedRestId) {
+                  return {
+                    ...item,
+                    banner_url: newBanner || item.banner_url,
+                    banner_urls: newBanner ? parseBannerUrls(newBanner) : (item as any).banner_urls,
+                    public_profile: {
+                      ...(item.public_profile || ({} as any)),
+                      ...(payload.new as any),
+                      banner_url: newBanner || item.public_profile?.banner_url,
+                      banner_urls: newBanner ? parseBannerUrls(newBanner) : item.public_profile?.banner_urls,
+                      is_open: newIsOpen,
+                    },
+                  };
+                }
+                return item;
+              })
+            );
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
   const onRefresh = () => {
     setRefreshing(true);
-    loadData();
+    marketplaceService.clearRestaurantCache();
+    loadData(selectedAddress, true);
   };
 
   const handleSelectAddress = (addr: CustomerAddress) => {
     setSelectedAddress(addr);
     setAddressModalVisible(false);
-    setLoading(true);
-    loadData(addr);
+    // Instantaneous distance recalculation and sorting from memory cache
+    marketplaceService
+      .getMarketplaceRestaurants({
+        customerLat: addr.latitude != null ? Number(addr.latitude) : null,
+        customerLng: addr.longitude != null ? Number(addr.longitude) : null,
+        customerCity: addr.city || null,
+      })
+      .then(setRestaurants);
   };
 
   const filteredRestaurants = restaurants.filter((r) => {
@@ -298,22 +355,35 @@ export default function MarketplaceHomeScreen() {
                       styles.restaurantCard,
                       getCardWidthStyle(),
                       numColumns === 1 && { marginBottom: 16 },
+                      !isOpen && styles.restaurantCardDisabled,
                     ]}
                     onPress={() => router.push(`/(marketplace)/restaurant/${r.id}` as any)}
-                    activeOpacity={0.85}
+                    activeOpacity={isOpen ? 0.85 : 0.95}
                   >
                     {/* Image / Banner */}
                     <View style={[styles.cardCover, { height: numColumns === 1 ? 175 : 155 }]}>
-                      <Image source={{ uri: bannerUrl }} style={styles.cardImage} />
+                      <OptimizedImage
+                        source={bannerUrl}
+                        type="banner"
+                        style={[styles.cardImage, !isOpen && styles.cardImageDimmed]}
+                      />
 
                       {!isOpen && (
                         <View style={styles.closedOverlay}>
-                          <Text style={styles.closedText}>CLOSED FOR DELIVERY</Text>
+                          <View style={styles.closedBadgeBox}>
+                            <Text style={styles.closedText}>🔴 CLOSED / OFFLINE</Text>
+                            <Text style={styles.closedSubText}>Not accepting online orders</Text>
+                          </View>
                         </View>
                       )}
 
                       {/* Delivery / Distance Badge */}
                       <View style={styles.badgeContainer}>
+                        {isOpen ? (
+                          <View style={styles.openStatusBadge}>
+                            <Text style={styles.openStatusBadgeText}>🟢 OPEN</Text>
+                          </View>
+                        ) : null}
                         <View style={styles.deliveryTimeBadge}>
                           <Text style={styles.deliveryTimeText}>⏱️ {deliveryTime} MINS</Text>
                         </View>
@@ -618,6 +688,11 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
+  restaurantCardDisabled: {
+    opacity: 0.72,
+    backgroundColor: '#FAFAFA',
+    borderColor: '#E2E8F0',
+  },
   cardCover: {
     position: 'relative',
     backgroundColor: '#F1F5F9',
@@ -627,21 +702,49 @@ const styles = StyleSheet.create({
     height: '100%',
     resizeMode: 'cover',
   },
+  cardImageDimmed: {
+    opacity: 0.45,
+  },
   closedOverlay: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(15,23,42,0.65)',
     justifyContent: 'center',
+    alignItems: 'center',
+    padding: 12,
+  },
+  closedBadgeBox: {
+    backgroundColor: 'rgba(239, 68, 68, 0.9)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
     alignItems: 'center',
   },
   closedText: {
     color: '#FFFFFF',
+    fontWeight: '900',
+    fontSize: 13,
+    letterSpacing: 0.5,
+  },
+  closedSubText: {
+    color: '#FEE2E2',
+    fontWeight: '600',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  openStatusBadge: {
+    backgroundColor: 'rgba(5, 150, 105, 0.9)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  openStatusBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
     fontWeight: '800',
-    fontSize: 14,
-    letterSpacing: 0.8,
   },
   badgeContainer: {
     position: 'absolute',

@@ -115,17 +115,7 @@ export const subscriptionGuardService = {
   ): Promise<{ allowed: boolean; message?: string }> {
     if (isSupabaseConfigured) {
       try {
-        const { data, error } = await supabase.rpc('check_restaurant_plan_limit', {
-          p_restaurant_id: restaurantId,
-          p_resource_type: resourceType,
-          p_requested_count: requestedCount,
-        });
-
-        if (!error && data !== null) {
-          return { allowed: Boolean(data) };
-        }
-
-        // Direct DB fallback check
+        // Direct DB check with robust plan limits
         const { data: subData } = await supabase
           .from('restaurant_subscriptions')
           .select('*, plan:subscription_plans(*)')
@@ -134,39 +124,46 @@ export const subscriptionGuardService = {
           .limit(1)
           .maybeSingle();
 
-        if (subData?.plan) {
-          const plan = subData.plan;
-          if (resourceType === 'STAFF' && plan.max_staff) {
-            const { count } = await supabase
-              .from('restaurant_members')
-              .select('*', { count: 'exact', head: true })
-              .eq('restaurant_id', restaurantId)
-              .eq('is_active', true);
-            if ((count || 0) + requestedCount > plan.max_staff) {
-              return { allowed: false, message: `Your plan allows up to ${plan.max_staff} staff members.` };
-            }
-          } else if (resourceType === 'TABLES' && plan.max_tables) {
-            const { count } = await supabase
-              .from('tables')
-              .select('*', { count: 'exact', head: true })
-              .eq('restaurant_id', restaurantId)
-              .eq('is_active', true);
-            if ((count || 0) + requestedCount > plan.max_tables) {
-              return { allowed: false, message: `Your plan allows up to ${plan.max_tables} dining tables.` };
-            }
-          } else if (resourceType === 'PRODUCTS' && plan.max_products) {
-            const { count } = await supabase
-              .from('products')
-              .select('*', { count: 'exact', head: true })
-              .eq('restaurant_id', restaurantId)
-              .eq('is_active', true);
-            if ((count || 0) + requestedCount > plan.max_products) {
-              return { allowed: false, message: `Your plan allows up to ${plan.max_products} menu products.` };
-            }
+        const plan = subData?.plan;
+
+        if (resourceType === 'STAFF') {
+          // Minimum 3 staff members for all plans
+          const maxStaff = plan?.max_staff ? Math.max(plan.max_staff, 3) : 3;
+          const { count } = await supabase
+            .from('restaurant_members')
+            .select('*', { count: 'exact', head: true })
+            .eq('restaurant_id', restaurantId)
+            .eq('role', 'STAFF')
+            .eq('is_active', true);
+
+          if ((count || 0) + requestedCount > maxStaff) {
+            return { allowed: false, message: `Your plan allows up to ${maxStaff} staff members. Currently active: ${count || 0}.` };
+          }
+        } else if (resourceType === 'TABLES' && plan?.max_tables) {
+          const maxTables = Math.max(plan.max_tables, 10);
+          const { count } = await supabase
+            .from('tables')
+            .select('*', { count: 'exact', head: true })
+            .eq('restaurant_id', restaurantId)
+            .eq('is_active', true);
+          if ((count || 0) + requestedCount > maxTables) {
+            return { allowed: false, message: `Your plan allows up to ${maxTables} dining tables.` };
+          }
+        } else if (resourceType === 'PRODUCTS' && plan?.max_products) {
+          const maxProducts = Math.max(plan.max_products, 50);
+          const { count } = await supabase
+            .from('products')
+            .select('*', { count: 'exact', head: true })
+            .eq('restaurant_id', restaurantId)
+            .eq('is_active', true);
+          if ((count || 0) + requestedCount > maxProducts) {
+            return { allowed: false, message: `Your plan allows up to ${maxProducts} menu products.` };
           }
         }
+
         return { allowed: true };
       } catch (err: any) {
+        console.warn('checkPlanLimit warning:', err?.message);
         return { allowed: true };
       }
     }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -14,8 +14,9 @@ import {
   Platform,
   Dimensions,
   Image,
+  useWindowDimensions,
 } from 'react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { orderService, resolveOrderSource } from '../../src/services/api/orderService';
 import { productService } from '../../src/services/api/productService';
@@ -28,10 +29,13 @@ import { getOrderSubtotal, calculateOrderTotals } from '../../src/utils/gst';
 import { useAuth } from '../../src/context/AuthContext';
 import { useSettings } from '../../src/context/SettingsContext';
 import { printedKotTracker } from '../../src/utils/printedKotTracker';
+import { cleanCustomerOrderNotes } from '../../src/utils/orderNotes';
+import { isValidPhoneNumber } from '../../src/utils/phone';
 
 export default function OrdersScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { openOrderId } = useLocalSearchParams<{ openOrderId?: string }>();
   const { user, activeRestaurantId, activeRestaurant } = useAuth();
   const { settings } = useSettings();
   const [orders, setOrders] = useState<Order[]>([]);
@@ -73,8 +77,14 @@ export default function OrdersScreen() {
   const [payDiscountType, setPayDiscountType] = useState<'none' | 'fixed' | 'percentage'>('none');
   const [payDiscountValue, setPayDiscountValue] = useState<string>('');
   const [closingOrder, setClosingOrder] = useState<boolean>(false);
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isTwoColumn = (Platform.OS === 'web' && windowWidth >= 600) || windowWidth >= 768;
 
-  const windowHeight = Dimensions.get('window').height;
+  const cardWidth = useMemo(() => {
+    if (!isTwoColumn) return '100%';
+    if (Platform.OS === 'web') return 'calc(50% - 7px)' as any;
+    return Math.floor((windowWidth - 28 - 14) / 2);
+  }, [isTwoColumn, windowWidth]);
 
   const loadData = async () => {
     try {
@@ -100,13 +110,65 @@ export default function OrdersScreen() {
     }, [activeRestaurantId])
   );
 
+  // Auto-navigate to the correct tab/filter when redirected from KOT dispatch
+  // Does NOT open the popup — popup should only appear after Settle Order
+  const handledOpenOrderIdRef = useRef<string | null>(null);
   useEffect(() => {
+    if (openOrderId && orders.length > 0 && handledOpenOrderIdRef.current !== openOrderId) {
+      handledOpenOrderIdRef.current = openOrderId;
+      const targetOrder = orders.find((o) => o.id === openOrderId);
+      if (targetOrder) {
+        // Switch to the correct category tab
+        if (isPosOrder(targetOrder)) {
+          setCategoryTab('pos');
+        } else if (isOnlineDeliveryOrder(targetOrder)) {
+          setCategoryTab('online');
+        } else if (isQrDigitalMenuOrder(targetOrder)) {
+          setCategoryTab('qr');
+        }
+        setTabFilter('active');
+      }
+    }
+  }, [openOrderId, orders]);
+
+  const [historyPage, setHistoryPage] = useState<number>(1);
+  const [historyHasMore, setHistoryHasMore] = useState<boolean>(true);
+  const [loadingMoreHistory, setLoadingMoreHistory] = useState<boolean>(false);
+
+  const loadMoreHistoryOrders = async () => {
+    if (!activeRestaurantId || loadingMoreHistory || !historyHasMore) return;
+    try {
+      setLoadingMoreHistory(true);
+      const nextPage = historyPage + 1;
+      const res = await orderService.getOrdersPaginated({
+        restaurantId: activeRestaurantId,
+        statusGroup: 'completed',
+        page: nextPage,
+        pageSize: 30,
+      });
+
+      setOrders((prev) => {
+        const existingIds = new Set(prev.map((o) => o.id));
+        const newOnes = res.orders.filter((o) => !existingIds.has(o.id));
+        return [...prev, ...newOnes];
+      });
+      setHistoryPage(nextPage);
+      setHistoryHasMore(res.hasMore);
+    } catch (e) {
+      console.warn('Failed to load more completed orders:', e);
+    } finally {
+      setLoadingMoreHistory(false);
+    }
+  };
+
+  useEffect(() => {
+    // 45-second low-frequency reconciliation fetch (Realtime handles instant changes)
     const interval = setInterval(async () => {
       if (activeRestaurantId) {
         const refreshed = await orderService.getOrders(activeRestaurantId);
         setOrders(refreshed);
       }
-    }, 4000);
+    }, 45000);
     return () => clearInterval(interval);
   }, [activeRestaurantId]);
 
@@ -124,10 +186,12 @@ export default function OrdersScreen() {
   const isQrDigitalMenuOrder = (o: Order): boolean => {
     // Explicitly exclude any delivery / online app order from QR tab
     if (isOnlineDeliveryOrder(o)) return false;
+    // POS orders with [POS] tag should never be classified as QR
+    if (o.notes?.includes('[POS]')) return false;
     const src = resolveOrderSource(o);
     if (src === 'CUSTOMER_QR') return true;
     if (o.notes?.includes('[QR_DINE_IN]') || o.notes?.includes('[QR_ORDER]') || o.notes?.includes('QR')) return true;
-    if (o.order_type === 'dine_in' && !o.notes?.includes('[POS]') && o.created_by !== 'POS_STAFF') {
+    if (o.order_type === 'dine_in' && o.created_by !== 'POS_STAFF') {
       return Boolean(o.table_id || o.table_number);
     }
     return false;
@@ -173,12 +237,25 @@ export default function OrdersScreen() {
   // Open Edit Modal
   const openEditModal = (ord: Order) => {
     setEditOrderModal(ord);
-    setEditItems([...(ord.items || [])]);
+    setEditItems(
+      (ord.items || []).map((i) => {
+        const qty = Number(i.quantity) || 1;
+        const unitPrice = Number(i.unit_price) || (Number(i.total) && qty ? Number(i.total) / qty : 0);
+        const subtotal = qty * unitPrice;
+        return {
+          ...i,
+          quantity: qty,
+          unit_price: unitPrice,
+          subtotal,
+          total: subtotal,
+        };
+      })
+    );
     setEditCustomerName(ord.customer_name || '');
     setEditCustomerPhone(ord.customer_phone || '');
     setEditDeliveryAddress(ord.delivery_address || '');
     setEditTableId(ord.table_id || '');
-    setEditNotes(ord.notes || '');
+    setEditNotes(cleanCustomerOrderNotes(ord.notes));
     setEditDiscount(String(ord.discount_amount || 0));
     setEditReason('Item adjustment / guest request');
     setProdSearch('');
@@ -187,11 +264,19 @@ export default function OrdersScreen() {
   // Add Product to Edit list
   const handleAddProductToEdit = (prod: Product) => {
     const existingIdx = editItems.findIndex((i) => i.product_id === prod.id);
+    const prodPrice = Number(prod.price) || 0;
     if (existingIdx !== -1) {
       const updated = [...editItems];
-      updated[existingIdx].quantity += 1;
-      updated[existingIdx].subtotal = updated[existingIdx].quantity * updated[existingIdx].unit_price;
-      updated[existingIdx].total = updated[existingIdx].subtotal;
+      const newQty = (Number(updated[existingIdx].quantity) || 0) + 1;
+      const unitPrice = Number(updated[existingIdx].unit_price) || prodPrice;
+      const subtotal = newQty * unitPrice;
+      updated[existingIdx] = {
+        ...updated[existingIdx],
+        quantity: newQty,
+        unit_price: unitPrice,
+        subtotal,
+        total: subtotal,
+      };
       setEditItems(updated);
     } else {
       const newItem: OrderItem = {
@@ -199,12 +284,12 @@ export default function OrdersScreen() {
         order_id: editOrderModal?.id || '',
         product_id: prod.id,
         product_name: prod.name,
-        unit_price: prod.price,
+        unit_price: prodPrice,
         quantity: 1,
-        tax_rate: prod.tax_rate || 5,
-        tax_amount: (prod.price * (prod.tax_rate || 5)) / 100,
-        subtotal: prod.price,
-        total: prod.price,
+        tax_rate: Number(prod.tax_rate) || 5,
+        tax_amount: (prodPrice * (Number(prod.tax_rate) || 5)) / 100,
+        subtotal: prodPrice,
+        total: prodPrice,
       };
       setEditItems([...editItems, newItem]);
     }
@@ -218,10 +303,12 @@ export default function OrdersScreen() {
       setEditItems(
         editItems.map((i) => {
           if (i.product_id === productId) {
-            const subtotal = newQty * i.unit_price;
+            const unitPrice = Number(i.unit_price) || 0;
+            const subtotal = newQty * unitPrice;
             return {
               ...i,
               quantity: newQty,
+              unit_price: unitPrice,
               subtotal,
               total: subtotal,
             };
@@ -232,11 +319,37 @@ export default function OrdersScreen() {
     }
   };
 
+  // Live recalculated totals for Edit Modal
+  const editTotals = useMemo(() => {
+    if (!editOrderModal) return null;
+    const disc = parseFloat(editDiscount) || 0;
+    const discType = editOrderModal.discount_type && editOrderModal.discount_type !== 'none'
+      ? editOrderModal.discount_type
+      : (disc > 0 ? 'fixed' : undefined);
+    return calculateOrderTotals({
+      items: editItems,
+      discountType: discType,
+      discountValue: disc,
+      couponDiscount: editOrderModal.coupon_discount || 0,
+      deliveryCharge: editOrderModal.delivery_charge || 0,
+    });
+  }, [editOrderModal, editItems, editDiscount]);
+
   // Save Edit Order
   const handleSaveEditOrder = async () => {
     if (!editOrderModal) return;
     if (editItems.length === 0) {
       Alert.alert('Empty Order', 'An order must contain at least one item.');
+      return;
+    }
+
+    if (editCustomerPhone.trim()) {
+      if (!isValidPhoneNumber(editCustomerPhone)) {
+        Alert.alert('Invalid Phone Number', 'Please enter a valid 10-digit mobile number for the customer.');
+        return;
+      }
+    } else if (editOrderModal.order_type === 'delivery') {
+      Alert.alert('Phone Required', 'Customer contact phone number is required for delivery orders.');
       return;
     }
 
@@ -251,7 +364,9 @@ export default function OrdersScreen() {
         deliveryAddress: editDeliveryAddress.trim(),
         tableId: editTableId || undefined,
         tableNumber: selectedTbl?.table_number || editOrderModal.table_number,
-        notes: editNotes.trim(),
+        notes: editNotes.trim()
+          ? (editOrderModal.notes?.includes('[POS]') ? `[POS] ${editNotes.trim()}` : editNotes.trim())
+          : (editOrderModal.notes?.includes('[POS]') ? '[POS]' : ''),
         discountAmount: parseFloat(editDiscount) || 0,
         reason: editReason.trim() || 'Active order modified from POS',
       });
@@ -259,6 +374,8 @@ export default function OrdersScreen() {
       if ((updated as any).latest_kot) {
         printService.printKotThermal(updated, settings, (updated as any).latest_kot);
       }
+
+      setOrders((prev) => prev.map((o) => (o.id === updated.id ? { ...o, ...updated } : o)));
 
       Alert.alert(
         'Order Updated',
@@ -630,6 +747,7 @@ export default function OrdersScreen() {
         <TextInput
           style={styles.search}
           placeholder="Search by Order #, Customer, Phone, Table..."
+          placeholderTextColor="#64748b"
           value={search}
           onChangeText={setSearch}
         />
@@ -639,7 +757,7 @@ export default function OrdersScreen() {
           {[
             {
               id: 'active',
-              label: `🔥 Active (${currentCategoryOrders.filter((o) => ['confirmed', 'preparing', 'ready', 'served', 'out_for_delivery'].includes(o.status)).length})`,
+              label: `🔥 Active (${currentCategoryOrders.filter((o) => ['confirmed', 'held', 'kot_generated', 'preparing', 'ready', 'served', 'out_for_delivery'].includes(o.status)).length})`,
             },
             {
               id: 'completed',
@@ -688,7 +806,11 @@ export default function OrdersScreen() {
         </View>
       ) : (
         <ScrollView
-          contentContainerStyle={[styles.list, { paddingBottom: 24 }]}
+          contentContainerStyle={[
+            styles.list,
+            isTwoColumn && styles.listGrid,
+            { paddingBottom: 24 },
+          ]}
           showsVerticalScrollIndicator={true}
         >
           {tabFilter === 'cancelled' && filteredOrders.length > 0 && (
@@ -758,6 +880,7 @@ export default function OrdersScreen() {
                 key={order.id}
                 style={[
                   styles.card,
+                  isTwoColumn && { width: cardWidth },
                   isCancelled && styles.cardCancelled,
                   isCompleted && styles.cardCompleted,
                 ]}
@@ -855,7 +978,7 @@ export default function OrdersScreen() {
 
                   {/* Order Notes / Instructions / Source info */}
                   {(() => {
-                    const displayNotes = order.notes ? order.notes.replace('[QR_DINE_IN]', '').replace('[QR_ORDER]', '').replace('[POS]', '').trim() : '';
+                    const displayNotes = cleanCustomerOrderNotes(order.notes);
                     if (displayNotes) {
                       return (
                         <View style={styles.notesBox}>
@@ -889,7 +1012,17 @@ export default function OrdersScreen() {
                   <View style={styles.summaryRow}>
                     <View>
                       <Text style={styles.payableLabel}>Payable Total:</Text>
-                      <Text style={styles.payableVal}>{formatCurrency(order.payable_amount)}</Text>
+                      <Text style={styles.payableVal}>
+                        {formatCurrency(
+                          order.payable_amount > 0
+                            ? order.payable_amount
+                            : (order.grand_total > 0
+                                ? order.grand_total
+                                : (order.items && order.items.length > 0
+                                    ? order.items.reduce((sum, item) => sum + (Number(item.total) || (Number(item.unit_price) * Number(item.quantity)) || 0), 0)
+                                    : 0))
+                        )}
+                      </Text>
                     </View>
                     <View
                       style={[
@@ -1066,7 +1199,7 @@ export default function OrdersScreen() {
                           onPress={() => {
                             Alert.alert(
                               `Order #${order.order_number} Cancelled`,
-                              `Details:\n${order.notes || 'No cancellation reason specified.'}`
+                              `Details:\n${cleanCustomerOrderNotes(order.notes) || 'No cancellation reason specified.'}`
                             );
                           }}
                         >
@@ -1088,6 +1221,35 @@ export default function OrdersScreen() {
                 </View>
               );
             })}
+
+          {/* Load More Completed Orders Button */}
+          {(tabFilter === 'completed' || tabFilter === 'cancelled' || tabFilter === 'all') && historyHasMore && (
+            <View style={{ width: '100%', paddingVertical: 16, alignItems: 'center' }}>
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#FFFFFF',
+                  borderWidth: 1.5,
+                  borderColor: '#0F172A',
+                  paddingVertical: 10,
+                  paddingHorizontal: 24,
+                  borderRadius: 24,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+                onPress={loadMoreHistoryOrders}
+                disabled={loadingMoreHistory}
+              >
+                {loadingMoreHistory ? (
+                  <ActivityIndicator size="small" color="#0F172A" />
+                ) : (
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                    ⬇️ Load More Past Orders
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
         </ScrollView>
       )}
 
@@ -1100,15 +1262,20 @@ export default function OrdersScreen() {
             styles.modalOverlay,
             {
               paddingTop: Platform.OS === 'web' ? 16 : insets.top + 8,
-              paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 8,
+              paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 12,
             },
           ]}
         >
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={{ width: '100%', maxHeight: windowHeight * 0.92 }}
+            style={{
+              width: '100%',
+              maxWidth: 580,
+              maxHeight: Platform.OS === 'web' ? windowHeight * 0.9 : Math.min(windowHeight * 0.86, windowHeight - insets.top - insets.bottom - 24),
+              flexShrink: 1,
+            }}
           >
-            <View style={styles.modalContent}>
+            <View style={[styles.modalContent, { maxHeight: '100%', display: 'flex' }]}>
               <View style={styles.modalHeader}>
                 <View>
                   <Text style={styles.modalTitle}>
@@ -1126,7 +1293,12 @@ export default function OrdersScreen() {
                 </TouchableOpacity>
               </View>
 
-              <ScrollView showsVerticalScrollIndicator={true}>
+              <ScrollView
+                showsVerticalScrollIndicator={true}
+                keyboardShouldPersistTaps="handled"
+                style={{ flexShrink: 1 }}
+                contentContainerStyle={{ paddingBottom: 24 }}
+              >
                 {/* Current Items Stepper List */}
                 <Text style={styles.fieldSectionHeader}>Ordered Items:</Text>
                 {editItems.map((itm) => (
@@ -1222,8 +1394,17 @@ export default function OrdersScreen() {
                     <TextInput
                       style={styles.fieldInput}
                       value={editCustomerPhone}
-                      onChangeText={setEditCustomerPhone}
+                      placeholder="e.g. 9876543210"
+                      placeholderTextColor="#64748b"
+                      keyboardType="phone-pad"
+                      maxLength={13}
+                      onChangeText={(v) => setEditCustomerPhone(v.replace(/[^\d+]/g, ''))}
                     />
+                    {Boolean(editCustomerPhone && !isValidPhoneNumber(editCustomerPhone)) && (
+                      <Text style={{ fontSize: 10, color: '#dc2626', fontWeight: '700', marginTop: 2 }}>
+                        ⚠️ Enter a valid 10-digit mobile number
+                      </Text>
+                    )}
                   </View>
                 </View>
 
@@ -1286,6 +1467,42 @@ export default function OrdersScreen() {
                     </TouchableOpacity>
                   )}
                 </View>
+
+                {/* Live Recalculated Bill Summary */}
+                {editTotals && (
+                  <View style={{ backgroundColor: '#f8fafc', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', padding: 12, marginTop: 12, marginBottom: 8 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 12, color: '#64748b' }}>Items Subtotal ({editItems.reduce((acc, i) => acc + (Number(i.quantity) || 0), 0)} items):</Text>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.subtotal)}</Text>
+                    </View>
+                    {editTotals.discountAmount > 0 && (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <Text style={{ fontSize: 12, color: '#16a34a', fontWeight: '600' }}>Discount:</Text>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#16a34a' }}>-{formatCurrency(editTotals.discountAmount)}</Text>
+                      </View>
+                    )}
+                    {editTotals.couponDiscount > 0 && (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <Text style={{ fontSize: 12, color: '#16a34a', fontWeight: '600' }}>Coupon Discount:</Text>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#16a34a' }}>-{formatCurrency(editTotals.couponDiscount)}</Text>
+                      </View>
+                    )}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 12, color: '#64748b' }}>CGST (2.5%) + SGST (2.5%):</Text>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.cgstAmount + editTotals.sgstAmount)}</Text>
+                    </View>
+                    {Boolean(editTotals.deliveryCharge) && (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <Text style={{ fontSize: 12, color: '#64748b' }}>Delivery Charge:</Text>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.deliveryCharge)}</Text>
+                      </View>
+                    )}
+                    <View style={{ borderTopWidth: 1, borderColor: '#cbd5e1', paddingTop: 6, marginTop: 4, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 14, fontWeight: '900', color: '#0f172a' }}>New Total Payable:</Text>
+                      <Text style={{ fontSize: 16, fontWeight: '900', color: '#2563eb' }}>{formatCurrency(editTotals.payableAmount)}</Text>
+                    </View>
+                  </View>
+                )}
 
                 {/* Submit Save Edit Button */}
                 <TouchableOpacity
@@ -1387,15 +1604,20 @@ export default function OrdersScreen() {
             styles.modalOverlay,
             {
               paddingTop: Platform.OS === 'web' ? 16 : insets.top + 8,
-              paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 8,
+              paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 12,
             },
           ]}
         >
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={{ width: '100%', maxHeight: windowHeight * 0.9 }}
+            style={{
+              width: '100%',
+              maxWidth: 580,
+              maxHeight: Platform.OS === 'web' ? windowHeight * 0.9 : Math.min(windowHeight * 0.86, windowHeight - insets.top - insets.bottom - 24),
+              flexShrink: 1,
+            }}
           >
-            <View style={styles.modalContent}>
+            <View style={[styles.modalContent, { maxHeight: '100%', display: 'flex' }]}>
               <View style={styles.modalHeader}>
                 <View>
                   <Text style={styles.modalTitle}>
@@ -1413,7 +1635,12 @@ export default function OrdersScreen() {
                 </TouchableOpacity>
               </View>
 
-              <ScrollView showsVerticalScrollIndicator={true}>
+              <ScrollView
+                showsVerticalScrollIndicator={true}
+                keyboardShouldPersistTaps="handled"
+                style={{ flexShrink: 1 }}
+                contentContainerStyle={{ paddingBottom: 24 }}
+              >
                 {/* 1. DISCOUNT SELECTION */}
                 <View style={styles.sectionBox}>
                   <Text style={styles.sectionLabel}>Apply Bill Discount</Text>
@@ -1627,11 +1854,20 @@ export default function OrdersScreen() {
               styles.modalOverlay,
               {
                 paddingTop: Platform.OS === 'web' ? 16 : insets.top + 8,
-                paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 8,
+                paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 12,
               },
             ]}
           >
-            <View style={[styles.modalContent, { maxHeight: windowHeight * 0.9 }]}>
+            <View
+              style={[
+                styles.modalContent,
+                {
+                  maxHeight: Platform.OS === 'web' ? windowHeight * 0.9 : Math.min(windowHeight * 0.86, windowHeight - insets.top - insets.bottom - 24),
+                  maxWidth: 580,
+                  display: 'flex',
+                },
+              ]}
+            >
               <View style={styles.modalHeader}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
                   {formatLogoDataUri(activeRestaurant?.logo_url || settings.logo_url) ? (
@@ -1656,7 +1892,11 @@ export default function OrdersScreen() {
                 </TouchableOpacity>
               </View>
 
-              <ScrollView showsVerticalScrollIndicator={true}>
+              <ScrollView
+                showsVerticalScrollIndicator={true}
+                style={{ flexShrink: 1 }}
+                contentContainerStyle={{ paddingBottom: 24 }}
+              >
                 <View style={styles.billBreakdownBox}>
                   <View style={styles.billRow}>
                     <Text><Text style={{ fontWeight: '700' }}>Order Type:</Text> {viewOrderModal.order_type.toUpperCase()}</Text>
@@ -1808,13 +2048,16 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   search: {
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#ffffff',
     borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
+    borderWidth: 1.5,
+    borderColor: '#94a3b8',
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 9,
     marginBottom: 8,
+    fontSize: 13,
+    color: '#0f172a',
+    fontWeight: '500',
   },
   categoryTabRow: {
     flexDirection: 'row',
@@ -1903,6 +2146,12 @@ const styles = StyleSheet.create({
   list: {
     padding: 14,
     gap: 12,
+  },
+  listGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    gap: 14,
   },
   card: {
     backgroundColor: '#ffffff',
@@ -2194,21 +2443,23 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: '#ffffff',
-    borderRadius: 24,
-    padding: 20,
+    borderRadius: 20,
+    padding: 16,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     elevation: 10,
     width: '100%',
+    maxHeight: '100%',
+    overflow: 'hidden',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 12,
+    marginBottom: 10,
     borderBottomWidth: 1,
     borderColor: '#f1f5f9',
-    paddingBottom: 10,
+    paddingBottom: 8,
   },
   modalTitle: { fontSize: 16, fontWeight: '900', color: '#0f172a' },
   modalSubTitle: { fontSize: 11, color: '#64748b', marginTop: 2 },
@@ -2270,12 +2521,13 @@ const styles = StyleSheet.create({
   tblChipTextActive: { color: '#ffffff', fontWeight: '900' },
   saveModalBtn: {
     backgroundColor: '#16a34a',
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
     marginTop: 14,
+    marginBottom: 8,
   },
-  saveModalBtnText: { color: '#ffffff', fontSize: 12, fontWeight: '900', letterSpacing: 0.5 },
+  saveModalBtnText: { color: '#ffffff', fontSize: 13, fontWeight: '900', letterSpacing: 0.5 },
   btnDisabled: { backgroundColor: '#94a3b8' },
 
   // Cancel Modal

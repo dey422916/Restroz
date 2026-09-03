@@ -14,8 +14,9 @@ export default function AdminLayout() {
   const router = useRouter();
   const { user, role, isSuperAdmin, isAdmin, activeRestaurantId, activeRestaurant, hasPermission, loading, logout } = useAuth();
   const { pendingCustomerOrders } = usePos();
-  const { settings } = useSettings();
+  const { settings, isOnlineOrdersEnabled, toggleOnlineOrders } = useSettings();
 
+  const [togglingOnline, setTogglingOnline] = useState<boolean>(false);
   const [subAccess, setSubAccess] = useState<SubscriptionAccessStatus | null>(null);
 
   const isWeb = Platform.OS === 'web';
@@ -133,9 +134,47 @@ export default function AdminLayout() {
               </View>
             )}
             <View style={{ flexShrink: 1 }}>
-              <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
-                {activeRestaurant?.name || settings.name || 'Ratnadeep Restaurant'}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
+                  {activeRestaurant?.name || settings.name || 'Ratnadeep Restaurant'}
+                </Text>
+
+                {/* Online Orders Status / Toggle Button */}
+                <TouchableOpacity
+                  testID="admin-online-orders-toggle"
+                  style={[
+                    styles.onlineToggleBtn,
+                    isOnlineOrdersEnabled ? styles.onlineToggleBtnGreen : styles.onlineToggleBtnRed,
+                    togglingOnline && { opacity: 0.6 },
+                  ]}
+                  disabled={togglingOnline}
+                  onPress={async () => {
+                    const canChange = isSuperAdmin || role === 'ADMIN' || hasPermission('can_view_settings');
+                    if (!canChange) {
+                      Alert.alert('Permission Denied', 'Only Restaurant Admins can change online ordering status.');
+                      return;
+                    }
+                    setTogglingOnline(true);
+                    try {
+                      const nextState = !isOnlineOrdersEnabled;
+                      await toggleOnlineOrders(nextState);
+                    } catch (err: any) {
+                      Alert.alert('Error', err.message || 'Failed to update online ordering status');
+                    } finally {
+                      setTogglingOnline(false);
+                    }
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[
+                    styles.onlineToggleBtnText,
+                    isOnlineOrdersEnabled ? styles.onlineToggleBtnTextGreen : styles.onlineToggleBtnTextRed,
+                  ]}>
+                    {isOnlineOrdersEnabled ? '🟢 Online' : '🔴 Offline'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
               <Text style={styles.subtitle} numberOfLines={1} ellipsizeMode="tail">
                 Logged in as: <Text style={{ fontWeight: 'bold', color: '#0f172a' }}>{user?.full_name || user?.email?.split('@')[0]}</Text> • <Text style={styles.roleBadgeText}>{role.toUpperCase()}</Text>
               </Text>
@@ -334,6 +373,32 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '900',
     color: '#0f172a',
+  },
+  onlineToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  onlineToggleBtnGreen: {
+    backgroundColor: '#ecfdf5',
+    borderColor: '#a7f3d0',
+  },
+  onlineToggleBtnRed: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+  },
+  onlineToggleBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  onlineToggleBtnTextGreen: {
+    color: '#059669',
+  },
+  onlineToggleBtnTextRed: {
+    color: '#dc2626',
   },
   subtitle: {
     fontSize: 10,

@@ -6,7 +6,8 @@ import { settingsService } from './settingsService';
 import { kotService } from './kotService';
 import { auditService } from './auditService';
 import { subscriptionService } from './subscriptionService';
-import { getOrderSubtotal } from '../../utils/gst';
+import { getOrderSubtotal, calculateOrderTotals } from '../../utils/gst';
+import { isValidPhoneNumber, validatePhoneNumberOrThrow } from '../../utils/phone';
 import { DEFAULT_RESTAURANT_ID } from './restaurantService';
 
 export const resolveOrderSource = (ord: Partial<Order>): OrderSource => {
@@ -39,7 +40,7 @@ export const resolveOrderSource = (ord: Partial<Order>): OrderSource => {
     ord.notes?.includes('[QR_ORDER]') ||
     ord.notes?.includes('QR') ||
     ord.order_source === 'CUSTOMER_QR' ||
-    (ord.order_type === 'dine_in' && (ord.table_id || ord.table_number))
+    (ord.order_type === 'dine_in' && !ord.notes?.includes('[POS]') && (ord.table_id || ord.table_number))
   ) {
     return 'CUSTOMER_QR';
   }
@@ -61,7 +62,38 @@ export const normalizeOrderStatus = (ord: Partial<Order>): OrderStatus => {
   return 'confirmed';
 };
 
+export interface GetOrdersPaginatedOptions {
+  restaurantId: string;
+  page?: number;
+  pageSize?: number;
+  statusGroup?: 'active' | 'completed' | 'all';
+  status?: OrderStatus | 'all';
+  orderType?: Order['order_type'] | 'all';
+  search?: string;
+}
+
+export interface PaginatedOrdersResult {
+  orders: Order[];
+  hasMore: boolean;
+  nextPage: number | null;
+  totalLoaded: number;
+}
+
+// High-performance in-memory cache for operational orders per tenant (10s TTL)
+const inMemoryOrdersCache: Record<string, { timestamp: number; data: Order[] }> = {};
+const ORDERS_CACHE_TTL = 10 * 1000;
+
+export function clearOrdersCache(restaurantId?: string) {
+  if (restaurantId) {
+    delete inMemoryOrdersCache[restaurantId];
+  } else {
+    Object.keys(inMemoryOrdersCache).forEach((k) => delete inMemoryOrdersCache[k]);
+  }
+}
+
 export const orderService = {
+  clearOrdersCache,
+
   async generateNextOrderNumber(
     prefix: string = 'INV-',
     restaurantId: string = DEFAULT_RESTAURANT_ID
@@ -86,43 +118,195 @@ export const orderService = {
     return `${prefix}${curYear}-${uniqueSuffix}`;
   },
 
-  async getOrders(restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<Order[]> {
+  /**
+   * Existing Stable getOrders method — Egress optimized with 100 row operational limit and 10s memory cache
+   */
+  async getOrders(restaurantId?: string, forceRefresh: boolean = false): Promise<Order[]> {
+    if (!restaurantId) return [];
+
+    const now = Date.now();
+    if (!forceRefresh && inMemoryOrdersCache[restaurantId] && (now - inMemoryOrdersCache[restaurantId].timestamp < ORDERS_CACHE_TTL)) {
+      return inMemoryOrdersCache[restaurantId].data;
+    }
+
     if (isSupabaseConfigured) {
       try {
-        let query = supabase
+        const query = supabase
           .from('orders')
           .select('*, items:order_items(*), payments:payments(*), kots:kots(*, items:kot_items(*))')
-          .order('created_at', { ascending: false });
-
-        if (restaurantId) {
-          query = query.eq('restaurant_id', restaurantId);
-        }
+          .eq('restaurant_id', restaurantId)
+          .order('created_at', { ascending: false })
+          .limit(100);
 
         const { data, error } = await query;
 
         if (!error && data) {
-          const sanitizedOrders = (data as Order[]).map((ord) => ({
-            ...ord,
-            restaurant_id: ord.restaurant_id || restaurantId,
-            order_source: resolveOrderSource(ord),
-            status: normalizeOrderStatus(ord),
-            subtotal: getOrderSubtotal(ord),
-          }));
-          mockStorage.saveOrders(sanitizedOrders);
+          const sanitizedOrders = (data as Order[])
+            .filter((ord) => ord.restaurant_id === restaurantId)
+            .map((ord) => ({
+              ...ord,
+              restaurant_id: ord.restaurant_id || restaurantId,
+              order_source: resolveOrderSource(ord),
+              status: normalizeOrderStatus(ord),
+              subtotal: getOrderSubtotal(ord),
+            }));
+
+          inMemoryOrdersCache[restaurantId] = {
+            timestamp: now,
+            data: sanitizedOrders,
+          };
+          mockStorage.saveOrders(sanitizedOrders, restaurantId);
           return sanitizedOrders;
         }
       } catch (e) {
         console.warn('Supabase fetch orders failed, using local cache:', e);
       }
     }
-    const local = mockStorage.getOrders();
-    return local.map((ord) => ({
+    const local = mockStorage.getOrders(restaurantId);
+    const result = local
+      .filter((ord) => ord.restaurant_id === restaurantId)
+      .map((ord) => ({
+        ...ord,
+        restaurant_id: ord.restaurant_id || restaurantId,
+        order_source: resolveOrderSource(ord),
+        status: normalizeOrderStatus(ord),
+        subtotal: getOrderSubtotal(ord),
+      }));
+
+    inMemoryOrdersCache[restaurantId] = {
+      timestamp: now,
+      data: result,
+    };
+    return result;
+  },
+
+  /**
+   * Egress-Optimized Paginated Orders Query
+   * Queries pageSize + 1 to detect hasMore without count: 'exact' overhead.
+   */
+  async getOrdersPaginated(options: GetOrdersPaginatedOptions): Promise<PaginatedOrdersResult> {
+    const {
+      restaurantId,
+      page = 1,
+      pageSize = 30,
+      statusGroup = 'all',
+      status = 'all',
+      orderType = 'all',
+      search,
+    } = options;
+
+    if (!restaurantId) {
+      return { orders: [], hasMore: false, nextPage: null, totalLoaded: 0 };
+    }
+
+    if (isSupabaseConfigured) {
+      try {
+        const from = (page - 1) * pageSize;
+        const to = from + pageSize; // fetches pageSize + 1 records
+
+        let query = supabase
+          .from('orders')
+          .select('*, items:order_items(*), payments:payments(*), kots:kots(*, items:kot_items(*))')
+          .eq('restaurant_id', restaurantId)
+          .order('created_at', { ascending: false })
+          .range(from, to);
+
+        if (statusGroup === 'active') {
+          query = query.not('status', 'in', '("completed","delivered","cancelled")');
+        } else if (statusGroup === 'completed') {
+          query = query.in('status', ['completed', 'delivered', 'cancelled']);
+        }
+
+        if (status !== 'all') {
+          query = query.eq('status', status);
+        }
+
+        if (orderType !== 'all') {
+          query = query.eq('order_type', orderType);
+        }
+
+        if (search && search.trim()) {
+          const s = search.trim();
+          query = query.or(`order_number.ilike.%${s}%,customer_name.ilike.%${s}%,customer_phone.ilike.%${s}%`);
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+          console.warn('getOrdersPaginated error:', error);
+          throw error;
+        }
+
+        const rawList = (data as Order[]) || [];
+        const hasMore = rawList.length > pageSize;
+        const pageItems = hasMore ? rawList.slice(0, pageSize) : rawList;
+
+        const sanitized = pageItems
+          .filter((ord) => ord.restaurant_id === restaurantId)
+          .map((ord) => ({
+            ...ord,
+            restaurant_id: ord.restaurant_id || restaurantId,
+            order_source: resolveOrderSource(ord),
+            status: normalizeOrderStatus(ord),
+            subtotal: getOrderSubtotal(ord),
+          }));
+
+        return {
+          orders: sanitized,
+          hasMore,
+          nextPage: hasMore ? page + 1 : null,
+          totalLoaded: sanitized.length,
+        };
+      } catch (err) {
+        console.warn('getOrdersPaginated failed, falling back to local storage:', err);
+      }
+    }
+
+    // Local / Offline fallback pagination
+    const allLocal = mockStorage.getOrders(restaurantId);
+    let filtered = allLocal.filter((ord) => ord.restaurant_id === restaurantId);
+
+    if (statusGroup === 'active') {
+      filtered = filtered.filter((o) => !['completed', 'delivered', 'cancelled'].includes(o.status));
+    } else if (statusGroup === 'completed') {
+      filtered = filtered.filter((o) => ['completed', 'delivered', 'cancelled'].includes(o.status));
+    }
+
+    if (status !== 'all') {
+      filtered = filtered.filter((o) => o.status === status);
+    }
+
+    if (orderType !== 'all') {
+      filtered = filtered.filter((o) => o.order_type === orderType);
+    }
+
+    if (search && search.trim()) {
+      const s = search.trim().toLowerCase();
+      filtered = filtered.filter(
+        (o) =>
+          o.order_number?.toLowerCase().includes(s) ||
+          o.customer_name?.toLowerCase().includes(s) ||
+          o.customer_phone?.includes(s)
+      );
+    }
+
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize;
+    const hasMore = filtered.length > to;
+    const pageItems = filtered.slice(from, to).map((ord) => ({
       ...ord,
       restaurant_id: ord.restaurant_id || restaurantId,
       order_source: resolveOrderSource(ord),
       status: normalizeOrderStatus(ord),
       subtotal: getOrderSubtotal(ord),
     }));
+
+    return {
+      orders: pageItems,
+      hasMore,
+      nextPage: hasMore ? page + 1 : null,
+      totalLoaded: pageItems.length,
+    };
   },
 
   async verifyOrderTenantAccess(order: Order, requiredRestaurantId?: string): Promise<boolean> {
@@ -358,6 +542,18 @@ export const orderService = {
       );
     }
 
+    // Phone number validation across all order types
+    if (orderData.order_type === 'delivery') {
+      validatePhoneNumberOrThrow(
+        orderData.customer_phone,
+        'Delivery Customer Phone Number'
+      );
+    } else if (orderData.customer_phone && orderData.customer_phone.trim()) {
+      if (!isValidPhoneNumber(orderData.customer_phone)) {
+        throw new Error('Invalid Customer Phone Number. Please enter a valid 10-digit mobile number.');
+      }
+    }
+
     let orderNumber = await this.generateNextOrderNumber(settings.invoice_prefix || 'INV-', targetRestaurantId);
 
     const paymentMethod = orderData.payment_method || 'cash';
@@ -427,7 +623,7 @@ export const orderService = {
       customer_id: validCustomerId || undefined,
       customer_name:
         orderData.customer_name ||
-        (resolvedTableNumber ? `${resolvedTableNumber} Guest` : orderData.order_type === 'dine_in' ? 'Dine-in Guest' : 'Customer'),
+        (resolvedTableNumber ? `${resolvedTableNumber} Guest` : orderData.order_type === 'dine_in' ? 'Dine-in Guest' : orderData.order_type === 'takeaway' ? 'Takeaway Guest' : 'Customer'),
       customer_phone: orderData.customer_phone,
       delivery_address: orderData.delivery_address,
       delivery_landmark: orderData.delivery_landmark,
@@ -622,7 +818,8 @@ export const orderService = {
             payable_amount: fullCreatedOrder.payable_amount,
           });
 
-          await this.getOrders();
+          clearOrdersCache(targetRestaurantId);
+          await this.getOrders(targetRestaurantId);
           return fullCreatedOrder;
         } else if (orderError) {
           console.error('Supabase order insert error:', orderError);
@@ -635,9 +832,9 @@ export const orderService = {
     }
 
     // Local fallback
-    const orders = mockStorage.getOrders();
+    const orders = mockStorage.getOrders(targetRestaurantId);
     orders.unshift(newOrder);
-    mockStorage.saveOrders(orders);
+    mockStorage.saveOrders(orders, targetRestaurantId);
 
     // Deduct local stock
     if (newOrder.items && newOrder.items.length > 0) {
@@ -709,6 +906,18 @@ export const orderService = {
     if (!existingOrder) throw new Error('Order not found');
     if (existingOrder.status === 'completed' || existingOrder.status === 'cancelled') {
       throw new Error(`Cannot edit an order that is already ${existingOrder.status.toUpperCase()}.`);
+    }
+
+    // Phone number validation for edited order
+    if (customerPhone && customerPhone.trim()) {
+      if (!isValidPhoneNumber(customerPhone)) {
+        throw new Error('Invalid Customer Phone Number. Please enter a valid 10-digit mobile number.');
+      }
+    } else if (existingOrder.order_type === 'delivery') {
+      validatePhoneNumberOrThrow(
+        customerPhone,
+        'Delivery Customer Phone Number'
+      );
     }
 
     const oldItems = existingOrder.items || [];
@@ -801,14 +1010,33 @@ export const orderService = {
       }
     }
 
-    // Recalculate totals
-    const subtotal = updatedItems.reduce((sum, i) => sum + i.total, 0);
-    const taxableAfterDiscounts = Math.max(0, subtotal - discountAmount - couponDiscount);
-    const cgstAmount = Math.round(taxableAfterDiscounts * 0.025 * 100) / 100;
-    const sgstAmount = Math.round(taxableAfterDiscounts * 0.025 * 100) / 100;
-    const grandTotal = taxableAfterDiscounts + cgstAmount + sgstAmount + deliveryCharge;
-    const payableAmount = Math.round(grandTotal);
-    const roundOff = Math.round((payableAmount - grandTotal) * 100) / 100;
+    // Recalculate totals using unified calculateOrderTotals
+    const normalizedItems = updatedItems.map((i) => {
+      const qty = Number(i.quantity) || 1;
+      const unitPrice = Number(i.unit_price) || (i.total && qty ? Number(i.total) / qty : 0);
+      const taxRate = Number(i.tax_rate) || 5;
+      const itemSubtotal = qty * unitPrice;
+      const taxAmount = (itemSubtotal * taxRate) / 100;
+      return {
+        ...i,
+        quantity: qty,
+        unit_price: unitPrice,
+        tax_rate: taxRate,
+        tax_amount: taxAmount,
+        subtotal: itemSubtotal,
+        total: itemSubtotal,
+      };
+    });
+
+    const calculated = calculateOrderTotals({
+      items: normalizedItems,
+      discountType: existingOrder.discount_type && existingOrder.discount_type !== 'none'
+        ? existingOrder.discount_type
+        : (discountAmount > 0 ? 'fixed' : undefined),
+      discountValue: discountAmount,
+      couponDiscount: couponDiscount,
+      deliveryCharge: deliveryCharge,
+    });
 
     // Handle table changes
     if (existingOrder.order_type === 'dine_in' && tableId && tableId !== existingOrder.table_id) {
@@ -818,7 +1046,7 @@ export const orderService = {
       await tableService.updateTableStatus(tableId, 'occupied');
     }
 
-    const updatePayload: Partial<Order> = {
+    const updatePayload: Record<string, any> = {
       customer_name: customerName ?? existingOrder.customer_name,
       customer_phone: customerPhone ?? existingOrder.customer_phone,
       delivery_address: deliveryAddress ?? existingOrder.delivery_address,
@@ -827,15 +1055,16 @@ export const orderService = {
       table_id: tableId ?? existingOrder.table_id,
       table_number: tableNumber ?? existingOrder.table_number,
       notes: notes ?? existingOrder.notes,
-      subtotal,
-      discount_amount: discountAmount,
+      subtotal: calculated.subtotal,
+      discount_amount: calculated.discountAmount,
       coupon_code: couponCode,
-      coupon_discount: couponDiscount,
-      cgst_amount: cgstAmount,
-      sgst_amount: sgstAmount,
-      grand_total: grandTotal,
-      round_off: roundOff,
-      payable_amount: payableAmount,
+      coupon_discount: calculated.couponDiscount,
+      cgst_amount: calculated.cgstAmount,
+      sgst_amount: calculated.sgstAmount,
+      igst_amount: calculated.igstAmount,
+      grand_total: calculated.rawTotal,
+      round_off: calculated.roundOff,
+      payable_amount: calculated.payableAmount,
       updated_at: new Date().toISOString(),
     };
 
@@ -843,17 +1072,17 @@ export const orderService = {
       try {
         // Delete old items and insert updated items
         await supabase.from('order_items').delete().eq('order_id', orderId);
-        const formattedItems = updatedItems.map((i) => ({
+        const formattedItems = normalizedItems.map((i) => ({
           id: i.id?.startsWith('item-') ? i.id : 'item-' + Date.now() + Math.random().toString(36).substr(2, 4),
           order_id: orderId,
           product_id: i.product_id || null,
           product_name: i.product_name,
-          unit_price: Number(i.unit_price) || 0,
-          quantity: Number(i.quantity) || 1,
-          tax_rate: Number(i.tax_rate) || 5,
-          tax_amount: Number(i.tax_amount) || 0,
-          subtotal: Number(i.subtotal) || (Number(i.unit_price) * Number(i.quantity)) || 0,
-          total: Number(i.total) || (Number(i.unit_price) * Number(i.quantity)) || 0,
+          unit_price: i.unit_price,
+          quantity: i.quantity,
+          tax_rate: i.tax_rate,
+          tax_amount: i.tax_amount,
+          subtotal: i.subtotal,
+          total: i.total,
           item_notes: i.item_notes || null,
           image_url: i.image_url || null,
           created_at: new Date().toISOString(),
@@ -868,6 +1097,7 @@ export const orderService = {
           .single();
 
         if (!error && updatedOrder) {
+          clearOrdersCache(existingOrder.restaurant_id);
           await auditService.log('UPDATE_ORDER', {
             order_number: updatedOrder.order_number,
             added_items_count: addedItems.length,
@@ -875,12 +1105,14 @@ export const orderService = {
             new_payable_amount: updatedOrder.payable_amount,
             reason: reason || 'Active order edited from POS',
           });
-          await this.getOrders();
+          await this.getOrders(existingOrder.restaurant_id);
           const finalResult = {
             ...updatedOrder,
             latest_kot: generatedKot,
           };
           return finalResult as Order;
+        } else if (error) {
+          console.warn('Supabase update order error in editActiveOrder:', error);
         }
       } catch (e) {
         console.warn('Supabase editActiveOrder failed, falling back:', e);
@@ -888,20 +1120,22 @@ export const orderService = {
     }
 
     // Local fallback
-    const localOrders = mockStorage.getOrders();
-    const idx = localOrders.findIndex((o) => o.id === orderId);
-    if (idx !== -1) {
-      localOrders[idx] = {
-        ...localOrders[idx],
+    const localOrders = mockStorage.getOrders(existingOrder.restaurant_id);
+    const orderIndex = localOrders.findIndex((o) => o.id === orderId);
+    if (orderIndex !== -1) {
+      localOrders[orderIndex] = {
+        ...localOrders[orderIndex],
         ...updatePayload,
-        items: updatedItems,
+        items: normalizedItems,
+        order_source: resolveOrderSource({ ...localOrders[orderIndex], ...updatePayload }),
+        status: normalizeOrderStatus(localOrders[orderIndex]),
       };
-      mockStorage.saveOrders(localOrders);
-      const finalLocal = {
-        ...localOrders[idx],
+      mockStorage.saveOrders(localOrders, existingOrder.restaurant_id);
+      clearOrdersCache(existingOrder.restaurant_id);
+      return {
+        ...localOrders[orderIndex],
         latest_kot: generatedKot,
-      };
-      return finalLocal as Order;
+      } as Order;
     }
     return existingOrder;
   },
@@ -973,7 +1207,8 @@ export const orderService = {
             reason: trimmedReason,
             had_payment: cancelledOrder.payment_status === 'paid',
           });
-          await this.getOrders();
+          clearOrdersCache(targetOrder.restaurant_id);
+          await this.getOrders(targetOrder.restaurant_id);
           return cancelledOrder as Order;
         }
       } catch (e) {
@@ -982,7 +1217,7 @@ export const orderService = {
     }
 
     // Local fallback
-    const localOrders = mockStorage.getOrders();
+    const localOrders = mockStorage.getOrders(targetOrder.restaurant_id);
     const idx = localOrders.findIndex((o) => o.id === orderId);
     if (idx !== -1) {
       localOrders[idx].status = 'cancelled';
@@ -990,7 +1225,8 @@ export const orderService = {
       if (localOrders[idx].table_id) {
         await tableService.updateTableStatus(localOrders[idx].table_id!, 'available');
       }
-      mockStorage.saveOrders(localOrders);
+      mockStorage.saveOrders(localOrders, targetOrder.restaurant_id);
+      clearOrdersCache(targetOrder.restaurant_id);
       return localOrders[idx];
     }
     return targetOrder;
@@ -1142,6 +1378,7 @@ export const orderService = {
           .single();
 
         if (!error && updated) {
+          clearOrdersCache(updated.restaurant_id);
           await auditService.log('CLOSE_ORDER', {
             order_number: updated.order_number,
             payment_method: paymentMethod,
@@ -1150,7 +1387,7 @@ export const orderService = {
             status: updated.status,
             discount_amount: discountAmount,
           });
-          await this.getOrders();
+          await this.getOrders(updated.restaurant_id);
           return {
             ...updated,
             order_source: resolveOrderSource(updated),
@@ -1166,7 +1403,7 @@ export const orderService = {
     }
 
     // Local fallback
-    const localOrders = mockStorage.getOrders();
+    const localOrders = mockStorage.getOrders(order.restaurant_id);
     const idx = localOrders.findIndex((o) => o.id === orderId);
     if (idx !== -1) {
       localOrders[idx] = {
@@ -1179,7 +1416,8 @@ export const orderService = {
       if (localOrders[idx].table_id) {
         await tableService.updateTableStatus(localOrders[idx].table_id!, 'available');
       }
-      mockStorage.saveOrders(localOrders);
+      mockStorage.saveOrders(localOrders, order.restaurant_id);
+      clearOrdersCache(order.restaurant_id);
       return localOrders[idx];
     }
     return order;
@@ -1257,8 +1495,9 @@ export const orderService = {
             }
           }
 
+          clearOrdersCache(data.restaurant_id);
           await auditService.log('UPDATE_ORDER_STATUS', { order_id: orderId, status });
-          await this.getOrders();
+          await this.getOrders(data.restaurant_id);
           return {
             ...data,
             order_source: resolveOrderSource(data),
@@ -1284,7 +1523,8 @@ export const orderService = {
       await this.releaseTableIfSafe(orders[idx].table_id!, orderId);
     }
 
-    mockStorage.saveOrders(orders);
+    mockStorage.saveOrders(orders, orders[idx].restaurant_id);
+    clearOrdersCache(orders[idx].restaurant_id);
     return orders[idx];
   },
 
@@ -1299,6 +1539,7 @@ export const orderService = {
           .single();
 
         if (!error && data) {
+          clearOrdersCache(data.restaurant_id);
           await auditService.log('UPDATE_PAYMENT_STATUS', { order_id: orderId, payment_status: paymentStatus });
           return {
             ...data,
@@ -1317,7 +1558,8 @@ export const orderService = {
     if (idx === -1) throw new Error('Order not found');
     orders[idx].payment_status = paymentStatus;
     orders[idx].updated_at = new Date().toISOString();
-    mockStorage.saveOrders(orders);
+    mockStorage.saveOrders(orders, orders[idx].restaurant_id);
+    clearOrdersCache(orders[idx].restaurant_id);
     return orders[idx];
   },
 
@@ -1346,7 +1588,7 @@ export const orderService = {
               .single();
 
             if (updated) {
-              await this.getOrders();
+              await this.getOrders(updated.restaurant_id);
               return updated as Order;
             }
           }
@@ -1372,7 +1614,7 @@ export const orderService = {
       orders[idx].payment_status = 'partially_paid';
     }
 
-    mockStorage.saveOrders(orders);
+    mockStorage.saveOrders(orders, orders[idx].restaurant_id);
     return orders[idx];
   },
 
@@ -1438,7 +1680,7 @@ export const orderService = {
         }
 
         if (!error && updated) {
-          await this.getOrders();
+          await this.getOrders(target.restaurant_id);
           return {
             ...updated,
             order_source: resolveOrderSource(updated),
@@ -1491,7 +1733,7 @@ export const orderService = {
 
     if (isSupabaseConfigured) {
       try {
-        const { data: ord } = await supabase.from('orders').select('table_id').eq('id', orderId).single();
+        const { data: ord } = await supabase.from('orders').select('table_id, restaurant_id').eq('id', orderId).single();
         targetTableId = ord?.table_id;
 
         // Delete children
@@ -1509,7 +1751,9 @@ export const orderService = {
           await this.releaseTableIfSafe(targetTableId, orderId);
         }
 
-        await this.getOrders();
+        if (ord?.restaurant_id) {
+          await this.getOrders(ord.restaurant_id);
+        }
         return true;
       } catch (e) {
         console.warn('Supabase deleteOrder failed:', e);
@@ -1531,13 +1775,19 @@ export const orderService = {
   /**
    * Remove all cancelled orders from database and release any occupied tables
    */
-  async deleteCancelledOrders(): Promise<number> {
+  async deleteCancelledOrders(restaurantId?: string): Promise<number> {
     if (isSupabaseConfigured) {
       try {
-        const { data: cancelledOrders } = await supabase
+        let query = supabase
           .from('orders')
-          .select('id, table_id')
+          .select('id, table_id, restaurant_id')
           .eq('status', 'cancelled');
+
+        if (restaurantId) {
+          query = query.eq('restaurant_id', restaurantId);
+        }
+
+        const { data: cancelledOrders } = await query;
 
         if (cancelledOrders && cancelledOrders.length > 0) {
           const ids = cancelledOrders.map((o) => o.id);
@@ -1555,11 +1805,11 @@ export const orderService = {
           await supabase.from('orders').delete().in('id', ids);
 
           // Also clean local cache
-          const localOrders = mockStorage.getOrders();
+          const localOrders = mockStorage.getOrders(restaurantId);
           const remaining = localOrders.filter((o) => o.status !== 'cancelled');
-          mockStorage.saveOrders(remaining);
+          mockStorage.saveOrders(remaining, restaurantId);
 
-          await this.getOrders();
+          await this.getOrders(restaurantId);
           return ids.length;
         }
       } catch (e) {
@@ -1567,10 +1817,10 @@ export const orderService = {
       }
     }
 
-    const localOrders = mockStorage.getOrders();
+    const localOrders = mockStorage.getOrders(restaurantId);
     const cancelled = localOrders.filter((o) => o.status === 'cancelled');
     const remaining = localOrders.filter((o) => o.status !== 'cancelled');
-    mockStorage.saveOrders(remaining);
+    mockStorage.saveOrders(remaining, restaurantId);
 
     for (const c of cancelled) {
       if (c.table_id) {

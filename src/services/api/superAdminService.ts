@@ -1,3 +1,4 @@
+import { createClient } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import {
   Restaurant,
@@ -497,34 +498,7 @@ export const superAdminService = {
     const cleanEmail = payload.email.trim().toLowerCase();
     const cleanName = payload.full_name.trim();
 
-    try {
-      // 1. Attempt Server-Side RPC Provisioning (Bypasses email rate limit, confirms immediately)
-      const { data: rpcData, error: rpcErr } = await supabase.rpc('provision_privileged_user', {
-        p_restaurant_id: payload.restaurant_id,
-        p_email: cleanEmail,
-        p_password: payload.password || 'Ratnadeep1@',
-        p_full_name: cleanName,
-        p_phone: payload.phone?.trim() || null,
-        p_role: 'ADMIN',
-      });
-
-      if (!rpcErr && rpcData?.user_id) {
-        return { user_id: rpcData.user_id, membership_id: rpcData.member_id };
-      }
-
-      if (rpcErr) {
-        if (rpcErr.message?.includes('already an active member')) {
-          throw new Error(`This user (${cleanEmail}) is already an active member of this restaurant.`);
-        }
-        console.warn('provision_privileged_user RPC failed, checking fallback:', rpcErr.message);
-      }
-    } catch (rpcEx: any) {
-      if (rpcEx.message?.includes('already an active member') || rpcEx.message?.includes('Forbidden') || rpcEx.message?.includes('Unauthorized')) {
-        throw rpcEx;
-      }
-    }
-
-    // 2. Fallback: Check if profile exists for email and link membership safely
+    // Check if profile exists for email and link membership safely
     const { data: existingProfile } = await supabase
       .from('profiles')
       .select('id, email, full_name')
@@ -535,7 +509,18 @@ export const superAdminService = {
 
     if (!targetUserId) {
       // Attempt client-side signup with user-friendly rate limit mapping
-      const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+      const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://szpjsibrwxegaopcaukb.supabase.co';
+      const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_Jh0O9Why0grSgCb3WjjpYQ_Uwj7RclD';
+
+      const tempClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+      });
+
+      const { data: signUpData, error: signUpErr } = await tempClient.auth.signUp({
         email: cleanEmail,
         password: payload.password || 'Ratnadeep1@',
         options: {
@@ -548,18 +533,18 @@ export const superAdminService = {
       });
 
       if (signUpErr) {
-        if (signUpErr.message.includes('rate limit') || signUpErr.message.includes('over_email_send_rate_limit')) {
+        if (signUpErr.message.toLowerCase().includes('rate limit') || signUpErr.message.toLowerCase().includes('over_email_send_rate_limit')) {
           throw new Error(
             'Email provisioning limit reached. The account could not be sent a verification email. ' +
-            'Please execute the database provisioning migration or assign an existing registered account.'
+            'Please assign an existing registered account or run the provisioning SQL script in Supabase.'
           );
         }
-        if (!signUpErr.message.includes('already registered')) {
+        if (!signUpErr.message.toLowerCase().includes('already registered') && !signUpErr.message.toLowerCase().includes('already exists')) {
           throw new Error(signUpErr.message || 'Failed to create admin user account.');
         }
       }
 
-      targetUserId = signUpData.user?.id;
+      targetUserId = signUpData?.user?.id;
     }
 
     if (!targetUserId) {
@@ -839,7 +824,7 @@ export const superAdminService = {
 
     let query = supabase
       .from('restaurant_subscriptions')
-      .select('*, plan:plan_id(*), restaurant:restaurant_id(id, name, slug)')
+      .select('*, plan:subscription_plans(*), restaurant:restaurants(id, name, slug)')
       .order('created_at', { ascending: false });
 
     if (restaurantId) {
@@ -956,7 +941,7 @@ export const superAdminService = {
 
     let query = supabase
       .from('subscription_payments')
-      .select('*, restaurant:restaurant_id(id, name, slug)')
+      .select('*, restaurant:restaurants(id, name, slug)')
       .order('paid_at', { ascending: false });
 
     if (restaurantId) {
@@ -1010,7 +995,7 @@ export const superAdminService = {
 
     const { data, error } = await supabase
       .from('audit_logs')
-      .select('*, restaurant:restaurant_id(id, name, slug)')
+      .select('*, restaurant:restaurants(id, name, slug)')
       .order('created_at', { ascending: false })
       .limit(limit);
 

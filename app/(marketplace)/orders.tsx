@@ -21,19 +21,63 @@ export default function CustomerOrdersScreen() {
   const { user, loading: authLoading } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'live' | 'history'>('live');
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [liveOrders, setLiveOrders] = useState<Order[]>([]);
+  const [historyOrders, setHistoryOrders] = useState<Order[]>([]);
+  const [historyPage, setHistoryPage] = useState<number>(1);
+  const [historyHasMore, setHistoryHasMore] = useState<boolean>(false);
+  const [loadingMoreHistory, setLoadingMoreHistory] = useState<boolean>(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const loadOrders = async () => {
+    setErrorMessage(null);
     try {
-      const data = await marketplaceService.getCustomerOrders();
-      setOrders(data);
-    } catch (e) {
+      // 1. Fetch all live active orders
+      const allOrders = await marketplaceService.getCustomerOrders();
+      const live = allOrders.filter(
+        (o) => !['delivered', 'completed', 'cancelled'].includes(o.status)
+      );
+      setLiveOrders(live);
+
+      // 2. Fetch paginated order history (first 20 records)
+      const histResult = await marketplaceService.getCustomerOrderHistoryPaginated({
+        page: 1,
+        pageSize: 20,
+      });
+      setHistoryOrders(histResult.orders);
+      setHistoryHasMore(histResult.hasMore);
+      setHistoryPage(1);
+    } catch (e: any) {
       console.warn('Error loading orders:', e);
+      setErrorMessage(e?.message || 'Failed to fetch customer orders.');
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const loadMoreHistory = async () => {
+    if (loadingMoreHistory || !historyHasMore) return;
+    try {
+      setLoadingMoreHistory(true);
+      const nextPage = historyPage + 1;
+      const result = await marketplaceService.getCustomerOrderHistoryPaginated({
+        page: nextPage,
+        pageSize: 20,
+      });
+
+      setHistoryOrders((prev) => {
+        const existingIds = new Set(prev.map((o) => o.id));
+        const newOnes = result.orders.filter((o) => !existingIds.has(o.id));
+        return [...prev, ...newOnes];
+      });
+      setHistoryPage(nextPage);
+      setHistoryHasMore(result.hasMore);
+    } catch (e) {
+      console.warn('Failed to load more order history:', e);
+    } finally {
+      setLoadingMoreHistory(false);
     }
   };
 
@@ -51,7 +95,7 @@ export default function CustomerOrdersScreen() {
       loadOrders();
 
       // Realtime subscription for customer's orders with unique channel name
-      const channelName = `customer-orders-${user.id}-${Date.now()}`;
+      const channelName = `customer-orders-${user.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const channel = supabase
         .channel(channelName)
         .on(
@@ -107,14 +151,6 @@ export default function CustomerOrdersScreen() {
       </View>
     );
   }
-
-  const liveOrders = orders.filter((o) =>
-    ['confirmed', 'preparing', 'ready', 'out_for_delivery', 'served'].includes(o.status)
-  );
-
-  const historyOrders = orders.filter((o) =>
-    ['delivered', 'completed', 'cancelled'].includes(o.status)
-  );
 
   const displayOrders = activeTab === 'live' ? liveOrders : historyOrders;
 
@@ -202,7 +238,16 @@ export default function CustomerOrdersScreen() {
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {displayOrders.length === 0 ? (
+        {errorMessage ? (
+          <View style={styles.emptyWrap}>
+            <Text style={{ fontSize: 40 }}>⚠️</Text>
+            <Text style={styles.emptyTitle}>Unable to Load Orders</Text>
+            <Text style={styles.emptySub}>{errorMessage}</Text>
+            <TouchableOpacity style={styles.exploreBtn} onPress={loadOrders}>
+              <Text style={styles.exploreBtnText}>🔄 Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : displayOrders.length === 0 ? (
           <View style={styles.emptyWrap}>
             <Text style={{ fontSize: 40 }}>{activeTab === 'live' ? '🛵' : '📦'}</Text>
             <Text style={styles.emptyTitle}>
@@ -307,6 +352,35 @@ export default function CustomerOrdersScreen() {
               </View>
             );
           })
+        )}
+
+        {/* Load More Past Orders Button */}
+        {activeTab === 'history' && historyHasMore && (
+          <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#FFFFFF',
+                borderWidth: 1.5,
+                borderColor: customerColors.primary,
+                paddingVertical: 10,
+                paddingHorizontal: 24,
+                borderRadius: 24,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 8,
+              }}
+              onPress={loadMoreHistory}
+              disabled={loadingMoreHistory}
+            >
+              {loadingMoreHistory ? (
+                <ActivityIndicator size="small" color={customerColors.primary} />
+              ) : (
+                <Text style={{ fontSize: 13, fontWeight: '700', color: customerColors.primary }}>
+                  ⬇️ Load More Past Orders
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
         )}
       </ScrollView>
     </View>

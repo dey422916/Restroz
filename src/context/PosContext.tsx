@@ -23,6 +23,16 @@ import { supabase, isSupabaseConfigured } from '../services/supabase';
 import { DEFAULT_RESTAURANT_ID } from '../services/api/restaurantService';
 import { printedKotTracker } from '../utils/printedKotTracker';
 
+// Custom error to represent expected register closed validation
+export class RegisterClosedError extends Error {
+  code = 'REGISTER_CLOSED';
+  constructor(message?: string) {
+    super(message ?? 'Register is closed. Please open the register from Dashboard before creating POS orders.');
+    this.name = 'RegisterClosedError';
+  }
+}
+import { isValidPhoneNumber, validatePhoneNumberOrThrow } from '../utils/phone';
+
 interface CustomerInfo {
   name: string;
   phone: string;
@@ -126,16 +136,23 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     refreshOrders();
 
-    // Setup Supabase Realtime Listener for Instant Order Notifications
-    if (isSupabaseConfigured) {
-      const channelName = `realtime_orders_${Date.now()}`;
+    // Setup Supabase Realtime Listener for Instant Order Notifications strictly scoped to activeRestaurantId
+    if (isSupabaseConfigured && activeRestaurantId) {
+      const channelName = `realtime_orders_${activeRestaurantId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       const ordersChannel = supabase
         .channel(channelName)
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'orders' },
+          {
+            event: '*',
+            schema: 'public',
+            table: 'orders',
+            filter: `restaurant_id=eq.${activeRestaurantId}`,
+          },
           (payload) => {
-            console.log('Realtime Order Event Received:', payload);
+            const rowRestId = (payload.new as any)?.restaurant_id || (payload.old as any)?.restaurant_id;
+            if (rowRestId && rowRestId !== activeRestaurantId) return;
+            console.log('Realtime Order Event Received for Tenant:', activeRestaurantId, payload);
             showToast('info', 'Order Update', 'Live order status updated from cloud');
             playOrderBell();
             refreshOrders();
@@ -146,14 +163,14 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return () => {
         supabase.removeChannel(ordersChannel);
       };
-    } else {
+    } else if (!isSupabaseConfigured && activeRestaurantId) {
       // Fallback polling for offline/local mode
       const interval = setInterval(() => {
         refreshOrders();
       }, 5000);
       return () => clearInterval(interval);
     }
-  }, [refreshOrders, showToast, playOrderBell]);
+  }, [activeRestaurantId, refreshOrders, showToast, playOrderBell]);
 
   const setOrderType = (type: OrderType) => {
     setOrderTypeState(type);
@@ -305,7 +322,18 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const holdCurrentOrder = async (): Promise<Order | null> => {
     if (cartItems.length === 0) return null;
 
-    const targetRestId = activeRestaurantId || settings.restaurant_id || DEFAULT_RESTAURANT_ID;
+    const targetRestId = activeRestaurantId || settings.restaurant_id;
+    if (!targetRestId) {
+      throw new Error('No active restaurant context found. Please ensure you are logged into an authorized restaurant.');
+    }
+
+    if (orderType === 'delivery') {
+      validatePhoneNumberOrThrow(customerInfo.phone, 'Delivery Customer Phone Number');
+    } else if (customerInfo.phone && customerInfo.phone.trim()) {
+      if (!isValidPhoneNumber(customerInfo.phone)) {
+        throw new Error('Please enter a valid 10-digit mobile number for the guest.');
+      }
+    }
     const heldOrder = await orderService.createOrder({
       restaurant_id: targetRestId,
       order_source: 'POS',
@@ -313,8 +341,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       order_type: orderType,
       table_id: selectedTable?.id,
       table_number: selectedTable?.table_number,
-      customer_name: customerInfo.name || 'Guest',
-      customer_phone: customerInfo.phone,
+      customer_name: customerInfo.name?.trim() || (orderType === 'dine_in' ? 'Dine-in Guest' : orderType === 'takeaway' ? 'Takeaway Guest' : 'Guest'),
+      customer_phone: customerInfo.phone?.trim(),
       status: 'held',
       subtotal: totals.subtotal,
       discount_type: discountValue > 0 ? discountType : 'none',
@@ -365,14 +393,16 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const confirmOrder = async (): Promise<Order> => {
     console.log('>>> [POS] confirmOrder entered! activeRestaurantId:', activeRestaurantId, 'settings.restaurant_id:', settings.restaurant_id, 'cartItems:', cartItems.length);
-    const targetRestId = activeRestaurantId || settings.restaurant_id || DEFAULT_RESTAURANT_ID;
+    const targetRestId = activeRestaurantId || settings.restaurant_id;
+    if (!targetRestId) {
+      throw new Error('No active restaurant context found. Please ensure you are logged into an authorized restaurant.');
+    }
     const isRegOpen = await dayRegisterService.isRegisterOpen(targetRestId);
     console.log('>>> [POS] isRegisterOpen for', targetRestId, ':', isRegOpen);
-    if (!isRegOpen) {
-      throw new Error(
-        'Restaurant Register is CLOSED. Please open the register from the Dashboard (Analytics & Operations) before placing POS orders.'
-      );
-    }
+      if (!isRegOpen) {
+        // Throw a specific error for closed register to allow UI handling without console.error
+        throw new RegisterClosedError();
+      }
 
     if (cartItems.length === 0) {
       throw new Error('Please add at least one item to the cart before sending to kitchen.');
@@ -384,21 +414,18 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     } else if (orderType === 'takeaway') {
       if (!customerInfo.name?.trim()) {
-        throw new Error('Customer Name is required for Takeaway orders.');
+        throw new Error('Please enter customer name for Takeaway orders.');
       }
-      if (!customerInfo.phone?.trim()) {
-        throw new Error('Customer Phone Number is required for Takeaway orders.');
+      if (customerInfo.phone && customerInfo.phone.trim()) {
+        if (!isValidPhoneNumber(customerInfo.phone)) {
+          throw new Error('Please enter a valid 10-digit mobile number for the takeaway customer.');
+        }
       }
     } else if (orderType === 'delivery') {
       if (!customerInfo.name?.trim()) {
         throw new Error('Customer Name is required for Delivery orders.');
       }
-      if (!customerInfo.phone?.trim()) {
-        throw new Error('Customer Phone Number is required for Delivery orders.');
-      }
-      if (!customerInfo.address?.trim()) {
-        throw new Error('Delivery Address is required for Delivery orders.');
-      }
+      validatePhoneNumberOrThrow(customerInfo.phone, 'Delivery Customer Phone Number');
     }
 
     const newOrder = await orderService.createOrder({
@@ -408,7 +435,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       order_type: orderType,
       table_id: selectedTable?.id,
       table_number: selectedTable?.table_number,
-      customer_name: customerInfo.name?.trim() || (orderType === 'dine_in' ? 'Dine-in Guest' : 'Customer'),
+      customer_name: customerInfo.name?.trim() || (orderType === 'dine_in' ? 'Dine-in Guest' : orderType === 'takeaway' ? 'Takeaway Guest' : 'Customer'),
       customer_phone: customerInfo.phone?.trim(),
       delivery_address: customerInfo.address?.trim(),
       delivery_landmark: customerInfo.landmark?.trim(),
@@ -489,10 +516,18 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error('Order must contain at least one item.');
     }
 
+    if (orderType === 'delivery') {
+      validatePhoneNumberOrThrow(customerInfo.phone, 'Delivery Customer Phone Number');
+    } else if (customerInfo.phone && customerInfo.phone.trim()) {
+      if (!isValidPhoneNumber(customerInfo.phone)) {
+        throw new Error('Please enter a valid 10-digit mobile number for the guest.');
+      }
+    }
+
     const updated = await orderService.editActiveOrder({
       orderId,
       updatedItems: cartItems,
-      customerName: customerInfo.name?.trim() || (orderType === 'dine_in' ? 'Dine-in Guest' : 'Customer'),
+      customerName: customerInfo.name?.trim() || (orderType === 'dine_in' ? 'Dine-in Guest' : orderType === 'takeaway' ? 'Takeaway Guest' : 'Customer'),
       customerPhone: customerInfo.phone?.trim(),
       deliveryAddress: customerInfo.address?.trim(),
       deliveryLandmark: customerInfo.landmark?.trim(),

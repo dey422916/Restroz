@@ -17,9 +17,10 @@ import { couponService } from '../../../src/services/api/couponService';
 import { useCustomerCart } from '../../../src/context/CustomerCartContext';
 import { Restaurant, RestaurantPublicProfile, Category, Product, Coupon } from '../../../src/types';
 import { customerColors } from '../../../src/utils/colors';
+import { supabase, isSupabaseConfigured } from '../../../src/services/supabase';
 
 import { RestaurantBannerCarousel } from '../../../src/components/marketplace/RestaurantBannerCarousel';
-
+import { OptimizedImage } from '../../../src/components/common/OptimizedImage';
 import { parseBannerUrls } from '../../../src/utils/mediaUtils';
 
 const CATEGORY_ICONS: Record<string, string> = {
@@ -94,6 +95,50 @@ export default function RestaurantMenuScreen() {
     };
 
     loadMenu();
+
+    // Supabase Realtime subscription on restaurant_public_profiles for live open/closed updates
+    if (isSupabaseConfigured && id) {
+      const channelName = `rest_public_profile_${id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const channel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'restaurant_public_profiles',
+            filter: `restaurant_id=eq.${id}`,
+          },
+          (payload) => {
+            if (payload.new && (payload.new as any).restaurant_id) {
+              const newIsOpen =
+                (payload.new as any).is_open !== false &&
+                (payload.new as any).marketplace_enabled !== false;
+              const newBanner = (payload.new as any).banner_url;
+              setRestaurant((prev) => {
+                if (!prev) return prev;
+                return {
+                  ...prev,
+                  banner_url: newBanner || prev.banner_url,
+                  banner_urls: newBanner ? parseBannerUrls(newBanner) : prev.banner_urls,
+                  public_profile: {
+                    ...(prev.public_profile || ({} as any)),
+                    ...(payload.new as any),
+                    banner_url: newBanner || prev.public_profile?.banner_url,
+                    banner_urls: newBanner ? parseBannerUrls(newBanner) : prev.public_profile?.banner_urls,
+                    is_open: newIsOpen,
+                  },
+                };
+              });
+            }
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
   }, [id]);
 
   const profile = restaurant?.public_profile;
@@ -232,6 +277,19 @@ export default function RestaurantMenuScreen() {
           deliveryFee="₹15"
           isOpen={isOpen}
         />
+
+        {/* Closed Notice Banner when Online Orders are OFF */}
+        {!isOpen && (
+          <View style={styles.closedNoticeBanner}>
+            <Text style={{ fontSize: 24 }}>🔴</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.closedNoticeTitle}>Online Orders Currently Closed</Text>
+              <Text style={styles.closedNoticeSub}>
+                Restaurant is currently closed for online orders. You may browse the menu, but placing new delivery orders is temporarily paused.
+              </Text>
+            </View>
+          </View>
+        )}
 
         {/* Restaurant Active Coupons Carousel */}
         {coupons.length > 0 && (
@@ -385,10 +443,11 @@ export default function RestaurantMenuScreen() {
                     {/* Top Image Container */}
                     <View style={styles.cardImageWrap}>
                       {p.image_url ? (
-                        <Image
-                          source={{ uri: p.image_url }}
+                        <OptimizedImage
+                          source={p.image_url}
+                          type="product"
                           style={styles.cardImage}
-                          resizeMode="cover"
+                          contentFit="cover"
                         />
                       ) : (
                         <View style={styles.cardPlaceholderWrap}>
@@ -639,6 +698,29 @@ const styles = StyleSheet.create({
   },
   scrollArea: {
     flex: 1,
+  },
+  closedNoticeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1.5,
+    borderColor: '#FECACA',
+    borderRadius: 12,
+    padding: 14,
+    marginHorizontal: 16,
+    marginTop: 12,
+    gap: 12,
+  },
+  closedNoticeTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#991B1B',
+  },
+  closedNoticeSub: {
+    fontSize: 12,
+    color: '#B91C1C',
+    marginTop: 2,
+    lineHeight: 16,
   },
   heroCard: {
     backgroundColor: '#FFFFFF',

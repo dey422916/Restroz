@@ -5,30 +5,56 @@ import { supabase, isSupabaseConfigured } from '../supabase';
 import { auditService } from './auditService';
 import { DEFAULT_RESTAURANT_ID } from './restaurantService';
 
+// High-performance in-memory cache for KOTs per tenant (10s TTL)
+const inMemoryKotsCache: Record<string, { timestamp: number; data: KOT[] }> = {};
+const KOTS_CACHE_TTL = 10 * 1000;
+
+export function clearKotsCache(restaurantId?: string) {
+  if (restaurantId) {
+    delete inMemoryKotsCache[restaurantId];
+  } else {
+    Object.keys(inMemoryKotsCache).forEach((k) => delete inMemoryKotsCache[k]);
+  }
+}
+
 export const kotService = {
-  async getKots(restaurantId?: string): Promise<KOT[]> {
+  clearKotsCache,
+
+  async getKots(restaurantId?: string, forceRefresh: boolean = false): Promise<KOT[]> {
+    if (!restaurantId) return [];
+    const now = Date.now();
+    if (!forceRefresh && inMemoryKotsCache[restaurantId] && (now - inMemoryKotsCache[restaurantId].timestamp < KOTS_CACHE_TTL)) {
+      return inMemoryKotsCache[restaurantId].data;
+    }
+
     if (isSupabaseConfigured) {
       try {
-        let query = supabase
+        const { data, error } = await supabase
           .from('kots')
-          .select('*, items:kot_items(*)')
-          .order('created_at', { ascending: false });
-
-        if (restaurantId) {
-          query = query.eq('restaurant_id', restaurantId);
-        }
-
-        const { data, error } = await query;
+          .select('id, restaurant_id, kot_number, order_id, order_number, order_type, table_number, customer_name, kitchen_notes, status, created_at, items:kot_items(id, kot_id, product_name, quantity, notes)')
+          .eq('restaurant_id', restaurantId)
+          .order('created_at', { ascending: false })
+          .limit(50);
 
         if (!error && data) {
-          mockStorage.saveKots(data as KOT[]);
-          return data as KOT[];
+          const scoped = (data as KOT[]).filter((k) => k.restaurant_id === restaurantId);
+          inMemoryKotsCache[restaurantId] = {
+            timestamp: now,
+            data: scoped,
+          };
+          mockStorage.saveKots(scoped, restaurantId);
+          return scoped;
         }
       } catch (e) {
         console.warn('Supabase getKots failed, using local cache:', e);
       }
     }
-    return mockStorage.getKots();
+    const local = mockStorage.getKots(restaurantId).filter((k) => k.restaurant_id === restaurantId);
+    inMemoryKotsCache[restaurantId] = {
+      timestamp: now,
+      data: local,
+    };
+    return local;
   },
 
   async generateKot(order: Order, kitchenNotes?: string, itemsToInclude?: OrderItem[]): Promise<KOT> {
@@ -97,7 +123,7 @@ export const kotService = {
     }
 
     existingKots.unshift(newKot);
-    mockStorage.saveKots(existingKots);
+    mockStorage.saveKots(existingKots, targetRestId);
     return newKot;
   },
 
@@ -112,49 +138,72 @@ export const kotService = {
     const reasonText = item.reason || 'Customer request / Item unavailable';
     const noteText = `⚠️ CANCELLED ITEM: ${cancelledQty}x ${item.product_name} (${item.old_quantity} -> ${item.new_quantity}). Reason: ${reasonText}`;
 
-    const settings = await settingsService.getSettings();
-    const existingKots = await this.getKots();
+    const targetRestId = order.restaurant_id || DEFAULT_RESTAURANT_ID;
+    const settings = await settingsService.getSettings(targetRestId);
+    const existingKots = await this.getKots(targetRestId);
     const kotSeq = (existingKots.length + 1).toString().padStart(4, '0');
     const kotNumber = `${settings.kot_prefix || 'KOT-'}${kotSeq}-CNL`;
 
     const cancelItem: KOTItem = {
-      id: 'kot-item-' + Date.now() + Math.random().toString(36).substr(2, 4),
+      id: 'kot-item-' + Date.now(),
       kot_id: '',
-      product_name: `[CANCELLED] ${item.product_name}`,
+      product_name: item.product_name,
       quantity: -cancelledQty,
       notes: reasonText,
     };
 
     const newKot: KOT = {
-      id: 'kot-' + Date.now() + Math.random().toString(36).substr(2, 4),
-      restaurant_id: order.restaurant_id,
-      kot_number: kotNumber,
+      id: 'kot-cnl-' + Date.now(),
+      restaurant_id: targetRestId,
       order_id: order.id,
       order_number: order.order_number,
-      order_type: order.order_type,
       table_number: order.table_number,
+      order_type: order.order_type,
       customer_name: order.customer_name,
       kitchen_notes: noteText,
-      status: 'pending',
-      items: [cancelItem],
+      status: 'served',
       created_at: new Date().toISOString(),
+      items: [cancelItem],
+      kot_number: kotNumber,
     };
 
     if (isSupabaseConfigured) {
       try {
-        const { items, ...kotRecord } = newKot;
-        const { data, error } = await supabase.from('kots').insert([kotRecord]).select().single();
+        const { data, error } = await supabase
+          .from('kots')
+          .insert({
+            restaurant_id: targetRestId,
+            order_id: newKot.order_id,
+            order_number: newKot.order_number,
+            table_number: newKot.table_number,
+            order_type: newKot.order_type,
+            customer_name: newKot.customer_name,
+            kitchen_notes: newKot.kitchen_notes,
+            status: newKot.status,
+            kot_number: newKot.kot_number,
+          })
+          .select()
+          .single();
+
         if (!error && data) {
-          const formatted = items.map((i) => ({ ...i, kot_id: data.id }));
-          await supabase.from('kot_items').insert(formatted);
+          await supabase.from('kot_items').insert([
+            {
+              kot_id: data.id,
+              product_id: null,
+              product_name: item.product_name,
+              quantity: -cancelledQty,
+              notes: reasonText,
+            },
+          ]);
+
           await auditService.log('CANCEL_KOT_ITEM', {
             order_number: order.order_number,
             item: item.product_name,
             cancelled_qty: cancelledQty,
             reason: reasonText,
           });
-          await this.getKots();
-          return { ...data, items } as KOT;
+          await this.getKots(targetRestId);
+          return { ...data, items: [cancelItem] } as KOT;
         }
       } catch (e) {
         console.warn('Supabase generateCancellationTicket failed:', e);
@@ -162,7 +211,7 @@ export const kotService = {
     }
 
     existingKots.unshift(newKot);
-    mockStorage.saveKots(existingKots);
+    mockStorage.saveKots(existingKots, targetRestId);
     return newKot;
   },
 
@@ -201,7 +250,7 @@ export const kotService = {
             order_id: parentOrderId,
           });
 
-          await this.getKots();
+          await this.getKots(data.restaurant_id);
           return data as KOT;
         }
       } catch (e) {
@@ -213,7 +262,7 @@ export const kotService = {
     const idx = kots.findIndex((k) => k.id === kotId);
     if (idx !== -1) {
       kots[idx].status = status;
-      mockStorage.saveKots(kots);
+      mockStorage.saveKots(kots, kots[idx].restaurant_id);
       return kots[idx];
     }
     throw new Error('KOT not found');

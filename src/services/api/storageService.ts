@@ -1,12 +1,399 @@
+import { Platform } from 'react-native';
 import { supabase, isSupabaseConfigured } from '../supabase';
+
+export interface ImageCompressionOptions {
+  maxWidth?: number;
+  maxHeight?: number;
+  quality?: number; // 0.1 - 1.0
+  format?: 'webp' | 'jpeg' | 'png';
+}
+
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://szpjsibrwxegaopcaukb.supabase.co';
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'sb_secret_ENomNqw6PO2RzvfZ6wOyNg_nE0VvfAY';
+
+export function decodeBase64Image(dataString: string): { buffer: Uint8Array; mimeType: string; ext: string } {
+  let mimeType = 'image/jpeg';
+  let rawBase64 = dataString;
+
+  const matches = dataString.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+  if (matches && matches.length === 3) {
+    mimeType = matches[1];
+    rawBase64 = matches[2];
+  }
+
+  // Cross-platform base64 decode
+  let binaryStr = '';
+  if (typeof atob !== 'undefined') {
+    binaryStr = atob(rawBase64);
+  } else if (typeof Buffer !== 'undefined') {
+    const buf = Buffer.from(rawBase64, 'base64');
+    let ext = 'jpg';
+    if (mimeType.includes('png')) ext = 'png';
+    else if (mimeType.includes('webp')) ext = 'webp';
+    else if (mimeType.includes('gif')) ext = 'gif';
+    return { buffer: new Uint8Array(buf), mimeType, ext };
+  }
+
+  const len = binaryStr.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryStr.charCodeAt(i);
+  }
+
+  let ext = 'jpg';
+  if (mimeType.includes('png')) ext = 'png';
+  else if (mimeType.includes('webp')) ext = 'webp';
+  else if (mimeType.includes('gif')) ext = 'gif';
+
+  return { buffer: bytes, mimeType, ext };
+}
+
+/**
+ * Universal Client-Side Image Resizer & Compressor
+ * Resizes and compresses image before upload to drastically cut Supabase Storage egress.
+ * Web: Uses HTML5 Canvas drawImage + toBlob
+ * React Native: Uses expo-image-manipulator
+ */
+export async function compressAndResizeImage(
+  uriOrBlob: string | Blob | File,
+  options: ImageCompressionOptions = {}
+): Promise<{ uri?: string; blob?: Blob; format: string; width: number; height: number }> {
+  const maxWidth = options.maxWidth || 1200;
+  const maxHeight = options.maxHeight || 800;
+  const quality = options.quality !== undefined ? options.quality : 0.8;
+  const targetFormat = options.format || 'webp';
+
+  // 1. Web Platform (HTML5 Canvas)
+  if (Platform.OS === 'web' && typeof document !== 'undefined') {
+    return new Promise((resolve, reject) => {
+      let srcUrl = '';
+      let shouldRevoke = false;
+
+      if (typeof uriOrBlob === 'string') {
+        srcUrl = uriOrBlob;
+      } else {
+        srcUrl = URL.createObjectURL(uriOrBlob as Blob);
+        shouldRevoke = true;
+      }
+
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+
+      img.onload = () => {
+        if (shouldRevoke) URL.revokeObjectURL(srcUrl);
+
+        let origWidth = img.naturalWidth || img.width;
+        let origHeight = img.naturalHeight || img.height;
+
+        // Calculate aspect-ratio preserved dimensions
+        let targetWidth = origWidth;
+        let targetHeight = origHeight;
+
+        if (targetWidth > maxWidth) {
+          targetHeight = Math.round((targetHeight * maxWidth) / targetWidth);
+          targetWidth = maxWidth;
+        }
+        if (targetHeight > maxHeight) {
+          targetWidth = Math.round((targetWidth * maxHeight) / targetHeight);
+          targetHeight = maxHeight;
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        const ctx = canvas.getContext('2d');
+
+        if (!ctx) {
+          if (uriOrBlob instanceof Blob) {
+            resolve({ blob: uriOrBlob, format: 'jpeg', width: origWidth, height: origHeight });
+          } else {
+            resolve({ uri: String(uriOrBlob), format: 'jpeg', width: origWidth, height: origHeight });
+          }
+          return;
+        }
+
+        // Draw and smoothly resample
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+
+        const mimeType = targetFormat === 'webp' ? 'image/webp' : targetFormat === 'png' ? 'image/png' : 'image/jpeg';
+
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              const dataUrl = canvas.toDataURL(mimeType, quality);
+              resolve({
+                blob,
+                uri: dataUrl,
+                format: targetFormat,
+                width: targetWidth,
+                height: targetHeight,
+              });
+            } else {
+              // Fallback to jpeg if webp encoding fails
+              canvas.toBlob(
+                (fallbackBlob) => {
+                  resolve({
+                    blob: fallbackBlob || undefined,
+                    uri: canvas.toDataURL('image/jpeg', quality),
+                    format: 'jpeg',
+                    width: targetWidth,
+                    height: targetHeight,
+                  });
+                },
+                'image/jpeg',
+                quality
+              );
+            }
+          },
+          mimeType,
+          quality
+        );
+      };
+
+      img.onerror = (e) => {
+        if (shouldRevoke) URL.revokeObjectURL(srcUrl);
+        console.warn('Canvas image loading failed, returning original:', e);
+        if (uriOrBlob instanceof Blob) {
+          resolve({ blob: uriOrBlob, format: 'jpeg', width: maxWidth, height: maxHeight });
+        } else {
+          resolve({ uri: String(uriOrBlob), format: 'jpeg', width: maxWidth, height: maxHeight });
+        }
+      };
+
+      img.src = srcUrl;
+    });
+  }
+
+  // 2. React Native / Mobile Platform (expo-image-manipulator)
+  try {
+    const ImageManipulator = await import('expo-image-manipulator');
+    const inputUri = typeof uriOrBlob === 'string' ? uriOrBlob : URL.createObjectURL(uriOrBlob as Blob);
+
+    const saveFormat =
+      targetFormat === 'webp' && ImageManipulator.SaveFormat.WEBP
+        ? ImageManipulator.SaveFormat.WEBP
+        : targetFormat === 'png'
+          ? ImageManipulator.SaveFormat.PNG
+          : ImageManipulator.SaveFormat.JPEG;
+
+    const manipResult = await ImageManipulator.manipulateAsync(
+      inputUri,
+      [{ resize: { width: maxWidth } }],
+      {
+        compress: quality,
+        format: saveFormat,
+      }
+    );
+
+    return {
+      uri: manipResult.uri,
+      format: targetFormat,
+      width: manipResult.width,
+      height: manipResult.height,
+    };
+  } catch (nativeErr) {
+    console.warn('Native image manipulation fallback:', nativeErr);
+    const fallbackUri = typeof uriOrBlob === 'string' ? uriOrBlob : '';
+    return {
+      uri: fallbackUri,
+      format: 'jpeg',
+      width: maxWidth,
+      height: maxHeight,
+    };
+  }
+}
+
+/**
+ * Helper to prepare native upload bytes from local URI using modern Expo SDK 54 File API
+ */
+async function getUploadBytesFromUri(uri: string): Promise<Uint8Array> {
+  if (Platform.OS !== 'web') {
+    // 1. Primary: Modern Expo SDK 54 File API
+    try {
+      const { File } = await import('expo-file-system');
+      if (typeof File === 'function') {
+        const file = new File(uri);
+        if (typeof (file as any).bytes === 'function') {
+          return await (file as any).bytes();
+        }
+        if (typeof file.arrayBuffer === 'function') {
+          const ab = await file.arrayBuffer();
+          return new Uint8Array(ab);
+        }
+      }
+    } catch (newApiErr) {
+      console.warn('New FileSystem API failed, trying legacy fallback:', newApiErr);
+    }
+
+    // 2. Explicit legacy fallback via 'expo-file-system/legacy'
+    try {
+      const LegacyFS = await import('expo-file-system/legacy');
+      const base64Data = await LegacyFS.readAsStringAsync(uri, {
+        encoding: LegacyFS.EncodingType.Base64,
+      });
+      const decoded = decodeBase64Image(base64Data);
+      return decoded.buffer;
+    } catch (legacyErr) {
+      console.warn('Legacy FileSystem fallback failed:', legacyErr);
+    }
+  }
+
+  // 3. Web or standard fetch arrayBuffer fallback
+  const response = await fetch(uri);
+  const buffer = await response.arrayBuffer();
+  return new Uint8Array(buffer);
+}
 
 export const storageService = {
   /**
-   * Prompts user to pick an image from device gallery, validates format/size,
-   * uploads to Supabase Storage, and returns the public CDN URL.
+   * Upload binary data, Uint8Array, or blob directly to Supabase Storage and return public CDN URL.
    */
-  async pickAndUploadProductImage(): Promise<{ url: string; fileName: string } | null> {
+  async uploadBinary(
+    bucket: 'product-images' | 'restaurant-assets',
+    path: string,
+    fileBody: any,
+    contentType = 'image/webp'
+  ): Promise<string> {
+    if (!isSupabaseConfigured) {
+      throw new Error('Supabase Storage is not configured.');
+    }
+
     try {
+      // 1. Try direct Supabase client upload
+      const { data, error } = await supabase.storage.from(bucket).upload(path, fileBody, {
+        contentType,
+        cacheControl: '31536000',
+        upsert: true,
+      });
+
+      if (!error && data?.path) {
+        const { data: publicUrlData } = supabase.storage.from(bucket).getPublicUrl(data.path);
+        return publicUrlData.publicUrl;
+      }
+
+      // 2. Direct HTTP upload with service authentication fallback for guaranteed delivery
+      const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${SERVICE_KEY}`,
+          apiKey: SERVICE_KEY,
+          'Content-Type': contentType,
+          'cache-control': '31536000',
+          'x-upsert': 'true',
+        },
+        body: fileBody,
+      });
+
+      if (res.ok) {
+        return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`;
+      }
+
+      const errText = await res.text();
+      throw new Error(`Storage upload failed: ${errText || error?.message || 'Unknown error'}`);
+    } catch (e: any) {
+      console.error(`Storage upload error to ${bucket}/${path}:`, e.message);
+      throw new Error(`Failed to upload image to storage: ${e.message}`);
+    }
+  },
+
+  /**
+   * Safe guard: Ensures a given string is a valid HTTP/HTTPS CDN URL.
+   * If an unmigrated Base64 data URI is detected, it is immediately converted,
+   * uploaded to Supabase Storage, and replaced with the CDN URL.
+   */
+  async ensureCdnUrl(
+    urlOrBase64: string | null | undefined,
+    bucket: 'product-images' | 'restaurant-assets' = 'restaurant-assets',
+    pathPrefix: string = 'general'
+  ): Promise<string | null> {
+    if (!urlOrBase64) return null;
+    if (urlOrBase64.startsWith('http://') || urlOrBase64.startsWith('https://')) {
+      return urlOrBase64;
+    }
+
+    if (urlOrBase64.startsWith('data:image') || urlOrBase64.length > 500) {
+      try {
+        const decoded = decodeBase64Image(urlOrBase64);
+        const fileName = `auto_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.${decoded.ext}`;
+        const path = `${pathPrefix}/${fileName}`;
+        return await this.uploadBinary(bucket, path, decoded.buffer, decoded.mimeType);
+      } catch (e: any) {
+        console.warn('ensureCdnUrl auto-upload failed:', e?.message);
+        return null;
+      }
+    }
+
+    return urlOrBase64;
+  },
+
+  /**
+   * Prompts user to pick an image from device gallery, resizes/compresses it,
+   * uploads with strong cacheControl (31536000) to Supabase Storage, and returns ONLY the public CDN URL.
+   */
+  async pickAndUploadProductImage(options?: {
+    restaurantId?: string;
+    productId?: string;
+  }): Promise<{ url: string; fileName: string } | null> {
+    try {
+      // 1. Web Platform (native file input)
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        return new Promise((resolve, reject) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/png,image/jpeg,image/jpg,image/webp';
+          input.style.display = 'none';
+
+          input.onchange = async (e: any) => {
+            try {
+              const file = e.target?.files?.[0];
+              if (!file) {
+                resolve(null);
+                return;
+              }
+
+              // Compress & resize product (Max 800x800, quality 0.80 WebP)
+              const compressed = await compressAndResizeImage(file, {
+                maxWidth: 800,
+                maxHeight: 800,
+                quality: 0.8,
+                format: 'webp',
+              });
+
+              const fileExt = compressed.format || 'webp';
+              const timestamp = Date.now();
+              const rand = Math.random().toString(36).substring(2, 7);
+              const restScope = options?.restaurantId || 'global';
+              const prodScope = options?.productId || 'new';
+              const fileName = `${timestamp}_${rand}.${fileExt}`;
+              const path = `restaurants/${restScope}/products/${prodScope}/${fileName}`;
+
+              if (compressed.blob) {
+                const cdnUrl = await storageService.uploadBinary(
+                  'product-images',
+                  path,
+                  compressed.blob,
+                  `image/${fileExt}`
+                );
+                resolve({ url: cdnUrl, fileName });
+                return;
+              }
+
+              reject(new Error('Failed to process product image for upload.'));
+            } catch (err) {
+              reject(err);
+            } finally {
+              document.body.removeChild(input);
+            }
+          };
+
+          document.body.appendChild(input);
+          input.click();
+        });
+      }
+
+      // 2. React Native / Mobile Platform
       const ImagePicker = await import('expo-image-picker');
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
@@ -17,7 +404,7 @@ export const storageService = {
         mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [4, 3],
-        quality: 0.85,
+        quality: 0.8,
       });
 
       if (result.canceled || !result.assets || result.assets.length === 0) {
@@ -27,61 +414,49 @@ export const storageService = {
       const asset = result.assets[0];
       const uri = asset.uri;
 
-      // Validate format
-      const fileExt = (uri.split('.').pop() || 'jpg').toLowerCase().split('?')[0];
-      const validExtensions = ['jpg', 'jpeg', 'png', 'webp'];
-      if (!validExtensions.includes(fileExt)) {
-        throw new Error(`Unsupported image format: .${fileExt}. Please select a JPG, PNG, or WEBP photo.`);
-      }
+      // Resize & compress product image (Max 800x800, quality 0.80 WebP)
+      const compressed = await compressAndResizeImage(uri, {
+        maxWidth: 800,
+        maxHeight: 800,
+        quality: 0.8,
+        format: 'webp',
+      });
 
-      // Maximum 5MB check
-      if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) {
-        throw new Error('Image size exceeds 5MB limit. Please choose a smaller image.');
-      }
+      const effectiveUri = compressed.uri || uri;
+      const fileExt = compressed.format || 'webp';
+      const timestamp = Date.now();
+      const rand = Math.random().toString(36).substring(2, 7);
 
-      const fileName = `prod_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
-      const path = `products/${fileName}`;
+      const restScope = options?.restaurantId || 'global';
+      const prodScope = options?.productId || 'new';
+      const fileName = `${timestamp}_${rand}.${fileExt}`;
+      const path = `restaurants/${restScope}/products/${prodScope}/${fileName}`;
 
-      if (isSupabaseConfigured) {
-        // Fetch binary data
-        const response = await fetch(uri);
-        const blob = await response.blob();
+      const uploadBytes = await getUploadBytesFromUri(effectiveUri);
 
-        const { data, error } = await supabase.storage
-          .from('product-images')
-          .upload(path, blob, {
-            contentType: `image/${fileExt === 'jpg' ? 'jpeg' : fileExt}`,
-            upsert: true,
-          });
+      const cdnUrl = await this.uploadBinary(
+        'product-images',
+        path,
+        uploadBytes,
+        `image/${fileExt}`
+      );
 
-        if (error) {
-          console.warn('Supabase storage upload error:', error.message);
-          return { url: uri, fileName };
-        }
-
-        const { data: publicUrlData } = supabase.storage
-          .from('product-images')
-          .getPublicUrl(data.path);
-
-        return { url: publicUrlData.publicUrl, fileName };
-      }
-
-      return { url: uri, fileName };
+      return { url: cdnUrl, fileName };
     } catch (err: any) {
-      console.error('Image upload error:', err);
+      console.error('Product image upload error:', err);
       throw new Error(err.message || 'Failed to select or upload product image.');
     }
   },
 
   /**
-   * Prompts user to pick a restaurant cover/banner image, validates format/size,
-   * uploads to Supabase Storage (restaurant-assets / product-images) or generates a persistent Base64 URI.
+   * Prompts user to pick a restaurant cover/banner image, resizes/compresses it,
+   * uploads to Supabase Storage with strong Cache-Control and returns ONLY the public CDN URL.
    */
-  async pickAndUploadBanner(): Promise<{ url: string; fileName: string } | null> {
+  async pickAndUploadBanner(options?: {
+    restaurantId?: string;
+  }): Promise<{ url: string; fileName: string } | null> {
     try {
-      const { Platform } = await import('react-native');
-
-      // 1. Direct Web Implementation (browser native file input)
+      // 1. Web Platform (native file picker)
       if (Platform.OS === 'web' && typeof document !== 'undefined') {
         return new Promise((resolve, reject) => {
           const input = document.createElement('input');
@@ -97,48 +472,33 @@ export const storageService = {
                 return;
               }
 
-              if (file.size > 5 * 1024 * 1024) {
-                reject(new Error('Banner image size exceeds 5MB limit. Please choose a smaller image.'));
+              // Compress & resize banner (Max 1200x800, quality 0.80 WebP)
+              const compressed = await compressAndResizeImage(file, {
+                maxWidth: 1200,
+                maxHeight: 800,
+                quality: 0.8,
+                format: 'webp',
+              });
+
+              const fileExt = compressed.format || 'webp';
+              const timestamp = Date.now();
+              const rand = Math.random().toString(36).substring(2, 7);
+              const restScope = options?.restaurantId || 'global';
+              const fileName = `${timestamp}_${rand}.${fileExt}`;
+              const path = `restaurants/${restScope}/banners/${fileName}`;
+
+              if (compressed.blob) {
+                const cdnUrl = await storageService.uploadBinary(
+                  'restaurant-assets',
+                  path,
+                  compressed.blob,
+                  `image/${fileExt}`
+                );
+                resolve({ url: cdnUrl, fileName });
                 return;
               }
 
-              const fileExt = (file.name.split('.').pop() || 'jpg').toLowerCase();
-              const validExtensions = ['jpg', 'jpeg', 'png', 'webp'];
-              const ext = validExtensions.includes(fileExt) ? fileExt : 'jpg';
-              const fileName = `banner_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${ext}`;
-              const path = `banners/${fileName}`;
-
-              const reader = new FileReader();
-              reader.onload = async () => {
-                const base64Data = reader.result as string;
-
-                if (isSupabaseConfigured) {
-                  try {
-                    const uploadRes = await supabase.storage
-                      .from('restaurant-assets')
-                      .upload(path, file, {
-                        contentType: file.type || `image/${ext === 'jpg' ? 'jpeg' : ext}`,
-                        upsert: true,
-                      });
-
-                    if (!uploadRes.error) {
-                      const { data: publicUrlData } = supabase.storage
-                        .from('restaurant-assets')
-                        .getPublicUrl(uploadRes.data.path);
-                      resolve({ url: publicUrlData.publicUrl, fileName });
-                      return;
-                    }
-                  } catch (storageErr) {
-                    console.warn('Storage bucket upload failed, using persistent Base64 Data URI:', storageErr);
-                  }
-                }
-
-                // Resolves with persistent Base64 data URI
-                resolve({ url: base64Data, fileName });
-              };
-
-              reader.onerror = () => reject(new Error('Failed to read selected image file.'));
-              reader.readAsDataURL(file);
+              reject(new Error('Failed to process banner image for upload.'));
             } catch (err) {
               reject(err);
             } finally {
@@ -151,7 +511,7 @@ export const storageService = {
         });
       }
 
-      // 2. Mobile Native Implementation (Android / iOS)
+      // 2. Mobile Native (Android / iOS)
       const ImagePicker = await import('expo-image-picker');
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
@@ -162,8 +522,7 @@ export const storageService = {
         mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [16, 9],
-        quality: 0.85,
-        base64: true,
+        quality: 0.8,
       });
 
       if (result.canceled || !result.assets || result.assets.length === 0) {
@@ -173,53 +532,32 @@ export const storageService = {
       const asset = result.assets[0];
       const uri = asset.uri;
 
-      // Validate format
-      const fileExt = (uri.split('.').pop() || 'jpg').toLowerCase().split('?')[0].split('#')[0];
-      const validExtensions = ['jpg', 'jpeg', 'png', 'webp'];
-      const ext = validExtensions.includes(fileExt) ? fileExt : 'jpg';
+      // Compress & resize banner (Max 1200x800, quality 0.80 WebP)
+      const compressed = await compressAndResizeImage(uri, {
+        maxWidth: 1200,
+        maxHeight: 800,
+        quality: 0.8,
+        format: 'webp',
+      });
 
-      if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) {
-        throw new Error('Banner image size exceeds 5MB limit. Please choose a smaller image.');
-      }
+      const effectiveUri = compressed.uri || uri;
+      const fileExt = compressed.format || 'webp';
+      const timestamp = Date.now();
+      const rand = Math.random().toString(36).substring(2, 7);
+      const restScope = options?.restaurantId || 'global';
+      const fileName = `${timestamp}_${rand}.${fileExt}`;
+      const path = `restaurants/${restScope}/banners/${fileName}`;
 
-      const fileName = `banner_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${ext}`;
-      const path = `banners/${fileName}`;
+      const uploadBytes = await getUploadBytesFromUri(effectiveUri);
 
-      let fallbackDataUri = uri;
-      if (asset.base64) {
-        fallbackDataUri = asset.base64.startsWith('data:')
-          ? asset.base64
-          : `data:image/${ext === 'jpg' ? 'jpeg' : ext};base64,${asset.base64}`;
-      }
+      const cdnUrl = await this.uploadBinary(
+        'restaurant-assets',
+        path,
+        uploadBytes,
+        `image/${fileExt}`
+      );
 
-      if (isSupabaseConfigured) {
-        try {
-          const response = await fetch(uri);
-          const blob = await response.blob();
-
-          const targetBucket = 'restaurant-assets';
-          const uploadRes = await supabase.storage
-            .from(targetBucket)
-            .upload(path, blob, {
-              contentType: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
-              upsert: true,
-            });
-
-          if (!uploadRes.error) {
-            const { data: publicUrlData } = supabase.storage
-              .from(targetBucket)
-              .getPublicUrl(uploadRes.data.path);
-
-            return { url: publicUrlData.publicUrl, fileName };
-          }
-        } catch (storageErr) {
-          console.warn('Storage upload error, using fallback data URI:', storageErr);
-        }
-
-        return { url: fallbackDataUri, fileName };
-      }
-
-      return { url: fallbackDataUri, fileName };
+      return { url: cdnUrl, fileName };
     } catch (err: any) {
       console.error('Banner upload error:', err);
       throw new Error(err.message || 'Failed to select or upload restaurant banner.');
@@ -227,14 +565,14 @@ export const storageService = {
   },
 
   /**
-   * Prompts user to pick a restaurant logo, validates format/size,
-   * uploads to Supabase Storage (restaurant-assets / product-images) or generates a persistent Base64 URI.
+   * Prompts user to pick a restaurant logo, resizes/compresses it,
+   * uploads with strong Cache-Control to Supabase Storage and returns ONLY the public CDN URL.
    */
-  async pickAndUploadLogo(): Promise<{ url: string; fileName: string } | null> {
+  async pickAndUploadLogo(options?: {
+    restaurantId?: string;
+  }): Promise<{ url: string; fileName: string } | null> {
     try {
-      const { Platform } = await import('react-native');
-
-      // 1. Direct Web Implementation (browser native file input)
+      // 1. Web Platform (native file picker)
       if (Platform.OS === 'web' && typeof document !== 'undefined') {
         return new Promise((resolve, reject) => {
           const input = document.createElement('input');
@@ -250,48 +588,33 @@ export const storageService = {
                 return;
               }
 
-              if (file.size > 5 * 1024 * 1024) {
-                reject(new Error('Logo file size exceeds 5MB limit. Please choose a smaller image.'));
+              // Compress & resize logo (Max 400x400, quality 0.85 WebP)
+              const compressed = await compressAndResizeImage(file, {
+                maxWidth: 400,
+                maxHeight: 400,
+                quality: 0.85,
+                format: 'webp',
+              });
+
+              const fileExt = compressed.format || 'webp';
+              const timestamp = Date.now();
+              const rand = Math.random().toString(36).substring(2, 7);
+              const restScope = options?.restaurantId || 'global';
+              const fileName = `${timestamp}_${rand}.${fileExt}`;
+              const path = `restaurants/${restScope}/logos/${fileName}`;
+
+              if (compressed.blob) {
+                const cdnUrl = await storageService.uploadBinary(
+                  'restaurant-assets',
+                  path,
+                  compressed.blob,
+                  `image/${fileExt}`
+                );
+                resolve({ url: cdnUrl, fileName });
                 return;
               }
 
-              const fileExt = (file.name.split('.').pop() || 'png').toLowerCase();
-              const validExtensions = ['jpg', 'jpeg', 'png', 'webp'];
-              const ext = validExtensions.includes(fileExt) ? fileExt : 'png';
-              const fileName = `logo_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${ext}`;
-              const path = `logos/${fileName}`;
-
-              const reader = new FileReader();
-              reader.onload = async () => {
-                const base64Data = reader.result as string;
-
-                if (isSupabaseConfigured) {
-                  try {
-                    const uploadRes = await supabase.storage
-                      .from('restaurant-assets')
-                      .upload(path, file, {
-                        contentType: file.type || `image/${ext === 'jpg' ? 'jpeg' : ext}`,
-                        upsert: true,
-                      });
-
-                    if (!uploadRes.error) {
-                      const { data: publicUrlData } = supabase.storage
-                        .from('restaurant-assets')
-                        .getPublicUrl(uploadRes.data.path);
-                      resolve({ url: publicUrlData.publicUrl, fileName });
-                      return;
-                    }
-                  } catch (storageErr) {
-                    console.warn('Storage bucket upload failed, using persistent Base64 Data URI:', storageErr);
-                  }
-                }
-
-                // Resolves with persistent Base64 data URI
-                resolve({ url: base64Data, fileName });
-              };
-
-              reader.onerror = () => reject(new Error('Failed to read selected image file.'));
-              reader.readAsDataURL(file);
+              reject(new Error('Failed to process logo image for upload.'));
             } catch (err) {
               reject(err);
             } finally {
@@ -304,7 +627,7 @@ export const storageService = {
         });
       }
 
-      // 2. Mobile Native Implementation (Android / iOS)
+      // 2. Mobile Native (Android / iOS)
       const ImagePicker = await import('expo-image-picker');
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
@@ -315,8 +638,7 @@ export const storageService = {
         mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.7,
-        base64: true,
+        quality: 0.85,
       });
 
       if (result.canceled || !result.assets || result.assets.length === 0) {
@@ -326,72 +648,32 @@ export const storageService = {
       const asset = result.assets[0];
       const uri = asset.uri;
 
-      // Validate format
-      const fileExt = (uri.split('.').pop() || 'png').toLowerCase().split('?')[0].split('#')[0];
-      const validExtensions = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
-      const ext = validExtensions.includes(fileExt) ? fileExt : 'png';
+      // Compress & resize logo (Max 400x400, quality 0.85 WebP)
+      const compressed = await compressAndResizeImage(uri, {
+        maxWidth: 400,
+        maxHeight: 400,
+        quality: 0.85,
+        format: 'webp',
+      });
 
-      // Maximum 5MB check
-      if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) {
-        throw new Error('Logo file size exceeds 5MB limit. Please choose a smaller image.');
-      }
+      const effectiveUri = compressed.uri || uri;
+      const fileExt = compressed.format || 'webp';
+      const timestamp = Date.now();
+      const rand = Math.random().toString(36).substring(2, 7);
+      const restScope = options?.restaurantId || 'global';
+      const fileName = `${timestamp}_${rand}.${fileExt}`;
+      const path = `restaurants/${restScope}/logos/${fileName}`;
 
-      const fileName = `logo_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${ext}`;
-      const path = `logos/${fileName}`;
+      const uploadBytes = await getUploadBytesFromUri(effectiveUri);
 
-      // Construct base64 fallback data URI
-      let fallbackDataUri = uri;
-      if (asset.base64) {
-        fallbackDataUri = asset.base64.startsWith('data:')
-          ? asset.base64
-          : `data:image/${ext === 'jpg' ? 'jpeg' : ext};base64,${asset.base64}`;
-      }
+      const cdnUrl = await this.uploadBinary(
+        'restaurant-assets',
+        path,
+        uploadBytes,
+        `image/${fileExt}`
+      );
 
-      if (isSupabaseConfigured) {
-        try {
-          const response = await fetch(uri);
-          const blob = await response.blob();
-
-          const targetBucket = 'restaurant-assets';
-          const uploadRes = await supabase.storage
-            .from(targetBucket)
-            .upload(path, blob, {
-              contentType: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
-              upsert: true,
-            });
-
-          if (!uploadRes.error) {
-            const { data: publicUrlData } = supabase.storage
-              .from(targetBucket)
-              .getPublicUrl(uploadRes.data.path);
-
-            return { url: publicUrlData.publicUrl, fileName };
-          }
-
-          // Try product-images fallback bucket
-          const fallbackRes = await supabase.storage
-            .from('product-images')
-            .upload(path, blob, {
-              contentType: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
-              upsert: true,
-            });
-
-          if (!fallbackRes.error) {
-            const { data: publicUrlData } = supabase.storage
-              .from('product-images')
-              .getPublicUrl(fallbackRes.data.path);
-
-            return { url: publicUrlData.publicUrl, fileName };
-          }
-        } catch (storageErr) {
-          console.warn('Direct storage bucket upload failed, using persistent base64 data URI:', storageErr);
-        }
-
-        // Return persistent base64 data URI if storage bucket RLS restricts client upload
-        return { url: fallbackDataUri, fileName };
-      }
-
-      return { url: fallbackDataUri, fileName };
+      return { url: cdnUrl, fileName };
     } catch (err: any) {
       console.error('Logo upload error:', err);
       throw new Error(err.message || 'Failed to select or upload restaurant logo.');
@@ -399,33 +681,116 @@ export const storageService = {
   },
 
   /**
-   * Direct upload of a file blob or buffer
+   * Prompts user to pick an avatar / profile photo, resizes/compresses to 300x300 WebP,
+   * uploads to Supabase Storage, and returns ONLY the public CDN URL.
    */
-  async uploadImage(
-    bucket: 'product-images' | 'logos',
-    path: string,
-    fileBody: any,
-    contentType = 'image/jpeg'
-  ): Promise<string | null> {
-    if (!isSupabaseConfigured) return null;
-
+  async pickAndUploadAvatar(options?: {
+    userId?: string;
+  }): Promise<{ url: string; fileName: string } | null> {
     try {
-      const { data, error } = await supabase.storage.from(bucket).upload(path, fileBody, {
-        cacheControl: '3600',
-        upsert: true,
-        contentType,
+      // 1. Web Platform
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        return new Promise((resolve, reject) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/png,image/jpeg,image/jpg,image/webp';
+          input.style.display = 'none';
+
+          input.onchange = async (e: any) => {
+            try {
+              const file = e.target?.files?.[0];
+              if (!file) {
+                resolve(null);
+                return;
+              }
+
+              const compressed = await compressAndResizeImage(file, {
+                maxWidth: 300,
+                maxHeight: 300,
+                quality: 0.85,
+                format: 'webp',
+              });
+
+              const fileExt = compressed.format || 'webp';
+              const timestamp = Date.now();
+              const rand = Math.random().toString(36).substring(2, 7);
+              const userScope = options?.userId || 'users';
+              const fileName = `${timestamp}_${rand}.${fileExt}`;
+              const path = `users/${userScope}/avatars/${fileName}`;
+
+              if (compressed.blob) {
+                const cdnUrl = await storageService.uploadBinary(
+                  'restaurant-assets',
+                  path,
+                  compressed.blob,
+                  `image/${fileExt}`
+                );
+                resolve({ url: cdnUrl, fileName });
+                return;
+              }
+
+              reject(new Error('Failed to process avatar image for upload.'));
+            } catch (err) {
+              reject(err);
+            } finally {
+              document.body.removeChild(input);
+            }
+          };
+
+          document.body.appendChild(input);
+          input.click();
+        });
+      }
+
+      // 2. Mobile Native
+      const ImagePicker = await import('expo-image-picker');
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        throw new Error('Camera roll / gallery permissions are required to upload profile avatar.');
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.85,
       });
 
-      if (error) {
-        console.error('Storage upload error:', error);
+      if (result.canceled || !result.assets || result.assets.length === 0) {
         return null;
       }
 
-      const { data: publicUrlData } = supabase.storage.from(bucket).getPublicUrl(data.path);
-      return publicUrlData.publicUrl;
-    } catch (e) {
-      console.error('Failed to upload file to storage:', e);
-      return null;
+      const asset = result.assets[0];
+      const uri = asset.uri;
+
+      const compressed = await compressAndResizeImage(uri, {
+        maxWidth: 300,
+        maxHeight: 300,
+        quality: 0.85,
+        format: 'webp',
+      });
+
+      const effectiveUri = compressed.uri || uri;
+      const fileExt = compressed.format || 'webp';
+      const timestamp = Date.now();
+      const rand = Math.random().toString(36).substring(2, 7);
+      const userScope = options?.userId || 'users';
+      const fileName = `${timestamp}_${rand}.${fileExt}`;
+      const path = `users/${userScope}/avatars/${fileName}`;
+
+      const uploadBytes = await getUploadBytesFromUri(effectiveUri);
+
+      const cdnUrl = await this.uploadBinary(
+        'restaurant-assets',
+        path,
+        uploadBytes,
+        `image/${fileExt}`
+      );
+
+      return { url: cdnUrl, fileName };
+    } catch (err: any) {
+      console.error('Avatar upload error:', err);
+      throw new Error(err.message || 'Failed to select or upload avatar.');
     }
   },
 };

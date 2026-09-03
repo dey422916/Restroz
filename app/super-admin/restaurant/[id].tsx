@@ -263,7 +263,7 @@ export default function RestaurantDetailsScreen() {
   const handlePickBanner = async () => {
     setUploadingBanner(true);
     try {
-      const res = await storageService.pickAndUploadBanner();
+      const res = await storageService.pickAndUploadBanner({ restaurantId: restaurant?.id });
       if (res?.url) {
         setEditBannerUrl(res.url);
       }
@@ -277,7 +277,7 @@ export default function RestaurantDetailsScreen() {
   const handlePickLogo = async () => {
     setUploadingLogo(true);
     try {
-      const res = await storageService.pickAndUploadLogo();
+      const res = await storageService.pickAndUploadLogo({ restaurantId: restaurant?.id });
       if (res?.url) {
         setEditLogoUrl(res.url);
       }

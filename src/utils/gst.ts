@@ -142,9 +142,7 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
  * Guaranteed never to return 0 if billable items exist.
  */
 export function getOrderSubtotal(order: Partial<Order>): number {
-  if (order.subtotal && Number(order.subtotal) > 0) {
-    return roundToTwoDecimals(Number(order.subtotal));
-  }
+  // Always compute from items when available — the stored subtotal may be stale after edits
   if (order.items && order.items.length > 0) {
     const sum = order.items.reduce((acc, item) => {
       const qty = Number(item.quantity) || 0;
@@ -152,6 +150,9 @@ export function getOrderSubtotal(order: Partial<Order>): number {
       return acc + (qty * unitPrice);
     }, 0);
     return roundToTwoDecimals(sum);
+  }
+  if (order.subtotal && Number(order.subtotal) > 0) {
+    return roundToTwoDecimals(Number(order.subtotal));
   }
   return 0;
 }

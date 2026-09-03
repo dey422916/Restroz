@@ -16,6 +16,7 @@ import { useCustomerCart } from '../../src/context/CustomerCartContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { CustomerAddress } from '../../src/types';
 import { customerColors } from '../../src/utils/colors';
+import { isValidPhoneNumber } from '../../src/utils/phone';
 
 export default function DeliveryCheckoutScreen() {
   const router = useRouter();
@@ -74,6 +75,11 @@ export default function DeliveryCheckoutScreen() {
       return;
     }
 
+    if (!isValidPhoneNumber(newPhone)) {
+      Alert.alert('Invalid Phone Number', 'Please enter a valid 10-digit mobile number for this address.');
+      return;
+    }
+
     setSavingAddr(true);
     try {
       const created = await marketplaceService.createCustomerAddress({
@@ -125,8 +131,19 @@ export default function DeliveryCheckoutScreen() {
       return;
     }
 
-    if (!customerPhone.trim()) {
-      Alert.alert('Phone Required', 'Please provide a valid contact number.');
+    const targetPhone = customerPhone.trim() || selectedAddr.phone;
+    if (!targetPhone || !isValidPhoneNumber(targetPhone)) {
+      Alert.alert('Invalid Phone Number', 'Please provide a valid 10-digit mobile number for order delivery updates.');
+      return;
+    }
+
+    // Verify restaurant is currently online before placing order
+    const isRestOnline = await marketplaceService.getRestaurantOnlineStatus(cart.restaurantId);
+    if (!isRestOnline) {
+      Alert.alert(
+        'Restaurant Offline',
+        'Restaurant is currently closed for online orders. Please try again later.'
+      );
       return;
     }
 
@@ -280,10 +297,17 @@ export default function DeliveryCheckoutScreen() {
               <TextInput
                 style={styles.input}
                 value={customerPhone}
-                onChangeText={setCustomerPhone}
-                placeholder="+91 98765 43210"
+                onChangeText={(v) => setCustomerPhone(v.replace(/[^\d+]/g, ''))}
+                placeholder="10-digit mobile number"
+                placeholderTextColor="#64748b"
                 keyboardType="phone-pad"
+                maxLength={13}
               />
+              {Boolean(customerPhone && !isValidPhoneNumber(customerPhone)) && (
+                <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: 3 }}>
+                  ⚠️ Invalid mobile number
+                </Text>
+              )}
             </View>
           </View>
 
@@ -449,10 +473,17 @@ export default function DeliveryCheckoutScreen() {
               <TextInput
                 style={styles.input}
                 value={newPhone}
-                onChangeText={setNewPhone}
+                onChangeText={(v) => setNewPhone(v.replace(/[^\d+]/g, ''))}
                 placeholder="10-digit mobile number"
+                placeholderTextColor="#64748b"
                 keyboardType="phone-pad"
+                maxLength={13}
               />
+              {Boolean(newPhone && !isValidPhoneNumber(newPhone)) && (
+                <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: 3 }}>
+                  ⚠️ Invalid mobile number
+                </Text>
+              )}
 
               <Text style={styles.label}>Flat / House No. / Street Address *</Text>
               <TextInput

@@ -65,9 +65,11 @@ export default function CustomerOrderDetailsScreen() {
     loadData();
 
     if (id) {
-      const channelName = `order-detail-${id}-${Date.now()}`;
-      const channel = supabase
-        .channel(channelName)
+      const orderChName = `sub_order_detail_${id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const eventsChName = `sub_order_events_${id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+      const orderChannel = supabase
+        .channel(orderChName)
         .on(
           'postgres_changes',
           {
@@ -80,6 +82,10 @@ export default function CustomerOrderDetailsScreen() {
             loadData();
           }
         )
+        .subscribe();
+
+      const eventsChannel = supabase
+        .channel(eventsChName)
         .on(
           'postgres_changes',
           {
@@ -95,7 +101,8 @@ export default function CustomerOrderDetailsScreen() {
         .subscribe();
 
       return () => {
-        supabase.removeChannel(channel);
+        supabase.removeChannel(orderChannel);
+        supabase.removeChannel(eventsChannel);
       };
     }
   }, [id]);

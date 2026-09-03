@@ -13,6 +13,7 @@ import { useCustomerCart } from '../../src/context/CustomerCartContext';
 import { couponService } from '../../src/services/api/couponService';
 import { Coupon } from '../../src/types';
 import { customerColors } from '../../src/utils/colors';
+import { marketplaceService } from '../../src/services/api/marketplaceService';
 
 export default function CustomerCartScreen() {
   const router = useRouter();
@@ -291,7 +292,19 @@ export default function CustomerCartScreen() {
 
         <TouchableOpacity
           style={styles.checkoutBtn}
-          onPress={() => router.push('/(marketplace)/checkout')}
+          onPress={async () => {
+            if (cart.restaurantId) {
+              const isOpen = await marketplaceService.getRestaurantOnlineStatus(cart.restaurantId);
+              if (!isOpen) {
+                Alert.alert(
+                  'Restaurant Offline',
+                  'Restaurant is currently closed for online orders. Please try again later.'
+                );
+                return;
+              }
+            }
+            router.push('/(marketplace)/checkout');
+          }}
         >
           <Text style={styles.checkoutBtnText}>Select Address & Pay →</Text>
         </TouchableOpacity>

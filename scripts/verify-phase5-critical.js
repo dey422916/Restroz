@@ -239,7 +239,7 @@ async function runPhase5Verification() {
       try {
         await adminClient.auth.admin.deleteUser(tempStaffUser.id);
         await adminClient.from('profiles').delete().eq('id', tempStaffUser.id);
-      } catch (c) {}
+      } catch (c) { }
     }
   }
 

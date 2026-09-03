@@ -220,33 +220,45 @@ export default function CategoriesScreen() {
               return (
                 <View
                   key={cat.id}
-                  style={[styles.card, !cat.is_active && styles.cardInactive]}
+                  style={[
+                    styles.card,
+                    Platform.OS === 'web' && styles.cardWeb,
+                    !cat.is_active && styles.cardInactive,
+                  ]}
                 >
-                  <View style={styles.cardHeader}>
-                    <Text style={styles.catName}>{cat.name}</Text>
-                    <View
-                      style={[
-                        styles.activeBadge,
-                        cat.is_active ? styles.activeBadgeOn : styles.activeBadgeOff,
-                      ]}
-                    >
-                      <Text
+                  <View>
+                    <View style={styles.cardHeader}>
+                      <Text style={styles.catName} numberOfLines={1}>
+                        {cat.name}
+                      </Text>
+                      <View
                         style={[
-                          styles.activeBadgeText,
-                          cat.is_active ? styles.activeBadgeTextOn : styles.activeBadgeTextOff,
+                          styles.activeBadge,
+                          cat.is_active ? styles.activeBadgeOn : styles.activeBadgeOff,
                         ]}
                       >
-                        {cat.is_active ? 'ACTIVE' : 'INACTIVE'}
-                      </Text>
+                        <Text
+                          style={[
+                            styles.activeBadgeText,
+                            cat.is_active ? styles.activeBadgeTextOn : styles.activeBadgeTextOff,
+                          ]}
+                        >
+                          {cat.is_active ? 'ACTIVE' : 'INACTIVE'}
+                        </Text>
+                      </View>
                     </View>
-                  </View>
 
-                  <Text style={styles.catDesc}>{cat.description || 'No description provided.'}</Text>
-                  
-                  <View style={styles.metaRow}>
-                    <Text style={styles.catSlug}>slug: {cat.slug}</Text>
-                    <Text style={styles.catCount}>🍲 {count} Dishes</Text>
-                    <Text style={styles.catOrder}>Order: #{cat.display_order}</Text>
+                    <Text style={styles.catDesc} numberOfLines={2}>
+                      {cat.description || 'No description provided.'}
+                    </Text>
+                    
+                    <View style={styles.metaRow}>
+                      <Text style={styles.catCount}>🍲 {count} Dishes</Text>
+                      <Text style={styles.catOrder}>Order: #{cat.display_order}</Text>
+                    </View>
+                    <Text style={styles.catSlug} numberOfLines={1}>
+                      slug: {cat.slug}
+                    </Text>
                   </View>
 
                   <View style={styles.actionsRow}>
@@ -261,7 +273,7 @@ export default function CategoriesScreen() {
                       style={styles.toggleActionBtn}
                       onPress={() => handleToggleActive(cat)}
                     >
-                      <Text style={styles.toggleActionBtnText}>
+                      <Text style={styles.toggleActionBtnText} numberOfLines={1}>
                         {cat.is_active ? 'Deactivate' : 'Activate'}
                       </Text>
                     </TouchableOpacity>
@@ -270,7 +282,7 @@ export default function CategoriesScreen() {
                       style={styles.deleteActionBtn}
                       onPress={() => handleDeleteCategory(cat)}
                     >
-                      <Text style={styles.deleteActionBtnText}>🗑️ Delete</Text>
+                      <Text style={styles.deleteActionBtnText}>🗑️</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -451,10 +463,13 @@ const styles = StyleSheet.create({
   list: {
     padding: 14,
     gap: 10,
+    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+    flexWrap: Platform.OS === 'web' ? 'wrap' : 'nowrap',
+    alignItems: 'stretch',
   },
   card: {
     backgroundColor: '#ffffff',
-    borderRadius: 18,
+    borderRadius: 16,
     padding: 14,
     borderWidth: 1,
     borderColor: '#e2e8f0',
@@ -463,6 +478,15 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 6,
+  },
+  cardWeb: {
+    width: 'calc(16.666% - 8.4px)' as any,
+    maxWidth: 'calc(16.666% - 8.4px)' as any,
+    minWidth: 155,
+    flexGrow: 0,
+    flexShrink: 0,
+    justifyContent: 'space-between',
+    padding: 12,
   },
   cardInactive: {
     opacity: 0.65,

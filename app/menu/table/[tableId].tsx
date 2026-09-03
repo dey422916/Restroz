@@ -27,6 +27,7 @@ import { Product, Category, DiningTable, OrderItem, Order, Coupon, PaymentMethod
 import { formatCurrency } from '../../../src/utils/currency';
 import { calculateOrderTotals, getOrderSubtotal } from '../../../src/utils/gst';
 import { findMatchingTable } from '../../../src/utils/qr';
+import { cleanCustomerOrderNotes } from '../../../src/utils/orderNotes';
 import { RealtimeOrderStatus } from '../../../src/components/customer/RealtimeOrderStatus';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../../src/context/AuthContext';
@@ -180,11 +181,13 @@ export default function CustomerDigitalMenuScreen() {
       loadCustomerOrders(false);
     }, 4000);
 
-    let orderChannel: any = null;
-    if (isSupabaseConfigured) {
-      const channelName = `customer-orders-${user.id}-${Date.now()}`;
-      orderChannel = supabase
-        .channel(channelName)
+    let ordersChannel: any = null;
+    let kotsChannel: any = null;
+
+    if (isSupabaseConfigured && user?.id) {
+      const ordersChName = `sub_table_orders_${user.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      ordersChannel = supabase
+        .channel(ordersChName)
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'orders', filter: `customer_id=eq.${user.id}` },
@@ -192,23 +195,33 @@ export default function CustomerDigitalMenuScreen() {
             loadCustomerOrders(false);
           }
         )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'kots' },
-          () => {
-            loadCustomerOrders(false);
-          }
-        )
         .subscribe();
+
+      if (table?.restaurant_id) {
+        const kotsChName = `sub_table_kots_${table.restaurant_id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        kotsChannel = supabase
+          .channel(kotsChName)
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'kots', filter: `restaurant_id=eq.${table.restaurant_id}` },
+            () => {
+              loadCustomerOrders(false);
+            }
+          )
+          .subscribe();
+      }
     }
 
     return () => {
       clearInterval(pollInterval);
-      if (orderChannel) {
-        supabase.removeChannel(orderChannel);
+      if (ordersChannel) {
+        supabase.removeChannel(ordersChannel);
+      }
+      if (kotsChannel) {
+        supabase.removeChannel(kotsChannel);
       }
     };
-  }, [user?.id, loadCustomerOrders]);
+  }, [user?.id, table?.restaurant_id, loadCustomerOrders]);
 
   const activeOrders = customerOrders.filter(
     (o) => o.status !== 'delivered' && o.status !== 'completed' && o.status !== 'cancelled'
@@ -1410,8 +1423,8 @@ export default function CustomerDigitalMenuScreen() {
                       Deliver To: {selectedOrderDetail.delivery_address} {selectedOrderDetail.delivery_landmark ? `(Near: ${selectedOrderDetail.delivery_landmark})` : ''}
                     </Text>
                   )}
-                  {selectedOrderDetail.notes && (
-                    <Text style={styles.detailMetaRow}>Notes: {selectedOrderDetail.notes}</Text>
+                  {Boolean(cleanCustomerOrderNotes(selectedOrderDetail.notes)) && (
+                    <Text style={styles.detailMetaRow}>Notes: {cleanCustomerOrderNotes(selectedOrderDetail.notes)}</Text>
                   )}
                 </View>
 

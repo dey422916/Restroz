@@ -106,14 +106,14 @@ export const dayRegisterService = {
   },
 
   /**
-   * Check if the register is currently open (auto-opens if no register is found so POS is never blocked)
+   * Check if the register is currently open for the given restaurant
    */
   async isRegisterOpen(restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<boolean> {
     if (isSupabaseConfigured) {
       try {
         const { data, error } = await supabase
           .from('day_registers')
-          .select('*')
+          .select('id, status')
           .eq('restaurant_id', restaurantId)
           .eq('status', 'open')
           .limit(1);
@@ -121,29 +121,16 @@ export const dayRegisterService = {
         if (!error && data && data.length > 0) {
           return true;
         }
+        if (!error && data && data.length === 0) {
+          return false;
+        }
       } catch (e) {
         console.warn('Supabase isRegisterOpen check failed, checking local:', e);
       }
     }
 
     const current = await this.getCurrentRegister(restaurantId);
-    if (current && current.status === 'open') {
-      return true;
-    }
-
-    // If no register is open, auto-open a business register so POS orders are never blocked
-    try {
-      await this.openRegister({
-        opening_cash_float: 1000,
-        opened_by: 'POS Cashier',
-        notes: 'Auto-initialized business shift for POS operations',
-        restaurant_id: restaurantId,
-      });
-      return true;
-    } catch (err) {
-      console.warn('Auto openRegister fallback notice:', err);
-      return true;
-    }
+    return Boolean(current && current.status === 'open');
   },
 
   /**
@@ -158,6 +145,8 @@ export const dayRegisterService = {
     card_sales: number;
     other_sales: number;
     digital_sales: number;
+    refunds: number;
+    cash_out: number;
     total_sales: number;
     total_orders_count: number;
     expected_cash: number;
@@ -170,16 +159,23 @@ export const dayRegisterService = {
     // Filter orders created or paid during this register shift
     const shiftOrders = allOrders.filter((ord) => {
       const ordTime = new Date(ord.created_at).getTime();
-      return ordTime >= openTime && ordTime <= closeTime && ord.status !== 'cancelled';
+      return ordTime >= openTime && ordTime <= closeTime;
     });
 
     let cash_sales = 0;
     let upi_sales = 0;
     let card_sales = 0;
     let other_sales = 0;
+    let refunds = 0;
 
-    // Aggregate payments accurately from payment records where available
     for (const ord of shiftOrders) {
+      if (ord.status === 'cancelled') {
+        if (ord.payment_status === 'paid') {
+          refunds += Number(ord.payable_amount) || 0;
+        }
+        continue;
+      }
+
       if (ord.payments && ord.payments.length > 0) {
         for (const p of ord.payments) {
           const amount = Number(p.amount) || 0;
@@ -200,7 +196,8 @@ export const dayRegisterService = {
 
     const digital_sales = upi_sales + card_sales + other_sales;
     const total_sales = cash_sales + digital_sales;
-    const expected_cash = register.opening_cash_float + cash_sales;
+    const cash_out = Number(register.cash_out) || 0;
+    const expected_cash = register.opening_cash_float + cash_sales - refunds - cash_out;
 
     return {
       cash_sales: Math.round(cash_sales * 100) / 100,
@@ -208,8 +205,10 @@ export const dayRegisterService = {
       card_sales: Math.round(card_sales * 100) / 100,
       other_sales: Math.round(other_sales * 100) / 100,
       digital_sales: Math.round(digital_sales * 100) / 100,
+      refunds: Math.round(refunds * 100) / 100,
+      cash_out: Math.round(cash_out * 100) / 100,
       total_sales: Math.round(total_sales * 100) / 100,
-      total_orders_count: shiftOrders.length,
+      total_orders_count: shiftOrders.filter(o => o.status !== 'cancelled').length,
       expected_cash: Math.round(expected_cash * 100) / 100,
     };
   },
@@ -329,6 +328,8 @@ export const dayRegisterService = {
       cash_sales: reconciliation.cash_sales,
       upi_sales: reconciliation.upi_sales,
       card_sales: reconciliation.card_sales,
+      refunds: reconciliation.refunds,
+      cash_out: reconciliation.cash_out,
       total_sales: reconciliation.total_sales,
       expected_cash: reconciliation.expected_cash,
       actual_cash_counted: counted,

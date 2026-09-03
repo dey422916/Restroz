@@ -4,6 +4,8 @@ import { mockStorage } from '../mockStorage';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import { DEFAULT_RESTAURANT_ID } from './restaurantService';
 import { parseBannerUrls } from '../../utils/mediaUtils';
+import { storageService } from './storageService';
+import { marketplaceService } from './marketplaceService';
 
 const STORAGE_KEY_PRINTER_PREFIX = '@restaurant_printer_settings_';
 
@@ -214,10 +216,19 @@ export const settingsService = {
     }
 
     if (isSupabaseConfigured) {
+      // Auto-upload any legacy Base64 to Supabase Storage before updating DB
+      const safeLogoUrl = settings.logo_url !== undefined
+        ? await storageService.ensureCdnUrl(settings.logo_url, 'restaurant-assets', `restaurants/${restaurantId}/logos`)
+        : undefined;
+
+      const safeBannerPayload = bannerPayload !== undefined
+        ? (bannerPayload.startsWith('data:') ? await storageService.ensureCdnUrl(bannerPayload, 'restaurant-assets', `restaurants/${restaurantId}/banners`) : bannerPayload)
+        : undefined;
+
       // 1. Update restaurants table (banner_url, logo_url, name, phone, address)
       const restUpdates: Record<string, any> = {};
-      if (bannerPayload !== undefined) restUpdates.banner_url = bannerPayload || null;
-      if (settings.logo_url !== undefined) restUpdates.logo_url = settings.logo_url || null;
+      if (safeBannerPayload !== undefined) restUpdates.banner_url = safeBannerPayload || null;
+      if (safeLogoUrl !== undefined) restUpdates.logo_url = safeLogoUrl || null;
       if (settings.name !== undefined) restUpdates.name = settings.name;
       if (settings.phone !== undefined) restUpdates.phone = settings.phone;
       if (settings.address !== undefined) restUpdates.address = settings.address;
@@ -231,11 +242,11 @@ export const settingsService = {
       }
 
       // 2. Update restaurant_public_profiles table with banner_url
-      if (bannerPayload !== undefined) {
+      if (safeBannerPayload !== undefined) {
         try {
           await supabase
             .from('restaurant_public_profiles')
-            .update({ banner_url: bannerPayload || null })
+            .update({ banner_url: safeBannerPayload || null })
             .eq('restaurant_id', restaurantId);
         } catch (pErr) {
           console.warn('Failed to update restaurant_public_profiles banner_url:', pErr);
@@ -322,10 +333,20 @@ export const settingsService = {
         auto_print_kot: targetAutoPrint,
       };
       mockStorage.saveSettings(persisted);
+      try {
+        marketplaceService.clearRestaurantCache();
+      } catch (e) {
+        // ignore
+      }
       return persisted;
     }
 
     mockStorage.saveSettings(updated);
+    try {
+      marketplaceService.clearRestaurantCache();
+    } catch (e) {
+      // ignore
+    }
     return updated;
   },
 };

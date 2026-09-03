@@ -15,9 +15,37 @@ export const csvPickerService = {
       }
 
       const asset = result.assets[0];
-      const content = await FileSystem.readAsStringAsync(asset.uri, {
-        encoding: 'utf8',
-      } as any);
+      let content = '';
+
+      if (typeof window === 'undefined' || !asset.uri.startsWith('http')) {
+        try {
+          const { File } = await import('expo-file-system');
+          if (typeof File === 'function') {
+            const file = new File(asset.uri);
+            if (typeof (file as any).text === 'function') {
+              content = await (file as any).text();
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        if (!content) {
+          try {
+            const LegacyFS = await import('expo-file-system/legacy');
+            content = await LegacyFS.readAsStringAsync(asset.uri, {
+              encoding: LegacyFS.EncodingType.UTF8,
+            });
+          } catch (e) {
+            // ignore
+          }
+        }
+      }
+
+      if (!content) {
+        const res = await fetch(asset.uri);
+        content = await res.text();
+      }
 
       const lines = content.split(/\r\n|\n/).filter((l) => l.trim().length > 0);
       if (lines.length < 2) {

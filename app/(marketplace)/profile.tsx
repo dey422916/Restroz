@@ -15,6 +15,7 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { customerColors } from '../../src/utils/colors';
+import { isValidPhoneNumber } from '../../src/utils/phone';
 
 export default function CustomerProfileScreen() {
   const router = useRouter();
@@ -29,6 +30,11 @@ export default function CustomerProfileScreen() {
     if (!user) return;
     if (!fullName.trim()) {
       Alert.alert('Validation Error', 'Full Name cannot be empty.');
+      return;
+    }
+
+    if (phone.trim() && !isValidPhoneNumber(phone)) {
+      Alert.alert('Invalid Phone Number', 'Please enter a valid 10-digit mobile number.');
       return;
     }
 
@@ -155,13 +161,22 @@ export default function CustomerProfileScreen() {
 
             <Text style={styles.fieldLabel}>Mobile Phone</Text>
             {isEditing ? (
-              <TextInput
-                style={styles.input}
-                value={phone}
-                onChangeText={setPhone}
-                placeholder="+91 99999 00000"
-                keyboardType="phone-pad"
-              />
+              <View>
+                <TextInput
+                  style={styles.input}
+                  value={phone}
+                  onChangeText={(v) => setPhone(v.replace(/[^\d+]/g, ''))}
+                  placeholder="10-digit mobile number"
+                  placeholderTextColor="#64748b"
+                  keyboardType="phone-pad"
+                  maxLength={13}
+                />
+                {Boolean(phone && !isValidPhoneNumber(phone)) && (
+                  <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: 3 }}>
+                    ⚠️ Invalid mobile number
+                  </Text>
+                )}
+              </View>
             ) : (
               <Text style={styles.fieldValue}>{phone || 'Not provided'}</Text>
             )}

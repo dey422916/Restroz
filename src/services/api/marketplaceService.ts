@@ -13,6 +13,7 @@ import {
 import { Order, Product, UserProfile, Restaurant, Category } from '../../types';
 import { couponService } from './couponService';
 import { parseBannerUrls } from '../../utils/mediaUtils';
+import { isValidPhoneNumber, validatePhoneNumberOrThrow } from '../../utils/phone';
 
 // Haversine Distance in Kilometers
 export function calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -27,36 +28,78 @@ export function calculateDistanceKm(lat1: number, lon1: number, lat2: number, lo
   return Math.round(R * c * 10) / 10;
 }
 
+// In-memory cache for ultra-fast instant marketplace restaurants & distance sorting
+let cachedMarketplaceRestaurants: {
+  timestamp: number;
+  data: any[];
+} | null = null;
+const RESTAURANT_CACHE_TTL = 30 * 1000; // 30 seconds
+
+// In-memory cache for restaurant menus
+const cachedRestaurantMenus: Record<string, { timestamp: number; data: { categories: Category[]; products: Product[] } }> = {};
+const MENU_CACHE_TTL = 30 * 1000; // 30 seconds
+
 export const marketplaceService = {
-  // 1. Get All Active Marketplace Restaurants
+  // Clear cached restaurants (e.g. on manual refresh)
+  clearRestaurantCache() {
+    cachedMarketplaceRestaurants = null;
+  },
+
+  // 1. Get All Active Marketplace Restaurants (Ultra-fast cached + instant coordinate sorting)
   async getMarketplaceRestaurants(options?: {
     customerLat?: number | null;
     customerLng?: number | null;
     customerCity?: string | null;
     cuisine?: string;
     search?: string;
+    forceRefresh?: boolean;
   }): Promise<
     Array<Restaurant & { public_profile?: RestaurantPublicProfile; is_active_sub: boolean }>
   > {
-    const { data: rests, error: restErr } = await supabase
-      .from('restaurants')
-      .select(`
-        *,
-        public_profile:restaurant_public_profiles(*)
-      `)
-      .eq('status', 'ACTIVE')
-      .order('name');
+    const now = Date.now();
+    let rawRests: any[] = [];
 
-    if (restErr) {
-      console.warn('Error fetching marketplace restaurants:', restErr);
-      return [];
+    if (
+      !options?.forceRefresh &&
+      cachedMarketplaceRestaurants &&
+      now - cachedMarketplaceRestaurants.timestamp < RESTAURANT_CACHE_TTL
+    ) {
+      rawRests = cachedMarketplaceRestaurants.data;
+    } else {
+      const { data: rests, error: restErr } = await supabase
+        .from('restaurants')
+        .select(`
+          id, name, slug, logo_url, banner_url, address, city, phone, status, latitude, longitude, created_at,
+          public_profile:restaurant_public_profiles(
+            id, restaurant_id, is_open, marketplace_enabled, accepts_delivery, accepts_takeaway,
+            delivery_radius_km, minimum_order_value, estimated_delivery_minutes, cuisine_tags,
+            banner_url, public_description, opening_time, closing_time, latitude, longitude, created_at
+          )
+        `)
+        .eq('status', 'ACTIVE')
+        .order('name');
+
+      if (restErr) {
+        console.warn('Error fetching marketplace restaurants:', restErr);
+        if (cachedMarketplaceRestaurants) {
+          rawRests = cachedMarketplaceRestaurants.data;
+        } else {
+          return [];
+        }
+      } else {
+        rawRests = rests || [];
+        cachedMarketplaceRestaurants = {
+          timestamp: now,
+          data: rawRests,
+        };
+      }
     }
 
     const defaultBanner =
       'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=800&q=80';
 
     // Map all active restaurants and calculate location distance
-    let mapped = (rests || []).map((r) => {
+    let mapped = (rawRests || []).map((r: any) => {
       const pubProf = Array.isArray(r.public_profile) ? r.public_profile[0] : r.public_profile;
       const parsedBanners = parseBannerUrls(pubProf?.banner_url || r.banner_url);
       const banner = parsedBanners[0] || defaultBanner;
@@ -119,14 +162,14 @@ export const marketplaceService = {
 
     // If customer coordinates provided, sort nearest first
     if (options?.customerLat != null && options?.customerLng != null) {
-      mapped.sort((a, b) => {
+      mapped.sort((a: any, b: any) => {
         const distA = a.public_profile?.distance_km ?? 999999;
         const distB = b.public_profile?.distance_km ?? 999999;
         return distA - distB;
       });
     } else if (options?.customerCity) {
       const cityLower = options.customerCity.trim().toLowerCase();
-      mapped.sort((a, b) => {
+      mapped.sort((a: any, b: any) => {
         const aCityMatch = (a.city || '').toLowerCase().includes(cityLower) ? 0 : 1;
         const bCityMatch = (b.city || '').toLowerCase().includes(cityLower) ? 0 : 1;
         return aCityMatch - bCityMatch;
@@ -152,8 +195,12 @@ export const marketplaceService = {
     const { data, error } = await supabase
       .from('restaurants')
       .select(`
-        *,
-        public_profile:restaurant_public_profiles(*)
+        id, name, slug, logo_url, banner_url, address, city, phone, status, latitude, longitude, created_at,
+        public_profile:restaurant_public_profiles(
+          id, restaurant_id, is_open, marketplace_enabled, accepts_delivery, accepts_takeaway,
+          delivery_radius_km, minimum_order_value, estimated_delivery_minutes, cuisine_tags,
+          banner_url, public_description, opening_time, closing_time, latitude, longitude, created_at
+        )
       `)
       .eq('id', restaurantId)
       .single();
@@ -189,43 +236,139 @@ export const marketplaceService = {
     };
   },
 
-  // 3. Get Restaurant Public Menu (Categories + Active/Available Products)
+  // In-memory cache for restaurant menus (30s TTL)
+  clearRestaurantMenuCache(restaurantId?: string) {
+    if (restaurantId) {
+      delete cachedRestaurantMenus[restaurantId];
+    } else {
+      Object.keys(cachedRestaurantMenus).forEach((k) => delete cachedRestaurantMenus[k]);
+    }
+  },
+
+  // 3. Get Restaurant Public Menu (Categories + Active/Available Products with 30s in-memory caching)
   async getRestaurantMenu(
-    restaurantId: string
+    restaurantId: string,
+    forceRefresh: boolean = false
   ): Promise<{ categories: Category[]; products: Product[] }> {
+    const now = Date.now();
+    if (!forceRefresh && cachedRestaurantMenus[restaurantId] && now - cachedRestaurantMenus[restaurantId].timestamp < MENU_CACHE_TTL) {
+      return cachedRestaurantMenus[restaurantId].data;
+    }
+
     const [catRes, prodRes] = await Promise.all([
       supabase
         .from('categories')
-        .select('*')
+        .select('id, restaurant_id, name, slug, description, image_url, display_order, is_active')
         .eq('restaurant_id', restaurantId)
         .eq('is_active', true)
         .order('display_order', { ascending: true }),
       supabase
         .from('products')
-        .select('*')
+        .select('id, restaurant_id, category_id, category_name, name, description, price, discounted_price, tax_rate, is_active, is_available, food_type, image_url, sku, stock_quantity, unit, preparation_time_mins, hsn_code')
         .eq('restaurant_id', restaurantId)
         .eq('is_active', true)
         .eq('is_available', true)
         .order('name', { ascending: true }),
     ]);
 
-    const categories = catRes.data || [];
-    const products = prodRes.data || [];
+    const categories = (catRes.data || []) as Category[];
+    const products = (prodRes.data || []) as Product[];
 
-    return { categories, products };
+    const result = { categories, products };
+    cachedRestaurantMenus[restaurantId] = {
+      timestamp: now,
+      data: result,
+    };
+
+    return result;
+  },
+
+  // 3b. Online Ordering State Check & Toggle
+  async getRestaurantOnlineStatus(restaurantId: string): Promise<boolean> {
+    try {
+      const { data, error } = await supabase
+        .from('restaurant_public_profiles')
+        .select('is_open, marketplace_enabled')
+        .eq('restaurant_id', restaurantId)
+        .maybeSingle();
+
+      if (!error && data) {
+        return data.is_open !== false && data.marketplace_enabled !== false;
+      }
+    } catch (e) {
+      console.warn('Error fetching restaurant online status:', e);
+    }
+    return true;
+  },
+
+  async setRestaurantOnlineStatus(restaurantId: string, isOnline: boolean): Promise<boolean> {
+    try {
+      // 1. Update restaurant_public_profiles (is_open controls marketplace order acceptance)
+      const { data: existing, error: checkErr } = await supabase
+        .from('restaurant_public_profiles')
+        .select('id')
+        .eq('restaurant_id', restaurantId)
+        .maybeSingle();
+
+      if (existing && existing.id) {
+        const { error: updateErr } = await supabase
+          .from('restaurant_public_profiles')
+          .update({
+            is_open: isOnline,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('restaurant_id', restaurantId);
+
+        if (updateErr) {
+          console.warn('Error updating restaurant_public_profiles is_open:', updateErr);
+          throw new Error(updateErr.message || 'Failed to update online ordering status');
+        }
+      } else {
+        // Profile does not exist yet, create it with requested state
+        const { error: insertErr } = await supabase
+          .from('restaurant_public_profiles')
+          .insert({
+            restaurant_id: restaurantId,
+            is_open: isOnline,
+            marketplace_enabled: true,
+            accepts_delivery: true,
+            accepts_takeaway: true,
+          });
+
+        if (insertErr) {
+          console.warn('Error creating restaurant_public_profiles:', insertErr);
+          throw new Error(insertErr.message || 'Failed to create online profile status');
+        }
+      }
+
+      return isOnline;
+    } catch (e: any) {
+      console.error('setRestaurantOnlineStatus failed:', e);
+      throw e;
+    }
+  },
+
+  // Helper to get active user ID without blocking network request
+  async getAuthUserId(): Promise<string | null> {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (session?.user?.id) return session.user.id;
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    return user?.id || null;
   },
 
   // 4. Customer Addresses CRUD
   async getCustomerAddresses(): Promise<CustomerAddress[]> {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return [];
+    const userId = await this.getAuthUserId();
+    if (!userId) return [];
 
     const { data, error } = await supabase
       .from('customer_addresses')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .order('is_default', { ascending: false })
       .order('created_at', { ascending: false });
 
@@ -236,30 +379,51 @@ export const marketplaceService = {
     return data || [];
   },
 
+  async setDefaultCustomerAddress(addressId: string): Promise<void> {
+    const userId = await this.getAuthUserId();
+    if (!userId) throw new Error('Not authenticated.');
+
+    // Parallelize: Unset old defaults and set new default simultaneously
+    await Promise.all([
+      supabase
+        .from('customer_addresses')
+        .update({ is_default: false, updated_at: new Date().toISOString() })
+        .eq('user_id', userId)
+        .neq('id', addressId),
+      supabase
+        .from('customer_addresses')
+        .update({ is_default: true, updated_at: new Date().toISOString() })
+        .eq('id', addressId)
+        .eq('user_id', userId),
+    ]);
+  },
+
   async createCustomerAddress(
     payload: Omit<CustomerAddress, 'id' | 'user_id' | 'created_at' | 'updated_at'>
   ): Promise<CustomerAddress> {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) throw new Error('You must be logged in to save an address.');
+    const userId = await this.getAuthUserId();
+    if (!userId) throw new Error('You must be logged in to save an address.');
 
-    // If marked default, unset other defaults
+    if (payload.phone) {
+      validatePhoneNumberOrThrow(payload.phone, 'Contact Phone Number');
+    }
+
+    // If marked default, unset other defaults in parallel
     if (payload.is_default) {
       await supabase
         .from('customer_addresses')
-        .update({ is_default: false })
-        .eq('user_id', user.id);
+        .update({ is_default: false, updated_at: new Date().toISOString() })
+        .eq('user_id', userId);
     }
 
     const { data, error } = await supabase
       .from('customer_addresses')
       .insert({
         ...payload,
-        user_id: user.id,
+        user_id: userId,
       })
       .select()
-      .single();
+      .maybeSingle();
 
     if (error || !data) throw error || new Error('Failed to create address.');
     return data;
@@ -269,37 +433,38 @@ export const marketplaceService = {
     id: string,
     payload: Partial<CustomerAddress>
   ): Promise<CustomerAddress> {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) throw new Error('Not authenticated.');
+    const userId = await this.getAuthUserId();
+    if (!userId) throw new Error('Not authenticated.');
+
+    if (payload.phone) {
+      validatePhoneNumberOrThrow(payload.phone, 'Contact Phone Number');
+    }
 
     if (payload.is_default) {
       await supabase
         .from('customer_addresses')
-        .update({ is_default: false })
-        .eq('user_id', user.id);
+        .update({ is_default: false, updated_at: new Date().toISOString() })
+        .eq('user_id', userId)
+        .neq('id', id);
     }
 
     const { data, error } = await supabase
       .from('customer_addresses')
       .update({ ...payload, updated_at: new Date().toISOString() })
       .eq('id', id)
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error || !data) throw error || new Error('Failed to update address.');
     return data;
   },
 
   async deleteCustomerAddress(id: string): Promise<void> {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
+    const userId = await this.getAuthUserId();
+    if (!userId) return;
 
-    await supabase.from('customer_addresses').delete().eq('id', id).eq('user_id', user.id);
+    await supabase.from('customer_addresses').delete().eq('id', id).eq('user_id', userId);
   },
 
   // 5. Create Customer Delivery Order via Server-Side Atomic RPC & Resilient Execution
@@ -308,6 +473,9 @@ export const marketplaceService = {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) throw new Error('Please log in to place an order.');
+
+    // Enforce phone number validation on customer online delivery order
+    validatePhoneNumberOrThrow(payload.customer_phone, 'Delivery Contact Phone Number');
 
     // 0. Server-Side Idempotency & Rapid Double-Tap Protection
     try {
@@ -384,6 +552,22 @@ export const marketplaceService = {
 
       if (rErr || !rest || rest.status !== 'ACTIVE') {
         throw new Error('Restaurant is currently inactive or unavailable.');
+      }
+
+      // Enforce online orders status check in fallback path
+      const { data: pubProf } = await supabase
+        .from('restaurant_public_profiles')
+        .select('is_open, marketplace_enabled, accepts_delivery')
+        .eq('restaurant_id', payload.restaurant_id)
+        .maybeSingle();
+
+      if (pubProf) {
+        if (pubProf.marketplace_enabled === false) {
+          throw new Error('Online marketplace ordering is not enabled for this restaurant.');
+        }
+        if (pubProf.is_open === false || pubProf.accepts_delivery === false) {
+          throw new Error('Restaurant is currently closed for online orders.');
+        }
       }
 
       // Fetch products
@@ -582,26 +766,160 @@ export const marketplaceService = {
 
   // 6. Get Customer Orders (Live & History)
   async getCustomerOrders(): Promise<Order[]> {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return [];
+    const userId = await this.getAuthUserId();
+    if (!userId) return [];
 
-    const { data, error } = await supabase
-      .from('orders')
-      .select(`
-        *,
-        restaurant:restaurant_id(name, slug, logo_url, address, phone),
-        items:order_items(*)
-      `)
-      .eq('customer_id', user.id)
-      .order('created_at', { ascending: false });
+    try {
+      // 1. Direct fetch with valid PostgREST relationship syntax (restaurants, order_items)
+      const { data: rawOrders, error: ordersErr } = await supabase
+        .from('orders')
+        .select(`
+          *,
+          restaurant:restaurants(id, name, slug, logo_url, address, phone),
+          items:order_items(*)
+        `)
+        .eq('customer_id', userId)
+        .order('created_at', { ascending: false });
 
-    if (error) {
-      console.warn('Error loading customer orders:', error);
-      return [];
+      if (ordersErr) {
+        console.warn('Direct getCustomerOrders query error, falling back to resilient multi-step fetch:', ordersErr);
+        
+        // 2. Resilient fallback: base orders query without foreign relationships
+        const { data: fallbackOrders, error: fbErr } = await supabase
+          .from('orders')
+          .select('*, items:order_items(*)')
+          .eq('customer_id', userId)
+          .order('created_at', { ascending: false });
+
+        if (fbErr || !fallbackOrders) {
+          console.error('Fatal getCustomerOrders fallback error:', fbErr);
+          throw fbErr || new Error('Failed to load customer orders.');
+        }
+
+        // Fetch restaurant details safely
+        const restIds = [...new Set(fallbackOrders.map((o) => o.restaurant_id).filter(Boolean))];
+        let restMap: Record<string, any> = {};
+        if (restIds.length > 0) {
+          const { data: rests } = await supabase
+            .from('restaurants')
+            .select('id, name, slug, logo_url, address, phone')
+            .in('id', restIds);
+          if (rests) {
+            restMap = rests.reduce((acc: any, r: any) => ({ ...acc, [r.id]: r }), {});
+          }
+        }
+
+        return fallbackOrders.map((o) => ({
+          ...o,
+          restaurant: restMap[o.restaurant_id] || null,
+        })) as Order[];
+      }
+
+      // Check if any restaurant object is null/missing (fallback join)
+      if (rawOrders && rawOrders.length > 0) {
+        const missingRestOrders = rawOrders.filter((o: any) => !o.restaurant && o.restaurant_id);
+        if (missingRestOrders.length > 0) {
+          const missingIds = [...new Set(missingRestOrders.map((o: any) => o.restaurant_id))];
+          const { data: missingRests } = await supabase
+            .from('restaurants')
+            .select('id, name, slug, logo_url, address, phone')
+            .in('id', missingIds);
+          if (missingRests) {
+            const map = missingRests.reduce((acc: any, r: any) => ({ ...acc, [r.id]: r }), {});
+            return rawOrders.map((o: any) => ({
+              ...o,
+              restaurant: o.restaurant || map[o.restaurant_id] || null,
+            })) as Order[];
+          }
+        }
+      }
+
+      return (rawOrders as Order[]) || [];
+    } catch (err: any) {
+      console.error('getCustomerOrders exception:', err);
+      throw err;
     }
-    return (data as any[]) || [];
+  },
+
+  // 6b. Get Customer Order History Paginated (20 items per page with hasMore)
+  async getCustomerOrderHistoryPaginated(options: {
+    page?: number;
+    pageSize?: number;
+  } = {}): Promise<{ orders: Order[]; hasMore: boolean; nextPage: number | null }> {
+    const userId = await this.getAuthUserId();
+    if (!userId) return { orders: [], hasMore: false, nextPage: null };
+
+    const page = options.page || 1;
+    const pageSize = options.pageSize || 20;
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize; // queries pageSize + 1 to evaluate hasMore without COUNT(*)
+
+    try {
+      const { data: rawOrders, error: ordersErr } = await supabase
+        .from('orders')
+        .select(`
+          *,
+          restaurant:restaurants(id, name, slug, logo_url, address, phone),
+          items:order_items(*)
+        `)
+        .eq('customer_id', userId)
+        .in('status', ['delivered', 'completed', 'cancelled'])
+        .order('created_at', { ascending: false })
+        .range(from, to);
+
+      if (ordersErr) {
+        console.warn('Direct getCustomerOrderHistoryPaginated error, using resilient fallback:', ordersErr);
+        const { data: fallbackOrders, error: fbErr } = await supabase
+          .from('orders')
+          .select('*, items:order_items(*)')
+          .eq('customer_id', userId)
+          .in('status', ['delivered', 'completed', 'cancelled'])
+          .order('created_at', { ascending: false })
+          .range(from, to);
+
+        if (fbErr || !fallbackOrders) {
+          throw fbErr || new Error('Failed to load customer order history.');
+        }
+
+        const hasMore = fallbackOrders.length > pageSize;
+        const pageItems = hasMore ? fallbackOrders.slice(0, pageSize) : fallbackOrders;
+        const restIds = [...new Set(pageItems.map((o) => o.restaurant_id).filter(Boolean))];
+        let restMap: Record<string, any> = {};
+        if (restIds.length > 0) {
+          const { data: rests } = await supabase
+            .from('restaurants')
+            .select('id, name, slug, logo_url, address, phone')
+            .in('id', restIds);
+          if (rests) {
+            restMap = rests.reduce((acc: any, r: any) => ({ ...acc, [r.id]: r }), {});
+          }
+        }
+
+        const formatted = pageItems.map((o) => ({
+          ...o,
+          restaurant: restMap[o.restaurant_id] || null,
+        })) as Order[];
+
+        return {
+          orders: formatted,
+          hasMore,
+          nextPage: hasMore ? page + 1 : null,
+        };
+      }
+
+      const list = (rawOrders as Order[]) || [];
+      const hasMore = list.length > pageSize;
+      const pageItems = hasMore ? list.slice(0, pageSize) : list;
+
+      return {
+        orders: pageItems,
+        hasMore,
+        nextPage: hasMore ? page + 1 : null,
+      };
+    } catch (e) {
+      console.warn('getCustomerOrderHistoryPaginated failed:', e);
+      return { orders: [], hasMore: false, nextPage: null };
+    }
   },
 
   // 7. 3-Stage Progress Mapper
@@ -630,8 +948,15 @@ export const marketplaceService = {
           description: 'This order was cancelled.',
           badgeColor: '#EF4444',
         };
-      case 'confirmed':
+      case 'kot_generated':
       case 'preparing':
+        return {
+          stage: 'ordered',
+          label: 'Preparing in Kitchen',
+          description: 'The kitchen is preparing your delicious meal.',
+          badgeColor: '#3B82F6',
+        };
+      case 'confirmed':
       case 'ready':
       default:
         return {
@@ -645,27 +970,63 @@ export const marketplaceService = {
 
   // 8. Get Single Order Details (Isolated to customer)
   async getOrderDetails(orderId: string): Promise<Order | null> {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) throw new Error('Authentication required.');
+    const userId = await this.getAuthUserId();
+    if (!userId) throw new Error('Authentication required.');
 
-    const { data, error } = await supabase
-      .from('orders')
-      .select(`
-        *,
-        restaurant:restaurant_id(id, name, slug, logo_url, address, phone),
-        items:order_items(*)
-      `)
-      .eq('id', orderId)
-      .eq('customer_id', user.id)
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select(`
+          *,
+          restaurant:restaurants(id, name, slug, logo_url, address, phone),
+          items:order_items(*)
+        `)
+        .eq('id', orderId)
+        .eq('customer_id', userId)
+        .maybeSingle();
 
-    if (error) {
-      console.warn('Error fetching order details:', error);
+      if (error) {
+        console.warn('Direct getOrderDetails query error, using fallback:', error);
+        const { data: fbData, error: fbErr } = await supabase
+          .from('orders')
+          .select('*, items:order_items(*)')
+          .eq('id', orderId)
+          .eq('customer_id', userId)
+          .maybeSingle();
+
+        if (fbErr || !fbData) return null;
+
+        if (fbData.restaurant_id) {
+          const { data: rest } = await supabase
+            .from('restaurants')
+            .select('id, name, slug, logo_url, address, phone')
+            .eq('id', fbData.restaurant_id)
+            .maybeSingle();
+          return {
+            ...fbData,
+            restaurant: rest || null,
+          } as Order;
+        }
+        return fbData as Order;
+      }
+
+      if (data && !data.restaurant && data.restaurant_id) {
+        const { data: rest } = await supabase
+          .from('restaurants')
+          .select('id, name, slug, logo_url, address, phone')
+          .eq('id', data.restaurant_id)
+          .maybeSingle();
+        return {
+          ...data,
+          restaurant: rest || null,
+        } as Order;
+      }
+
+      return data as Order | null;
+    } catch (err) {
+      console.error('getOrderDetails exception:', err);
       return null;
     }
-    return data as any;
   },
 
   // 9. Cancel Customer Order (Before preparation)
@@ -718,22 +1079,20 @@ export const marketplaceService = {
 
   // 12. Prepare Reorder (Validates current prices and product availability)
   async prepareReorder(orderId: string): Promise<ReorderResult> {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) throw new Error('Authentication required.');
+    const userId = await this.getAuthUserId();
+    if (!userId) throw new Error('Authentication required.');
 
     // Fetch original order with items
     const { data: order, error: orderErr } = await supabase
       .from('orders')
       .select(`
         id, restaurant_id,
-        restaurant:restaurant_id(id, name, status),
+        restaurant:restaurants(id, name, status),
         items:order_items(*)
       `)
       .eq('id', orderId)
-      .eq('customer_id', user.id)
-      .single();
+      .eq('customer_id', userId)
+      .maybeSingle();
 
     if (orderErr || !order) {
       throw new Error('Order not found for reorder.');

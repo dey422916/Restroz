@@ -1,3 +1,4 @@
+import { createClient } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import {
   StaffMemberWithDetails,
@@ -135,48 +136,49 @@ export const staffService = {
     const cleanEmail = staffData.email.trim().toLowerCase();
     const cleanName = staffData.full_name.trim();
 
-    // 1. Check Plan Staff Limit if creating STAFF
+    // 1. Check Plan Limits (2 Admins, 3 Staff minimum across all plans)
     if (memberRole === 'STAFF') {
       const limitCheck = await subscriptionGuardService.checkPlanLimit(restaurantId, 'STAFF', 1);
       if (!limitCheck.allowed) {
         throw new Error(limitCheck.message || 'Staff limit reached for your current plan. Please upgrade to add more staff.');
       }
+    } else if (memberRole === 'ADMIN' && isSupabaseConfigured) {
+      try {
+        const { count: adminCount } = await supabase
+          .from('restaurant_members')
+          .select('*', { count: 'exact', head: true })
+          .eq('restaurant_id', restaurantId)
+          .eq('role', 'ADMIN')
+          .eq('is_active', true);
+
+        if ((adminCount || 0) >= 2) {
+          const { data: existingProf } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('email', cleanEmail)
+            .maybeSingle();
+
+          let isExistingMember = false;
+          if (existingProf) {
+            const { data: mem } = await supabase
+              .from('restaurant_members')
+              .select('id')
+              .eq('restaurant_id', restaurantId)
+              .eq('user_id', existingProf.id)
+              .maybeSingle();
+            if (mem) isExistingMember = true;
+          }
+
+          if (!isExistingMember) {
+            throw new Error(`Admin limit reached: You can have up to 2 Admin accounts per restaurant.`);
+          }
+        }
+      } catch (err: any) {
+        if (err.message?.includes('Admin limit reached')) throw err;
+      }
     }
 
     if (isSupabaseConfigured) {
-      try {
-        // Attempt Server-Side RPC Provisioning first (Bypasses email rate limit, confirms immediately)
-        const { data: rpcData, error: rpcErr } = await supabase.rpc('provision_privileged_user', {
-          p_restaurant_id: restaurantId,
-          p_email: cleanEmail,
-          p_password: staffData.password || (memberRole === 'ADMIN' ? 'Ratnadeep1@' : 'Staff12345!'),
-          p_full_name: cleanName,
-          p_phone: staffData.phone?.trim() || null,
-          p_role: memberRole,
-          p_preset: staffData.preset || null,
-          p_permissions: staffData.permissions || null,
-        });
-
-        if (!rpcErr && rpcData?.user_id) {
-          return {
-            success: true,
-            member_id: rpcData.member_id,
-            message: `${memberRole === 'ADMIN' ? 'Admin' : 'Staff'} member provisioned successfully.`,
-          };
-        }
-
-        if (rpcErr) {
-          if (rpcErr.message?.includes('already an active member')) {
-            throw new Error(`This user (${cleanEmail}) is already an active member of this restaurant.`);
-          }
-          console.warn('provision_privileged_user RPC failed, evaluating fallback:', rpcErr.message);
-        }
-      } catch (rpcEx: any) {
-        if (rpcEx.message?.includes('already an active member') || rpcEx.message?.includes('Forbidden') || rpcEx.message?.includes('Unauthorized')) {
-          throw rpcEx;
-        }
-      }
-
       try {
         // Find or check existing profile by email
         let targetUserId: string | null = null;
@@ -193,7 +195,18 @@ export const staffService = {
         // If user does not exist, create auth user
         if (!targetUserId) {
           const tempPassword = staffData.password || (memberRole === 'ADMIN' ? 'Ratnadeep1@' : 'Staff12345!');
-          const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+          const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://szpjsibrwxegaopcaukb.supabase.co';
+          const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_Jh0O9Why0grSgCb3WjjpYQ_Uwj7RclD';
+
+          const tempClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+            auth: {
+              persistSession: false,
+              autoRefreshToken: false,
+              detectSessionInUrl: false,
+            },
+          });
+
+          const { data: signUpData, error: signUpErr } = await tempClient.auth.signUp({
             email: cleanEmail,
             password: tempPassword,
             options: {
@@ -205,16 +218,34 @@ export const staffService = {
           });
 
           if (signUpErr) {
-            if (signUpErr.message.includes('rate limit') || signUpErr.message.includes('over_email_send_rate_limit')) {
+            if (signUpErr.message.toLowerCase().includes('rate limit') || signUpErr.message.toLowerCase().includes('over_email_send_rate_limit')) {
               throw new Error(
                 'Email provisioning rate limit reached. Please provision via database migration or assign an existing registered user.'
               );
             }
-            if (!signUpErr.message.includes('already registered')) {
+            if (!signUpErr.message.toLowerCase().includes('already registered') && !signUpErr.message.toLowerCase().includes('already exists')) {
               throw new Error(`Failed to create account: ${signUpErr.message}`);
             }
+            // Fetch existing user ID if already registered
+            const { data: retryProf } = await supabase
+              .from('profiles')
+              .select('id')
+              .eq('email', cleanEmail)
+              .maybeSingle();
+            targetUserId = retryProf?.id || null;
+          } else if (signUpData?.user?.id) {
+            targetUserId = signUpData.user.id;
           }
-          targetUserId = signUpData.user?.id || null;
+        }
+
+        if (!targetUserId) {
+          // Final attempt to find profile
+          const { data: lastRetry } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('email', cleanEmail)
+            .maybeSingle();
+          targetUserId = lastRetry?.id || null;
         }
 
         if (!targetUserId) {
@@ -227,7 +258,7 @@ export const staffService = {
           .select('id, is_active, role')
           .eq('restaurant_id', restaurantId)
           .eq('user_id', targetUserId)
-          .single();
+          .maybeSingle();
 
         let memberId: string;
         if (existingMember) {
@@ -411,7 +442,7 @@ export const staffService = {
           `)
           .eq('user_id', userId)
           .eq('restaurant_id', restaurantId)
-          .single();
+          .maybeSingle();
 
         if (member) {
           if (member.role === 'ADMIN') {

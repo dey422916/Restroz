@@ -181,9 +181,9 @@ async function runPasswordResetLiveVerification() {
     const logsSanitized = (auditEntries || []).every(e => {
       const detailsStr = JSON.stringify(e.details || {});
       return !detailsStr.includes(oldAdminPassword) &&
-             !detailsStr.includes(newAdminPassword) &&
-             !detailsStr.includes(oldStaffPassword) &&
-             !detailsStr.includes(newStaffPassword);
+        !detailsStr.includes(newAdminPassword) &&
+        !detailsStr.includes(oldStaffPassword) &&
+        !detailsStr.includes(newStaffPassword);
     });
 
     record('11. Audit logs record action without storing any password', logsSanitized, `Checked ${auditEntries?.length} audit log entries`);

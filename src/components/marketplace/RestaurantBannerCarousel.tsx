@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
-  Image,
   Text,
   StyleSheet,
   TouchableOpacity,
@@ -10,6 +9,7 @@ import {
   NativeScrollEvent,
   useWindowDimensions,
 } from 'react-native';
+import { OptimizedImage } from '../common/OptimizedImage';
 
 interface RestaurantBannerCarouselProps {
   images: string[];
@@ -127,7 +127,7 @@ export const RestaurantBannerCarousel: React.FC<RestaurantBannerCarouselProps> =
       {/* Restaurant Title & Logo Row */}
       <View style={styles.titleRow}>
         {logoUrl ? (
-          <Image source={{ uri: logoUrl }} style={styles.logoImg} resizeMode="contain" />
+          <OptimizedImage source={logoUrl} type="logo" style={styles.logoImg} contentFit="contain" />
         ) : null}
         <Text style={[styles.restaurantTitle, isMobile && { fontSize: 20 }]} numberOfLines={1}>
           {restaurantName}
@@ -193,12 +193,13 @@ export const RestaurantBannerCarousel: React.FC<RestaurantBannerCarouselProps> =
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-        {/* Background Image Layer - Absolute Fill */}
-        <Image
+        {/* Background Image Layer - Absolute Fill with Memory & Disk Caching */}
+        <OptimizedImage
           key={`hero-img-${currentIndex}-${currentImageUri}`}
-          source={{ uri: currentImageUri }}
+          source={currentImageUri}
+          type="banner"
           style={[StyleSheet.absoluteFillObject, styles.slideImage]}
-          resizeMode="cover"
+          contentFit="cover"
         />
 
         {/* Dark Gradient Overlay for Maximum Readability */}

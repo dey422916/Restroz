@@ -4,23 +4,48 @@ import { supabase, isSupabaseConfigured } from '../supabase';
 import { CsvProductRow } from '../../utils/validators';
 import { DEFAULT_RESTAURANT_ID } from './restaurantService';
 import { subscriptionGuardService } from './subscriptionGuardService';
+import { storageService } from './storageService';
+
+// High-performance in-memory cache for products per tenant (15s TTL)
+const inMemoryProductsCache: Record<string, { timestamp: number; data: Product[] }> = {};
+const PRODUCTS_CACHE_TTL = 15 * 1000;
+
+export function clearProductsCache(restaurantId?: string) {
+  if (restaurantId) {
+    delete inMemoryProductsCache[restaurantId];
+  } else {
+    Object.keys(inMemoryProductsCache).forEach((k) => delete inMemoryProductsCache[k]);
+  }
+}
 
 export const productService = {
-  async getProducts(restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<Product[]> {
+  clearProductsCache,
+
+  async getProducts(restaurantId: string = DEFAULT_RESTAURANT_ID, forceRefresh: boolean = false): Promise<Product[]> {
+    const targetRestId = restaurantId || DEFAULT_RESTAURANT_ID;
+    const now = Date.now();
+    if (!forceRefresh && inMemoryProductsCache[targetRestId] && (now - inMemoryProductsCache[targetRestId].timestamp < PRODUCTS_CACHE_TTL)) {
+      return inMemoryProductsCache[targetRestId].data;
+    }
+
     if (isSupabaseConfigured) {
       try {
         let query = supabase
           .from('products')
-          .select('*')
+          .select('id, restaurant_id, category_id, category_name, name, description, price, discounted_price, tax_rate, is_active, is_available, food_type, image_url, sku, stock_quantity, unit, preparation_time_mins, hsn_code')
           .order('name', { ascending: true });
 
-        if (restaurantId) {
-          query = query.eq('restaurant_id', restaurantId);
+        if (targetRestId) {
+          query = query.eq('restaurant_id', targetRestId);
         }
 
         const { data, error } = await query;
         if (!error && data) {
-          const list = (data as Product[]).map(p => ({ ...p, restaurant_id: p.restaurant_id || restaurantId }));
+          const list = (data as Product[]).map(p => ({ ...p, restaurant_id: p.restaurant_id || targetRestId }));
+          inMemoryProductsCache[targetRestId] = {
+            timestamp: now,
+            data: list,
+          };
           mockStorage.saveProducts(list);
           return list;
         }
@@ -28,7 +53,12 @@ export const productService = {
         console.warn('Supabase fetch products failed, using local cache:', e);
       }
     }
-    return mockStorage.getProducts();
+    const local = mockStorage.getProducts();
+    inMemoryProductsCache[targetRestId] = {
+      timestamp: now,
+      data: local,
+    };
+    return local;
   },
 
   async saveProduct(product: Partial<Product>, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<Product> {
@@ -103,7 +133,11 @@ export const productService = {
       hsn_code: product.hsn_code || '996331',
       preparation_time_mins: product.preparation_time_mins ? Number(product.preparation_time_mins) : 15,
       image_url:
-        product.image_url ||
+        (await storageService.ensureCdnUrl(
+          product.image_url,
+          'product-images',
+          `restaurants/${targetRestId}/products/${product.id || 'new'}`
+        )) ||
         'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=600&q=80',
       description: product.description ? product.description.trim() : null,
       is_available: product.is_available ?? (stock > 0),

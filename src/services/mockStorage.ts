@@ -319,16 +319,36 @@ export const mockStorage = {
     AsyncStorage.setItem(COUPONS_KEY, JSON.stringify(coups)).catch(() => {});
   },
 
-  getOrders: (): Order[] => inMemoryData[ORDERS_KEY],
-  saveOrders: (orders: Order[]) => {
-    inMemoryData[ORDERS_KEY] = orders;
-    AsyncStorage.setItem(ORDERS_KEY, JSON.stringify(orders)).catch(() => {});
+  getOrders: (restaurantId?: string): Order[] => {
+    const list = inMemoryData[ORDERS_KEY] || [];
+    if (!restaurantId) return list;
+    return list.filter((o: Order) => o.restaurant_id === restaurantId);
+  },
+  saveOrders: (orders: Order[], restaurantId?: string) => {
+    if (restaurantId) {
+      const existing = (inMemoryData[ORDERS_KEY] || []).filter((o: Order) => o.restaurant_id !== restaurantId);
+      const scoped = orders.filter((o: Order) => o.restaurant_id === restaurantId);
+      inMemoryData[ORDERS_KEY] = [...scoped, ...existing];
+    } else {
+      inMemoryData[ORDERS_KEY] = orders;
+    }
+    AsyncStorage.setItem(ORDERS_KEY, JSON.stringify(inMemoryData[ORDERS_KEY])).catch(() => {});
   },
 
-  getKots: (): KOT[] => inMemoryData[KOTS_KEY],
-  saveKots: (kots: KOT[]) => {
-    inMemoryData[KOTS_KEY] = kots;
-    AsyncStorage.setItem(KOTS_KEY, JSON.stringify(kots)).catch(() => {});
+  getKots: (restaurantId?: string): KOT[] => {
+    const list = inMemoryData[KOTS_KEY] || [];
+    if (!restaurantId) return list;
+    return list.filter((k: KOT) => k.restaurant_id === restaurantId);
+  },
+  saveKots: (kots: KOT[], restaurantId?: string) => {
+    if (restaurantId) {
+      const existing = (inMemoryData[KOTS_KEY] || []).filter((k: KOT) => k.restaurant_id !== restaurantId);
+      const scoped = kots.filter((k: KOT) => k.restaurant_id === restaurantId);
+      inMemoryData[KOTS_KEY] = [...scoped, ...existing];
+    } else {
+      inMemoryData[KOTS_KEY] = kots;
+    }
+    AsyncStorage.setItem(KOTS_KEY, JSON.stringify(inMemoryData[KOTS_KEY])).catch(() => {});
   },
 
   getProfiles: (): UserProfile[] => inMemoryData[PROFILES_KEY],

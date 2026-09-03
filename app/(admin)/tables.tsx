@@ -13,6 +13,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Dimensions,
+  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { tableService } from '../../src/services/api/tableService';
@@ -23,6 +24,7 @@ import { TableQRModal } from '../../src/components/admin/TableQRModal';
 
 export default function TablesScreen() {
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
   const { activeRestaurantId, activeRestaurant } = useAuth();
   const { settings } = useSettings();
   const [tables, setTables] = useState<DiningTable[]>([]);
@@ -300,6 +302,7 @@ export default function TablesScreen() {
         <TextInput
           style={styles.searchInput}
           placeholder="Search by table number or section..."
+          placeholderTextColor="#64748b"
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
@@ -360,11 +363,23 @@ export default function TablesScreen() {
                 const isOccupied = table.status === 'occupied';
                 const isReserved = table.status === 'reserved';
 
+                const responsiveCardStyle =
+                  Platform.OS === 'web'
+                    ? windowWidth >= 960
+                      ? styles.cardWeb4Col
+                      : windowWidth >= 640
+                      ? styles.cardWeb3Col
+                      : styles.cardWeb2Col
+                    : windowWidth >= 960
+                    ? styles.cardNative4Col
+                    : styles.cardNative2Col;
+
                 return (
                   <View
                     key={table.id}
                     style={[
                       styles.card,
+                      responsiveCardStyle,
                       !table.is_active && styles.cardInactive,
                     ]}
                   >
@@ -811,13 +826,15 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   searchInput: {
-    backgroundColor: '#f1f5f9',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#94a3b8',
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 12,
+    paddingVertical: 9,
+    fontSize: 13,
+    color: '#0f172a',
+    fontWeight: '500',
     marginBottom: 8,
   },
   sectionScroll: {
@@ -868,12 +885,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
-    justifyContent: 'space-between',
   },
   card: {
-    width: '48%',
-    minWidth: 150,
-    flexGrow: 1,
     backgroundColor: '#ffffff',
     borderRadius: 16,
     padding: 12,
@@ -884,6 +897,34 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 6,
+  },
+  cardWeb4Col: {
+    width: 'calc(25% - 8px)' as any,
+    flexBasis: 'calc(25% - 8px)' as any,
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  cardWeb3Col: {
+    width: 'calc(33.333% - 7px)' as any,
+    flexBasis: 'calc(33.333% - 7px)' as any,
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  cardWeb2Col: {
+    width: 'calc(50% - 5px)' as any,
+    flexBasis: 'calc(50% - 5px)' as any,
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  cardNative4Col: {
+    flexBasis: '23.5%',
+    maxWidth: '24%',
+    flexGrow: 1,
+  },
+  cardNative2Col: {
+    width: '48%',
+    minWidth: 150,
+    flexGrow: 1,
   },
   cardInactive: {
     opacity: 0.65,

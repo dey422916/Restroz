@@ -72,6 +72,7 @@ export interface RestaurantSettings {
   kot_paper_size?: PaperSize;
   bill_paper_size?: PaperSize;
   auto_print_kot?: boolean;
+  online_orders_enabled?: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -314,6 +315,8 @@ export interface DayRegister {
   upi_sales: number;
   card_sales: number;
   digital_sales?: number;
+  refunds?: number;
+  cash_out?: number;
   total_sales: number;
   expected_cash: number;
   actual_cash_counted?: number;

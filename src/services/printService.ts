@@ -1,6 +1,7 @@
 import { Order, KOT, RestaurantSettings, OrderItem } from '../types';
 import { formatCurrency, numberToWords } from '../utils/currency';
 import { getOrderSubtotal } from '../utils/gst';
+import { cleanCustomerOrderNotes } from '../utils/orderNotes';
 import { supabase } from './supabase';
 
 const isWebEnvironment = typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -324,11 +325,11 @@ export const printService = {
           </table>
 
           ${
-            order.notes
+            cleanCustomerOrderNotes(order.notes)
               ? `
             <div class="dashed"></div>
             <div style="font-size: ${is58 ? '10px' : '11px'}; margin: 4px 0;">
-              <b>Notes:</b> ${order.notes}
+              <b>Notes:</b> ${cleanCustomerOrderNotes(order.notes)}
             </div>
           `
               : ''

@@ -15,6 +15,7 @@ import {
   Alert,
   Modal,
   ActivityIndicator,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,6 +27,7 @@ import { usePos } from '../../src/context/PosContext';
 import { useSettings } from '../../src/context/SettingsContext';
 import { useNotification } from '../../src/context/NotificationContext';
 import { useAuth } from '../../src/context/AuthContext';
+import { RegisterClosedError } from '../../src/context/PosContext';
 import { formatCurrency, numberToWords } from '../../src/utils/currency';
 import { getOrderSubtotal } from '../../src/utils/gst';
 import { printService } from '../../src/services/printService';
@@ -33,12 +35,15 @@ import { TableSelectorModal } from '../../src/components/pos/TableSelectorModal'
 import { SplitBillModal } from '../../src/components/pos/SplitBillModal';
 import { HoldOrdersModal } from '../../src/components/pos/HoldOrdersModal';
 import { PaymentModal } from '../../src/components/pos/PaymentModal';
+import { isValidPhoneNumber } from '../../src/utils/phone';
 
 export default function PosScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { settings } = useSettings();
+  const { settings, isOnlineOrdersEnabled, toggleOnlineOrders } = useSettings();
+  const { user, role, isSuperAdmin, activeRestaurantId, activeRestaurant, hasPermission } = useAuth();
   const { showToast } = useNotification();
+  const [togglingOnline, setTogglingOnline] = useState<boolean>(false);
   const {
     cartItems,
     orderType,
@@ -120,7 +125,6 @@ export default function PosScreen() {
 
   const isWideDesktop = windowWidth >= 1200;
   const isTablet = windowWidth >= 768;
-  const { activeRestaurantId, activeRestaurant } = useAuth();
 
   // Load products, categories, and dining tables
   const loadInitialData = async () => {
@@ -350,7 +354,7 @@ export default function PosScreen() {
         setPosStep('choose_type');
         setMobileTab('menu');
         showToast('success', 'Order & KOT Dispatched!', `Order #${ord.order_number} updated in kitchen.`);
-        router.push('/(admin)/orders' as any);
+        router.push({ pathname: '/(admin)/orders', params: { openOrderId: ord.id } } as any);
       } else {
         // Brand new order creation
         ord = await confirmOrder();
@@ -362,14 +366,18 @@ export default function PosScreen() {
         setPosStep('choose_type');
         setMobileTab('menu');
         showToast('success', 'Order & KOT Dispatched!', `Order #${ord.order_number} sent to kitchen.`);
-        // Automatically redirect to Orders Feed
-        router.push('/(admin)/orders' as any);
+        // Automatically redirect to Orders Feed and open the exact order
+        router.push({ pathname: '/(admin)/orders', params: { openOrderId: ord.id } } as any);
       }
       // Refresh table list
       tableService.getTables().then(setTables);
     } catch (e: any) {
-      console.error('>>> [POS] handleSendKotAction caught error:', e);
-      Alert.alert('Validation Error', e.message);
+      // Distinguish expected register closed validation from unexpected errors
+      if (e instanceof RegisterClosedError || e?.code === 'REGISTER_CLOSED') {
+        Alert.alert('Register Closed', e.message);
+      } else {
+        Alert.alert('Required Information', e.message || 'Unable to place order.');
+      }
     } finally {
       setIsSendingKot(false);
     }
@@ -463,6 +471,25 @@ export default function PosScreen() {
 
   const numColumns = isWideDesktop ? 5 : isTablet ? 4 : 2;
 
+  // Uniform card width calculation to ensure last row items match previous rows exactly on web
+  const cardWidthStyle = useMemo(() => {
+    if (Platform.OS === 'web') {
+      const gap = 8;
+      const calcWidth = `calc(${100 / numColumns}% - ${(gap * (numColumns - 1)) / numColumns}px)`;
+      return {
+        width: calcWidth as any,
+        maxWidth: calcWidth as any,
+        minWidth: calcWidth as any,
+        flexGrow: 0,
+        flexShrink: 0,
+        flexBasis: calcWidth as any,
+      };
+    }
+    return {
+      maxWidth: `${100 / numColumns}%` as any,
+    };
+  }, [numColumns]);
+
   // ============================================================
   // STEP 1: ORDER TYPE FIRST CHOOSER SCREEN
   // ============================================================
@@ -487,7 +514,9 @@ export default function PosScreen() {
             </Text>
           </View>
         )}
-        <Text style={styles.chooserBrandName}>{activeRestaurant?.name || settings.name || 'Restaurant POS'}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
+          <Text style={styles.chooserBrandName}>{activeRestaurant?.name || settings.name || 'Restaurant POS'}</Text>
+        </View>
         <Text style={styles.chooserSubTitle}>POS Billing & Terminal System</Text>
       </View>
 
@@ -634,6 +663,7 @@ export default function PosScreen() {
           <TextInput
             style={styles.tableSearchInput}
             placeholder="🔍 Search table number or floor..."
+            placeholderTextColor="#64748b"
             value={tableSearchQuery}
             onChangeText={setTableSearchQuery}
           />
@@ -693,19 +723,31 @@ export default function PosScreen() {
                 tableOrderMap.get(t.table_number.toLowerCase().trim());
               const isOccupied = Boolean(activeOrd);
 
+              const responsiveCardStyle =
+                Platform.OS === 'web'
+                  ? windowWidth >= 960
+                    ? styles.tableCardWeb4Col
+                    : windowWidth >= 640
+                    ? styles.tableCardWeb3Col
+                    : styles.tableCardWeb2Col
+                  : windowWidth >= 960
+                  ? styles.tableCardNative4Col
+                  : styles.tableCardNative2Col;
+
               return (
                 <View
                   key={t.id}
                   style={[
                     styles.tableCard,
+                    responsiveCardStyle,
                     isOccupied ? styles.tableCardOccupied : styles.tableCardAvailable,
                   ]}
                 >
                   {/* Table Card Top */}
                   <View style={styles.tableCardTopRow}>
-                    <View>
-                      <Text style={styles.tableCardNumber}>{t.table_number}</Text>
-                      <Text style={styles.tableCardSection}>{t.section}</Text>
+                    <View style={{ flex: 1, marginRight: 6 }}>
+                      <Text style={styles.tableCardNumber} numberOfLines={1}>{t.table_number}</Text>
+                      <Text style={styles.tableCardSection} numberOfLines={1}>{t.section}</Text>
                     </View>
                     <View
                       style={[
@@ -718,6 +760,7 @@ export default function PosScreen() {
                           styles.tableStatusBadgeText,
                           isOccupied ? styles.statusTextOccupied : styles.statusTextAvailable,
                         ]}
+                        numberOfLines={1}
                       >
                         {isOccupied ? '🔴 OCCUPIED' : '🟢 AVAILABLE'}
                       </Text>
@@ -730,16 +773,16 @@ export default function PosScreen() {
                   {/* Active Order Summary (if occupied) */}
                   {isOccupied && activeOrd ? (
                     <View style={styles.tableActiveOrderBox}>
-                      <Text style={styles.tableActiveOrderTitle}>
+                      <Text style={styles.tableActiveOrderTitle} numberOfLines={1}>
                         #{activeOrd.order_number}
                       </Text>
-                      <Text style={styles.tableActiveOrderVal}>
+                      <Text style={styles.tableActiveOrderVal} numberOfLines={1}>
                         {formatCurrency(activeOrd.payable_amount)} • {activeOrd.items?.length || 0} items
                       </Text>
                     </View>
                   ) : (
                     <View style={styles.tableEmptyBox}>
-                      <Text style={styles.tableEmptyBoxText}>Ready for new guests</Text>
+                      <Text style={styles.tableEmptyBoxText} numberOfLines={1}>Ready for new guests</Text>
                     </View>
                   )}
 
@@ -753,7 +796,7 @@ export default function PosScreen() {
                       ]}
                       onPress={() => handleSelectTableAction(t)}
                     >
-                      <Text style={styles.tableSelectBtnText}>
+                      <Text style={styles.tableSelectBtnText} numberOfLines={1}>
                         {isOccupied ? '➕ Add Items' : '🪑 Select Table'}
                       </Text>
                     </TouchableOpacity>
@@ -762,7 +805,7 @@ export default function PosScreen() {
                       style={styles.tableViewOrderBtn}
                       onPress={() => handleViewCurrentOrderAction(t)}
                     >
-                      <Text style={styles.tableViewOrderBtnText}>👁️ View Order</Text>
+                      <Text style={styles.tableViewOrderBtnText} numberOfLines={1}>👁️ View Order</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -827,20 +870,32 @@ export default function PosScreen() {
             <TextInput
               style={styles.custInput}
               placeholder="Customer Name *"
+              placeholderTextColor="#64748b"
               value={customerInfo.name}
               onChangeText={(v) => setCustomerInfo({ name: v })}
             />
             <TextInput
               style={styles.custInput}
-              placeholder="Phone Number *"
+              placeholder={orderType === 'delivery' ? 'Phone Number *' : 'Phone Number (Optional)'}
+              placeholderTextColor="#64748b"
               value={customerInfo.phone}
               keyboardType="phone-pad"
-              onChangeText={(v) => setCustomerInfo({ phone: v })}
+              maxLength={13}
+              onChangeText={(v) => {
+                const cleaned = v.replace(/[^\d+]/g, '');
+                setCustomerInfo({ phone: cleaned });
+              }}
             />
+            {Boolean(customerInfo.phone && !isValidPhoneNumber(customerInfo.phone)) && (
+              <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: -2, marginBottom: 2 }}>
+                ⚠️ Enter a valid 10-digit mobile number
+              </Text>
+            )}
             {orderType === 'delivery' && (
               <TextInput
-                style={[styles.custInput, { height: 40 }]}
+                style={[styles.custInput, { minHeight: 44 }]}
                 placeholder="Delivery Address *"
+                placeholderTextColor="#64748b"
                 value={customerInfo.address || ''}
                 onChangeText={(v) => setCustomerInfo({ address: v })}
               />
@@ -977,7 +1032,7 @@ export default function PosScreen() {
               <TextInput
                 style={styles.posDiscountInput}
                 placeholder={discountType === 'percentage' ? 'Custom % (e.g. 10)' : 'Custom ₹ (e.g. 75)'}
-                placeholderTextColor="#94a3b8"
+                placeholderTextColor="#64748b"
                 keyboardType="numeric"
                 value={discountInputValue}
                 onChangeText={(text) => {
@@ -1004,6 +1059,7 @@ export default function PosScreen() {
               <TextInput
                 style={[styles.custInput, { flex: 1, textTransform: 'uppercase' } as any]}
                 placeholder="Coupon Code"
+                placeholderTextColor="#64748b"
                 value={couponCodeInput}
                 onChangeText={setCouponCodeInput}
               />
@@ -1254,6 +1310,7 @@ export default function PosScreen() {
               <TextInput
                 style={styles.searchInput}
                 placeholder="Search food item or SKU..."
+                placeholderTextColor="#64748b"
                 value={searchQuery}
                 onChangeText={setSearchQuery}
               />
@@ -1342,7 +1399,7 @@ export default function PosScreen() {
                 return (
                   <TouchableOpacity
                     testID={`pos-product-${item.id}`}
-                    style={[styles.productCard, inCart && styles.productCardInCart]}
+                    style={[styles.productCard, cardWidthStyle, inCart && styles.productCardInCart]}
                     onPress={() => handleProductCardPress(item)}
                     activeOpacity={0.8}
                   >
@@ -1775,6 +1832,32 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#0f172a',
   },
+  posOnlineToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  posOnlineToggleBtnGreen: {
+    backgroundColor: '#ecfdf5',
+    borderColor: '#a7f3d0',
+  },
+  posOnlineToggleBtnRed: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+  },
+  posOnlineToggleBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  posOnlineToggleBtnTextGreen: {
+    color: '#059669',
+  },
+  posOnlineToggleBtnTextRed: {
+    color: '#dc2626',
+  },
   chooserSubTitle: {
     fontSize: 12,
     color: '#64748b',
@@ -2031,13 +2114,15 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   tableSearchInput: {
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#94a3b8',
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 12,
+    paddingVertical: 9,
+    fontSize: 13,
+    color: '#0f172a',
+    fontWeight: '500',
   },
   sectionPillsScroll: {
     flexDirection: 'row',
@@ -2100,11 +2185,9 @@ const styles = StyleSheet.create({
   tablesGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: 12,
   },
   tableCard: {
-    flexBasis: '48%',
-    flexGrow: 1,
     backgroundColor: '#ffffff',
     borderRadius: 14,
     padding: 12,
@@ -2114,6 +2197,34 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06,
     shadowRadius: 4,
+  },
+  tableCardWeb4Col: {
+    width: 'calc(25% - 9px)' as any,
+    flexBasis: 'calc(25% - 9px)' as any,
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  tableCardWeb3Col: {
+    width: 'calc(33.333% - 8px)' as any,
+    flexBasis: 'calc(33.333% - 8px)' as any,
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  tableCardWeb2Col: {
+    width: 'calc(50% - 6px)' as any,
+    flexBasis: 'calc(50% - 6px)' as any,
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  tableCardNative4Col: {
+    flexBasis: '23.5%',
+    maxWidth: '24%',
+    flexGrow: 1,
+  },
+  tableCardNative2Col: {
+    flexBasis: '48%',
+    maxWidth: '49%',
+    flexGrow: 1,
   },
   tableCardAvailable: {
     borderColor: '#bbf7d0',
@@ -2334,12 +2445,14 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
+    borderWidth: 1.5,
+    borderColor: '#94a3b8',
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 7,
-    fontSize: 12,
+    paddingVertical: 9,
+    fontSize: 13,
+    color: '#0f172a',
+    fontWeight: '500',
   },
   catScrollWrapper: {
     marginBottom: 8,
@@ -2402,7 +2515,6 @@ const styles = StyleSheet.create({
   },
   productCard: {
     flex: 1,
-    maxWidth: '50%',
     backgroundColor: '#ffffff',
     borderRadius: 12,
     borderWidth: 1,
@@ -2615,17 +2727,19 @@ const styles = StyleSheet.create({
     color: '#334155',
   },
   customerBox: {
-    gap: 4,
-    marginBottom: 8,
+    gap: 8,
+    marginBottom: 10,
   },
   custInput: {
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#94a3b8',
     borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    fontSize: 11,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 13,
+    color: '#0f172a',
+    fontWeight: '500',
   },
   emptyCartBox: {
     alignItems: 'center',
@@ -2771,13 +2885,14 @@ const styles = StyleSheet.create({
   posDiscountInput: {
     flex: 1,
     backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    fontSize: 11,
+    borderWidth: 1.5,
+    borderColor: '#94a3b8',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 13,
     color: '#0f172a',
+    fontWeight: '500',
   },
   posDiscountAppliedBadge: {
     backgroundColor: '#fee2e2',

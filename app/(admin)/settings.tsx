@@ -12,8 +12,9 @@ import { parseBannerUrls } from '../../src/utils/mediaUtils';
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const { settings, updateSettings, loading: settingsLoading } = useSettings();
+  const { settings, updateSettings, isOnlineOrdersEnabled, toggleOnlineOrders, loading: settingsLoading } = useSettings();
   const { user, role, isSuperAdmin, isAdmin, activeRestaurantId } = useAuth();
+  const [isTogglingOnline, setIsTogglingOnline] = useState(false);
 
   const [name, setName] = useState(settings.name);
   const [legalName, setLegalName] = useState(settings.legal_name || '');
@@ -98,7 +99,7 @@ export default function SettingsScreen() {
     }
     try {
       setIsUploadingLogo(true);
-      const res = await storageService.pickAndUploadLogo();
+      const res = await storageService.pickAndUploadLogo({ restaurantId: activeRestaurantId });
       if (res && res.url) {
         setLogoUrl(res.url);
         const persisted = await updateSettings({ logo_url: res.url });
@@ -148,7 +149,7 @@ export default function SettingsScreen() {
     }
     try {
       setIsUploadingBanner(true);
-      const res = await storageService.pickAndUploadBanner();
+      const res = await storageService.pickAndUploadBanner({ restaurantId: activeRestaurantId });
       if (res && res.url) {
         const updated = [...bannerUrls, res.url];
         setBannerUrls(updated);
@@ -335,12 +336,14 @@ export default function SettingsScreen() {
 
     try {
       setIsCreatingAccount(true);
+      const targetRestId = activeRestaurantId || settings.restaurant_id || settings.id;
       const newUser = await authService.createAdminUser(
         accountEmail,
         accountPassword,
         accountName,
         accountPhone,
-        accountRole
+        accountRole,
+        targetRestId
       );
       Alert.alert(
         'Account Created!',
@@ -573,6 +576,52 @@ export default function SettingsScreen() {
               <Text style={styles.saveBtnText}>SAVE RESTAURANT SETTINGS</Text>
             )}
           </TouchableOpacity>
+        </View>
+
+        {/* Marketplace Online Ordering Status Section */}
+        <View style={[styles.card, { marginTop: 20 }]}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={styles.cardHeader}>🌐 Marketplace Online Ordering</Text>
+              <Text style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+                Control whether this restaurant is open or closed for customer online delivery orders in the Marketplace.
+              </Text>
+            </View>
+            <TouchableOpacity
+              testID="settings-online-orders-toggle"
+              disabled={isTogglingOnline || !canManage}
+              style={[
+                styles.toggleBadge,
+                isOnlineOrdersEnabled ? styles.toggleBadgeOn : styles.toggleBadgeOff,
+                (isTogglingOnline || !canManage) && { opacity: 0.6 },
+              ]}
+              onPress={async () => {
+                if (!canManage) {
+                  Alert.alert('Permission Denied', 'Only Restaurant Admins can change online ordering status.');
+                  return;
+                }
+                setIsTogglingOnline(true);
+                try {
+                  const next = !isOnlineOrdersEnabled;
+                  await toggleOnlineOrders(next);
+                  Alert.alert(
+                    next ? 'Online Orders Enabled' : 'Online Orders Disabled',
+                    next
+                      ? 'Restaurant is now OPEN for customer marketplace orders.'
+                      : 'Restaurant is now CLOSED in customer marketplace. Delivery checkout is blocked.'
+                  );
+                } catch (e: any) {
+                  Alert.alert('Error', e.message || 'Failed to update online ordering status');
+                } finally {
+                  setIsTogglingOnline(false);
+                }
+              }}
+            >
+              <Text style={styles.toggleBadgeText}>
+                {isOnlineOrdersEnabled ? '● OPEN' : '○ CLOSED'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Printer Settings Section */}

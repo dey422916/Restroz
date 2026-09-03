@@ -23,6 +23,7 @@ import { dayRegisterService, getLocalRestaurantDate } from '../../src/services/a
 import { analyticsService } from '../../src/services/api/analyticsService';
 import { useAuth } from '../../src/context/AuthContext';
 import { formatCurrency } from '../../src/utils/currency';
+import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
 import { Order, Product, Category, DayRegister, RestaurantSettings, ItemSalesSummary } from '../../src/types';
 
 export default function DashboardScreen() {
@@ -69,6 +70,52 @@ export default function DashboardScreen() {
   const [submittingClose, setSubmittingClose] = useState<boolean>(false);
   const [liveReconciliation, setLiveReconciliation] = useState<any>(null);
 
+  // Live Register Open Elapsed Timer (HH:MM:SS) derived from Supabase opened_at
+  const [elapsedTimeStr, setElapsedTimeStr] = useState<string>('00:00:00');
+
+  useEffect(() => {
+    if (!activeRegister || !activeRegister.opened_at || activeRegister.status !== 'open') {
+      setElapsedTimeStr('00:00:00');
+      return;
+    }
+
+    const updateTimer = () => {
+      const openedTimestamp = new Date(activeRegister.opened_at).getTime();
+      const now = Date.now();
+      const diffSecs = Math.max(0, Math.floor((now - openedTimestamp) / 1000));
+      const hours = Math.floor(diffSecs / 3600);
+      const minutes = Math.floor((diffSecs % 3600) / 60);
+      const seconds = diffSecs % 60;
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      setElapsedTimeStr(`${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
+    };
+
+    updateTimer();
+    const timerId = setInterval(updateTimer, 1000);
+    return () => clearInterval(timerId);
+  }, [activeRegister]);
+
+  // Formatted Opened Since timestamp string: e.g. 03 Sep 2026, 09:15 AM
+  const formatOpenedSince = (isoString?: string) => {
+    if (!isoString) return 'N/A';
+    try {
+      const d = new Date(isoString);
+      const day = d.getDate().toString().padStart(2, '0');
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const month = months[d.getMonth()];
+      const year = d.getFullYear();
+      let hours = d.getHours();
+      const minutes = d.getMinutes().toString().padStart(2, '0');
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      hours = hours % 12;
+      hours = hours ? hours : 12; // 0 should be 12
+      const formattedHours = hours.toString().padStart(2, '0');
+      return `${day} ${month} ${year}, ${formattedHours}:${minutes} ${ampm}`;
+    } catch {
+      return isoString;
+    }
+  };
+
   // Z-Report Modal
   const [viewingZReport, setViewingZReport] = useState<DayRegister | null>(null);
 
@@ -105,6 +152,36 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     loadData();
+
+    // 1. Live Realtime Orders subscription for instant dashboard metrics updates
+    let channel: any = null;
+    if (isSupabaseConfigured && activeRestaurantId) {
+      const channelName = `sub_dash_orders_${activeRestaurantId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      channel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'orders',
+            filter: `restaurant_id=eq.${activeRestaurantId}`,
+          },
+          async () => {
+            const refreshedOrders = await orderService.getOrders(activeRestaurantId);
+            setOrders(refreshedOrders);
+            const curReg = await dayRegisterService.getCurrentRegister(activeRestaurantId);
+            setActiveRegister(curReg && curReg.status === 'open' ? curReg : null);
+            if (curReg && curReg.status === 'open') {
+              const recon = await dayRegisterService.calculateRegisterReconciliation(curReg);
+              setLiveReconciliation(recon);
+            }
+          }
+        )
+        .subscribe();
+    }
+
+    // 2. Low-frequency 60s background reconciliation fallback (reduced from 6s to eliminate 90% redundant egress)
     const interval = setInterval(async () => {
       if (activeRestaurantId) {
         const refreshedOrders = await orderService.getOrders(activeRestaurantId);
@@ -116,8 +193,14 @@ export default function DashboardScreen() {
           setLiveReconciliation(recon);
         }
       }
-    }, 6000);
-    return () => clearInterval(interval);
+    }, 60000);
+
+    return () => {
+      clearInterval(interval);
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+    };
   }, [activeRestaurantId]);
 
   // Handle Date Presets
@@ -273,46 +356,42 @@ export default function DashboardScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Live Register Status Banner */}
-      <View
-        style={[
-          styles.registerBanner,
-          activeRegister ? styles.registerBannerOpen : styles.registerBannerClosed,
-          isMobile && { flexDirection: 'column', alignItems: 'stretch', gap: 10 },
-        ]}
-      >
-        <View style={styles.registerBannerLeft}>
-          <Text style={{ fontSize: 16 }}>{activeRegister ? '🟢' : '🔴'}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.registerStatusTitle}>
-              {activeRegister ? 'Register OPEN (Active Shift)' : 'Register CLOSED'}
-            </Text>
-            <Text style={styles.registerStatusDesc}>
-              {activeRegister
-                ? `Opened by ${activeRegister.opened_by} • Float: ${formatCurrency(activeRegister.opening_cash_float)} • Live Cash: ${formatCurrency(liveReconciliation?.expected_cash || activeRegister.opening_cash_float)}`
-                : 'Open register with opening float to start POS orders.'}
-            </Text>
+      {/* ========================================================================= */}
+      {/* SIMPLIFIED DASHBOARD REGISTER SECTION                                      */}
+      {/* ========================================================================= */}
+      {activeRegister ? (
+        <View style={[styles.compactRegisterCard, isMobile && styles.compactRegisterCardMobile]}>
+          <View style={styles.compactRegisterLeft}>
+            <Text style={styles.compactRegisterTitle}>REGISTER OPEN FOR</Text>
+            <Text style={styles.compactRegisterTimer}>{elapsedTimeStr}</Text>
           </View>
-        </View>
 
-        <View style={styles.registerBannerActions}>
-          {activeRegister ? (
-            <TouchableOpacity
-              style={[styles.closeRegBtn, isMobile && { width: '100%', alignItems: 'center' }]}
-              onPress={handleInitiateCloseRegister}
-            >
-              <Text style={styles.closeRegBtnText}>🔒 Close Register (Z-Report)</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={[styles.openRegBtn, isMobile && { width: '100%', alignItems: 'center' }]}
-              onPress={() => setShowOpenModal(true)}
-            >
-              <Text style={styles.openRegBtnText}>💵 Open Register Now</Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity
+            testID="dashboard-close-register-btn"
+            style={styles.compactCloseBtn}
+            onPress={handleInitiateCloseRegister}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.compactCloseBtnText}>Close Register</Text>
+          </TouchableOpacity>
         </View>
-      </View>
+      ) : (
+        <View style={[styles.compactRegisterCardClosed, isMobile && styles.compactRegisterCardMobile]}>
+          <View style={styles.compactRegisterLeft}>
+            <Text style={styles.compactRegisterClosedTitle}>REGISTER CLOSED</Text>
+            <Text style={styles.compactRegisterClosedSubtitle}>Open register shift to start POS orders</Text>
+          </View>
+
+          <TouchableOpacity
+            testID="dashboard-open-register-btn"
+            style={styles.compactOpenBtn}
+            onPress={() => setShowOpenModal(true)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.compactOpenBtnText}>Open Register</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Main 3 Navigation Tabs - Scrollable */}
       <View style={styles.tabScrollWrapper}>
@@ -880,12 +959,6 @@ export default function DashboardScreen() {
                       Opened at {new Date(activeRegister.opened_at).toLocaleTimeString()} by {activeRegister.opened_by}
                     </Text>
                   </View>
-                  <TouchableOpacity
-                    style={[styles.closeRegBtn, isMobile && { width: '100%', alignItems: 'center' }]}
-                    onPress={handleInitiateCloseRegister}
-                  >
-                    <Text style={styles.closeRegBtnText}>🔒 Close Register & End Day</Text>
-                  </TouchableOpacity>
                 </View>
 
                 <View style={styles.activeRegGrid}>
@@ -1130,52 +1203,83 @@ export default function DashboardScreen() {
       </Modal>
 
       {/* ========================================================================= */}
-      {/* MODAL 2: CLOSE REGISTER & Z-REPORT SETTLEMENT                             */}
+      {/* MODAL 2: CLOSE REGISTER & RECONCILIATION FLOW                             */}
       {/* ========================================================================= */}
       <Modal visible={showCloseModal} transparent animationType="fade">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { maxWidth: 480 }]}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>🔒 Close Register & End Shift (Z-Report)</Text>
+              <Text style={styles.modalTitle}>🔒 Close Register & Shift Reconciliation</Text>
               <TouchableOpacity onPress={() => setShowCloseModal(false)}>
                 <Text style={{ fontSize: 20, color: '#64748b', fontWeight: 'bold' }}>✕</Text>
               </TouchableOpacity>
             </View>
 
             <Text style={styles.modalDesc}>
-              Reconcile physical cash drawer against system calculated sales.
+              Complete physical cash count and verify shift sales before generating the official Z-Report.
             </Text>
 
-            {/* Reconciliation Snapshot */}
+            {/* Complete Reconciliation Snapshot Grid */}
             <View style={styles.reconCard}>
+              {/* 1. Opening Cash */}
               <View style={styles.reconRow}>
-                <Text style={styles.reconLabel}>Opening Cash Float:</Text>
+                <Text style={styles.reconLabel}>1. Opening Cash:</Text>
                 <Text style={styles.reconVal}>{formatCurrency(activeRegister?.opening_cash_float || 0)}</Text>
               </View>
+
+              {/* 2. Cash Sales */}
               <View style={styles.reconRow}>
-                <Text style={styles.reconLabel}>+ Cash Sales Collected:</Text>
-                <Text style={[styles.reconVal, { color: '#16a34a' }]}>
-                  {formatCurrency(liveReconciliation?.cash_sales || 0)}
+                <Text style={styles.reconLabel}>2. Cash Sales:</Text>
+                <Text style={[styles.reconVal, { color: '#16a34a', fontWeight: '800' }]}>
+                  +{formatCurrency(liveReconciliation?.cash_sales || 0)}
                 </Text>
               </View>
+
+              {/* 3. Card Sales */}
+              <View style={styles.reconRow}>
+                <Text style={styles.reconLabel}>3. Card Sales:</Text>
+                <Text style={[styles.reconVal, { color: '#2563eb' }]}>
+                  {formatCurrency(liveReconciliation?.card_sales || 0)}
+                </Text>
+              </View>
+
+              {/* 4. UPI Sales */}
+              <View style={styles.reconRow}>
+                <Text style={styles.reconLabel}>4. UPI Sales:</Text>
+                <Text style={[styles.reconVal, { color: '#7c3aed' }]}>
+                  {formatCurrency(liveReconciliation?.upi_sales || 0)}
+                </Text>
+              </View>
+
+              {/* 5. Refunds */}
+              <View style={styles.reconRow}>
+                <Text style={styles.reconLabel}>5. Refunds:</Text>
+                <Text style={[styles.reconVal, { color: '#dc2626' }]}>
+                  -{formatCurrency(liveReconciliation?.refunds || 0)}
+                </Text>
+              </View>
+
+              {/* 6. Cash Out / Expenses */}
+              <View style={styles.reconRow}>
+                <Text style={styles.reconLabel}>6. Cash Out / Expenses:</Text>
+                <Text style={[styles.reconVal, { color: '#d97706' }]}>
+                  -{formatCurrency(liveReconciliation?.cash_out || 0)}
+                </Text>
+              </View>
+
+              {/* 7. Expected Cash */}
               <View style={[styles.reconRow, { borderTopWidth: 1, borderColor: '#cbd5e1', paddingTop: 6, marginTop: 4 }]}>
-                <Text style={[styles.reconLabel, { fontWeight: 'bold', color: '#0f172a' }]}>
-                  = Expected Cash in Drawer:
+                <Text style={[styles.reconLabel, { fontWeight: '900', color: '#0f172a', fontSize: 13 }]}>
+                  7. Expected Cash:
                 </Text>
                 <Text style={[styles.reconVal, { fontWeight: '900', color: '#0f172a', fontSize: 15 }]}>
                   {formatCurrency(liveReconciliation?.expected_cash || 0)}
                 </Text>
               </View>
-              <View style={styles.reconRow}>
-                <Text style={styles.reconLabel}>Digital / UPI / Card Sales:</Text>
-                <Text style={[styles.reconVal, { color: '#2563eb' }]}>
-                  {formatCurrency(liveReconciliation?.digital_sales || 0)}
-                </Text>
-              </View>
             </View>
 
             <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>Staff / Manager Closing Register</Text>
+              <Text style={styles.formLabel}>Staff / Manager Closing Shift</Text>
               <TextInput
                 style={styles.formInput}
                 value={closeStaffName}
@@ -1184,22 +1288,26 @@ export default function DashboardScreen() {
               />
             </View>
 
+            {/* 8. Actual Cash Counted Input */}
             <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>Counted Physical Cash in Drawer (₹)</Text>
+              <Text style={[styles.formLabel, { fontWeight: '800', color: '#0f172a' }]}>
+                8. Actual Cash Counted (₹)
+              </Text>
               <TextInput
-                style={styles.formInput}
+                testID="close-register-actual-cash"
+                style={[styles.formInput, { borderColor: '#2563eb', borderWidth: 1.5, backgroundColor: '#ffffff' }]}
                 value={countedCashInput}
                 onChangeText={setCountedCashInput}
                 keyboardType="numeric"
-                placeholder="Enter physical cash counted"
+                placeholder="Enter physical cash counted in drawer"
               />
             </View>
 
-            {/* Discrepancy Indicator */}
+            {/* 9. Difference (Discrepancy) */}
             {(() => {
               const counted = parseFloat(countedCashInput) || 0;
               const expected = liveReconciliation?.expected_cash || 0;
-              const diff = counted - expected;
+              const diff = Math.round((counted - expected) * 100) / 100;
 
               return (
                 <View
@@ -1220,30 +1328,33 @@ export default function DashboardScreen() {
                     ]}
                   >
                     {diff === 0
-                      ? '✓ Cash Drawer Perfectly Balanced'
+                      ? '9. Difference: ₹0.00 (Balanced Perfectly ✓)'
                       : diff > 0
-                      ? `🟢 Cash Over (Excess): +${formatCurrency(diff)}`
-                      : `🔴 Cash Shortage: -${formatCurrency(Math.abs(diff))}`}
+                      ? `9. Difference: +${formatCurrency(diff)} (Cash Over / Excess)`
+                      : `9. Difference: -${formatCurrency(Math.abs(diff))} (Cash Shortage)`}
                   </Text>
                 </View>
               );
             })()}
 
+            {/* 10. Notes */}
             <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>Closing Notes (Optional)</Text>
+              <Text style={styles.formLabel}>10. Notes / Handover Details</Text>
               <TextInput
                 style={styles.formInput}
                 value={closeNotes}
                 onChangeText={setCloseNotes}
-                placeholder="e.g. Handed over to night manager"
+                placeholder="e.g. Handed over to night manager / cash audited"
               />
             </View>
 
+            {/* 11. Confirm & Close Register Button */}
             <View style={styles.modalActionRow}>
               <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowCloseModal(false)}>
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
+                testID="confirm-close-register-btn"
                 style={[styles.submitBtn, { backgroundColor: '#dc2626' }]}
                 onPress={handleCloseRegisterSubmit}
                 disabled={submittingClose}
@@ -1251,7 +1362,7 @@ export default function DashboardScreen() {
                 {submittingClose ? (
                   <ActivityIndicator color="#ffffff" />
                 ) : (
-                  <Text style={styles.submitBtnText}>Confirm Close & Settle Day →</Text>
+                  <Text style={styles.submitBtnText}>Confirm & Close Register</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -1385,23 +1496,95 @@ const styles = StyleSheet.create({
   },
   posNavBtnText: { color: '#ffffff', fontWeight: '800', fontSize: 11 },
 
-  // Register Banner
-  registerBanner: {
+  // Simplified Compact Register Section Styles
+  compactRegisterCard: {
+    marginHorizontal: 12,
+    marginTop: 10,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  compactRegisterCardClosed: {
     marginHorizontal: 12,
     marginTop: 10,
-    padding: 12,
-    borderRadius: 12,
+    backgroundColor: '#fef2f2',
     borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  registerBannerOpen: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
-  registerBannerClosed: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
-  registerBannerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
-  registerStatusTitle: { fontSize: 13, fontWeight: '800', color: '#0f172a' },
-  registerStatusDesc: { fontSize: 11, color: '#64748b', marginTop: 2 },
-  registerBannerActions: {},
+  compactRegisterCardMobile: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 8,
+  },
+  compactRegisterLeft: {
+    justifyContent: 'center',
+  },
+  compactRegisterTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#15803d',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  compactRegisterTimer: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#0f172a',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    marginTop: 1,
+  },
+  compactRegisterClosedTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#b91c1c',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  compactRegisterClosedSubtitle: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 1,
+  },
+  compactCloseBtn: {
+    backgroundColor: '#dc2626',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  compactCloseBtnText: {
+    color: '#ffffff',
+    fontWeight: '800',
+    fontSize: 12,
+  },
+  compactOpenBtn: {
+    backgroundColor: '#16a34a',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  compactOpenBtnText: {
+    color: '#ffffff',
+    fontWeight: '800',
+    fontSize: 12,
+  },
+
+  // Legacy Banner helpers (retained if referenced)
   openRegBtn: {
     backgroundColor: '#16a34a',
     paddingHorizontal: 14,

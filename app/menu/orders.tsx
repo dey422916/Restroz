@@ -63,7 +63,7 @@ export default function CustomerOrdersScreen() {
 
     let channel: any = null;
     if (isSupabaseConfigured) {
-      const channelName = `customer_orders_sync_${user.id}_${Date.now()}`;
+      const channelName = `customer_orders_sync_${user.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       channel = supabase
         .channel(channelName)
         .on(
@@ -84,8 +84,8 @@ export default function CustomerOrdersScreen() {
     };
   }, [user?.id, fetchOrders]);
 
-  const activeOrders = orders.filter((o) =>
-    ['confirmed', 'preparing', 'ready', 'served', 'out_for_delivery'].includes(o.status)
+  const activeOrders = orders.filter(
+    (o) => !['delivered', 'completed', 'cancelled'].includes(o.status)
   );
   const historyOrders = orders.filter((o) =>
     ['delivered', 'completed', 'cancelled'].includes(o.status)

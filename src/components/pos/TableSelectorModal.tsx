@@ -36,10 +36,10 @@ export const TableSelectorModal: React.FC<TableSelectorModalProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [activeSection, setActiveSection] = useState<TableSection | 'All'>('All');
 
-  const targetRestId = restaurantId || activeRestaurantId || DEFAULT_RESTAURANT_ID;
+  const targetRestId = restaurantId || activeRestaurantId;
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && targetRestId) {
       setLoading(true);
       tableService
         .getTables(targetRestId)

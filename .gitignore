@@ -1,4 +1,5 @@
 node_modules/
-package-lock.json
 screenshots/
 scripts/
+!scripts/post-export-web.js
+.expo/

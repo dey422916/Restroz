@@ -59,7 +59,7 @@ export const categoryService = {
   },
 
   async saveCategory(category: Partial<Category>, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<Category> {
-    const targetRestId = category.restaurant_id || restaurantId;
+    const targetRestId = category.restaurant_id || restaurantId || DEFAULT_RESTAURANT_ID;
     const name = (category.name || '').trim();
     if (!name) {
       throw new Error('Category Name is required.');
@@ -67,10 +67,7 @@ export const categoryService = {
     const slug = (category.slug || name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     const displayOrder = category.display_order !== undefined ? Number(category.display_order) : 1;
 
-    const catId = category.id || 'cat-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-    const payload = {
-      ...category,
-      id: catId,
+    const payload: any = {
       restaurant_id: targetRestId,
       name,
       slug,
@@ -81,6 +78,10 @@ export const categoryService = {
         'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=600&q=80',
       is_active: category.is_active ?? true,
     };
+
+    if (category.id) {
+      payload.id = category.id;
+    }
 
     if (isSupabaseConfigured) {
       try {
@@ -93,7 +94,8 @@ export const categoryService = {
             .single();
 
           if (!error && data) {
-            await this.getCategories(targetRestId);
+            clearCategoriesCache(targetRestId);
+            await this.getCategories(targetRestId, true);
             return data as Category;
           }
           if (error) throw error;
@@ -105,7 +107,8 @@ export const categoryService = {
             .single();
 
           if (!error && data) {
-            await this.getCategories(targetRestId);
+            clearCategoriesCache(targetRestId);
+            await this.getCategories(targetRestId, true);
             return data as Category;
           }
           if (error) throw error;
@@ -119,8 +122,11 @@ export const categoryService = {
     if (category.id) {
       const updated = mockStorage.updateCategory(category.id, payload);
       if (!updated) throw new Error('Category not found in local cache.');
+      clearCategoriesCache(targetRestId);
       return updated;
     } else {
+      payload.id = 'cat-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+      clearCategoriesCache(targetRestId);
       return mockStorage.addCategory(payload as Omit<Category, 'id'>);
     }
   },

@@ -8,6 +8,7 @@ import { storageService } from './storageService';
 import { marketplaceService } from './marketplaceService';
 
 const STORAGE_KEY_PRINTER_PREFIX = '@restaurant_printer_settings_';
+const STORAGE_KEY_GST_PREFIX = '@restaurant_gst_settings_';
 
 const RESTAURANT_SETTINGS_COLUMNS = new Set([
   'id',
@@ -23,6 +24,9 @@ const RESTAURANT_SETTINGS_COLUMNS = new Set([
   'invoice_prefix',
   'kot_prefix',
   'default_tax_rate',
+  'gst_registered',
+  'is_gst_enabled',
+  'tax_invoice_enabled',
   'currency',
   'currency_symbol',
   'service_charge_rate',
@@ -57,12 +61,20 @@ export const settingsService = {
   },
 
   async getSettings(restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<RestaurantSettings> {
-    // 0. Load local printer settings cache if available
+    // 0. Load local printer & GST settings cache if available
     let localPrinterSettings: { kot_paper_size?: PaperSize; bill_paper_size?: PaperSize; auto_print_kot?: boolean } | null = null;
+    let localGstSettings: { gst_registered?: boolean; is_gst_enabled?: boolean; tax_invoice_enabled?: boolean } | null = null;
+
     try {
-      const cachedStr = await AsyncStorage.getItem(`${STORAGE_KEY_PRINTER_PREFIX}${restaurantId}`);
-      if (cachedStr) {
-        localPrinterSettings = JSON.parse(cachedStr);
+      const [cachedPrinterStr, cachedGstStr] = await Promise.all([
+        AsyncStorage.getItem(`${STORAGE_KEY_PRINTER_PREFIX}${restaurantId}`),
+        AsyncStorage.getItem(`${STORAGE_KEY_GST_PREFIX}${restaurantId}`),
+      ]);
+      if (cachedPrinterStr) {
+        localPrinterSettings = JSON.parse(cachedPrinterStr);
+      }
+      if (cachedGstStr) {
+        localGstSettings = JSON.parse(cachedGstStr);
       }
     } catch (e) {
       // ignore
@@ -96,10 +108,11 @@ export const settingsService = {
         let restLogo = '';
         let restPhone = '';
         let restAddress = '';
+        let restGstin = '';
 
         const { data: restData } = await supabase
           .from('restaurants')
-          .select('banner_url, logo_url, name, phone, address')
+          .select('banner_url, logo_url, name, phone, address, gstin')
           .eq('id', restaurantId)
           .maybeSingle();
 
@@ -110,6 +123,7 @@ export const settingsService = {
           restLogo = restData.logo_url || '';
           restPhone = restData.phone || '';
           restAddress = restData.address || '';
+          restGstin = restData.gstin || '';
         }
 
         // Extract printer settings directly from Supabase columns or local cache
@@ -119,6 +133,24 @@ export const settingsService = {
           ? Boolean(data.auto_print_kot)
           : (localPrinterSettings?.auto_print_kot !== undefined ? localPrinterSettings.auto_print_kot : false);
 
+        // Resolve GST & Tax configuration
+        const effectiveGstin = (data?.gstin || restGstin || '').trim();
+        const resolvedGstRegistered: boolean = data?.gst_registered !== undefined && data?.gst_registered !== null
+          ? Boolean(data.gst_registered)
+          : (localGstSettings?.gst_registered !== undefined ? localGstSettings.gst_registered : Boolean(effectiveGstin));
+
+        const resolvedIsGstEnabled: boolean = resolvedGstRegistered
+          ? (data?.is_gst_enabled !== undefined && data?.is_gst_enabled !== null
+              ? Boolean(data.is_gst_enabled)
+              : (localGstSettings?.is_gst_enabled !== undefined ? localGstSettings.is_gst_enabled : Boolean(effectiveGstin)))
+          : false;
+
+        const resolvedTaxInvoiceEnabled: boolean = resolvedGstRegistered
+          ? (data?.tax_invoice_enabled !== undefined && data?.tax_invoice_enabled !== null
+              ? Boolean(data.tax_invoice_enabled)
+              : (localGstSettings?.tax_invoice_enabled !== undefined ? localGstSettings.tax_invoice_enabled : Boolean(effectiveGstin)))
+          : false;
+
         // Sync local cache with Supabase values
         AsyncStorage.setItem(
           `${STORAGE_KEY_PRINTER_PREFIX}${restaurantId}`,
@@ -126,6 +158,15 @@ export const settingsService = {
             kot_paper_size: resolvedKotPaper,
             bill_paper_size: resolvedBillPaper,
             auto_print_kot: resolvedAutoPrint,
+          })
+        ).catch(() => {});
+
+        AsyncStorage.setItem(
+          `${STORAGE_KEY_GST_PREFIX}${restaurantId}`,
+          JSON.stringify({
+            gst_registered: resolvedGstRegistered,
+            is_gst_enabled: resolvedIsGstEnabled,
+            tax_invoice_enabled: resolvedTaxInvoiceEnabled,
           })
         ).catch(() => {});
 
@@ -139,6 +180,7 @@ export const settingsService = {
             logo_url: cleanLogo,
             phone: restPhone || data.phone || '',
             address: restAddress || data.address || '',
+            gstin: effectiveGstin || data.gstin || '',
             banner_url: bannerUrl,
             banner_urls: bannerUrls,
             gallery_urls: bannerUrls,
@@ -146,6 +188,9 @@ export const settingsService = {
             kot_paper_size: resolvedKotPaper,
             bill_paper_size: resolvedBillPaper,
             auto_print_kot: resolvedAutoPrint,
+            gst_registered: resolvedGstRegistered,
+            is_gst_enabled: resolvedIsGstEnabled,
+            tax_invoice_enabled: resolvedTaxInvoiceEnabled,
           };
           mockStorage.saveSettings(loaded);
           return loaded;
@@ -157,6 +202,7 @@ export const settingsService = {
             logo_url: cleanLogo,
             phone: restPhone || '',
             address: restAddress || '',
+            gstin: effectiveGstin,
             banner_url: bannerUrl,
             banner_urls: bannerUrls,
             gallery_urls: bannerUrls,
@@ -164,6 +210,9 @@ export const settingsService = {
             kot_paper_size: resolvedKotPaper,
             bill_paper_size: resolvedBillPaper,
             auto_print_kot: resolvedAutoPrint,
+            gst_registered: resolvedGstRegistered,
+            is_gst_enabled: resolvedIsGstEnabled,
+            tax_invoice_enabled: resolvedTaxInvoiceEnabled,
           };
           mockStorage.saveSettings(loaded);
           return loaded;
@@ -179,6 +228,9 @@ export const settingsService = {
       kot_paper_size: localPrinterSettings?.kot_paper_size || localSettings.kot_paper_size || '80mm',
       bill_paper_size: localPrinterSettings?.bill_paper_size || localSettings.bill_paper_size || '80mm',
       auto_print_kot: localPrinterSettings?.auto_print_kot !== undefined ? localPrinterSettings.auto_print_kot : (localSettings.auto_print_kot || false),
+      gst_registered: localGstSettings?.gst_registered !== undefined ? localGstSettings.gst_registered : Boolean(localSettings.gstin),
+      is_gst_enabled: localGstSettings?.is_gst_enabled !== undefined ? localGstSettings.is_gst_enabled : (localSettings.is_gst_enabled ?? Boolean(localSettings.gstin)),
+      tax_invoice_enabled: localGstSettings?.tax_invoice_enabled !== undefined ? localGstSettings.tax_invoice_enabled : (localSettings.tax_invoice_enabled ?? Boolean(localSettings.gstin)),
     };
   },
 
@@ -193,18 +245,38 @@ export const settingsService = {
     const targetBillPaper = updated.bill_paper_size || '80mm';
     const targetAutoPrint = Boolean(updated.auto_print_kot);
 
+    const targetGstRegistered = updated.gst_registered !== undefined
+      ? Boolean(updated.gst_registered)
+      : Boolean((updated.gstin || '').trim());
+    const targetIsGstEnabled = targetGstRegistered
+      ? (updated.is_gst_enabled !== undefined ? Boolean(updated.is_gst_enabled) : Boolean((updated.gstin || '').trim()))
+      : false;
+    const targetTaxInvoiceEnabled = targetGstRegistered
+      ? (updated.tax_invoice_enabled !== undefined ? Boolean(updated.tax_invoice_enabled) : Boolean((updated.gstin || '').trim()))
+      : false;
+
     // Save to local AsyncStorage cache for instant response
     try {
-      await AsyncStorage.setItem(
-        `${STORAGE_KEY_PRINTER_PREFIX}${restaurantId}`,
-        JSON.stringify({
-          kot_paper_size: targetKotPaper,
-          bill_paper_size: targetBillPaper,
-          auto_print_kot: targetAutoPrint,
-        })
-      );
+      await Promise.all([
+        AsyncStorage.setItem(
+          `${STORAGE_KEY_PRINTER_PREFIX}${restaurantId}`,
+          JSON.stringify({
+            kot_paper_size: targetKotPaper,
+            bill_paper_size: targetBillPaper,
+            auto_print_kot: targetAutoPrint,
+          })
+        ),
+        AsyncStorage.setItem(
+          `${STORAGE_KEY_GST_PREFIX}${restaurantId}`,
+          JSON.stringify({
+            gst_registered: targetGstRegistered,
+            is_gst_enabled: targetIsGstEnabled,
+            tax_invoice_enabled: targetTaxInvoiceEnabled,
+          })
+        ),
+      ]);
     } catch (e) {
-      console.warn('Failed to cache printer settings locally:', e);
+      console.warn('Failed to cache settings locally:', e);
     }
 
     // Format banner payload for restaurants & public profiles
@@ -225,13 +297,14 @@ export const settingsService = {
         ? (bannerPayload.startsWith('data:') ? await storageService.ensureCdnUrl(bannerPayload, 'restaurant-assets', `restaurants/${restaurantId}/banners`) : bannerPayload)
         : undefined;
 
-      // 1. Update restaurants table (banner_url, logo_url, name, phone, address)
+      // 1. Update restaurants table (banner_url, logo_url, name, phone, address, gstin)
       const restUpdates: Record<string, any> = {};
       if (safeBannerPayload !== undefined) restUpdates.banner_url = safeBannerPayload || null;
       if (safeLogoUrl !== undefined) restUpdates.logo_url = safeLogoUrl || null;
       if (settings.name !== undefined) restUpdates.name = settings.name;
       if (settings.phone !== undefined) restUpdates.phone = settings.phone;
       if (settings.address !== undefined) restUpdates.address = settings.address;
+      if (settings.gstin !== undefined) restUpdates.gstin = settings.gstin.trim() || null;
 
       if (Object.keys(restUpdates).length > 0) {
         try {
@@ -270,6 +343,9 @@ export const settingsService = {
       sanitizedSettingsPayload.kot_paper_size = targetKotPaper;
       sanitizedSettingsPayload.bill_paper_size = targetBillPaper;
       sanitizedSettingsPayload.auto_print_kot = targetAutoPrint;
+      sanitizedSettingsPayload.gst_registered = targetGstRegistered;
+      sanitizedSettingsPayload.is_gst_enabled = targetIsGstEnabled;
+      sanitizedSettingsPayload.tax_invoice_enabled = targetTaxInvoiceEnabled;
 
       let targetId = current.id;
       let query;
@@ -290,11 +366,15 @@ export const settingsService = {
 
       let { data, error } = await query;
 
-      // If database does not yet have kot_paper_size columns (PGRST204), retry omitting native columns
+      // If database does not yet have custom columns (PGRST204), retry omitting native columns
       if (error && error.code === 'PGRST204') {
         delete sanitizedSettingsPayload.kot_paper_size;
         delete sanitizedSettingsPayload.bill_paper_size;
         delete sanitizedSettingsPayload.auto_print_kot;
+        delete sanitizedSettingsPayload.gst_registered;
+        delete sanitizedSettingsPayload.is_gst_enabled;
+        delete sanitizedSettingsPayload.tax_invoice_enabled;
+
         if (targetId && !targetId.startsWith('rest-')) {
           query = supabase
             .from('restaurant_settings')
@@ -331,6 +411,9 @@ export const settingsService = {
         kot_paper_size: targetKotPaper,
         bill_paper_size: targetBillPaper,
         auto_print_kot: targetAutoPrint,
+        gst_registered: targetGstRegistered,
+        is_gst_enabled: targetIsGstEnabled,
+        tax_invoice_enabled: targetTaxInvoiceEnabled,
       };
       mockStorage.saveSettings(persisted);
       try {

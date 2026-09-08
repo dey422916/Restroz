@@ -11,7 +11,7 @@ import {
 } from '../types';
 import { calculateOrderTotals, CalculationResult } from '../utils/gst';
 import { validateCoupon } from '../utils/validators';
-import { orderService } from '../services/api/orderService';
+import { orderService, clearOrdersCache } from '../services/api/orderService';
 import { kotService } from '../services/api/kotService';
 import { dayRegisterService } from '../services/api/dayRegisterService';
 import { mockStorage } from '../services/mockStorage';
@@ -123,7 +123,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const refreshOrders = useCallback(async () => {
     if (!activeRestaurantId) return;
-    const orders = await orderService.getOrders(activeRestaurantId);
+    clearOrdersCache(activeRestaurantId);
+    const orders = await orderService.getOrders(activeRestaurantId, true);
     setActiveOrders(orders);
 
     const held = orders.filter((o) => o.status === 'held');
@@ -280,12 +281,18 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'Invalid coupon code.' };
     }
 
+    const isGstEnabled = (settings.is_gst_enabled !== undefined && settings.is_gst_enabled !== null)
+      ? Boolean(settings.is_gst_enabled)
+      : (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin));
+
     const currentTotals = calculateOrderTotals({
       items: cartItems,
       discountType,
       discountValue,
       serviceChargeRate: settings.service_charge_rate,
       deliveryCharge: orderType === 'delivery' ? (customerInfo.deliveryCharge || 0) : 0,
+      isGstEnabled,
+      taxRate: settings.default_tax_rate !== undefined ? Number(settings.default_tax_rate) : 5.0,
     });
 
     const validation = validateCoupon(coupon, currentTotals.subtotal);
@@ -310,6 +317,10 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAppliedCoupon(null);
   };
 
+  const isGstEnabled = (settings.is_gst_enabled !== undefined && settings.is_gst_enabled !== null)
+    ? Boolean(settings.is_gst_enabled)
+    : (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin));
+
   const totals = calculateOrderTotals({
     items: cartItems,
     discountType,
@@ -317,6 +328,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     coupon: appliedCoupon,
     serviceChargeRate: settings.service_charge_rate,
     deliveryCharge: orderType === 'delivery' ? (customerInfo.deliveryCharge || 0) : 0,
+    isGstEnabled,
+    taxRate: settings.default_tax_rate !== undefined ? Number(settings.default_tax_rate) : 5.0,
   });
 
   const holdCurrentOrder = async (): Promise<Order | null> => {
@@ -535,6 +548,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       tableId: selectedTable?.id,
       tableNumber: selectedTable?.table_number,
       notes: orderNotes ? `[POS] ${orderNotes}` : '[POS]',
+      discountType: discountValue > 0 ? discountType : 'none',
+      discountValue: discountValue,
       discountAmount: totals.discountAmount,
       couponCode: appliedCoupon?.code,
       couponDiscount: totals.couponDiscount,
@@ -575,6 +590,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       tableId: selectedTable?.id,
       tableNumber: selectedTable?.table_number,
       notes: orderNotes ? `[POS] ${orderNotes}` : '[POS]',
+      discountType: discountValue > 0 ? discountType : 'none',
+      discountValue: discountValue,
       discountAmount: totals.discountAmount,
       couponCode: appliedCoupon?.code,
       couponDiscount: totals.couponDiscount,
@@ -609,6 +626,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       grand_total?: number;
       round_off?: number;
       payable_amount?: number;
+      customer_gstin?: string;
     }
   ): Promise<Order> => {
     const updatedOrder = await orderService.closeAndSettleOrder(orderId, {

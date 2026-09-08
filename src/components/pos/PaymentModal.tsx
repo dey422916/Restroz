@@ -10,11 +10,15 @@ import {
   Dimensions,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Order, PaymentMethod } from '../../types';
 import { formatCurrency, numberToWords } from '../../utils/currency';
 import { calculateOrderTotals, getOrderSubtotal } from '../../utils/gst';
+import { formatOrderDateTime } from '../../utils/dateUtils';
+import { validateGSTIN } from '../../utils/validators';
+import { useSettings } from '../../context/SettingsContext';
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -34,6 +38,7 @@ interface PaymentModalProps {
       grand_total: number;
       round_off: number;
       payable_amount: number;
+      customer_gstin?: string;
     }
   ) => Promise<void>;
 }
@@ -46,6 +51,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const windowHeight = Dimensions.get('window').height;
+  const { settings } = useSettings();
+
+  const isGstEnabled = settings?.is_gst_enabled ?? (settings?.gst_registered ?? Boolean(settings?.gstin?.trim()));
+  const taxRate = settings?.default_tax_rate !== undefined ? settings.default_tax_rate : 5.0;
 
   // Discount configuration state
   const [discountType, setDiscountType] = useState<'none' | 'fixed' | 'percentage'>(
@@ -59,6 +68,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       : ''
   );
 
+  const [customerGstinInput, setCustomerGstinInput] = useState<string>(order.customer_gstin || '');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [refNo, setRefNo] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -81,6 +91,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     return 0;
   }, [discountType, numDiscount, subtotal]);
 
+  const gstinValidation = useMemo(() => {
+    if (!customerGstinInput.trim()) return { isValid: true, error: null };
+    return validateGSTIN(customerGstinInput);
+  }, [customerGstinInput]);
+
   const totals = useMemo(() => {
     return calculateOrderTotals({
       items: order.items || [],
@@ -94,8 +109,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           }
         : undefined,
       deliveryCharge: order.delivery_charge || 0,
+      isGstEnabled,
+      taxRate,
     });
-  }, [order, discountType, validatedDiscount]);
+  }, [order, discountType, validatedDiscount, isGstEnabled, taxRate]);
 
   const [tendered, setTendered] = useState<string>(totals.payableAmount.toString());
 
@@ -106,9 +123,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
   const numTendered = parseFloat(tendered) || 0;
   const isEnough = numTendered >= totals.payableAmount;
+  const isGstinValid = gstinValidation.isValid;
 
   const handleSubmit = async () => {
-    if (!isEnough || isProcessing) return;
+    if (!isEnough || isProcessing || !isGstinValid) return;
     try {
       setIsProcessing(true);
       await onProcessPayment(
@@ -125,9 +143,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           grand_total: totals.rawTotal,
           round_off: totals.roundOff,
           payable_amount: totals.payableAmount,
+          customer_gstin: customerGstinInput.trim().toUpperCase() || undefined,
         }
       );
       onClose();
+    } catch (err: any) {
+      Alert.alert('Settlement Error', err?.message || 'Unable to process settlement. Please retry.');
     } finally {
       setIsProcessing(false);
     }
@@ -161,7 +182,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               <View>
                 <Text style={styles.title}>Close Order & Settlement</Text>
                 <Text style={styles.subTitle}>
-                  Order #{order.order_number} • {order.table_number ? `Table ${order.table_number}` : order.order_type.toUpperCase()}
+                  Order #{order.order_number} • {order.table_number ? `Table ${order.table_number}` : order.order_type.toUpperCase()} • 🕒 {formatOrderDateTime(order.created_at)}
                 </Text>
               </View>
               <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -215,6 +236,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                     <TextInput
                       style={styles.discInput}
                       placeholder={discountType === 'fixed' ? 'e.g. 100' : 'e.g. 10'}
+                      placeholderTextColor="#64748b"
                       value={discountInput}
                       onChangeText={(val) => {
                         const clean = val.replace(/[^0-9.]/g, '');
@@ -259,20 +281,24 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   </View>
                 )}
 
-                <View style={styles.billRow}>
-                  <Text style={styles.billLabel}>Taxable Amount:</Text>
-                  <Text style={styles.billVal}>{formatCurrency(totals.taxableSubtotal)}</Text>
-                </View>
+                {totals.totalTax > 0 && (
+                  <>
+                    <View style={styles.billRow}>
+                      <Text style={styles.billLabel}>Taxable Amount:</Text>
+                      <Text style={styles.billVal}>{formatCurrency(totals.taxableSubtotal)}</Text>
+                    </View>
 
-                <View style={styles.billRow}>
-                  <Text style={styles.billLabel}>CGST (2.5%):</Text>
-                  <Text style={styles.billVal}>{formatCurrency(totals.cgstAmount)}</Text>
-                </View>
+                    <View style={styles.billRow}>
+                      <Text style={styles.billLabel}>CGST ({((taxRate || 5) / 2).toFixed(1)}%):</Text>
+                      <Text style={styles.billVal}>{formatCurrency(totals.cgstAmount)}</Text>
+                    </View>
 
-                <View style={styles.billRow}>
-                  <Text style={styles.billLabel}>SGST (2.5%):</Text>
-                  <Text style={styles.billVal}>{formatCurrency(totals.sgstAmount)}</Text>
-                </View>
+                    <View style={styles.billRow}>
+                      <Text style={styles.billLabel}>SGST ({((taxRate || 5) / 2).toFixed(1)}%):</Text>
+                      <Text style={styles.billVal}>{formatCurrency(totals.sgstAmount)}</Text>
+                    </View>
+                  </>
+                )}
 
                 {totals.deliveryCharge > 0 && (
                   <View style={styles.billRow}>
@@ -320,6 +346,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 style={styles.input}
                 value={tendered}
                 onChangeText={setTendered}
+                placeholderTextColor="#64748b"
                 keyboardType="numeric"
               />
 
@@ -331,8 +358,33 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                     value={refNo}
                     onChangeText={setRefNo}
                     placeholder="e.g. UPI-998811 or Card Auth #4411"
+                    placeholderTextColor="#64748b"
                   />
                 </>
+              )}
+
+              {/* B2B Customer GSTIN (Optional) */}
+              {isGstEnabled && (
+                <View style={{ marginBottom: 8 }}>
+                  <Text style={styles.fieldLabel}>Customer GSTIN (Optional for B2B Invoice)</Text>
+                  <TextInput
+                    style={[
+                      styles.input,
+                      !isGstinValid && { borderColor: '#ef4444', borderWidth: 1.5 },
+                    ]}
+                    value={customerGstinInput}
+                    onChangeText={(v) => setCustomerGstinInput(v.toUpperCase().trim())}
+                    placeholder="15-digit GSTIN (e.g. 19AAAAA0000A1Z5)"
+                    placeholderTextColor="#64748b"
+                    maxLength={15}
+                    autoCapitalize="characters"
+                  />
+                  {!isGstinValid && gstinValidation.error && (
+                    <Text style={{ color: '#ef4444', fontSize: 10, marginTop: -8, marginBottom: 8, fontWeight: '700' }}>
+                      ⚠️ {gstinValidation.error}
+                    </Text>
+                  )}
+                </View>
               )}
 
               {/* 5. SUBMIT ACTION */}
@@ -555,6 +607,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     fontSize: 12,
+    color: '#0f172a',
     marginBottom: 12,
   },
   payBtn: {

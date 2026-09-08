@@ -15,6 +15,8 @@ import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { supabase } from '../../src/services/supabase';
 import { Order } from '../../src/types';
 import { customerColors } from '../../src/utils/colors';
+import { formatPrice } from '../../src/utils/currency';
+import { formatOrderDateTime } from '../../src/utils/dateUtils';
 
 export default function CustomerOrdersScreen() {
   const router = useRouter();
@@ -40,10 +42,10 @@ export default function CustomerOrdersScreen() {
       );
       setLiveOrders(live);
 
-      // 2. Fetch paginated order history (first 20 records)
+      // 2. Fetch paginated order history (first 15 records)
       const histResult = await marketplaceService.getCustomerOrderHistoryPaginated({
         page: 1,
-        pageSize: 20,
+        pageSize: 15,
       });
       setHistoryOrders(histResult.orders);
       setHistoryHasMore(histResult.hasMore);
@@ -64,7 +66,7 @@ export default function CustomerOrdersScreen() {
       const nextPage = historyPage + 1;
       const result = await marketplaceService.getCustomerOrderHistoryPaginated({
         page: nextPage,
-        pageSize: 20,
+        pageSize: 15,
       });
 
       setHistoryOrders((prev) => {
@@ -280,7 +282,7 @@ export default function CustomerOrdersScreen() {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.restName}>{rest?.name || 'Restaurant'}</Text>
                     <Text style={styles.orderNum}>
-                      Order #{order.order_number} • {new Date(order.created_at).toLocaleDateString()}
+                      Order #{order.order_number} • 🕒 {formatOrderDateTime(order.created_at)}
                     </Text>
                   </View>
 
@@ -300,7 +302,7 @@ export default function CustomerOrdersScreen() {
                     <View key={item.id || idx} style={styles.itemRow}>
                       <Text style={styles.itemQty}>{item.quantity}x</Text>
                       <Text style={styles.itemName}>{item.product_name || 'Item'}</Text>
-                      <Text style={styles.itemPrice}>₹{item.total || item.unit_price * item.quantity}</Text>
+                      <Text style={styles.itemPrice}>₹{formatPrice(item.total || item.unit_price * item.quantity)}</Text>
                     </View>
                   ))}
                 </View>
@@ -319,7 +321,7 @@ export default function CustomerOrdersScreen() {
                     )}
                   </View>
 
-                  <Text style={styles.totalAmount}>₹{order.payable_amount || order.grand_total || 0}</Text>
+                  <Text style={styles.totalAmount}>₹{formatPrice(order.payable_amount || order.grand_total || 0)}</Text>
                 </View>
 
                 {/* Card Action Row */}
@@ -331,7 +333,7 @@ export default function CustomerOrdersScreen() {
                     <Text style={styles.detailBtnText}>View Details & Receipt ›</Text>
                   </TouchableOpacity>
 
-                  {order.status === 'confirmed' && (
+                  {!((order.kots && order.kots.length > 0) || order.status === 'kot_generated') && !['cancelled', 'delivered', 'completed'].includes(order.status) && (
                     <TouchableOpacity
                       style={styles.cancelCardBtn}
                       onPress={() => router.push(`/order/${order.id}` as any)}

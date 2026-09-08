@@ -10,6 +10,13 @@ export function roundToTwoDecimals(num: number): number {
   return Math.round((num + Number.EPSILON) * 100) / 100;
 }
 
+export function formatPrice(amount: number | undefined | null): string {
+  if (amount === undefined || amount === null || isNaN(Number(amount))) return '0';
+  const num = Number(amount);
+  if (num % 1 === 0) return num.toString();
+  return num.toFixed(2);
+}
+
 export function numberToWords(amount: number): string {
   const integerPart = Math.floor(amount);
   const paise = Math.round((amount - integerPart) * 100);

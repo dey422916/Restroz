@@ -11,6 +11,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Order } from '../../types';
 import { formatCurrency } from '../../utils/currency';
+import { formatOrderDateTime } from '../../utils/dateUtils';
 
 interface HoldOrdersModalProps {
   isOpen: boolean;
@@ -52,7 +53,7 @@ export const HoldOrdersModal: React.FC<HoldOrdersModalProps> = ({
                     <Text style={styles.ordNum}>#{o.order_number}</Text>
                     <Text style={styles.ordMeta}>
                       {o.table_number ? `🪑 ${o.table_number}` : o.order_type.toUpperCase()} •{' '}
-                      {formatCurrency(o.payable_amount)}
+                      {formatCurrency(o.payable_amount)} • 🕒 {formatOrderDateTime(o.created_at)}
                     </Text>
                   </View>
                   <TouchableOpacity

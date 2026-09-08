@@ -14,21 +14,26 @@ import {
   Platform,
   Dimensions,
   useWindowDimensions,
+  RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { tableService } from '../../src/services/api/tableService';
+import { subscriptionGuardService } from '../../src/services/api/subscriptionGuardService';
 import { useAuth } from '../../src/context/AuthContext';
 import { useSettings } from '../../src/context/SettingsContext';
 import { DiningTable, TableSection } from '../../src/types';
 import { TableQRModal } from '../../src/components/admin/TableQRModal';
 
 export default function TablesScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   const { activeRestaurantId, activeRestaurant } = useAuth();
   const { settings } = useSettings();
   const [tables, setTables] = useState<DiningTable[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
   const [activeSection, setActiveSection] = useState<TableSection | 'All'>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -72,23 +77,49 @@ export default function TablesScreen() {
     'VIP Section',
   ];
 
-  const loadTables = async () => {
+  const loadTables = async (isRefresh: boolean = false) => {
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       const list = await tableService.getTables(activeRestaurantId);
       setTables(list);
     } catch (err: any) {
       Alert.alert('Load Error', err.message || 'Failed to load tables.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  };
+
+  const onRefresh = () => {
+    loadTables(true);
   };
 
   useEffect(() => {
     loadTables();
   }, [activeRestaurantId]);
 
-  const openCreateModal = () => {
+  const openCreateModal = async () => {
+    try {
+      const limitCheck = await subscriptionGuardService.checkPlanLimit(activeRestaurantId, 'TABLES', 1);
+      if (!limitCheck.allowed) {
+        Alert.alert(
+          'Plan Limit Reached',
+          'Plan limit reached. Please upgrade or contact Super Admin.',
+          [
+            { text: 'Upgrade Plan', onPress: () => router.push('/(admin)/my-plan' as any) },
+            { text: 'OK', style: 'cancel' }
+          ]
+        );
+        return;
+      }
+    } catch (e) {
+      // allow proceeding if guard check fails
+    }
+
     setEditingTable(null);
     let nextNum = 1;
     while (tables.some((t) => t.table_number.toLowerCase() === `table ${nextNum}`.toLowerCase())) {
@@ -99,6 +130,26 @@ export default function TablesScreen() {
     setFormCapacity('4');
     setFormIsActive(true);
     setShowSingleModal(true);
+  };
+
+  const openBulkModal = async () => {
+    try {
+      const limitCheck = await subscriptionGuardService.checkPlanLimit(activeRestaurantId, 'TABLES', 1);
+      if (!limitCheck.allowed) {
+        Alert.alert(
+          'Plan Limit Reached',
+          'Plan limit reached. Please upgrade or contact Super Admin.',
+          [
+            { text: 'Upgrade Plan', onPress: () => router.push('/(admin)/my-plan' as any) },
+            { text: 'OK', style: 'cancel' }
+          ]
+        );
+        return;
+      }
+    } catch (e) {
+      // allow proceeding
+    }
+    setShowBulkModal(true);
   };
 
   const openEditModal = (t: DiningTable) => {
@@ -281,7 +332,7 @@ export default function TablesScreen() {
             <Text style={styles.addBtnText}>+ ADD TABLE</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.addBulkBtn} onPress={() => setShowBulkModal(true)}>
+          <TouchableOpacity style={styles.addBulkBtn} onPress={openBulkModal}>
             <Text style={styles.addBulkBtnText}>+ MULTIPLE</Text>
           </TouchableOpacity>
 
@@ -346,6 +397,9 @@ export default function TablesScreen() {
             { paddingBottom: 24 },
           ]}
           showsVerticalScrollIndicator={true}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
         >
           {filteredTables.length === 0 ? (
             <View style={styles.emptyBox}>
@@ -506,6 +560,7 @@ export default function TablesScreen() {
                 <TextInput
                   style={styles.fieldInput}
                   placeholder="e.g. Table 12 or 12"
+                  placeholderTextColor="#64748b"
                   value={formTableNumber}
                   onChangeText={setFormTableNumber}
                 />
@@ -560,6 +615,7 @@ export default function TablesScreen() {
                 <TextInput
                   style={[styles.fieldInput, { marginTop: 6 }]}
                   placeholder="Custom seating capacity (e.g. 14)"
+                  placeholderTextColor="#64748b"
                   keyboardType="numeric"
                   value={formCapacity}
                   onChangeText={setFormCapacity}
@@ -634,6 +690,7 @@ export default function TablesScreen() {
                 <TextInput
                   style={styles.fieldInput}
                   placeholder="e.g. 11"
+                  placeholderTextColor="#64748b"
                   keyboardType="numeric"
                   value={bulkStartingNum}
                   onChangeText={setBulkStartingNum}
@@ -644,6 +701,7 @@ export default function TablesScreen() {
                 <TextInput
                   style={styles.fieldInput}
                   placeholder="e.g. 5 (Creates Table 11 to Table 15)"
+                  placeholderTextColor="#64748b"
                   keyboardType="numeric"
                   value={bulkCount}
                   onChangeText={setBulkCount}
@@ -1136,6 +1194,7 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     fontSize: 13,
     fontWeight: '600',
+    color: '#0f172a',
   },
   pillsPickerRow: {
     flexDirection: 'row',

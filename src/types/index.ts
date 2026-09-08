@@ -59,6 +59,7 @@ export interface RestaurantSettings {
   email: string;
   gstin: string;
   state: string;
+  state_code?: string;
   logo_url?: string;
   banner_url?: string;
   banner_urls?: string[];
@@ -66,6 +67,9 @@ export interface RestaurantSettings {
   invoice_prefix: string;
   kot_prefix: string;
   default_tax_rate: number;
+  gst_registered?: boolean;
+  is_gst_enabled?: boolean;
+  tax_invoice_enabled?: boolean;
   currency: string;
   currency_symbol: string;
   service_charge_rate: number;
@@ -157,6 +161,7 @@ export interface OrderItem {
   quantity: number;
   tax_rate: number;
   tax_amount: number;
+  hsn_code?: string;
   item_notes?: string;
   subtotal: number;
   total: number;
@@ -167,6 +172,8 @@ export interface Order {
   id: string;
   restaurant_id?: string;
   order_number: string;
+  invoice_number?: string;
+  customer_gstin?: string;
   order_type: OrderType;
   order_source?: OrderSource;
   table_id?: string;

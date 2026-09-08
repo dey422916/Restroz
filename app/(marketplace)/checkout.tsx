@@ -17,6 +17,7 @@ import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { CustomerAddress } from '../../src/types';
 import { customerColors } from '../../src/utils/colors';
 import { isValidPhoneNumber } from '../../src/utils/phone';
+import { formatPrice } from '../../src/utils/currency';
 
 export default function DeliveryCheckoutScreen() {
   const router = useRouter();
@@ -31,6 +32,7 @@ export default function DeliveryCheckoutScreen() {
   const [customerPhone, setCustomerPhone] = useState('');
   const [placingOrder, setPlacingOrder] = useState(false);
   const [loadingAddresses, setLoadingAddresses] = useState(true);
+  const [minOrderValue, setMinOrderValue] = useState<number>(0);
 
   // Add Address Modal
   const [addModalVisible, setAddModalVisible] = useState(false);
@@ -53,6 +55,21 @@ export default function DeliveryCheckoutScreen() {
       loadAddresses();
     }
   }, [user]);
+
+  useEffect(() => {
+    if (cart.restaurantId) {
+      marketplaceService.getRestaurantPublicDetails(cart.restaurantId).then((details) => {
+        if (details?.public_profile?.minimum_order_value) {
+          setMinOrderValue(Number(details.public_profile.minimum_order_value) || 0);
+        } else {
+          setMinOrderValue(0);
+        }
+      }).catch(console.warn);
+    }
+  }, [cart.restaurantId]);
+
+  const isBelowMinOrder = minOrderValue > 0 && cart.subtotal < minOrderValue;
+  const remainingForMinOrder = isBelowMinOrder ? Math.max(0, minOrderValue - cart.subtotal) : 0;
 
   const loadAddresses = async () => {
     try {
@@ -137,6 +154,16 @@ export default function DeliveryCheckoutScreen() {
       return;
     }
 
+    // Verify minimum order value requirement
+    if (minOrderValue > 0 && cart.subtotal < minOrderValue) {
+      const diff = minOrderValue - cart.subtotal;
+      Alert.alert(
+        'Minimum Order Value Required',
+        `The minimum order amount for this restaurant is ₹${minOrderValue}. Please add items worth ₹${formatPrice(diff)} more to place your order.`
+      );
+      return;
+    }
+
     // Verify restaurant is currently online before placing order
     const isRestOnline = await marketplaceService.getRestaurantOnlineStatus(cart.restaurantId);
     if (!isRestOnline) {
@@ -177,7 +204,12 @@ export default function DeliveryCheckoutScreen() {
     } catch (e: any) {
       isSubmittingRef.current = false;
       setPlacingOrder(false);
-      Alert.alert('Order Failed', e.message || 'Could not complete order.');
+      const errMsg = e.message || 'Could not complete order.';
+      if (errMsg.toLowerCase().includes('minimum order') || errMsg.toLowerCase().includes('below the minimum')) {
+        Alert.alert('Minimum Order Value Required', errMsg);
+      } else {
+        Alert.alert('Order Failed', errMsg);
+      }
     } finally {
       if (!hasSucceededRef.current) {
         isSubmittingRef.current = false;
@@ -324,9 +356,25 @@ export default function DeliveryCheckoutScreen() {
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>🧾 Order & Price Summary</Text>
 
+          {isBelowMinOrder && (
+            <View style={styles.minOrderCard}>
+              <View style={styles.minOrderCardHeader}>
+                <Text style={{ fontSize: 15 }}>⚠️</Text>
+                <Text style={styles.minOrderCardTitle}>
+                  Minimum Order Value: ₹{minOrderValue}
+                </Text>
+              </View>
+              <Text style={styles.minOrderCardSub}>
+                Your order subtotal is ₹{formatPrice(cart.subtotal)}. Please add items worth{' '}
+                <Text style={styles.minOrderCardHighlight}>₹{formatPrice(remainingForMinOrder)}</Text>{' '}
+                more to place this order.
+              </Text>
+            </View>
+          )}
+
           <View style={styles.summaryItemRow}>
-            <Text style={styles.summaryLabel}>Subtotal ({cart.items.length} items)</Text>
-            <Text style={styles.summaryValue}>₹{cart.subtotal}</Text>
+            <Text style={styles.summaryLabel}>Item Subtotal ({cart.items.length} items)</Text>
+            <Text style={styles.summaryValue}>₹{formatPrice(cart.subtotal)}</Text>
           </View>
 
           {cart.couponCode && cart.discount > 0 ? (
@@ -339,7 +387,7 @@ export default function DeliveryCheckoutScreen() {
               </View>
               <View style={{ alignItems: 'flex-end' }}>
                 <Text style={[styles.summaryValue, { color: '#065F46', fontWeight: '800' }]}>
-                  -₹{cart.discount}
+                  -₹{formatPrice(cart.discount)}
                 </Text>
                 <TouchableOpacity onPress={removeCoupon}>
                   <Text style={{ fontSize: 11, color: '#DC2626', fontWeight: '700', marginTop: 2 }}>✕ Remove</Text>
@@ -348,9 +396,21 @@ export default function DeliveryCheckoutScreen() {
             </View>
           ) : null}
 
+          {cart.discount > 0 && (
+            <View style={styles.summaryItemRow}>
+              <Text style={styles.summaryLabel}>Taxable Amount</Text>
+              <Text style={styles.summaryValue}>₹{formatPrice(cart.taxableAmount)}</Text>
+            </View>
+          )}
+
           <View style={styles.summaryItemRow}>
-            <Text style={styles.summaryLabel}>Taxes & GST (5%)</Text>
-            <Text style={styles.summaryValue}>₹{Math.round(cart.taxTotal)}</Text>
+            <Text style={styles.summaryLabel}>CGST 2.5%</Text>
+            <Text style={styles.summaryValue}>₹{formatPrice(cart.cgst)}</Text>
+          </View>
+
+          <View style={styles.summaryItemRow}>
+            <Text style={styles.summaryLabel}>SGST 2.5%</Text>
+            <Text style={styles.summaryValue}>₹{formatPrice(cart.sgst)}</Text>
           </View>
 
           <View style={styles.summaryItemRow}>
@@ -362,10 +422,10 @@ export default function DeliveryCheckoutScreen() {
 
           <View style={styles.summaryItemRow}>
             <Text style={[styles.summaryLabel, { fontSize: 15, fontWeight: '800', color: '#0F172A' }]}>
-              Final Payable Amount
+              Grand Total
             </Text>
             <Text style={[styles.summaryValue, { fontSize: 16, fontWeight: '900', color: '#0F172A' }]}>
-              ₹{cart.payableAmount}
+              ₹{formatPrice(cart.payableAmount)}
             </Text>
           </View>
         </View>
@@ -413,18 +473,24 @@ export default function DeliveryCheckoutScreen() {
       <View style={styles.footerBar}>
         <View>
           <Text style={styles.footerSubLabel}>TOTAL AMOUNT</Text>
-          <Text style={styles.footerAmount}>₹{cart.payableAmount}</Text>
+          <Text style={styles.footerAmount}>₹{formatPrice(cart.payableAmount)}</Text>
         </View>
 
         <TouchableOpacity
-          style={[styles.placeOrderBtn, placingOrder && styles.placeOrderBtnDisabled]}
+          style={[
+            styles.placeOrderBtn,
+            isBelowMinOrder && styles.placeOrderBtnWarning,
+            placingOrder && styles.placeOrderBtnDisabled,
+          ]}
           onPress={handlePlaceOrder}
           disabled={placingOrder}
         >
           {placingOrder ? (
             <ActivityIndicator size="small" color="#FFFFFF" />
           ) : (
-            <Text style={styles.placeOrderBtnText}>Place Order Now ✓</Text>
+            <Text style={styles.placeOrderBtnText}>
+              {isBelowMinOrder ? `Min Order ₹${minOrderValue}` : 'Place Order Now ✓'}
+            </Text>
           )}
         </TouchableOpacity>
       </View>
@@ -787,6 +853,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 10,
   },
+  placeOrderBtnWarning: {
+    backgroundColor: '#EA580C',
+  },
   placeOrderBtnDisabled: {
     opacity: 0.6,
   },
@@ -794,6 +863,34 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
+  },
+  minOrderCard: {
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+  },
+  minOrderCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  minOrderCardTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#B45309',
+  },
+  minOrderCardSub: {
+    fontSize: 12,
+    color: '#92400E',
+    lineHeight: 18,
+  },
+  minOrderCardHighlight: {
+    fontWeight: '800',
+    color: '#B45309',
   },
   modalOverlay: {
     flex: 1,

@@ -6,15 +6,6 @@ export const subscriptionGuardService = {
   async getPlanUsage(restaurantId: string): Promise<RestaurantPlanUsage> {
     if (isSupabaseConfigured) {
       try {
-        const { data, error } = await supabase.rpc('get_restaurant_resource_usage', {
-          p_restaurant_id: restaurantId,
-        });
-
-        if (!error && data && data.staff) {
-          return data as RestaurantPlanUsage;
-        }
-
-        // Resilient Direct DB Query
         const { data: subData } = await supabase
           .from('restaurant_subscriptions')
           .select('*, plan:subscription_plans(*)')
@@ -30,9 +21,13 @@ export const subscriptionGuardService = {
         ]);
 
         const plan = subData?.plan || {};
-        const staffCount = staffRes.count || 1;
-        const tablesCount = tablesRes.count || 1;
-        const prodsCount = prodsRes.count || 1;
+        const staffCount = staffRes.count !== null && staffRes.count !== undefined ? staffRes.count : 1;
+        const tablesCount = tablesRes.count !== null && tablesRes.count !== undefined ? tablesRes.count : 1;
+        const prodsCount = prodsRes.count !== null && prodsRes.count !== undefined ? prodsRes.count : 1;
+
+        const maxStaff = plan.max_staff !== null && plan.max_staff !== undefined && plan.max_staff > 0 ? plan.max_staff : null;
+        const maxTables = plan.max_tables !== null && plan.max_tables !== undefined && plan.max_tables > 0 ? plan.max_tables : null;
+        const maxProducts = plan.max_products !== null && plan.max_products !== undefined && plan.max_products > 0 ? plan.max_products : null;
 
         return {
           restaurant_id: restaurantId,
@@ -48,21 +43,21 @@ export const subscriptionGuardService = {
           },
           staff: {
             current: staffCount,
-            max: plan.max_staff || null,
-            is_unlimited: !plan.max_staff,
-            percentage: plan.max_staff ? Math.round((staffCount / plan.max_staff) * 100) : 0,
+            max: maxStaff,
+            is_unlimited: !maxStaff,
+            percentage: maxStaff ? Math.round((staffCount / maxStaff) * 100) : 0,
           },
           tables: {
             current: tablesCount,
-            max: plan.max_tables || null,
-            is_unlimited: !plan.max_tables,
-            percentage: plan.max_tables ? Math.round((tablesCount / plan.max_tables) * 100) : 0,
+            max: maxTables,
+            is_unlimited: !maxTables,
+            percentage: maxTables ? Math.round((tablesCount / maxTables) * 100) : 0,
           },
           products: {
             current: prodsCount,
-            max: plan.max_products || null,
-            is_unlimited: !plan.max_products,
-            percentage: plan.max_products ? Math.round((prodsCount / plan.max_products) * 100) : 0,
+            max: maxProducts,
+            is_unlimited: !maxProducts,
+            percentage: maxProducts ? Math.round((prodsCount / maxProducts) * 100) : 0,
           },
           features: plan.features || {
             qr_ordering: true,
@@ -115,7 +110,6 @@ export const subscriptionGuardService = {
   ): Promise<{ allowed: boolean; message?: string }> {
     if (isSupabaseConfigured) {
       try {
-        // Direct DB check with robust plan limits
         const { data: subData } = await supabase
           .from('restaurant_subscriptions')
           .select('*, plan:subscription_plans(*)')
@@ -127,37 +121,52 @@ export const subscriptionGuardService = {
         const plan = subData?.plan;
 
         if (resourceType === 'STAFF') {
-          // Minimum 3 staff members for all plans
-          const maxStaff = plan?.max_staff ? Math.max(plan.max_staff, 3) : 3;
-          const { count } = await supabase
-            .from('restaurant_members')
-            .select('*', { count: 'exact', head: true })
-            .eq('restaurant_id', restaurantId)
-            .eq('role', 'STAFF')
-            .eq('is_active', true);
+          const maxStaff = plan?.max_staff !== null && plan?.max_staff !== undefined && plan.max_staff > 0 ? plan.max_staff : null;
+          if (maxStaff !== null) {
+            const { count } = await supabase
+              .from('restaurant_members')
+              .select('*', { count: 'exact', head: true })
+              .eq('restaurant_id', restaurantId)
+              .eq('is_active', true);
 
-          if ((count || 0) + requestedCount > maxStaff) {
-            return { allowed: false, message: `Your plan allows up to ${maxStaff} staff members. Currently active: ${count || 0}.` };
+            if ((count || 0) + requestedCount > maxStaff) {
+              return {
+                allowed: false,
+                message: 'Plan limit reached. Please upgrade or contact Super Admin.',
+              };
+            }
           }
-        } else if (resourceType === 'TABLES' && plan?.max_tables) {
-          const maxTables = Math.max(plan.max_tables, 10);
-          const { count } = await supabase
-            .from('tables')
-            .select('*', { count: 'exact', head: true })
-            .eq('restaurant_id', restaurantId)
-            .eq('is_active', true);
-          if ((count || 0) + requestedCount > maxTables) {
-            return { allowed: false, message: `Your plan allows up to ${maxTables} dining tables.` };
+        } else if (resourceType === 'TABLES') {
+          const maxTables = plan?.max_tables !== null && plan?.max_tables !== undefined && plan.max_tables > 0 ? plan.max_tables : null;
+          if (maxTables !== null) {
+            const { count } = await supabase
+              .from('tables')
+              .select('*', { count: 'exact', head: true })
+              .eq('restaurant_id', restaurantId)
+              .eq('is_active', true);
+
+            if ((count || 0) + requestedCount > maxTables) {
+              return {
+                allowed: false,
+                message: 'Plan limit reached. Please upgrade or contact Super Admin.',
+              };
+            }
           }
-        } else if (resourceType === 'PRODUCTS' && plan?.max_products) {
-          const maxProducts = Math.max(plan.max_products, 50);
-          const { count } = await supabase
-            .from('products')
-            .select('*', { count: 'exact', head: true })
-            .eq('restaurant_id', restaurantId)
-            .eq('is_active', true);
-          if ((count || 0) + requestedCount > maxProducts) {
-            return { allowed: false, message: `Your plan allows up to ${maxProducts} menu products.` };
+        } else if (resourceType === 'PRODUCTS') {
+          const maxProducts = plan?.max_products !== null && plan?.max_products !== undefined && plan.max_products > 0 ? plan.max_products : null;
+          if (maxProducts !== null) {
+            const { count } = await supabase
+              .from('products')
+              .select('*', { count: 'exact', head: true })
+              .eq('restaurant_id', restaurantId)
+              .eq('is_active', true);
+
+            if ((count || 0) + requestedCount > maxProducts) {
+              return {
+                allowed: false,
+                message: 'Plan limit reached. Please upgrade or contact Super Admin.',
+              };
+            }
           }
         }
 

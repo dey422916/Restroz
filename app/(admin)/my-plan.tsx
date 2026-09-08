@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
@@ -18,10 +19,15 @@ export default function MyPlanScreen() {
   const { activeRestaurantId, activeRestaurant } = useAuth();
   const [usage, setUsage] = useState<RestaurantPlanUsage | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const loadData = async () => {
+  const loadData = async (isRefresh: boolean = false) => {
     if (!activeRestaurantId) return;
-    setLoading(true);
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     try {
       const data = await subscriptionGuardService.getPlanUsage(activeRestaurantId);
       setUsage(data);
@@ -29,7 +35,12 @@ export default function MyPlanScreen() {
       Alert.alert('Error', e.message || 'Failed to load plan details.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  };
+
+  const onRefresh = () => {
+    loadData(true);
   };
 
   useEffect(() => {
@@ -80,7 +91,11 @@ export default function MyPlanScreen() {
   const statusStyle = getStatusBadgeStyle(plan.status);
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
       {/* Header */}
       <View style={styles.header}>
         <View>
@@ -147,7 +162,9 @@ export default function MyPlanScreen() {
         <Text style={styles.usageHint}>
           {staff.is_unlimited
             ? 'You have unlimited staff slots.'
-            : `${staff.percentage}% utilized • ${Math.max(0, (staff.max || 0) - staff.current)} slots remaining`}
+            : staff.max !== null && staff.current >= staff.max
+              ? `Plan limit reached (${staff.percentage}% utilized) • Please upgrade or contact Super Admin.`
+              : `${staff.percentage}% utilized • ${Math.max(0, (staff.max || 0) - staff.current)} slots remaining`}
         </Text>
       </View>
 
@@ -173,7 +190,9 @@ export default function MyPlanScreen() {
         <Text style={styles.usageHint}>
           {tables.is_unlimited
             ? 'You have unlimited dining tables.'
-            : `${tables.percentage}% utilized • ${Math.max(0, (tables.max || 0) - tables.current)} slots remaining`}
+            : tables.max !== null && tables.current >= tables.max
+              ? `Plan limit reached (${tables.percentage}% utilized) • Please upgrade or contact Super Admin.`
+              : `${tables.percentage}% utilized • ${Math.max(0, (tables.max || 0) - tables.current)} slots remaining`}
         </Text>
       </View>
 
@@ -199,7 +218,9 @@ export default function MyPlanScreen() {
         <Text style={styles.usageHint}>
           {products.is_unlimited
             ? 'You have unlimited menu items.'
-            : `${products.percentage}% utilized • ${Math.max(0, (products.max || 0) - products.current)} slots remaining`}
+            : products.max !== null && products.current >= products.max
+              ? `Plan limit reached (${products.percentage}% utilized) • Please upgrade or contact Super Admin.`
+              : `${products.percentage}% utilized • ${Math.max(0, (products.max || 0) - products.current)} slots remaining`}
         </Text>
       </View>
 

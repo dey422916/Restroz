@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, Alert, ActivityIndicator, Image } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, Alert, ActivityIndicator, Image, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSettings } from '../../src/context/SettingsContext';
 import { useAuth } from '../../src/context/AuthContext';
@@ -12,6 +12,8 @@ import { parseBannerUrls } from '../../src/utils/mediaUtils';
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
+  const isDesktop = windowWidth >= 860;
   const { settings, updateSettings, isOnlineOrdersEnabled, toggleOnlineOrders, loading: settingsLoading } = useSettings();
   const { user, role, isSuperAdmin, isAdmin, activeRestaurantId } = useAuth();
   const [isTogglingOnline, setIsTogglingOnline] = useState(false);
@@ -23,6 +25,19 @@ export default function SettingsScreen() {
   const [email, setEmail] = useState(settings.email || '');
   const [gstin, setGstin] = useState(settings.gstin || '');
   const [taxRate, setTaxRate] = useState(settings.default_tax_rate?.toString() || '5.0');
+  const [gstRegistered, setGstRegistered] = useState<boolean>(
+    settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim())
+  );
+  const [isGstEnabled, setIsGstEnabled] = useState<boolean>(
+    settings.is_gst_enabled !== undefined
+      ? Boolean(settings.is_gst_enabled)
+      : (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()))
+  );
+  const [taxInvoiceEnabled, setTaxInvoiceEnabled] = useState<boolean>(
+    settings.tax_invoice_enabled !== undefined
+      ? Boolean(settings.tax_invoice_enabled)
+      : (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()))
+  );
   const [logoUrl, setLogoUrl] = useState(settings.logo_url || '');
   const [bannerUrls, setBannerUrls] = useState<string[]>(() =>
     parseBannerUrls(settings.banner_url || settings.banner_urls)
@@ -53,6 +68,19 @@ export default function SettingsScreen() {
       setEmail(settings.email || '');
       setGstin(settings.gstin || '');
       setTaxRate(settings.default_tax_rate?.toString() || '5.0');
+      setGstRegistered(
+        settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim())
+      );
+      setIsGstEnabled(
+        settings.is_gst_enabled !== undefined
+          ? Boolean(settings.is_gst_enabled)
+          : (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()))
+      );
+      setTaxInvoiceEnabled(
+        settings.tax_invoice_enabled !== undefined
+          ? Boolean(settings.tax_invoice_enabled)
+          : (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()))
+      );
       setLogoUrl(settings.logo_url || '');
       setBannerUrls(parseBannerUrls(settings.banner_url || settings.banner_urls));
     }
@@ -277,7 +305,10 @@ export default function SettingsScreen() {
         banner_url: bannerPayload,
         banner_urls: bannerUrls,
         gallery_urls: bannerUrls,
-        default_tax_rate: parseFloat(taxRate) || 5.0,
+        default_tax_rate: parseFloat(taxRate) >= 0 ? parseFloat(taxRate) : 5.0,
+        gst_registered: gstRegistered,
+        is_gst_enabled: isGstEnabled,
+        tax_invoice_enabled: taxInvoiceEnabled,
       });
 
       if (activeRestaurantId) {
@@ -288,6 +319,7 @@ export default function SettingsScreen() {
             address: address.trim(),
             phone: phone.trim(),
             email: email.trim(),
+            gstin: gstin.trim() || null,
             logo_url: logoUrl || null,
             banner_url: bannerPayload || null,
           }).eq('id', activeRestaurantId),
@@ -304,13 +336,26 @@ export default function SettingsScreen() {
         setPhone(persisted.phone || '');
         setEmail(persisted.email || '');
         setGstin(persisted.gstin || '');
-        setTaxRate(persisted.default_tax_rate?.toString() || '5.0');
+        setTaxRate(persisted.default_tax_rate !== undefined ? persisted.default_tax_rate.toString() : '5.0');
+        setGstRegistered(
+          persisted.gst_registered !== undefined ? Boolean(persisted.gst_registered) : Boolean(persisted.gstin?.trim())
+        );
+        setIsGstEnabled(
+          persisted.is_gst_enabled !== undefined
+            ? Boolean(persisted.is_gst_enabled)
+            : (persisted.gst_registered !== undefined ? Boolean(persisted.gst_registered) : Boolean(persisted.gstin?.trim()))
+        );
+        setTaxInvoiceEnabled(
+          persisted.tax_invoice_enabled !== undefined
+            ? Boolean(persisted.tax_invoice_enabled)
+            : (persisted.gst_registered !== undefined ? Boolean(persisted.gst_registered) : Boolean(persisted.gstin?.trim()))
+        );
         setLogoUrl(persisted.logo_url || '');
         setBannerUrls(parseBannerUrls(persisted.banner_url || persisted.banner_urls));
       }
 
       setIsDirty(false);
-      Alert.alert('Success', 'Restaurant information updated successfully.');
+      Alert.alert('Success', 'Restaurant information and GST settings updated successfully.');
     } catch (err: any) {
       Alert.alert('Save Failed', err.message || 'Failed to save restaurant settings to database.');
     } finally {
@@ -362,561 +407,934 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: 24 }]}>
-        <Text style={styles.title}>Restaurant Settings & Administration</Text>
-
-        <View style={styles.card}>
-          <Text style={styles.cardHeader}>🏢 Restaurant Info & GST</Text>
-
-          {/* Restaurant Logo Section */}
-          <Text style={styles.label}>Restaurant Logo (Header Branding)</Text>
-          <View style={styles.logoRow}>
-            {logoUrl ? (
-              <Image source={{ uri: logoUrl }} style={styles.logoPreview} resizeMode="contain" />
-            ) : (
-              <View style={styles.logoPlaceholder}>
-                <Text style={{ fontSize: 24 }}>🍽️</Text>
-                <Text style={{ fontSize: 9, color: '#94a3b8', fontWeight: '700', marginTop: 2 }}>NO LOGO</Text>
-              </View>
-            )}
-
-            <View style={{ flex: 1, gap: 6 }}>
-              <TouchableOpacity
-                style={[styles.logoBtn, isUploadingLogo && { opacity: 0.6 }]}
-                onPress={handleUploadLogo}
-                disabled={isUploadingLogo || !canManage}
-              >
-                {isUploadingLogo ? (
-                  <ActivityIndicator size="small" color="#2563eb" />
-                ) : (
-                  <Text style={styles.logoBtnText}>📷 {logoUrl ? 'CHANGE LOGO' : 'UPLOAD LOGO'}</Text>
-                )}
-              </TouchableOpacity>
-
-              {logoUrl && canManage ? (
-                <TouchableOpacity
-                  style={styles.logoRemoveBtn}
-                  onPress={handleRemoveLogo}
-                >
-                  <Text style={styles.logoRemoveBtnText}>✕ Remove Logo</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scroll,
+          { paddingHorizontal: isDesktop ? 20 : 12 },
+        ]}
+      >
+        <View style={styles.contentWrapper}>
+          <View style={styles.headerTitleWrap}>
+            <Text style={styles.title}>Restaurant Settings & Administration</Text>
+            <Text style={styles.subTitleText}>
+              Manage restaurant branding, tax & GST rules, printer paper sizes, online marketplace status, and staff access.
+            </Text>
           </View>
 
-          {/* Restaurant Showcase / Banner Carousel Section */}
-          <View style={{ marginTop: 16, marginBottom: 12 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
-              <Text style={styles.label}>Showcase Banner Images (Marketplace Carousel)</Text>
-              <View style={{ flexDirection: 'row', gap: 6 }}>
+          {/* Responsive Multi-Column Flex Grid */}
+          <View style={[styles.dashboardGrid, isDesktop ? styles.dashboardGridRow : styles.dashboardGridCol]}>
+            {/* LEFT COLUMN */}
+            <View style={[styles.gridCol, isDesktop ? styles.gridColDesktop : styles.gridColMobile]}>
+              {/* 1. Restaurant Profile & Basic Info */}
+              <View style={styles.card}>
+                <Text style={styles.cardHeader}>🏢 Restaurant Profile & Branding</Text>
+                <Text style={styles.cardSubHeader}>Basic business identity, logo, showcase banners, and contact information.</Text>
+
+                {/* Logo & Banner Controls Row */}
+                <View style={[styles.brandingRow, isDesktop ? styles.brandingRowDesktop : styles.brandingRowMobile]}>
+                  {/* Logo Box */}
+                  <View style={[styles.logoBox, isDesktop ? styles.logoBoxDesktop : styles.logoBoxMobile]}>
+                    {logoUrl ? (
+                      <Image source={{ uri: logoUrl }} style={styles.logoPreview} resizeMode="contain" />
+                    ) : (
+                      <View style={styles.logoPlaceholder}>
+                        <Text style={{ fontSize: 18 }}>🍽️</Text>
+                        <Text style={{ fontSize: 8, color: '#94a3b8', fontWeight: '700', marginTop: 1 }}>NO LOGO</Text>
+                      </View>
+                    )}
+
+                    <View style={{ gap: 4, flexShrink: 1 }}>
+                      <TouchableOpacity
+                        style={[styles.logoBtn, isUploadingLogo && { opacity: 0.6 }]}
+                        onPress={handleUploadLogo}
+                        disabled={isUploadingLogo || !canManage}
+                      >
+                        {isUploadingLogo ? (
+                          <ActivityIndicator size="small" color="#2563eb" />
+                        ) : (
+                          <Text style={styles.logoBtnText}>📷 {logoUrl ? 'Change' : 'Upload'}</Text>
+                        )}
+                      </TouchableOpacity>
+
+                      {logoUrl && canManage ? (
+                        <TouchableOpacity
+                          style={styles.logoRemoveBtn}
+                          onPress={handleRemoveLogo}
+                        >
+                          <Text style={styles.logoRemoveBtnText}>✕ Remove</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  </View>
+
+                  {/* Banner Add Box */}
+                  <View style={[styles.bannerBox, isDesktop ? styles.bannerBoxDesktop : styles.bannerBoxMobile]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <Text style={[styles.label, { marginTop: 0, marginBottom: 0 }]}>Showcase Banners</Text>
+                      <View style={{ flexDirection: 'row', gap: 6 }}>
+                        <TouchableOpacity
+                          style={[styles.bannerAddBtn, isUploadingBanner && { opacity: 0.6 }]}
+                          onPress={handleUploadBanner}
+                          disabled={isUploadingBanner || !canManage}
+                        >
+                          {isUploadingBanner ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <Text style={styles.bannerAddBtnText}>📷 Photo</Text>
+                          )}
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.bannerAddBtn, { backgroundColor: '#475569' }]}
+                          onPress={() => setShowUrlModal(!showUrlModal)}
+                          disabled={!canManage}
+                        >
+                          <Text style={styles.bannerAddBtnText}>🔗 URL</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {showUrlModal && (
+                      <View style={styles.urlInputBox}>
+                        <View style={{ flexDirection: 'row', gap: 6 }}>
+                          <TextInput
+                            style={[styles.input, { flex: 1, paddingVertical: 5 }]}
+                            placeholder="https://..."
+                            placeholderTextColor="#94a3b8"
+                            value={customBannerUrl}
+                            onChangeText={setCustomBannerUrl}
+                            autoCapitalize="none"
+                          />
+                          <TouchableOpacity
+                            style={[styles.bannerAddBtn, { justifyContent: 'center' }]}
+                            onPress={handleAddBannerByUrl}
+                          >
+                            <Text style={styles.bannerAddBtnText}>Add</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
+
+                    {/* Banner Previews */}
+                    {bannerUrls.length > 0 ? (
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 2 }}>
+                        <View style={{ flexDirection: 'row', gap: 6 }}>
+                          {bannerUrls.map((url, idx) => (
+                            <View key={`banner-${idx}`} style={styles.bannerThumbWrap}>
+                              <Image source={{ uri: url }} style={styles.bannerThumb} resizeMode="cover" />
+                              {canManage && (
+                                <TouchableOpacity
+                                  style={styles.bannerDeleteBtn}
+                                  onPress={() => handleRemoveBanner(idx)}
+                                >
+                                  <Text style={styles.bannerDeleteBtnText}>✕</Text>
+                                </TouchableOpacity>
+                              )}
+                              <View style={styles.bannerIndexBadge}>
+                                <Text style={styles.bannerIndexText}>#{idx + 1}</Text>
+                              </View>
+                            </View>
+                          ))}
+                        </View>
+                      </ScrollView>
+                    ) : (
+                      <View style={styles.bannerEmptyBox}>
+                        <Text style={{ fontSize: 13 }}>🖼️</Text>
+                        <Text style={styles.bannerEmptyText}>No showcase banners uploaded.</Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+
+                {/* Form Fields */}
+                <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>Restaurant Name *</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={name}
+                      onChangeText={(v) => {
+                        setName(v);
+                        setIsDirty(true);
+                      }}
+                      placeholder="Ratnadeep Restaurant"
+                      placeholderTextColor="#94a3b8"
+                    />
+                  </View>
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>Legal Entity Name</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={legalName}
+                      onChangeText={(v) => {
+                        setLegalName(v);
+                        setIsDirty(true);
+                      }}
+                      placeholder="e.g. Ratnadeep Foods Pvt Ltd"
+                      placeholderTextColor="#94a3b8"
+                    />
+                  </View>
+                </View>
+
+                <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>Phone Number</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={phone}
+                      onChangeText={(v) => {
+                        setPhone(v);
+                        setIsDirty(true);
+                      }}
+                      placeholder="+91 98765 43210"
+                      placeholderTextColor="#94a3b8"
+                      keyboardType="phone-pad"
+                    />
+                  </View>
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>Email Address</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={email}
+                      onChangeText={(v) => {
+                        setEmail(v);
+                        setIsDirty(true);
+                      }}
+                      placeholder="contact@restaurant.com"
+                      placeholderTextColor="#94a3b8"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Address</Text>
+                  <TextInput
+                    style={[styles.input, { minHeight: 38 }]}
+                    value={address}
+                    onChangeText={(v) => {
+                      setAddress(v);
+                      setIsDirty(true);
+                    }}
+                    multiline
+                    placeholder="Restaurant physical address"
+                    placeholderTextColor="#94a3b8"
+                  />
+                </View>
+
                 <TouchableOpacity
-                  style={[styles.bannerAddBtn, isUploadingBanner && { opacity: 0.6 }]}
-                  onPress={handleUploadBanner}
-                  disabled={isUploadingBanner || !canManage}
+                  style={[styles.saveBtn, (isSaving || !canManage) && { opacity: 0.6 }]}
+                  onPress={handleSave}
+                  disabled={isSaving || !canManage}
                 >
-                  {isUploadingBanner ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  {isSaving ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <ActivityIndicator color="#ffffff" size="small" />
+                      <Text style={styles.saveBtnText}>Saving...</Text>
+                    </View>
                   ) : (
-                    <Text style={styles.bannerAddBtnText}>📷 Choose Photo</Text>
+                    <Text style={styles.saveBtnText}>Save Profile Info</Text>
                   )}
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.bannerAddBtn, { backgroundColor: '#475569' }]}
-                  onPress={() => setShowUrlModal(!showUrlModal)}
-                  disabled={!canManage}
-                >
-                  <Text style={styles.bannerAddBtnText}>🔗 Paste URL</Text>
-                </TouchableOpacity>
               </View>
-            </View>
 
-            {/* Optional URL Paste Input Box */}
-            {showUrlModal && (
-              <View style={{ backgroundColor: '#F8FAFC', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#CBD5E1', marginBottom: 10 }}>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#1E293B', marginBottom: 4 }}>Paste Image Web URL:</Text>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  <TextInput
-                    style={[styles.input, { flex: 1, marginBottom: 0, paddingVertical: 6 }]}
-                    placeholder="https://images.unsplash.com/..."
-                    value={customBannerUrl}
-                    onChangeText={setCustomBannerUrl}
-                    autoCapitalize="none"
-                  />
+              {/* 3. Marketplace Online Ordering */}
+              <View style={styles.card}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={styles.cardHeader}>🌐 Marketplace Online Ordering</Text>
+                    <Text style={styles.cardSubHeader}>
+                      Toggle customer online food ordering availability in the marketplace.
+                    </Text>
+                  </View>
                   <TouchableOpacity
-                    style={[styles.bannerAddBtn, { justifyContent: 'center' }]}
-                    onPress={handleAddBannerByUrl}
+                    testID="settings-online-orders-toggle"
+                    disabled={isTogglingOnline || !canManage}
+                    style={[
+                      styles.toggleBadge,
+                      isOnlineOrdersEnabled ? styles.toggleBadgeOn : styles.toggleBadgeOff,
+                      (isTogglingOnline || !canManage) && { opacity: 0.6 },
+                    ]}
+                    onPress={async () => {
+                      if (!canManage) {
+                        Alert.alert('Permission Denied', 'Only Restaurant Admins can change online ordering status.');
+                        return;
+                      }
+                      setIsTogglingOnline(true);
+                      try {
+                        const next = !isOnlineOrdersEnabled;
+                        await toggleOnlineOrders(next);
+                        Alert.alert(
+                          next ? 'Online Orders Enabled' : 'Online Orders Disabled',
+                          next
+                            ? 'Restaurant is now OPEN for customer marketplace orders.'
+                            : 'Restaurant is now CLOSED in customer marketplace. Delivery checkout is blocked.'
+                        );
+                      } catch (e: any) {
+                        Alert.alert('Error', e.message || 'Failed to update online ordering status');
+                      } finally {
+                        setIsTogglingOnline(false);
+                      }
+                    }}
                   >
-                    <Text style={styles.bannerAddBtnText}>Add</Text>
+                    <Text style={[styles.toggleBadgeText, !isOnlineOrdersEnabled && styles.toggleBadgeTextOff]}>
+                      {isOnlineOrdersEnabled ? '● OPEN' : '○ CLOSED'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
-            )}
 
-            {bannerUrls.length === 0 ? (
-              <View style={styles.bannerEmptyBox}>
-                <Text style={{ fontSize: 18 }}>🖼️</Text>
-                <Text style={styles.bannerEmptyText}>No custom banners yet. Choose a photo or paste a URL to showcase your restaurant ambiance.</Text>
-              </View>
-            ) : (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingVertical: 4 }}>
-                {bannerUrls.map((bUrl, idx) => (
-                  <View key={idx} style={styles.bannerThumbWrap}>
-                    <Image source={{ uri: bUrl }} style={styles.bannerThumb} resizeMode="cover" />
-                    {canManage && (
-                      <TouchableOpacity
-                        style={styles.bannerDeleteBtn}
-                        onPress={() => handleRemoveBanner(idx)}
-                      >
-                        <Text style={styles.bannerDeleteBtnText}>✕</Text>
-                      </TouchableOpacity>
-                    )}
-                    <View style={styles.bannerIndexBadge}>
-                      <Text style={styles.bannerIndexText}>#{idx + 1}</Text>
+              {/* 4. Printer Settings */}
+              <View style={styles.card}>
+                <Text style={styles.cardHeader}>🖨️ Printer Settings</Text>
+                <Text style={styles.cardSubHeader}>
+                  Configure thermal receipt dimensions and automatic printing per restaurant.
+                </Text>
+
+                <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
+                  {/* KOT Paper Size */}
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>KOT Paper Size</Text>
+                    <View style={styles.segmentedRow}>
+                      {(['58mm', '80mm', 'A4'] as PaperSize[]).map((size) => (
+                        <TouchableOpacity
+                          key={`kot-${size}`}
+                          testID={`kot-paper-${size}`}
+                          style={[
+                            styles.segmentBtn,
+                            kotPaperSize === size && styles.segmentBtnActive,
+                          ]}
+                          onPress={() => setKotPaperSize(size)}
+                        >
+                          <Text
+                            style={[
+                              styles.segmentBtnText,
+                              kotPaperSize === size && styles.segmentBtnTextActive,
+                            ]}
+                          >
+                            {size}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
                     </View>
                   </View>
-                ))}
-              </ScrollView>
-            )}
-          </View>
 
-          <Text style={styles.label}>Restaurant Name *</Text>
-          <TextInput
-            style={styles.input}
-            value={name}
-            onChangeText={(v) => {
-              setName(v);
-              setIsDirty(true);
-            }}
-            placeholder="e.g. Ratnadeep Restaurant"
-          />
+                  {/* Bill Paper Size */}
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>Bill Paper Size</Text>
+                    <View style={styles.segmentedRow}>
+                      {(['58mm', '80mm', 'A4'] as PaperSize[]).map((size) => (
+                        <TouchableOpacity
+                          key={`bill-${size}`}
+                          testID={`bill-paper-${size}`}
+                          style={[
+                            styles.segmentBtn,
+                            billPaperSize === size && styles.segmentBtnActive,
+                          ]}
+                          onPress={() => setBillPaperSize(size)}
+                        >
+                          <Text
+                            style={[
+                              styles.segmentBtnText,
+                              billPaperSize === size && styles.segmentBtnTextActive,
+                            ]}
+                          >
+                            {size}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                </View>
 
-          <Text style={styles.label}>Legal Entity Name</Text>
-          <TextInput
-            style={styles.input}
-            value={legalName}
-            onChangeText={(v) => {
-              setLegalName(v);
-              setIsDirty(true);
-            }}
-            placeholder="e.g. Ratnadeep Foods Pvt Ltd"
-          />
-
-          <Text style={styles.label}>Address</Text>
-          <TextInput
-            style={styles.input}
-            value={address}
-            onChangeText={(v) => {
-              setAddress(v);
-              setIsDirty(true);
-            }}
-            multiline
-            placeholder="Restaurant physical address"
-          />
-
-          <Text style={styles.label}>Phone</Text>
-          <TextInput
-            style={styles.input}
-            value={phone}
-            onChangeText={(v) => {
-              setPhone(v);
-              setIsDirty(true);
-            }}
-            placeholder="+91 98765 43210"
-            keyboardType="phone-pad"
-          />
-
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            style={styles.input}
-            value={email}
-            onChangeText={(v) => {
-              setEmail(v);
-              setIsDirty(true);
-            }}
-            placeholder="contact@restaurant.com"
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
-
-          <Text style={styles.label}>GSTIN</Text>
-          <TextInput
-            style={styles.input}
-            value={gstin}
-            onChangeText={(v) => {
-              setGstin(v);
-              setIsDirty(true);
-            }}
-            placeholder="36AAAAA0000A1Z5"
-            autoCapitalize="characters"
-          />
-
-          <Text style={styles.label}>Default Tax Rate (%)</Text>
-          <TextInput
-            style={styles.input}
-            value={taxRate}
-            onChangeText={(v) => {
-              setTaxRate(v);
-              setIsDirty(true);
-            }}
-            keyboardType="numeric"
-            placeholder="5.0"
-          />
-
-          <TouchableOpacity
-            style={[styles.saveBtn, (isSaving || !canManage) && { opacity: 0.6 }]}
-            onPress={handleSave}
-            disabled={isSaving || !canManage}
-          >
-            {isSaving ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <ActivityIndicator color="#ffffff" size="small" />
-                <Text style={styles.saveBtnText}>SAVING TO SUPABASE...</Text>
-              </View>
-            ) : (
-              <Text style={styles.saveBtnText}>SAVE RESTAURANT SETTINGS</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {/* Marketplace Online Ordering Status Section */}
-        <View style={[styles.card, { marginTop: 20 }]}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <View style={{ flex: 1, paddingRight: 10 }}>
-              <Text style={styles.cardHeader}>🌐 Marketplace Online Ordering</Text>
-              <Text style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
-                Control whether this restaurant is open or closed for customer online delivery orders in the Marketplace.
-              </Text>
-            </View>
-            <TouchableOpacity
-              testID="settings-online-orders-toggle"
-              disabled={isTogglingOnline || !canManage}
-              style={[
-                styles.toggleBadge,
-                isOnlineOrdersEnabled ? styles.toggleBadgeOn : styles.toggleBadgeOff,
-                (isTogglingOnline || !canManage) && { opacity: 0.6 },
-              ]}
-              onPress={async () => {
-                if (!canManage) {
-                  Alert.alert('Permission Denied', 'Only Restaurant Admins can change online ordering status.');
-                  return;
-                }
-                setIsTogglingOnline(true);
-                try {
-                  const next = !isOnlineOrdersEnabled;
-                  await toggleOnlineOrders(next);
-                  Alert.alert(
-                    next ? 'Online Orders Enabled' : 'Online Orders Disabled',
-                    next
-                      ? 'Restaurant is now OPEN for customer marketplace orders.'
-                      : 'Restaurant is now CLOSED in customer marketplace. Delivery checkout is blocked.'
-                  );
-                } catch (e: any) {
-                  Alert.alert('Error', e.message || 'Failed to update online ordering status');
-                } finally {
-                  setIsTogglingOnline(false);
-                }
-              }}
-            >
-              <Text style={styles.toggleBadgeText}>
-                {isOnlineOrdersEnabled ? '● OPEN' : '○ CLOSED'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Printer Settings Section */}
-        <View style={[styles.card, { marginTop: 20 }]}>
-          <Text style={styles.cardHeader}>🖨️ Printer Settings</Text>
-          <Text style={{ fontSize: 11, color: '#64748b', marginBottom: 14 }}>
-            Configure thermal receipt dimensions and automatic printing per restaurant. Settings are saved per restaurant in the database.
-          </Text>
-
-          {/* KOT Paper Size */}
-          <Text style={styles.label}>KOT Paper Size</Text>
-          <View style={styles.segmentedRow}>
-            {(['58mm', '80mm', 'A4'] as PaperSize[]).map((size) => (
-              <TouchableOpacity
-                key={`kot-${size}`}
-                testID={`kot-paper-${size}`}
-                style={[
-                  styles.segmentBtn,
-                  kotPaperSize === size && styles.segmentBtnActive,
-                ]}
-                onPress={() => setKotPaperSize(size)}
-              >
-                <Text
-                  style={[
-                    styles.segmentBtnText,
-                    kotPaperSize === size && styles.segmentBtnTextActive,
-                  ]}
-                >
-                  {size}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <Text style={styles.helperText}>
-            {kotPaperSize === '58mm'
-              ? 'Compact narrow format (48-52mm printable area) for mini thermal printers.'
-              : kotPaperSize === '80mm'
-              ? 'Standard POS kitchen thermal receipt format (74mm printable area).'
-              : 'Full-width structured invoice layout suitable for A4 office or kitchen printers.'}
-          </Text>
-
-          {/* Auto Print KOT Toggle */}
-          <View style={{ marginTop: 14 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <Text style={styles.label}>Auto Print KOT</Text>
-              <TouchableOpacity
-                testID="toggle-auto-print-kot"
-                style={[
-                  styles.toggleBadge,
-                  autoPrintKot ? styles.toggleBadgeOn : styles.toggleBadgeOff,
-                ]}
-                onPress={() => setAutoPrintKot(!autoPrintKot)}
-              >
-                <Text style={styles.toggleBadgeText}>
-                  {autoPrintKot ? '● ON' : '○ OFF'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.helperText}>
-              {autoPrintKot
-                ? 'ON: Newly generated KOTs (Dine-In, Takeaway, Online Delivery, and Delta items) automatically trigger printing.'
-                : 'OFF: KOT is generated and saved to DB; cashier manually clicks KOT Print when ready.'}
-            </Text>
-          </View>
-
-          {/* Bill Paper Size */}
-          <View style={{ marginTop: 14 }}>
-            <Text style={styles.label}>Bill Paper Size</Text>
-            <View style={styles.segmentedRow}>
-              {(['58mm', '80mm', 'A4'] as PaperSize[]).map((size) => (
-                <TouchableOpacity
-                  key={`bill-${size}`}
-                  testID={`bill-paper-${size}`}
-                  style={[
-                    styles.segmentBtn,
-                    billPaperSize === size && styles.segmentBtnActive,
-                  ]}
-                  onPress={() => setBillPaperSize(size)}
-                >
-                  <Text
-                    style={[
-                      styles.segmentBtnText,
-                      billPaperSize === size && styles.segmentBtnTextActive,
-                    ]}
-                  >
-                    {size}
+                {/* Auto Print KOT Toggle */}
+                <View style={[styles.toggleCard, { marginTop: 4 }]}>
+                  <View style={styles.toggleHeaderRow}>
+                    <Text style={styles.toggleTitle}>Auto Print KOT</Text>
+                    <TouchableOpacity
+                      testID="toggle-auto-print-kot"
+                      style={[
+                        styles.toggleBadge,
+                        autoPrintKot ? styles.toggleBadgeOn : styles.toggleBadgeOff,
+                      ]}
+                      onPress={() => setAutoPrintKot(!autoPrintKot)}
+                    >
+                      <Text style={[styles.toggleBadgeText, !autoPrintKot && styles.toggleBadgeTextOff]}>
+                        {autoPrintKot ? '● ON' : '○ OFF'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.toggleDesc}>
+                    {autoPrintKot
+                      ? 'Newly generated KOTs automatically trigger the kitchen thermal printer.'
+                      : 'Cashier manually clicks Print KOT when ready.'}
                   </Text>
+                </View>
+
+                <TouchableOpacity
+                  testID="save-printer-settings-btn"
+                  style={[styles.saveBtn, (isSavingPrinter || !canManage) && { opacity: 0.6 }]}
+                  onPress={handleSavePrinterSettings}
+                  disabled={isSavingPrinter || !canManage}
+                >
+                  {isSavingPrinter ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <ActivityIndicator color="#ffffff" size="small" />
+                      <Text style={styles.saveBtnText}>Saving...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.saveBtnText}>Save Printer Settings</Text>
+                  )}
                 </TouchableOpacity>
-              ))}
-            </View>
-            <Text style={styles.helperText}>
-              Final customer bill receipt formatting adapts to selected size.
-            </Text>
-          </View>
-
-          {/* Save Button */}
-          <TouchableOpacity
-            testID="save-printer-settings-btn"
-            style={[styles.saveBtn, (isSavingPrinter || !canManage) && { opacity: 0.6 }, { marginTop: 18 }]}
-            onPress={handleSavePrinterSettings}
-            disabled={isSavingPrinter || !canManage}
-          >
-            {isSavingPrinter ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <ActivityIndicator color="#ffffff" size="small" />
-                <Text style={styles.saveBtnText}>SAVING PRINTER SETTINGS...</Text>
               </View>
-            ) : (
-              <Text style={styles.saveBtnText}>SAVE PRINTER SETTINGS</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {/* Staff & Admin Management Section (Visible to ADMIN & SUPER_ADMIN) */}
-        {canManage ? (
-          <View style={[styles.card, { marginTop: 20 }]}>
-            <Text style={styles.cardHeader}>🔐 Staff & Admin Management (Admin Only)</Text>
-            <Text style={{ fontSize: 11, color: '#64748b', marginBottom: 12 }}>
-              Create official STAFF or ADMIN accounts with server-side security. Public signups cannot create privileged roles.
-            </Text>
-
-            <Text style={styles.label}>Account Role *</Text>
-            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
-              <TouchableOpacity
-                style={[styles.roleSelectBtn, accountRole === 'STAFF' && styles.roleSelectBtnActive]}
-                onPress={() => setAccountRole('STAFF')}
-              >
-                <Text style={[styles.roleSelectText, accountRole === 'STAFF' && styles.roleSelectTextActive]}>
-                  👨‍🍳 STAFF Account
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.roleSelectBtn, accountRole === 'ADMIN' && styles.roleSelectBtnActive]}
-                onPress={() => setAccountRole('ADMIN')}
-              >
-                <Text style={[styles.roleSelectText, accountRole === 'ADMIN' && styles.roleSelectTextActive]}>
-                  👑 ADMIN Account
-                </Text>
-              </TouchableOpacity>
             </View>
 
-            <Text style={styles.label}>Account Email *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="staff@ratnadeep.com"
-              value={accountEmail}
-              onChangeText={setAccountEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
+            {/* RIGHT COLUMN */}
+            <View style={[styles.gridCol, isDesktop ? styles.gridColDesktop : styles.gridColMobile]}>
+              {/* 2. GST & Tax Settings */}
+              <View style={styles.card}>
+                <Text style={styles.cardHeader}>🧾 GST & Tax Settings</Text>
+                <Text style={styles.cardSubHeader}>
+                  Configure GST registration, tax collection rules, GSTIN, and tax invoice printing.
+                </Text>
 
-            <Text style={styles.label}>Full Name *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Rahul Sharma"
-              value={accountName}
-              onChangeText={setAccountName}
-            />
+                {/* GST Registered Toggle */}
+                <View style={styles.toggleCard}>
+                  <View style={styles.toggleHeaderRow}>
+                    <Text style={styles.toggleTitle}>GST Registered Business</Text>
+                    <TouchableOpacity
+                      testID="settings-gst-registered-toggle"
+                      disabled={!canManage}
+                      style={[
+                        styles.toggleBadge,
+                        gstRegistered ? styles.toggleBadgeOn : styles.toggleBadgeOff,
+                        !canManage && { opacity: 0.6 },
+                      ]}
+                      onPress={() => {
+                        if (!canManage) return;
+                        if (gstRegistered) {
+                          setGstRegistered(false);
+                          setIsGstEnabled(false);
+                          setTaxInvoiceEnabled(false);
+                        } else {
+                          setGstRegistered(true);
+                        }
+                        setIsDirty(true);
+                      }}
+                    >
+                      <Text style={[styles.toggleBadgeText, !gstRegistered && styles.toggleBadgeTextOff]}>
+                        {gstRegistered ? '● REGISTERED' : '○ UNREGISTERED'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.toggleDesc}>
+                    Turning OFF disables GST collection and Tax Invoices across all order channels.
+                  </Text>
+                </View>
 
-            <Text style={styles.label}>Phone Number</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="+91 9876543210"
-              value={accountPhone}
-              onChangeText={setAccountPhone}
-              keyboardType="phone-pad"
-            />
+                {/* Include GST Toggle */}
+                <View style={styles.toggleCard}>
+                  <View style={styles.toggleHeaderRow}>
+                    <Text style={styles.toggleTitle}>Include GST / Tax on Orders</Text>
+                    <TouchableOpacity
+                      testID="settings-include-gst-toggle"
+                      disabled={!canManage}
+                      style={[
+                        styles.toggleBadge,
+                        isGstEnabled ? styles.toggleBadgeOn : styles.toggleBadgeOff,
+                        !canManage && { opacity: 0.6 },
+                      ]}
+                      onPress={() => {
+                        if (!canManage) return;
+                        if (!isGstEnabled) {
+                          if (!gstin.trim()) {
+                            Alert.alert(
+                              'GSTIN Required',
+                              'Please enter a valid GSTIN before enabling GST billing.'
+                            );
+                            return;
+                          }
+                          setGstRegistered(true);
+                          setIsGstEnabled(true);
+                        } else {
+                          setIsGstEnabled(false);
+                        }
+                        setIsDirty(true);
+                      }}
+                    >
+                      <Text style={[styles.toggleBadgeText, !isGstEnabled && styles.toggleBadgeTextOff]}>
+                        {isGstEnabled ? '● GST ON' : '○ GST OFF'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.toggleDesc}>
+                    Calculates CGST & SGST on Dine-In, Takeaway, Delivery, and QR Menu.
+                  </Text>
+                </View>
 
-            <Text style={styles.label}>Password * (Min 6 chars)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="••••••••"
-              value={accountPassword}
-              onChangeText={setAccountPassword}
-              secureTextEntry
-            />
+                {/* Tax Invoice Toggle */}
+                <View style={styles.toggleCard}>
+                  <View style={styles.toggleHeaderRow}>
+                    <Text style={styles.toggleTitle}>Tax Invoice Labeling</Text>
+                    <TouchableOpacity
+                      testID="settings-tax-invoice-toggle"
+                      disabled={!canManage}
+                      style={[
+                        styles.toggleBadge,
+                        taxInvoiceEnabled ? styles.toggleBadgeOn : styles.toggleBadgeOff,
+                        !canManage && { opacity: 0.6 },
+                      ]}
+                      onPress={() => {
+                        if (!canManage) return;
+                        if (!taxInvoiceEnabled) {
+                          setGstRegistered(true);
+                          setTaxInvoiceEnabled(true);
+                        } else {
+                          setTaxInvoiceEnabled(false);
+                        }
+                        setIsDirty(true);
+                      }}
+                    >
+                      <Text style={[styles.toggleBadgeText, !taxInvoiceEnabled && styles.toggleBadgeTextOff]}>
+                        {taxInvoiceEnabled ? '● TAX INVOICE' : '○ RETAIL BILL'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.toggleDesc}>
+                    Label receipts as official Tax Invoices. When OFF, receipts are labeled Retail Bills.
+                  </Text>
+                </View>
 
-            <TouchableOpacity
-              style={[styles.saveBtn, { backgroundColor: '#16a34a', marginTop: 14 }, isCreatingAccount && { backgroundColor: '#cbd5e1' }]}
-              onPress={handleCreateNewAccount}
-              disabled={isCreatingAccount}
-            >
-              {isCreatingAccount ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text style={styles.saveBtnText}>+ CREATE NEW {accountRole} ACCOUNT</Text>
-              )}
-            </TouchableOpacity>
+                {/* GSTIN & Tax Rate Inputs */}
+                <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>GSTIN (GST Number)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={gstin}
+                      onChangeText={(v) => {
+                        setGstin(v.toUpperCase());
+                        setIsDirty(true);
+                      }}
+                      placeholder="e.g. 36AAAAA0000A1Z5"
+                      placeholderTextColor="#94a3b8"
+                      autoCapitalize="characters"
+                    />
+                    <Text style={styles.helperText}>
+                      15-digit GSTIN on receipts.
+                    </Text>
+                  </View>
+
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>GST Rate (%)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={taxRate}
+                      onChangeText={(v) => {
+                        setTaxRate(v);
+                        setIsDirty(true);
+                      }}
+                      keyboardType="numeric"
+                      placeholder="5.0"
+                      placeholderTextColor="#94a3b8"
+                    />
+                    <Text style={styles.helperText}>
+                      Splits into equal CGST & SGST.
+                    </Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.saveBtn, (isSaving || !canManage) && { opacity: 0.6 }]}
+                  onPress={handleSave}
+                  disabled={isSaving || !canManage}
+                >
+                  {isSaving ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <ActivityIndicator color="#ffffff" size="small" />
+                      <Text style={styles.saveBtnText}>Saving...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.saveBtnText}>Save GST Settings</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              {/* 5. Staff & Admin Management */}
+              {canManage ? (
+                <View style={styles.card}>
+                  <Text style={styles.cardHeader}>🔐 Staff & Admin Management</Text>
+                  <Text style={styles.cardSubHeader}>
+                    Create official STAFF or ADMIN accounts with server-side credentials.
+                  </Text>
+
+                  <Text style={styles.label}>Account Role *</Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+                    <TouchableOpacity
+                      style={[styles.roleSelectBtn, accountRole === 'STAFF' && styles.roleSelectBtnActive]}
+                      onPress={() => setAccountRole('STAFF')}
+                    >
+                      <Text style={[styles.roleSelectText, accountRole === 'STAFF' && styles.roleSelectTextActive]}>
+                        👨‍🍳 STAFF Account
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.roleSelectBtn, accountRole === 'ADMIN' && styles.roleSelectBtnActive]}
+                      onPress={() => setAccountRole('ADMIN')}
+                    >
+                      <Text style={[styles.roleSelectText, accountRole === 'ADMIN' && styles.roleSelectTextActive]}>
+                        👑 ADMIN Account
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
+                    <View style={styles.formCol}>
+                      <Text style={styles.label}>Email *</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="staff@restaurant.com"
+                        placeholderTextColor="#94a3b8"
+                        value={accountEmail}
+                        onChangeText={setAccountEmail}
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                      />
+                    </View>
+                    <View style={styles.formCol}>
+                      <Text style={styles.label}>Full Name *</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Rahul Sharma"
+                        placeholderTextColor="#94a3b8"
+                        value={accountName}
+                        onChangeText={setAccountName}
+                      />
+                    </View>
+                  </View>
+
+                  <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
+                    <View style={styles.formCol}>
+                      <Text style={styles.label}>Phone Number</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="+91 98765 43210"
+                        placeholderTextColor="#94a3b8"
+                        value={accountPhone}
+                        onChangeText={setAccountPhone}
+                        keyboardType="phone-pad"
+                      />
+                    </View>
+                    <View style={styles.formCol}>
+                      <Text style={styles.label}>Password * (Min 6 chars)</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="••••••••"
+                        placeholderTextColor="#94a3b8"
+                        value={accountPassword}
+                        onChangeText={setAccountPassword}
+                        secureTextEntry
+                      />
+                    </View>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.saveBtn, { backgroundColor: '#16a34a' }, isCreatingAccount && { backgroundColor: '#cbd5e1' }]}
+                    onPress={handleCreateNewAccount}
+                    disabled={isCreatingAccount}
+                  >
+                    {isCreatingAccount ? (
+                      <ActivityIndicator color="#ffffff" size="small" />
+                    ) : (
+                      <Text style={styles.saveBtnText}>+ Create {accountRole} Account</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </View>
           </View>
-        ) : null}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8fafc' },
-  scroll: { padding: 20 },
-  title: { fontSize: 20, fontWeight: '900', color: '#0f172a', marginBottom: 16 },
-  card: { backgroundColor: '#ffffff', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#e2e8f0' },
-  cardHeader: { fontSize: 15, fontWeight: '800', color: '#0f172a', marginBottom: 14 },
-  label: { fontSize: 11, fontWeight: '700', color: '#475569', marginBottom: 4, marginTop: 8 },
-  input: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, fontSize: 13, color: '#0f172a', backgroundColor: '#ffffff' },
-  saveBtn: { backgroundColor: '#2563eb', paddingVertical: 12, borderRadius: 10, alignItems: 'center', marginTop: 16 },
-  saveBtnText: { color: '#ffffff', fontSize: 12, fontWeight: '900' },
-  roleSelectBtn: { flex: 1, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1', alignItems: 'center', backgroundColor: '#f8fafc' },
-  roleSelectBtnActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-  roleSelectText: { fontSize: 11, fontWeight: '700', color: '#475569' },
-  roleSelectTextActive: { color: '#ffffff' },
-  logoRow: {
+  container: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+  },
+  scroll: {
+    paddingVertical: 14,
+    width: '100%',
+  },
+  contentWrapper: {
+    width: '100%',
+    gap: 12,
+  },
+  headerTitleWrap: {
+    marginBottom: 4,
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: -0.5,
+  },
+  subTitleText: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  dashboardGrid: {
+    width: '100%',
+  },
+  dashboardGridRow: {
+    flexDirection: 'row',
+    gap: 16,
+    alignItems: 'flex-start',
+  },
+  dashboardGridCol: {
+    flexDirection: 'column',
+    gap: 12,
+  },
+  gridCol: {
+    gap: 12,
+  },
+  gridColDesktop: {
+    flex: 1,
+  },
+  gridColMobile: {
+    width: '100%',
+  },
+  card: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  cardHeader: {
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 2,
+  },
+  cardSubHeader: {
+    fontSize: 11,
+    color: '#64748B',
+    lineHeight: 15,
+    marginBottom: 10,
+  },
+  label: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 4,
+    marginTop: 2,
+  },
+  input: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 12.5,
+    color: '#0F172A',
+    backgroundColor: '#FFFFFF',
+  },
+  formGroup: {
+    marginBottom: 10,
+    width: '100%',
+  },
+  formRow: {
+    width: '100%',
+  },
+  formRowDesktop: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 10,
+    flexWrap: 'wrap',
+  },
+  formRowMobile: {
+    flexDirection: 'column',
+    gap: 8,
+    marginBottom: 10,
+  },
+  formCol: {
+    flex: 1,
+    width: '100%',
+  },
+  saveBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#2563EB',
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+    minWidth: 140,
+  },
+  saveBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11.5,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  roleSelectBtn: {
+    flex: 1,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+  },
+  roleSelectBtnActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  roleSelectText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  roleSelectTextActive: {
+    color: '#FFFFFF',
+  },
+  brandingRow: {
+    width: '100%',
+    marginBottom: 10,
+  },
+  brandingRowDesktop: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'flex-start',
+  },
+  brandingRowMobile: {
+    flexDirection: 'column',
+    gap: 10,
+  },
+  logoBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
-    marginVertical: 8,
-    padding: 10,
-    backgroundColor: '#f8fafc',
-    borderRadius: 12,
+    gap: 10,
+    padding: 8,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#E2E8F0',
+  },
+  logoBoxDesktop: {
+    flex: 1,
+  },
+  logoBoxMobile: {
+    width: '100%',
   },
   logoPreview: {
-    width: 64,
-    height: 64,
-    borderRadius: 12,
-    backgroundColor: '#ffffff',
+    width: 48,
+    height: 48,
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#cbd5e1',
+    borderColor: '#CBD5E1',
   },
   logoPlaceholder: {
-    width: 64,
-    height: 64,
-    borderRadius: 12,
-    backgroundColor: '#ffffff',
+    width: 48,
+    height: 48,
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#cbd5e1',
+    borderColor: '#CBD5E1',
     justifyContent: 'center',
     alignItems: 'center',
   },
   logoBtn: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#EFF6FF',
     borderWidth: 1,
-    borderColor: '#bfdbfe',
-    paddingVertical: 9,
-    paddingHorizontal: 14,
-    borderRadius: 10,
+    borderColor: '#BFDBFE',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
     alignItems: 'center',
   },
   logoBtnText: {
-    color: '#1d4ed8',
-    fontSize: 12,
+    color: '#1D4ED8',
+    fontSize: 11,
     fontWeight: '800',
   },
   logoRemoveBtn: {
-    paddingVertical: 5,
-    paddingHorizontal: 8,
+    paddingVertical: 2,
+    paddingHorizontal: 4,
     alignItems: 'flex-start',
   },
   logoRemoveBtnText: {
-    color: '#e11d48',
-    fontSize: 11,
+    color: '#E11D48',
+    fontSize: 10,
     fontWeight: '700',
+  },
+  bannerBox: {
+    width: '100%',
+  },
+  bannerBoxDesktop: {
+    flex: 1.3,
+  },
+  bannerBoxMobile: {
+    width: '100%',
   },
   bannerAddBtn: {
     backgroundColor: '#0F172A',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 6,
   },
   bannerAddBtnText: {
     color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '800',
   },
-  bannerEmptyBox: {
-    padding: 14,
+  urlInputBox: {
     backgroundColor: '#F8FAFC',
-    borderRadius: 10,
+    padding: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    marginBottom: 8,
+    width: '100%',
+  },
+  bannerEmptyBox: {
+    padding: 10,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderStyle: 'dashed',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 6,
+    width: '100%',
   },
   bannerEmptyText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#64748B',
     flex: 1,
-    lineHeight: 16,
+    lineHeight: 14,
   },
   bannerThumbWrap: {
-    width: 130,
-    height: 75,
-    borderRadius: 8,
+    width: 90,
+    height: 52,
+    borderRadius: 6,
     overflow: 'hidden',
     position: 'relative',
     backgroundColor: '#0F172A',
@@ -929,49 +1347,50 @@ const styles = StyleSheet.create({
   },
   bannerDeleteBtn: {
     position: 'absolute',
-    top: 4,
-    right: 4,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    top: 2,
+    right: 2,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: 'rgba(225, 29, 72, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   bannerDeleteBtnText: {
     color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 9,
     fontWeight: '900',
-    lineHeight: 12,
+    lineHeight: 10,
   },
   bannerIndexBadge: {
     position: 'absolute',
-    bottom: 4,
-    left: 4,
+    bottom: 2,
+    left: 2,
     backgroundColor: 'rgba(15, 23, 42, 0.75)',
-    paddingHorizontal: 5,
+    paddingHorizontal: 4,
     paddingVertical: 1,
-    borderRadius: 4,
+    borderRadius: 3,
   },
   bannerIndexText: {
     color: '#FFFFFF',
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '800',
   },
   segmentedRow: {
     flexDirection: 'row',
     backgroundColor: '#F1F5F9',
-    borderRadius: 8,
-    padding: 3,
-    marginBottom: 4,
-    gap: 4,
+    borderRadius: 6,
+    padding: 2,
+    marginBottom: 2,
+    gap: 3,
+    width: '100%',
   },
   segmentBtn: {
     flex: 1,
-    paddingVertical: 9,
+    paddingVertical: 6,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 6,
+    borderRadius: 5,
   },
   segmentBtnActive: {
     backgroundColor: '#0F172A',
@@ -982,7 +1401,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   segmentBtnText: {
-    fontSize: 13,
+    fontSize: 11.5,
     fontWeight: '700',
     color: '#64748B',
   },
@@ -990,26 +1409,60 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   helperText: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#64748B',
-    lineHeight: 15,
-    marginTop: 2,
+    lineHeight: 14,
+    marginTop: 3,
+  },
+  toggleCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 8,
+    width: '100%',
+  },
+  toggleHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  toggleTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    flex: 1,
+  },
+  toggleDesc: {
+    fontSize: 10.5,
+    color: '#64748B',
+    lineHeight: 14,
+    marginTop: 3,
   },
   toggleBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 14,
+    paddingHorizontal: 9,
+    paddingVertical: 3.5,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   toggleBadgeOn: {
     backgroundColor: '#16A34A',
   },
   toggleBadgeOff: {
-    backgroundColor: '#64748B',
+    backgroundColor: '#E2E8F0',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
   },
   toggleBadgeText: {
     color: '#FFFFFF',
-    fontSize: 12,
+    fontSize: 9.5,
     fontWeight: '900',
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
+  },
+  toggleBadgeTextOff: {
+    color: '#475569',
   },
 });

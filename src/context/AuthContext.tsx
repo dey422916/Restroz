@@ -72,37 +72,64 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
-    // Initial user & pending table load
-    Promise.all([
-      authService.getCurrentUser(),
-      pendingRedirectUtil.getPendingTableId(),
-    ]).then(async ([u, tblId]) => {
-      setUser(u);
-      setPendingTableIdState(tblId);
-      await loadRestaurantContext(u);
-      setLoading(false);
-    });
+    let isMounted = true;
 
-    // Supabase Auth listener for session persistence across Android restarts
+    // Initial user & pending table load from persistent storage
+    const initializeAuth = async () => {
+      try {
+        const [u, tblId] = await Promise.all([
+          authService.getCurrentUser(),
+          pendingRedirectUtil.getPendingTableId(),
+        ]);
+        if (!isMounted) return;
+        setUser(u);
+        setPendingTableIdState(tblId);
+        await loadRestaurantContext(u);
+      } catch (err) {
+        console.warn('Auth initialization error:', err);
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    initializeAuth();
+
+    // Supabase Auth listener for session persistence across Android restarts & token refreshes
     if (isSupabaseConfigured) {
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        if (
+          event === 'INITIAL_SESSION' ||
+          event === 'SIGNED_IN' ||
+          event === 'TOKEN_REFRESHED' ||
+          event === 'USER_UPDATED'
+        ) {
           if (session?.user) {
             const current = await authService.getCurrentUser();
-            setUser(current);
-            await loadRestaurantContext(current);
+            if (isMounted) {
+              setUser(current);
+              await loadRestaurantContext(current);
+            }
           }
         } else if (event === 'SIGNED_OUT') {
-          setUser(null);
-          await loadRestaurantContext(null);
-          setLoading(false);
+          if (isMounted) {
+            setUser(null);
+            await loadRestaurantContext(null);
+            setLoading(false);
+          }
         }
       });
 
       return () => {
+        isMounted = false;
         subscription.unsubscribe();
       };
     }
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const setPendingTableId = async (tableId: string) => {

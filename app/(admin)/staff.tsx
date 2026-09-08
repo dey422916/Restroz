@@ -24,6 +24,99 @@ import {
   RestaurantPlanUsage,
 } from '../../src/types';
 
+const PERMISSION_CONFIG_ITEMS: {
+  key: keyof RestaurantMemberPermissions;
+  label: string;
+  icon: string;
+  description: string;
+}[] = [
+  {
+    key: 'can_use_pos',
+    label: 'POS Terminal',
+    icon: '🖥️',
+    description: 'Punch orders, live cart & bill counter',
+  },
+  {
+    key: 'can_view_orders',
+    label: 'View Orders',
+    icon: '📋',
+    description: 'View active orders feed & order history',
+  },
+  {
+    key: 'can_edit_orders',
+    label: 'Edit Orders',
+    icon: '✏️',
+    description: 'Modify items, quantities & order notes',
+  },
+  {
+    key: 'can_cancel_orders',
+    label: 'Cancel Orders',
+    icon: '❌',
+    description: 'Cancel live orders with required reason',
+  },
+  {
+    key: 'can_manage_products',
+    label: 'Products & Stock',
+    icon: '🍲',
+    description: 'Update products, pricing & inventory stock',
+  },
+  {
+    key: 'can_manage_categories',
+    label: 'Categories',
+    icon: '📂',
+    description: 'Create & organize menu categories',
+  },
+  {
+    key: 'can_manage_tables',
+    label: 'Tables & QR',
+    icon: '🪑',
+    description: 'Manage dining tables & table QR codes',
+  },
+  {
+    key: 'can_manage_coupons',
+    label: 'Coupons & Offers',
+    icon: '🎟️',
+    description: 'Create & manage promotional discount coupons',
+  },
+  {
+    key: 'can_view_reports',
+    label: 'Analytics & Reports',
+    icon: '📊',
+    description: 'View sales revenue metrics & day summaries',
+  },
+  {
+    key: 'can_manage_register',
+    label: 'Cash Register',
+    icon: '💵',
+    description: 'Open & close daily register cash drawer',
+  },
+  {
+    key: 'can_view_settings',
+    label: 'View Settings',
+    icon: '⚙️',
+    description: 'View restaurant details & printer config',
+  },
+  {
+    key: 'can_manage_settings',
+    label: 'Manage Settings',
+    icon: '🔧',
+    description: 'Modify store profile, taxes & system options',
+  },
+  {
+    key: 'can_manage_staff',
+    label: 'Staff & Roles',
+    icon: '👥',
+    description: 'Manage team members & assign role permissions',
+  },
+];
+
+const PRESET_OPTIONS: { id: StaffPermissionPreset; label: string; icon: string }[] = [
+  { id: 'CASHIER', label: 'Cashier', icon: '💳' },
+  { id: 'WAITER', label: 'Waiter', icon: '🍽️' },
+  { id: 'MANAGER', label: 'Manager', icon: '💼' },
+  { id: 'KITCHEN', label: 'Kitchen', icon: '🧑‍🍳' },
+];
+
 export default function StaffManagementScreen() {
   const router = useRouter();
   const { user, isAdmin, isSuperAdmin, activeRestaurantId, activeRestaurant } = useAuth();
@@ -87,6 +180,26 @@ export default function StaffManagementScreen() {
       </View>
     );
   }
+
+  const handleOpenAddStaff = () => {
+    if (
+      planUsage &&
+      !planUsage.staff.is_unlimited &&
+      planUsage.staff.max !== null &&
+      planUsage.staff.current >= planUsage.staff.max
+    ) {
+      Alert.alert(
+        'Plan Limit Reached',
+        'Plan limit reached. Please upgrade or contact Super Admin.',
+        [
+          { text: 'Upgrade Plan', onPress: () => router.push('/(admin)/my-plan' as any) },
+          { text: 'OK', style: 'cancel' },
+        ]
+      );
+      return;
+    }
+    setAddModalVisible(true);
+  };
 
   const handleAddStaff = async () => {
     if (!email.trim()) {
@@ -243,16 +356,16 @@ export default function StaffManagementScreen() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>👥 Staff & Role Permissions</Text>
-          <Text style={styles.subtitle}>
+        <View style={styles.headerTitleBox}>
+          <Text style={styles.title} numberOfLines={1}>👥 Staff & Role Permissions</Text>
+          <Text style={styles.subtitle} numberOfLines={1}>
             {activeRestaurant?.name || 'Restaurant'} • {staffList.length} Team Members
           </Text>
         </View>
 
         <TouchableOpacity
           style={styles.addBtn}
-          onPress={() => setAddModalVisible(true)}
+          onPress={handleOpenAddStaff}
         >
           <Text style={styles.addBtnText}>+ Add Staff</Text>
         </TouchableOpacity>
@@ -307,6 +420,8 @@ export default function StaffManagementScreen() {
           data={filteredStaff}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
+          refreshing={loading}
+          onRefresh={loadData}
           renderItem={({ item }) => (
             <View style={[styles.staffCard, !item.is_active && styles.staffCardInactive]}>
               <View style={styles.cardHeader}>
@@ -351,51 +466,138 @@ export default function StaffManagementScreen() {
                   </View>
                 ) : (
                   <>
-                    {item.permissions.can_use_pos && <Text style={styles.permChip}>🖥️ POS</Text>}
-                    {item.permissions.can_view_orders && <Text style={styles.permChip}>📋 Orders</Text>}
-                    {item.permissions.can_edit_orders && <Text style={styles.permChip}>✏️ Edit Orders</Text>}
-                    {item.permissions.can_cancel_orders && <Text style={styles.permChip}>❌ Cancel Orders</Text>}
-                    {item.permissions.can_manage_products && <Text style={styles.permChip}>🍲 Products</Text>}
-                    {item.permissions.can_manage_tables && <Text style={styles.permChip}>🪑 Tables</Text>}
-                    {item.permissions.can_view_reports && <Text style={styles.permChip}>📊 Reports</Text>}
-                    {item.permissions.can_manage_register && <Text style={styles.permChip}>💵 Register</Text>}
+                    {item.permissions.can_use_pos && (
+                      <View style={styles.permChip}>
+                        <Text style={styles.permChipText}>🖥️ POS</Text>
+                      </View>
+                    )}
+                    {item.permissions.can_view_orders && (
+                      <View style={styles.permChip}>
+                        <Text style={styles.permChipText}>📋 Orders</Text>
+                      </View>
+                    )}
+                    {item.permissions.can_edit_orders && (
+                      <View style={styles.permChip}>
+                        <Text style={styles.permChipText}>✏️ Edit Orders</Text>
+                      </View>
+                    )}
+                    {item.permissions.can_cancel_orders && (
+                      <View style={styles.permChip}>
+                        <Text style={styles.permChipText}>❌ Cancel Orders</Text>
+                      </View>
+                    )}
+                    {item.permissions.can_manage_products && (
+                      <View style={styles.permChip}>
+                        <Text style={styles.permChipText}>🍲 Products</Text>
+                      </View>
+                    )}
+                    {item.permissions.can_manage_tables && (
+                      <View style={styles.permChip}>
+                        <Text style={styles.permChipText}>🪑 Tables</Text>
+                      </View>
+                    )}
+                    {item.permissions.can_view_reports && (
+                      <View style={styles.permChip}>
+                        <Text style={styles.permChipText}>📊 Reports</Text>
+                      </View>
+                    )}
+                    {item.permissions.can_manage_register && (
+                      <View style={styles.permChip}>
+                        <Text style={styles.permChipText}>💵 Register</Text>
+                      </View>
+                    )}
+                    {!item.permissions.can_use_pos &&
+                      !item.permissions.can_view_orders &&
+                      !item.permissions.can_edit_orders &&
+                      !item.permissions.can_cancel_orders &&
+                      !item.permissions.can_manage_products &&
+                      !item.permissions.can_manage_tables &&
+                      !item.permissions.can_view_reports &&
+                      !item.permissions.can_manage_register && (
+                        <View style={styles.permChipEmpty}>
+                          <Text style={styles.permChipEmptyText}>No permissions assigned</Text>
+                        </View>
+                      )}
                   </>
                 )}
               </View>
 
-              {/* Actions */}
-              <View style={styles.cardActions}>
-                {item.role !== 'ADMIN' && (
-                  <TouchableOpacity
-                    style={styles.actionBtnPerms}
-                    onPress={() => openPermissionEditor(item)}
-                  >
-                    <Text style={styles.actionBtnPermsText}>🛡️ Permissions</Text>
-                  </TouchableOpacity>
+              {/* Actions Grid (2 columns on mobile) */}
+              <View style={styles.cardActionsGrid}>
+                {item.role !== 'ADMIN' ? (
+                  <>
+                    <View style={styles.actionRow}>
+                      <TouchableOpacity
+                        style={[styles.actionBtn, styles.actionBtnPerms]}
+                        onPress={() => openPermissionEditor(item)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.actionBtnPermsText} numberOfLines={1}>🛡️ Permissions</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.actionBtn, styles.actionBtnPwd]}
+                        onPress={() => openStaffPasswordModal(item)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.actionBtnPwdText} numberOfLines={1}>🔑 Password</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.actionRow}>
+                      <TouchableOpacity
+                        style={[styles.actionBtn, item.is_active ? styles.btnDeact : styles.btnAct]}
+                        onPress={() => handleToggleActive(item)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={item.is_active ? styles.btnDeactText : styles.btnActText} numberOfLines={1}>
+                          {item.is_active ? '⏸️ Deactivate' : '▶️ Activate'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.actionBtn, styles.actionBtnRemove]}
+                        onPress={() => handleRemoveMember(item)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.actionBtnRemoveText} numberOfLines={1}>🗑️ Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    <View style={styles.actionRow}>
+                      <TouchableOpacity
+                        style={[styles.actionBtn, styles.actionBtnPwd]}
+                        onPress={() => openStaffPasswordModal(item)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.actionBtnPwdText} numberOfLines={1}>🔑 Password</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.actionBtn, item.is_active ? styles.btnDeact : styles.btnAct]}
+                        onPress={() => handleToggleActive(item)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={item.is_active ? styles.btnDeactText : styles.btnActText} numberOfLines={1}>
+                          {item.is_active ? '⏸️ Deactivate' : '▶️ Activate'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.actionRow}>
+                      <TouchableOpacity
+                        style={[styles.actionBtn, styles.actionBtnRemove]}
+                        onPress={() => handleRemoveMember(item)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.actionBtnRemoveText} numberOfLines={1}>🗑️ Remove</Text>
+                      </TouchableOpacity>
+                      <View style={styles.actionBtnPlaceholder} />
+                    </View>
+                  </>
                 )}
-
-                <TouchableOpacity
-                  style={styles.actionBtnPerms}
-                  onPress={() => openStaffPasswordModal(item)}
-                >
-                  <Text style={styles.actionBtnPermsText}>🔑 Password</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.actionBtnToggle, item.is_active ? styles.btnDeact : styles.btnAct]}
-                  onPress={() => handleToggleActive(item)}
-                >
-                  <Text style={item.is_active ? styles.btnDeactText : styles.btnActText}>
-                    {item.is_active ? '⏸️ Deactivate' : '▶️ Activate'}
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.actionBtnRemove}
-                  onPress={() => handleRemoveMember(item)}
-                >
-                  <Text style={styles.actionBtnRemoveText}>🗑️ Remove</Text>
-                </TouchableOpacity>
               </View>
             </View>
           )}
@@ -441,6 +643,7 @@ export default function StaffManagementScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="staff@example.com"
+                placeholderTextColor="#64748b"
                 keyboardType="email-address"
                 autoCapitalize="none"
                 value={email}
@@ -451,6 +654,7 @@ export default function StaffManagementScreen() {
               <TextInput
                 style={styles.input}
                 placeholder={newMemberRole === 'ADMIN' ? 'Default: Ratnadeep1@' : 'Default: Staff12345!'}
+                placeholderTextColor="#64748b"
                 secureTextEntry
                 value={password}
                 onChangeText={setPassword}
@@ -460,6 +664,7 @@ export default function StaffManagementScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="e.g. Ramesh Kumar"
+                placeholderTextColor="#64748b"
                 value={fullName}
                 onChangeText={setFullName}
               />
@@ -468,6 +673,7 @@ export default function StaffManagementScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="+91 98765 43210"
+                placeholderTextColor="#64748b"
                 keyboardType="phone-pad"
                 value={phone}
                 onChangeText={setPhone}
@@ -529,138 +735,114 @@ export default function StaffManagementScreen() {
       </Modal>
 
       {/* Modal 2: Edit Permissions */}
-      <Modal visible={editPermsModalVisible} transparent animationType="slide">
+      <Modal visible={editPermsModalVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>🛡️ Configure Permissions</Text>
-            <Text style={styles.modalSubtitle}>Editing permissions for {targetMember?.full_name}</Text>
-
-            <View style={styles.presetQuickRow}>
-              <Text style={styles.presetQuickLabel}>Presets:</Text>
-              {(['CASHIER', 'WAITER', 'MANAGER', 'KITCHEN'] as StaffPermissionPreset[]).map((pr) => (
-                <TouchableOpacity
-                  key={pr}
-                  style={styles.presetChip}
-                  onPress={() => handleApplyPreset(pr)}
-                >
-                  <Text style={styles.presetChipText}>{pr}</Text>
-                </TouchableOpacity>
-              ))}
+          <View style={styles.permsModalContainer}>
+            {/* Header with Title and Close Button */}
+            <View style={styles.permsModalHeader}>
+              <View style={styles.permsHeaderIconBox}>
+                <Text style={{ fontSize: 20 }}>🛡️</Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.permsModalTitle}>Configure Permissions</Text>
+                <Text style={styles.permsModalSubtitle} numberOfLines={1}>
+                  Editing permissions for <Text style={styles.permsTargetName}>{targetMember?.full_name}</Text>
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.permsCloseBtn}
+                onPress={() => setEditPermsModalVisible(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={styles.permsCloseBtnText}>✕</Text>
+              </TouchableOpacity>
             </View>
 
+            {/* Quick Presets Carousel / ScrollRow */}
+            <View style={styles.presetsSection}>
+              <Text style={styles.presetsSectionLabel}>Quick Presets:</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.presetScrollContent}
+              >
+                {PRESET_OPTIONS.map((pr) => (
+                  <TouchableOpacity
+                    key={pr.id}
+                    style={styles.presetPillBtn}
+                    onPress={() => handleApplyPreset(pr.id)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.presetPillIcon}>{pr.icon}</Text>
+                    <Text style={styles.presetPillText}>{pr.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+
+            {/* Scrollable Permissions List */}
             {tempPermissions && (
-              <ScrollView style={styles.modalScroll}>
-                <View style={styles.permSwitchRow}>
-                  <Text style={styles.permSwitchLabel}>🖥️ Can Use POS Terminal</Text>
-                  <Switch
-                    value={tempPermissions.can_use_pos}
-                    onValueChange={(v) => setTempPermissions({ ...tempPermissions, can_use_pos: v })}
-                  />
-                </View>
-                <View style={styles.permSwitchRow}>
-                  <Text style={styles.permSwitchLabel}>📋 Can View Orders</Text>
-                  <Switch
-                    value={tempPermissions.can_view_orders}
-                    onValueChange={(v) => setTempPermissions({ ...tempPermissions, can_view_orders: v })}
-                  />
-                </View>
-                <View style={styles.permSwitchRow}>
-                  <Text style={styles.permSwitchLabel}>✏️ Can Edit Orders</Text>
-                  <Switch
-                    value={tempPermissions.can_edit_orders}
-                    onValueChange={(v) => setTempPermissions({ ...tempPermissions, can_edit_orders: v })}
-                  />
-                </View>
-                <View style={styles.permSwitchRow}>
-                  <Text style={styles.permSwitchLabel}>❌ Can Cancel Orders</Text>
-                  <Switch
-                    value={tempPermissions.can_cancel_orders}
-                    onValueChange={(v) => setTempPermissions({ ...tempPermissions, can_cancel_orders: v })}
-                  />
-                </View>
-                <View style={styles.permSwitchRow}>
-                  <Text style={styles.permSwitchLabel}>🍲 Can Manage Products & Stock</Text>
-                  <Switch
-                    value={tempPermissions.can_manage_products}
-                    onValueChange={(v) => setTempPermissions({ ...tempPermissions, can_manage_products: v })}
-                  />
-                </View>
-                <View style={styles.permSwitchRow}>
-                  <Text style={styles.permSwitchLabel}>📂 Can Manage Categories</Text>
-                  <Switch
-                    value={tempPermissions.can_manage_categories}
-                    onValueChange={(v) => setTempPermissions({ ...tempPermissions, can_manage_categories: v })}
-                  />
-                </View>
-                <View style={styles.permSwitchRow}>
-                  <Text style={styles.permSwitchLabel}>🪑 Can Manage Tables & QR</Text>
-                  <Switch
-                    value={tempPermissions.can_manage_tables}
-                    onValueChange={(v) => setTempPermissions({ ...tempPermissions, can_manage_tables: v })}
-                  />
-                </View>
-                <View style={styles.permSwitchRow}>
-                  <Text style={styles.permSwitchLabel}>🎟️ Can Manage Coupons</Text>
-                  <Switch
-                    value={tempPermissions.can_manage_coupons}
-                    onValueChange={(v) => setTempPermissions({ ...tempPermissions, can_manage_coupons: v })}
-                  />
-                </View>
-                <View style={styles.permSwitchRow}>
-                  <Text style={styles.permSwitchLabel}>📊 Can View Analytics & Reports</Text>
-                  <Switch
-                    value={tempPermissions.can_view_reports}
-                    onValueChange={(v) => setTempPermissions({ ...tempPermissions, can_view_reports: v })}
-                  />
-                </View>
-                <View style={styles.permSwitchRow}>
-                  <Text style={styles.permSwitchLabel}>💵 Can Open/Close Cash Register</Text>
-                  <Switch
-                    value={tempPermissions.can_manage_register}
-                    onValueChange={(v) => setTempPermissions({ ...tempPermissions, can_manage_register: v })}
-                  />
-                </View>
-                <View style={styles.permSwitchRow}>
-                  <Text style={styles.permSwitchLabel}>⚙️ Can View Settings</Text>
-                  <Switch
-                    value={tempPermissions.can_view_settings}
-                    onValueChange={(v) => setTempPermissions({ ...tempPermissions, can_view_settings: v })}
-                  />
-                </View>
-                <View style={styles.permSwitchRow}>
-                  <Text style={styles.permSwitchLabel}>🔧 Can Manage Settings</Text>
-                  <Switch
-                    value={tempPermissions.can_manage_settings}
-                    onValueChange={(v) => setTempPermissions({ ...tempPermissions, can_manage_settings: v })}
-                  />
-                </View>
-                <View style={styles.permSwitchRow}>
-                  <Text style={styles.permSwitchLabel}>👥 Can Manage Staff & Permissions</Text>
-                  <Switch
-                    value={tempPermissions.can_manage_staff}
-                    onValueChange={(v) => setTempPermissions({ ...tempPermissions, can_manage_staff: v })}
-                  />
-                </View>
+              <ScrollView
+                style={styles.permsScrollView}
+                contentContainerStyle={styles.permsScrollContent}
+                showsVerticalScrollIndicator={true}
+              >
+                {PERMISSION_CONFIG_ITEMS.map((item) => {
+                  const isEnabled = Boolean(tempPermissions[item.key]);
+                  return (
+                    <TouchableOpacity
+                      key={item.key}
+                      style={[styles.permCard, isEnabled && styles.permCardActive]}
+                      onPress={() =>
+                        setTempPermissions({
+                          ...tempPermissions,
+                          [item.key]: !isEnabled,
+                        })
+                      }
+                      activeOpacity={0.8}
+                    >
+                      <View style={[styles.permIconBox, isEnabled && styles.permIconBoxActive]}>
+                        <Text style={{ fontSize: 16 }}>{item.icon}</Text>
+                      </View>
+                      <View style={styles.permTextBox}>
+                        <Text style={[styles.permTitle, isEnabled && styles.permTitleActive]}>
+                          {item.label}
+                        </Text>
+                        <Text style={styles.permDescription}>{item.description}</Text>
+                      </View>
+                      <Switch
+                        value={isEnabled}
+                        onValueChange={(v) =>
+                          setTempPermissions({ ...tempPermissions, [item.key]: v })
+                        }
+                        trackColor={{ false: '#E2E8F0', true: '#EA580C' }}
+                        thumbColor="#FFFFFF"
+                        ios_backgroundColor="#E2E8F0"
+                      />
+                    </TouchableOpacity>
+                  );
+                })}
               </ScrollView>
             )}
 
-            <View style={styles.modalBtnRow}>
+            {/* Action Buttons */}
+            <View style={styles.permsFooterRow}>
               <TouchableOpacity
-                style={styles.modalCancelBtn}
+                style={styles.permsCancelBtn}
                 onPress={() => setEditPermsModalVisible(false)}
                 disabled={savingPerms}
               >
-                <Text style={styles.modalCancelBtnText}>Cancel</Text>
+                <Text style={styles.permsCancelBtnText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.modalSubmitBtn}
+                style={[styles.permsSaveBtn, savingPerms && styles.btnDisabled]}
                 onPress={handleSavePermissions}
                 disabled={savingPerms}
               >
                 {savingPerms ? (
-                  <ActivityIndicator color="#fff" />
+                  <ActivityIndicator color="#ffffff" size="small" />
                 ) : (
-                  <Text style={styles.modalSubmitBtnText}>Save Permissions</Text>
+                  <Text style={styles.permsSaveBtnText}>Save Permissions</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -687,6 +869,7 @@ export default function StaffManagementScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="Enter new password (min 8 chars)"
+                placeholderTextColor="#64748b"
                 value={staffNewPassword}
                 onChangeText={setStaffNewPassword}
                 autoCapitalize="none"
@@ -729,22 +912,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingHorizontal: 16,
+    paddingTop: 16,
     paddingBottom: 12,
     backgroundColor: '#ffffff',
     borderBottomWidth: 1,
     borderColor: '#e2e8f0',
+    gap: 10,
   },
-  title: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
-  subtitle: { fontSize: 13, color: '#64748b', marginTop: 2 },
+  headerTitleBox: { flex: 1, minWidth: 0 },
+  title: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
+  subtitle: { fontSize: 12, color: '#64748b', marginTop: 2 },
   addBtn: {
     backgroundColor: '#ea580c',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderRadius: 8,
+    flexShrink: 0,
   },
-  addBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 14 },
+  addBtnText: { color: '#ffffff', fontWeight: '800', fontSize: 13 },
   usageBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -784,9 +970,10 @@ const styles = StyleSheet.create({
   staffCard: {
     backgroundColor: '#ffffff',
     borderRadius: 12,
-    padding: 16,
+    padding: 14,
     borderWidth: 1,
     borderColor: '#e2e8f0',
+    overflow: 'hidden',
   },
   staffCardInactive: { opacity: 0.6, backgroundColor: '#f1f5f9' },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
@@ -800,8 +987,8 @@ const styles = StyleSheet.create({
   },
   avatarText: { fontSize: 18, fontWeight: '800', color: '#ea580c' },
   cardMainInfo: { flex: 1 },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  staffName: { fontSize: 16, fontWeight: '700', color: '#1e293b' },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  staffName: { fontSize: 15, fontWeight: '700', color: '#1e293b' },
   roleBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 },
   roleAdmin: { backgroundColor: '#fef08a' },
   roleStaff: { backgroundColor: '#e2e8f0' },
@@ -814,56 +1001,110 @@ const styles = StyleSheet.create({
   permsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    alignItems: 'center',
     gap: 6,
-    marginTop: 12,
-    paddingTop: 10,
+    marginTop: 10,
+    paddingTop: 8,
     borderTopWidth: 1,
     borderColor: '#f1f5f9',
   },
   permChip: {
-    fontSize: 11,
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#f8fafc',
-    paddingHorizontal: 8,
+    paddingHorizontal: 9,
     paddingVertical: 4,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: '#e2e8f0',
+  },
+  permChipText: {
+    fontSize: 12,
+    fontWeight: '600',
     color: '#334155',
   },
-  permChipFull: { backgroundColor: '#fef3c7', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
-  permChipFullText: { fontSize: 11, fontWeight: '700', color: '#92400e' },
-  cardActions: {
+  permChipFull: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 8,
+    backgroundColor: '#fef3c7',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+  },
+  permChipFullText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#92400e',
+  },
+  permChipEmpty: {
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+  },
+  permChipEmptyText: {
+    fontSize: 12,
+    color: '#94a3b8',
+    fontStyle: 'italic',
+  },
+  cardActionsGrid: {
     marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderColor: '#f1f5f9',
+    gap: 8,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+  },
+  actionBtn: {
+    flex: 1,
+    minHeight: 36,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+  },
+  actionBtnPlaceholder: {
+    flex: 1,
   },
   actionBtnPerms: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
     borderWidth: 1,
     borderColor: '#cbd5e1',
     backgroundColor: '#f8fafc',
   },
-  actionBtnPermsText: { fontSize: 12, fontWeight: '700', color: '#334155' },
-  actionBtnToggle: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 },
-  btnAct: { backgroundColor: '#dcfce7' },
-  btnActText: { color: '#16a34a', fontSize: 12, fontWeight: '700' },
-  btnDeact: { backgroundColor: '#fee2e2' },
-  btnDeactText: { color: '#dc2626', fontSize: 12, fontWeight: '700' },
+  actionBtnPermsText: { fontSize: 11, fontWeight: '700', color: '#334155' },
+  actionBtnPwd: {
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f8fafc',
+  },
+  actionBtnPwdText: { fontSize: 11, fontWeight: '700', color: '#334155' },
+  btnAct: {
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+  },
+  btnActText: { color: '#059669', fontSize: 11, fontWeight: '700' },
+  btnDeact: {
+    backgroundColor: '#fff1f2',
+    borderWidth: 1,
+    borderColor: '#fecdd3',
+  },
+  btnDeactText: { color: '#e11d48', fontSize: 11, fontWeight: '700' },
   actionBtnRemove: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: '#fee2e2',
+    backgroundColor: '#fef2f2',
     borderWidth: 1,
     borderColor: '#fecaca',
   },
   actionBtnRemoveText: {
     color: '#dc2626',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   rolePickerRow: {
@@ -940,6 +1181,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
+    color: '#0f172a',
   },
   presetGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 },
   presetCard: {
@@ -971,4 +1213,197 @@ const styles = StyleSheet.create({
   modalCancelBtnText: { color: '#64748b', fontWeight: '700' },
   modalSubmitBtn: { backgroundColor: '#ea580c', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 },
   modalSubmitBtnText: { color: '#fff', fontWeight: '700' },
+
+  // Redesigned Configure Permissions Modal Styles
+  permsModalContainer: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 18,
+    maxHeight: '88%',
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  permsModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  permsHeaderIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: '#fff7ed',
+    borderWidth: 1,
+    borderColor: '#ffedd5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  permsModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0f172a',
+    letterSpacing: -0.2,
+  },
+  permsModalSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  permsTargetName: {
+    color: '#ea580c',
+    fontWeight: '700',
+  },
+  permsCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  permsCloseBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  presetsSection: {
+    marginBottom: 12,
+  },
+  presetsSectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  presetScrollContent: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingRight: 8,
+  },
+  presetPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  presetPillIcon: {
+    fontSize: 12,
+    marginRight: 6,
+  },
+  presetPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  permsScrollView: {
+    maxHeight: 380,
+  },
+  permsScrollContent: {
+    gap: 8,
+    paddingVertical: 4,
+  },
+  permCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  permCardActive: {
+    borderColor: '#fed7aa',
+    backgroundColor: '#fffaf5',
+  },
+  permIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  permIconBoxActive: {
+    backgroundColor: '#ffedd5',
+  },
+  permTextBox: {
+    flex: 1,
+    marginRight: 8,
+  },
+  permTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  permTitleActive: {
+    color: '#0f172a',
+  },
+  permDescription: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 1,
+  },
+  permsFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  permsCancelBtn: {
+    flex: 1,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  permsCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  permsSaveBtn: {
+    flex: 1.5,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: '#ea580c',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#ea580c',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  permsSaveBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  btnDisabled: {
+    opacity: 0.6,
+  },
 });

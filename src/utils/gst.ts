@@ -11,6 +11,8 @@ export interface CalculationInput {
   serviceChargeRate?: number;
   deliveryCharge?: number;
   isInterState?: boolean;
+  isGstEnabled?: boolean;
+  taxRate?: number;
 }
 
 export interface CalculationResult {
@@ -40,6 +42,8 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
     serviceChargeRate = 0,
     deliveryCharge = 0,
     isInterState = false,
+    isGstEnabled = true,
+    taxRate: customTaxRate,
   } = input;
 
   const itemsSubtotal = roundToTwoDecimals(
@@ -76,30 +80,36 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
   let totalSgst = 0;
   let totalIgst = 0;
 
-  if (subtotal > 0 && taxableSubtotal > 0) {
+  // Calculate GST only if GST is enabled for the restaurant
+  if (isGstEnabled && subtotal > 0 && taxableSubtotal > 0) {
+    const defaultRate = customTaxRate !== undefined && !isNaN(Number(customTaxRate))
+      ? Number(customTaxRate)
+      : 5.0;
+
     if (items.length > 0) {
       const discountRatio = taxableSubtotal / subtotal;
 
       items.forEach((item) => {
         const itemGross = Number(item.unit_price) * Number(item.quantity);
         const itemTaxable = itemGross * discountRatio;
-        const taxRate = Number(item.tax_rate) || 5;
+        const rate = customTaxRate !== undefined ? defaultRate : (Number(item.tax_rate) || defaultRate);
 
         if (isInterState) {
-          totalIgst += (itemTaxable * taxRate) / 100;
+          totalIgst += (itemTaxable * rate) / 100;
         } else {
-          const halfRate = taxRate / 2;
+          const halfRate = rate / 2;
           totalCgst += (itemTaxable * halfRate) / 100;
           totalSgst += (itemTaxable * halfRate) / 100;
         }
       });
     } else {
-      // Robust fallback if items array is missing/empty: compute 5% GST directly
+      // Fallback if items array is missing/empty: compute GST from default rate directly
       if (isInterState) {
-        totalIgst = (taxableSubtotal * 5.0) / 100;
+        totalIgst = (taxableSubtotal * defaultRate) / 100;
       } else {
-        totalCgst = (taxableSubtotal * 2.5) / 100;
-        totalSgst = (taxableSubtotal * 2.5) / 100;
+        const halfRate = defaultRate / 2;
+        totalCgst = (taxableSubtotal * halfRate) / 100;
+        totalSgst = (taxableSubtotal * halfRate) / 100;
       }
     }
   }

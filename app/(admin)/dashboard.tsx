@@ -21,6 +21,7 @@ import { categoryService } from '../../src/services/api/categoryService';
 import { settingsService } from '../../src/services/api/settingsService';
 import { dayRegisterService, getLocalRestaurantDate } from '../../src/services/api/dayRegisterService';
 import { analyticsService } from '../../src/services/api/analyticsService';
+import { reportExportService, ReportType } from '../../src/services/api/reportExportService';
 import { useAuth } from '../../src/context/AuthContext';
 import { formatCurrency } from '../../src/utils/currency';
 import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
@@ -34,7 +35,7 @@ export default function DashboardScreen() {
   const isMobile = width < 768;
 
   // Primary navigation tabs
-  const [activeTab, setActiveTab] = useState<'sales' | 'items' | 'register'>('sales');
+  const [activeTab, setActiveTab] = useState<'sales' | 'items' | 'register' | 'reports'>('sales');
 
   // Core Data
   const [loading, setLoading] = useState<boolean>(true);
@@ -329,12 +330,90 @@ export default function DashboardScreen() {
           : `Cash Shortage: -₹${Math.abs(diff).toFixed(2)}`;
       const msg = `Register CLOSED for ${closed.register_date}.\n${diffText}\nZ-Report generated.`;
       if (Platform.OS === 'web') window.alert(msg);
-      else Alert.alert('Register Closed', msg);
     } catch (err: any) {
       if (Platform.OS === 'web') window.alert(err.message);
       else Alert.alert('Close Register Error', err.message);
     } finally {
       setSubmittingClose(false);
+    }
+  };
+
+  // Report Export State & Handlers
+  const [exportingReport, setExportingReport] = useState<string | null>(null);
+
+  const handleExportReportCsv = async (type: ReportType) => {
+    const effectiveSettings: RestaurantSettings = settings || {
+      id: activeRestaurantId || 'default',
+      name: activeRestaurant?.name || 'Restaurant POS',
+      legal_name: (activeRestaurant as any)?.legal_name || activeRestaurant?.name || 'Restaurant POS',
+      address: activeRestaurant?.address || '',
+      phone: activeRestaurant?.phone || '',
+      email: '',
+      gstin: (activeRestaurant as any)?.gstin || '22AAAAA0000A1Z5',
+      state: 'West Bengal',
+      invoice_prefix: 'INV-',
+      kot_prefix: 'KOT-',
+      default_tax_rate: 5,
+      currency: 'INR',
+      currency_symbol: '₹',
+      service_charge_rate: 0,
+    };
+
+    setExportingReport(`${type}_csv`);
+    try {
+      await reportExportService.downloadReportCsv(
+        type,
+        orders,
+        startDate,
+        endDate,
+        effectiveSettings
+      );
+      const msg = `Excel/CSV report exported successfully for ${startDate} to ${endDate}.`;
+      if (Platform.OS === 'web') {
+        // file downloaded via browser
+      } else {
+        Alert.alert('Report Exported', msg);
+      }
+    } catch (err: any) {
+      if (Platform.OS === 'web') window.alert(`Export Failed: ${err.message}`);
+      else Alert.alert('Export Failed', err.message);
+    } finally {
+      setExportingReport(null);
+    }
+  };
+
+  const handleExportReportPdf = async (type: ReportType) => {
+    const effectiveSettings: RestaurantSettings = settings || {
+      id: activeRestaurantId || 'default',
+      name: activeRestaurant?.name || 'Restaurant POS',
+      legal_name: (activeRestaurant as any)?.legal_name || activeRestaurant?.name || 'Restaurant POS',
+      address: activeRestaurant?.address || '',
+      phone: activeRestaurant?.phone || '',
+      email: '',
+      gstin: (activeRestaurant as any)?.gstin || '22AAAAA0000A1Z5',
+      state: 'West Bengal',
+      invoice_prefix: 'INV-',
+      kot_prefix: 'KOT-',
+      default_tax_rate: 5,
+      currency: 'INR',
+      currency_symbol: '₹',
+      service_charge_rate: 0,
+    };
+
+    setExportingReport(`${type}_pdf`);
+    try {
+      await reportExportService.printOrExportReportPdf(
+        type,
+        orders,
+        startDate,
+        endDate,
+        effectiveSettings
+      );
+    } catch (err: any) {
+      if (Platform.OS === 'web') window.alert(`PDF / Print Failed: ${err.message}`);
+      else Alert.alert('PDF / Print Failed', err.message);
+    } finally {
+      setExportingReport(null);
     }
   };
 
@@ -432,6 +511,17 @@ export default function DashboardScreen() {
               📋 Register & Z-Reports ({registers.length})
             </Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            accessibilityRole="button"
+            testID="tab-reports"
+            style={[styles.mainTabBtn, activeTab === 'reports' && styles.mainTabBtnActive]}
+            onPress={() => setActiveTab('reports')}
+          >
+            <Text style={[styles.mainTabText, activeTab === 'reports' && styles.mainTabTextActive]}>
+              📑 Reports & Tax Center (6)
+            </Text>
+          </TouchableOpacity>
         </ScrollView>
       </View>
 
@@ -504,6 +594,7 @@ export default function DashboardScreen() {
                       setDatePreset('custom');
                     }}
                     placeholder="YYYY-MM-DD"
+                    placeholderTextColor="#64748b"
                   />
                   <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748b' }}>To:</Text>
                   <TextInput
@@ -514,6 +605,7 @@ export default function DashboardScreen() {
                       setDatePreset('custom');
                     }}
                     placeholder="YYYY-MM-DD"
+                    placeholderTextColor="#64748b"
                   />
                 </View>
                 <View style={{ alignSelf: isMobile ? 'flex-start' : 'auto' }}>
@@ -850,6 +942,7 @@ export default function DashboardScreen() {
                 <TextInput
                   style={styles.itemSearchInput}
                   placeholder="Search item by name or SKU..."
+                  placeholderTextColor="#64748b"
                   value={itemSearch}
                   onChangeText={setItemSearch}
                 />
@@ -1121,6 +1214,451 @@ export default function DashboardScreen() {
             </View>
           </View>
         )}
+
+        {/* ========================================================================= */}
+        {/* TAB 4: REPORTS & TAX EXPORT CENTER (6 STANDARD POS REPORTS)               */}
+        {/* ========================================================================= */}
+        {activeTab === 'reports' && (
+          <View>
+            {/* Date Range Selector for Reports */}
+            <View style={styles.dateFilterCard}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                <Text style={styles.dateFilterLabel}>📊 Report Timeframe Filter (Local Restaurant Date):</Text>
+                <Text style={styles.dateRangeBadge}>
+                  📅 {startDate === endDate ? startDate : `${startDate} → ${endDate}`}
+                </Text>
+              </View>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.datePillRow}
+              >
+                <TouchableOpacity
+                  style={[styles.datePill, datePreset === 'today' && styles.datePillActive]}
+                  onPress={() => applyDatePreset('today')}
+                >
+                  <Text style={[styles.datePillText, datePreset === 'today' && styles.datePillTextActive]}>
+                    Today ({todayStr})
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.datePill, datePreset === 'yesterday' && styles.datePillActive]}
+                  onPress={() => applyDatePreset('yesterday')}
+                >
+                  <Text style={[styles.datePillText, datePreset === 'yesterday' && styles.datePillTextActive]}>
+                    Yesterday
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.datePill, datePreset === '7days' && styles.datePillActive]}
+                  onPress={() => applyDatePreset('7days')}
+                >
+                  <Text style={[styles.datePillText, datePreset === '7days' && styles.datePillTextActive]}>
+                    Last 7 Days
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.datePill, datePreset === '30days' && styles.datePillActive]}
+                  onPress={() => applyDatePreset('30days')}
+                >
+                  <Text style={[styles.datePillText, datePreset === '30days' && styles.datePillTextActive]}>
+                    Last 30 Days
+                  </Text>
+                </TouchableOpacity>
+              </ScrollView>
+
+              <View
+                style={[
+                  styles.customDateRow,
+                  isMobile && { flexDirection: 'column', alignItems: 'stretch', gap: 8 },
+                ]}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748b' }}>From:</Text>
+                  <TextInput
+                    style={styles.dateInput}
+                    value={startDate}
+                    onChangeText={(t) => {
+                      setStartDate(t);
+                      setDatePreset('custom');
+                    }}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor="#64748b"
+                  />
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748b' }}>To:</Text>
+                  <TextInput
+                    style={styles.dateInput}
+                    value={endDate}
+                    onChangeText={(t) => {
+                      setEndDate(t);
+                      setDatePreset('custom');
+                    }}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+
+                <Text style={{ fontSize: 11, color: '#64748b', fontStyle: 'italic' }}>
+                  Calculations follow: Subtotal → Discount/Coupon → Taxable → CGST + SGST → Charges → Grand Total
+                </Text>
+              </View>
+            </View>
+
+            {/* Grid / List of 6 POS Reports */}
+            <View style={styles.reportCardsContainer}>
+              {/* Report 1: Daily Sales Report */}
+              <View style={styles.reportCard}>
+                <View style={styles.reportCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={styles.reportCardTitle}>1. Daily Sales Report</Text>
+                      <View style={styles.reportBadge}><Text style={styles.reportBadgeText}>Channel Breakdown</Text></View>
+                    </View>
+                    <Text style={styles.reportCardDesc}>
+                      Day-by-day sales aggregated across Dine-In, Takeaway, Online Delivery, and QR Digital Menu orders with complete tax and discount reconciliation.
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Column Badges */}
+                <View style={styles.colTagsContainer}>
+                  <Text style={styles.colTagsLabel}>COLUMNS INCLUDED:</Text>
+                  <View style={styles.colTagsRow}>
+                    {[
+                      'Date', 'Total Orders', 'Dine-In Orders', 'Takeaway Orders', 'Delivery Orders',
+                      'QR Orders', 'Gross Sales', 'Discount', 'Coupon Discount', 'Taxable Amount',
+                      'CGST', 'SGST', 'Other/Delivery Charges', 'Net Sales'
+                    ].map((col) => (
+                      <View key={col} style={styles.colTag}><Text style={styles.colTagText}>{col}</Text></View>
+                    ))}
+                  </View>
+                </View>
+
+                {/* Action Buttons */}
+                <View style={styles.reportActionRow}>
+                  <TouchableOpacity
+                    testID="export-csv-daily_sales"
+                    style={[styles.exportBtn, styles.exportBtnCsv]}
+                    onPress={() => handleExportReportCsv('daily_sales')}
+                    disabled={exportingReport === 'daily_sales_csv'}
+                  >
+                    {exportingReport === 'daily_sales_csv' ? (
+                      <ActivityIndicator size="small" color="#16a34a" />
+                    ) : (
+                      <Text style={styles.exportBtnCsvText}>📥 Download Excel / CSV</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    testID="export-pdf-daily_sales"
+                    style={[styles.exportBtn, styles.exportBtnPdf]}
+                    onPress={() => handleExportReportPdf('daily_sales')}
+                    disabled={exportingReport === 'daily_sales_pdf'}
+                  >
+                    {exportingReport === 'daily_sales_pdf' ? (
+                      <ActivityIndicator size="small" color="#2563eb" />
+                    ) : (
+                      <Text style={styles.exportBtnPdfText}>📄 Download PDF / Print</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Report 2: Daily Order Report */}
+              <View style={styles.reportCard}>
+                <View style={styles.reportCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={styles.reportCardTitle}>2. Daily Order Report</Text>
+                      <View style={[styles.reportBadge, { backgroundColor: '#eff6ff' }]}><Text style={[styles.reportBadgeText, { color: '#2563eb' }]}>Detailed Invoices</Text></View>
+                    </View>
+                    <Text style={styles.reportCardDesc}>
+                      Order-by-order itemized log with exact order timestamps, table number/customer name, item quantities, taxable base, taxes, and status.
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Column Badges */}
+                <View style={styles.colTagsContainer}>
+                  <Text style={styles.colTagsLabel}>COLUMNS INCLUDED:</Text>
+                  <View style={styles.colTagsRow}>
+                    {[
+                      'Date', 'Order Time', 'Order ID', 'Order Type', 'Table No./Customer',
+                      'Item Qty', 'Subtotal', 'Discount', 'Coupon Discount', 'Taxable Amount',
+                      'CGST', 'SGST', 'Charges', 'Grand Total', 'Order Status'
+                    ].map((col) => (
+                      <View key={col} style={styles.colTag}><Text style={styles.colTagText}>{col}</Text></View>
+                    ))}
+                  </View>
+                </View>
+
+                {/* Action Buttons */}
+                <View style={styles.reportActionRow}>
+                  <TouchableOpacity
+                    testID="export-csv-daily_order"
+                    style={[styles.exportBtn, styles.exportBtnCsv]}
+                    onPress={() => handleExportReportCsv('daily_order')}
+                    disabled={exportingReport === 'daily_order_csv'}
+                  >
+                    {exportingReport === 'daily_order_csv' ? (
+                      <ActivityIndicator size="small" color="#16a34a" />
+                    ) : (
+                      <Text style={styles.exportBtnCsvText}>📥 Download Excel / CSV</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    testID="export-pdf-daily_order"
+                    style={[styles.exportBtn, styles.exportBtnPdf]}
+                    onPress={() => handleExportReportPdf('daily_order')}
+                    disabled={exportingReport === 'daily_order_pdf'}
+                  >
+                    {exportingReport === 'daily_order_pdf' ? (
+                      <ActivityIndicator size="small" color="#2563eb" />
+                    ) : (
+                      <Text style={styles.exportBtnPdfText}>📄 Download PDF / Print</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Report 3: Daily Revenue Report */}
+              <View style={styles.reportCard}>
+                <View style={styles.reportCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={styles.reportCardTitle}>3. Daily Revenue Report</Text>
+                      <View style={[styles.reportBadge, { backgroundColor: '#fef3c7' }]}><Text style={[styles.reportBadgeText, { color: '#d97706' }]}>Executive Summary</Text></View>
+                    </View>
+                    <Text style={styles.reportCardDesc}>
+                      Executive day-by-day revenue audit showing Gross Revenue, Promo Deductions, Taxable Turnover, Taxes Collected, and Net Realized Revenue.
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Column Badges */}
+                <View style={styles.colTagsContainer}>
+                  <Text style={styles.colTagsLabel}>COLUMNS INCLUDED:</Text>
+                  <View style={styles.colTagsRow}>
+                    {[
+                      'Date', 'Gross Revenue', 'Discount', 'Coupon Discount', 'Taxable Revenue',
+                      'CGST', 'SGST', 'Delivery/Other Charges', 'Net Revenue', 'Total Orders'
+                    ].map((col) => (
+                      <View key={col} style={styles.colTag}><Text style={styles.colTagText}>{col}</Text></View>
+                    ))}
+                  </View>
+                </View>
+
+                {/* Action Buttons */}
+                <View style={styles.reportActionRow}>
+                  <TouchableOpacity
+                    testID="export-csv-daily_revenue"
+                    style={[styles.exportBtn, styles.exportBtnCsv]}
+                    onPress={() => handleExportReportCsv('daily_revenue')}
+                    disabled={exportingReport === 'daily_revenue_csv'}
+                  >
+                    {exportingReport === 'daily_revenue_csv' ? (
+                      <ActivityIndicator size="small" color="#16a34a" />
+                    ) : (
+                      <Text style={styles.exportBtnCsvText}>📥 Download Excel / CSV</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    testID="export-pdf-daily_revenue"
+                    style={[styles.exportBtn, styles.exportBtnPdf]}
+                    onPress={() => handleExportReportPdf('daily_revenue')}
+                    disabled={exportingReport === 'daily_revenue_pdf'}
+                  >
+                    {exportingReport === 'daily_revenue_pdf' ? (
+                      <ActivityIndicator size="small" color="#2563eb" />
+                    ) : (
+                      <Text style={styles.exportBtnPdfText}>📄 Download PDF / Print</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Report 4: Monthly Revenue Report */}
+              <View style={styles.reportCard}>
+                <View style={styles.reportCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={styles.reportCardTitle}>4. Monthly Revenue Report</Text>
+                      <View style={[styles.reportBadge, { backgroundColor: '#f3e8ff' }]}><Text style={[styles.reportBadgeText, { color: '#7c3aed' }]}>Monthly Rollup</Text></View>
+                    </View>
+                    <Text style={styles.reportCardDesc}>
+                      Aggregated monthly breakdown (YYYY-MM) with total orders count, gross collections, taxable revenue, taxes, and net business earnings.
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Column Badges */}
+                <View style={styles.colTagsContainer}>
+                  <Text style={styles.colTagsLabel}>COLUMNS INCLUDED:</Text>
+                  <View style={styles.colTagsRow}>
+                    {[
+                      'Month (Date)', 'Total Orders', 'Gross Revenue', 'Discount', 'Coupon Discount',
+                      'Taxable Revenue', 'CGST', 'SGST', 'Other Charges', 'Net Revenue'
+                    ].map((col) => (
+                      <View key={col} style={styles.colTag}><Text style={styles.colTagText}>{col}</Text></View>
+                    ))}
+                  </View>
+                </View>
+
+                {/* Action Buttons */}
+                <View style={styles.reportActionRow}>
+                  <TouchableOpacity
+                    testID="export-csv-monthly_revenue"
+                    style={[styles.exportBtn, styles.exportBtnCsv]}
+                    onPress={() => handleExportReportCsv('monthly_revenue')}
+                    disabled={exportingReport === 'monthly_revenue_csv'}
+                  >
+                    {exportingReport === 'monthly_revenue_csv' ? (
+                      <ActivityIndicator size="small" color="#16a34a" />
+                    ) : (
+                      <Text style={styles.exportBtnCsvText}>📥 Download Excel / CSV</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    testID="export-pdf-monthly_revenue"
+                    style={[styles.exportBtn, styles.exportBtnPdf]}
+                    onPress={() => handleExportReportPdf('monthly_revenue')}
+                    disabled={exportingReport === 'monthly_revenue_pdf'}
+                  >
+                    {exportingReport === 'monthly_revenue_pdf' ? (
+                      <ActivityIndicator size="small" color="#2563eb" />
+                    ) : (
+                      <Text style={styles.exportBtnPdfText}>📄 Download PDF / Print</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Report 5: Custom Date Range Sales Report */}
+              <View style={styles.reportCard}>
+                <View style={styles.reportCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={styles.reportCardTitle}>5. Custom Date Range Sales Report</Text>
+                      <View style={[styles.reportBadge, { backgroundColor: '#e0f2fe' }]}><Text style={[styles.reportBadgeText, { color: '#0369a1' }]}>Audit Log</Text></View>
+                    </View>
+                    <Text style={styles.reportCardDesc}>
+                      Transaction-level sales ledger for any custom date span, maintaining complete historical invoice data and status tracking.
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Column Badges */}
+                <View style={styles.colTagsContainer}>
+                  <Text style={styles.colTagsLabel}>COLUMNS INCLUDED:</Text>
+                  <View style={styles.colTagsRow}>
+                    {[
+                      'Date', 'Order ID', 'Order Type', 'Subtotal', 'Discount',
+                      'Coupon Discount', 'Taxable Amount', 'CGST', 'SGST', 'Other Charges',
+                      'Grand Total', 'Status'
+                    ].map((col) => (
+                      <View key={col} style={styles.colTag}><Text style={styles.colTagText}>{col}</Text></View>
+                    ))}
+                  </View>
+                </View>
+
+                {/* Action Buttons */}
+                <View style={styles.reportActionRow}>
+                  <TouchableOpacity
+                    testID="export-csv-custom_sales"
+                    style={[styles.exportBtn, styles.exportBtnCsv]}
+                    onPress={() => handleExportReportCsv('custom_sales')}
+                    disabled={exportingReport === 'custom_sales_csv'}
+                  >
+                    {exportingReport === 'custom_sales_csv' ? (
+                      <ActivityIndicator size="small" color="#16a34a" />
+                    ) : (
+                      <Text style={styles.exportBtnCsvText}>📥 Download Excel / CSV</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    testID="export-pdf-custom_sales"
+                    style={[styles.exportBtn, styles.exportBtnPdf]}
+                    onPress={() => handleExportReportPdf('custom_sales')}
+                    disabled={exportingReport === 'custom_sales_pdf'}
+                  >
+                    {exportingReport === 'custom_sales_pdf' ? (
+                      <ActivityIndicator size="small" color="#2563eb" />
+                    ) : (
+                      <Text style={styles.exportBtnPdfText}>📄 Download PDF / Print</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Report 6: GST / Tax Report */}
+              <View style={[styles.reportCard, { borderColor: '#7c3aed', borderWidth: 1.5 }]}>
+                <View style={styles.reportCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={[styles.reportCardTitle, { color: '#6d28d9' }]}>6. GST / Tax Sales Report</Text>
+                      <View style={[styles.reportBadge, { backgroundColor: '#f3e8ff' }]}><Text style={[styles.reportBadgeText, { color: '#7c3aed' }]}>Tax & B2B Audit</Text></View>
+                    </View>
+                    <Text style={styles.reportCardDesc}>
+                      Official GST and tax compliance report with invoice numbering, Customer GSTIN for B2B, Restaurant GSTIN, Taxable Base, CGST, SGST, IGST rate breakdowns, Total GST, and Payment Mode.
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Column Badges */}
+                <View style={styles.colTagsContainer}>
+                  <Text style={styles.colTagsLabel}>COLUMNS INCLUDED (17 COLUMNS):</Text>
+                  <View style={styles.colTagsRow}>
+                    {[
+                      'Invoice Date & Time', 'Invoice No.', 'Order ID', 'Order Type', 'Customer Name',
+                      'Customer GSTIN', 'Restaurant GSTIN', 'Taxable Amount', 'GST Rate', 'CGST Rate',
+                      'CGST Amount', 'SGST Rate', 'SGST Amount', 'IGST Rate', 'IGST Amount',
+                      'Total GST', 'Invoice Grand Total', 'Payment Mode'
+                    ].map((col) => (
+                      <View key={col} style={[styles.colTag, { backgroundColor: '#ede9fe' }]}><Text style={[styles.colTagText, { color: '#5b21b6' }]}>{col}</Text></View>
+                    ))}
+                  </View>
+                </View>
+
+                {/* Action Buttons */}
+                <View style={styles.reportActionRow}>
+                  <TouchableOpacity
+                    testID="export-csv-gst_tax"
+                    style={[styles.exportBtn, styles.exportBtnCsv, { borderColor: '#7c3aed' }]}
+                    onPress={() => handleExportReportCsv('gst_tax')}
+                    disabled={exportingReport === 'gst_tax_csv'}
+                  >
+                    {exportingReport === 'gst_tax_csv' ? (
+                      <ActivityIndicator size="small" color="#16a34a" />
+                    ) : (
+                      <Text style={styles.exportBtnCsvText}>📥 Download Excel / CSV</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    testID="export-pdf-gst_tax"
+                    style={[styles.exportBtn, styles.exportBtnPdf, { backgroundColor: '#6d28d9' }]}
+                    onPress={() => handleExportReportPdf('gst_tax')}
+                    disabled={exportingReport === 'gst_tax_pdf'}
+                  >
+                    {exportingReport === 'gst_tax_pdf' ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={[styles.exportBtnPdfText, { color: '#ffffff' }]}>📄 Download PDF / Print</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
       {/* ========================================================================= */}
@@ -1147,6 +1685,7 @@ export default function DashboardScreen() {
                 value={openStaffName}
                 onChangeText={setOpenStaffName}
                 placeholder="e.g. Admin / Cashier"
+                placeholderTextColor="#64748b"
               />
             </View>
 
@@ -1158,6 +1697,7 @@ export default function DashboardScreen() {
                 onChangeText={setOpenFloatInput}
                 keyboardType="numeric"
                 placeholder="e.g. 2000"
+                placeholderTextColor="#64748b"
               />
               <View style={styles.quickChipsRow}>
                 {['1000', '2000', '3000', '5000'].map((chip) => (
@@ -1179,6 +1719,7 @@ export default function DashboardScreen() {
                 value={openNotes}
                 onChangeText={setOpenNotes}
                 placeholder="e.g. Starting morning shift"
+                placeholderTextColor="#64748b"
               />
             </View>
 
@@ -1285,6 +1826,7 @@ export default function DashboardScreen() {
                 value={closeStaffName}
                 onChangeText={setCloseStaffName}
                 placeholder="e.g. Admin / Cashier"
+                placeholderTextColor="#64748b"
               />
             </View>
 
@@ -1300,6 +1842,7 @@ export default function DashboardScreen() {
                 onChangeText={setCountedCashInput}
                 keyboardType="numeric"
                 placeholder="Enter physical cash counted in drawer"
+                placeholderTextColor="#64748b"
               />
             </View>
 
@@ -1345,6 +1888,7 @@ export default function DashboardScreen() {
                 value={closeNotes}
                 onChangeText={setCloseNotes}
                 placeholder="e.g. Handed over to night manager / cash audited"
+                placeholderTextColor="#64748b"
               />
             </View>
 
@@ -1661,6 +2205,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     fontSize: 11,
+    color: '#0f172a',
     width: 90,
     backgroundColor: '#f8fafc',
   },
@@ -1814,6 +2359,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     fontSize: 11,
+    color: '#0f172a',
     backgroundColor: '#f8fafc',
     marginBottom: 6,
   },
@@ -1911,6 +2457,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     fontSize: 12,
+    color: '#0f172a',
     backgroundColor: '#f8fafc',
   },
   quickChipsRow: { flexDirection: 'row', gap: 6, marginTop: 4 },
@@ -1967,4 +2514,68 @@ const styles = StyleSheet.create({
   receiptMeta: { fontSize: 9.5, color: '#475569', marginBottom: 1.5 },
   receiptRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 1.5 },
   receiptText: { fontSize: 10, color: '#0f172a' },
+  
+  // Reports & Tax Center
+  reportCardsContainer: { gap: 12, marginTop: 4 },
+  reportCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  reportCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
+  reportCardTitle: { fontSize: 14, fontWeight: '900', color: '#0f172a' },
+  reportCardDesc: { fontSize: 11, color: '#475569', marginTop: 3, lineHeight: 16 },
+  reportBadge: {
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  reportBadgeText: { fontSize: 9, fontWeight: '800', color: '#16a34a', textTransform: 'uppercase' },
+  colTagsContainer: {
+    backgroundColor: '#f8fafc',
+    padding: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 10,
+  },
+  colTagsLabel: { fontSize: 8.5, fontWeight: '800', color: '#64748b', marginBottom: 4, letterSpacing: 0.5 },
+  colTagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  colTag: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  colTagText: { fontSize: 9.5, fontWeight: '600', color: '#334155' },
+  reportActionRow: { flexDirection: 'row', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' },
+  exportBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 150,
+  },
+  exportBtnCsv: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#86efac',
+  },
+  exportBtnCsvText: { color: '#16a34a', fontWeight: '800', fontSize: 11 },
+  exportBtnPdf: {
+    backgroundColor: '#2563eb',
+  },
+  exportBtnPdfText: { color: '#ffffff', fontWeight: '800', fontSize: 11 },
 });

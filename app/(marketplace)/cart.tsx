@@ -14,6 +14,7 @@ import { couponService } from '../../src/services/api/couponService';
 import { Coupon } from '../../src/types';
 import { customerColors } from '../../src/utils/colors';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
+import { formatPrice } from '../../src/utils/currency';
 
 export default function CustomerCartScreen() {
   const router = useRouter();
@@ -25,10 +26,18 @@ export default function CustomerCartScreen() {
     type: 'error' | 'success';
     text: string;
   } | null>(null);
+  const [minOrderValue, setMinOrderValue] = useState<number>(0);
 
   useEffect(() => {
     if (cart.restaurantId) {
       couponService.getValidMarketplaceCoupons(cart.restaurantId).then(setAvailableCoupons);
+      marketplaceService.getRestaurantPublicDetails(cart.restaurantId).then((details) => {
+        if (details?.public_profile?.minimum_order_value) {
+          setMinOrderValue(Number(details.public_profile.minimum_order_value) || 0);
+        } else {
+          setMinOrderValue(0);
+        }
+      }).catch(console.warn);
     }
   }, [cart.restaurantId]);
 
@@ -37,6 +46,9 @@ export default function CustomerCartScreen() {
       setCouponValidationMsg(null);
     }
   }, [cart.couponCode]);
+
+  const isBelowMinOrder = minOrderValue > 0 && cart.subtotal < minOrderValue;
+  const remainingForMinOrder = isBelowMinOrder ? Math.max(0, minOrderValue - cart.subtotal) : 0;
 
   const handleRemoveCoupon = () => {
     removeCoupon();
@@ -142,7 +154,7 @@ export default function CustomerCartScreen() {
                   </Text>
                 </View>
                 <Text style={styles.itemName}>{item.name}</Text>
-                <Text style={styles.itemUnitPrice}>₹{item.price} each</Text>
+                <Text style={styles.itemUnitPrice}>₹{formatPrice(item.price)} each</Text>
               </View>
 
               <View style={styles.itemActions}>
@@ -162,7 +174,7 @@ export default function CustomerCartScreen() {
                   </TouchableOpacity>
                 </View>
 
-                <Text style={styles.itemTotalPrice}>₹{item.price * item.quantity}</Text>
+                <Text style={styles.itemTotalPrice}>₹{formatPrice(item.price * item.quantity)}</Text>
               </View>
             </View>
           ))}
@@ -175,7 +187,7 @@ export default function CustomerCartScreen() {
             <View style={styles.appliedCouponRow}>
               <View>
                 <Text style={styles.appliedCode}>✓ {cart.couponCode}</Text>
-                <Text style={styles.appliedDisc}>₹{cart.discount} saved on this order</Text>
+                <Text style={styles.appliedDisc}>₹{formatPrice(cart.discount)} saved on this order</Text>
               </View>
               <TouchableOpacity onPress={handleRemoveCoupon} style={styles.removeCouponBtn}>
                 <Text style={styles.removeCouponText}>✕ Remove</Text>
@@ -248,25 +260,54 @@ export default function CustomerCartScreen() {
           )}
         </View>
 
+        {/* Minimum Order Value Alert Card */}
+        {isBelowMinOrder && (
+          <View style={styles.minOrderCard}>
+            <View style={styles.minOrderCardHeader}>
+              <Text style={{ fontSize: 16 }}>⚠️</Text>
+              <Text style={styles.minOrderCardTitle}>
+                Minimum Order Value: ₹{minOrderValue}
+              </Text>
+            </View>
+            <Text style={styles.minOrderCardSub}>
+              Your current subtotal is ₹{formatPrice(cart.subtotal)}. Add items worth{' '}
+              <Text style={styles.minOrderCardHighlight}>₹{formatPrice(remainingForMinOrder)}</Text>{' '}
+              more to place your order.
+            </Text>
+          </View>
+        )}
+
         {/* Bill Breakdown Details */}
         <View style={styles.billCard}>
           <Text style={styles.billTitle}>Bill Summary</Text>
 
           <View style={styles.billRow}>
             <Text style={styles.billLabel}>Item Subtotal</Text>
-            <Text style={styles.billVal}>₹{cart.subtotal}</Text>
+            <Text style={styles.billVal}>₹{formatPrice(cart.subtotal)}</Text>
           </View>
 
           {cart.discount > 0 && (
             <View style={styles.billRow}>
               <Text style={[styles.billLabel, { color: '#059669' }]}>Coupon Discount</Text>
-              <Text style={[styles.billVal, { color: '#059669' }]}>−₹{cart.discount}</Text>
+              <Text style={[styles.billVal, { color: '#059669' }]}>−₹{formatPrice(cart.discount)}</Text>
+            </View>
+          )}
+
+          {cart.discount > 0 && (
+            <View style={styles.billRow}>
+              <Text style={styles.billLabel}>Taxable Amount</Text>
+              <Text style={styles.billVal}>₹{formatPrice(cart.taxableAmount)}</Text>
             </View>
           )}
 
           <View style={styles.billRow}>
-            <Text style={styles.billLabel}>Taxes & GST (5%)</Text>
-            <Text style={styles.billVal}>₹{Math.round(cart.taxTotal)}</Text>
+            <Text style={styles.billLabel}>CGST 2.5%</Text>
+            <Text style={styles.billVal}>₹{formatPrice(cart.cgst)}</Text>
+          </View>
+
+          <View style={styles.billRow}>
+            <Text style={styles.billLabel}>SGST 2.5%</Text>
+            <Text style={styles.billVal}>₹{formatPrice(cart.sgst)}</Text>
           </View>
 
           <View style={styles.billRow}>
@@ -278,7 +319,7 @@ export default function CustomerCartScreen() {
 
           <View style={styles.billTotalRow}>
             <Text style={styles.billTotalLabel}>Grand Total</Text>
-            <Text style={styles.billTotalVal}>₹{cart.payableAmount}</Text>
+            <Text style={styles.billTotalVal}>₹{formatPrice(cart.payableAmount)}</Text>
           </View>
         </View>
       </ScrollView>
@@ -287,12 +328,19 @@ export default function CustomerCartScreen() {
       <View style={styles.footerBar}>
         <View>
           <Text style={styles.footerSubLabel}>TO PAY</Text>
-          <Text style={styles.footerAmount}>₹{cart.payableAmount}</Text>
+          <Text style={styles.footerAmount}>₹{formatPrice(cart.payableAmount)}</Text>
         </View>
 
         <TouchableOpacity
-          style={styles.checkoutBtn}
+          style={[styles.checkoutBtn, isBelowMinOrder && styles.checkoutBtnWarning]}
           onPress={async () => {
+            if (isBelowMinOrder) {
+              Alert.alert(
+                'Minimum Order Value Required',
+                `The minimum order amount for ${cart.restaurantName || 'this restaurant'} is ₹${minOrderValue}. Please add items worth ₹${formatPrice(remainingForMinOrder)} more to place your order.`
+              );
+              return;
+            }
             if (cart.restaurantId) {
               const isOpen = await marketplaceService.getRestaurantOnlineStatus(cart.restaurantId);
               if (!isOpen) {
@@ -306,7 +354,9 @@ export default function CustomerCartScreen() {
             router.push('/(marketplace)/checkout');
           }}
         >
-          <Text style={styles.checkoutBtnText}>Select Address & Pay →</Text>
+          <Text style={styles.checkoutBtnText}>
+            {isBelowMinOrder ? `Add ₹${formatPrice(remainingForMinOrder)} More` : 'Select Address & Pay →'}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -688,10 +738,41 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 10,
   },
+  checkoutBtnWarning: {
+    backgroundColor: '#EA580C',
+  },
   checkoutBtnText: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
+  },
+  minOrderCard: {
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 14,
+  },
+  minOrderCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  minOrderCardTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#B45309',
+  },
+  minOrderCardSub: {
+    fontSize: 12,
+    color: '#92400E',
+    lineHeight: 18,
+  },
+  minOrderCardHighlight: {
+    fontWeight: '800',
+    color: '#B45309',
   },
   validationBanner: {
     marginTop: 8,

@@ -18,6 +18,8 @@ import { supabase } from '../../../src/services/supabase';
 import { Order } from '../../../src/types';
 import { OrderStatusEvent } from '../../../src/types/marketplace';
 import { colors } from '../../../src/utils/colors';
+import { formatPrice } from '../../../src/utils/currency';
+import { formatOrderDateTime } from '../../../src/utils/dateUtils';
 
 const CANCELLATION_REASONS = [
   'Ordered by mistake',
@@ -204,7 +206,8 @@ export default function CustomerOrderDetailsScreen() {
 
   const rest = (order as any).restaurant;
   const progress = marketplaceService.mapOrderToCustomerStage(order.status);
-  const isCancellable = order.status === 'confirmed';
+  const hasKot = Boolean((order as any).kots && (order as any).kots.length > 0) || order.status === 'kot_generated';
+  const isCancellable = !hasKot && !['cancelled', 'delivered', 'completed'].includes(order.status);
   const isCompleted = ['completed', 'delivered'].includes(order.status);
 
   // 3-Stage calculation
@@ -230,7 +233,7 @@ export default function CustomerOrderDetailsScreen() {
           <Text style={styles.headerTitle} numberOfLines={1}>
             {rest?.name || 'Restaurant'}
           </Text>
-          <Text style={styles.headerSub}>Order #{order.order_number}</Text>
+          <Text style={styles.headerSub}>Order #{order.order_number} • 🕒 {formatOrderDateTime(order.created_at)}</Text>
         </View>
         <View style={[styles.statusBadge, { backgroundColor: `${progress.badgeColor}18` }]}>
           <Text style={[styles.statusBadgeText, { color: progress.badgeColor }]}>
@@ -307,12 +310,13 @@ export default function CustomerOrderDetailsScreen() {
               <Text style={styles.itemQty}>{item.quantity}x</Text>
               <View style={{ flex: 1 }}>
                 <Text style={styles.itemName}>{item.product_name || 'Item'}</Text>
+                <Text style={styles.itemUnitPrice}>@ ₹{formatPrice(item.unit_price)} each</Text>
                 {item.item_notes ? (
                   <Text style={styles.itemNote}>Note: {item.item_notes}</Text>
                 ) : null}
               </View>
               <Text style={styles.itemPrice}>
-                ₹{item.total || item.unit_price * item.quantity}
+                ₹{formatPrice(item.total || item.unit_price * item.quantity)}
               </Text>
             </View>
           ))}
@@ -321,38 +325,54 @@ export default function CustomerOrderDetailsScreen() {
           <View style={styles.billBreakdown}>
             <View style={styles.billRow}>
               <Text style={styles.billLabel}>Item Subtotal</Text>
-              <Text style={styles.billVal}>₹{order.subtotal}</Text>
+              <Text style={styles.billVal}>₹{formatPrice(order.subtotal)}</Text>
             </View>
 
-            {Boolean(order.discount_amount) && (
+            {Boolean((order.coupon_discount && order.coupon_discount > 0) || (order.discount_amount && order.discount_amount > 0)) && (
               <View style={styles.billRow}>
-                <Text style={[styles.billLabel, { color: '#16A34A' }]}>
+                <Text style={[styles.billLabel, { color: '#059669' }]}>
                   Coupon Discount {order.coupon_code ? `(${order.coupon_code})` : ''}
                 </Text>
-                <Text style={[styles.billVal, { color: '#16A34A' }]}>
-                  -₹{order.discount_amount}
+                <Text style={[styles.billVal, { color: '#059669' }]}>
+                  −₹{formatPrice(order.coupon_discount || order.discount_amount || 0)}
+                </Text>
+              </View>
+            )}
+
+            {Boolean((order.coupon_discount && order.coupon_discount > 0) || (order.discount_amount && order.discount_amount > 0)) && (
+              <View style={styles.billRow}>
+                <Text style={styles.billLabel}>Taxable Amount</Text>
+                <Text style={styles.billVal}>
+                  ₹{formatPrice(Math.max(0, (order.subtotal || 0) - (order.coupon_discount || order.discount_amount || 0)))}
                 </Text>
               </View>
             )}
 
             <View style={styles.billRow}>
-              <Text style={styles.billLabel}>Taxes (CGST + SGST)</Text>
+              <Text style={styles.billLabel}>CGST 2.5%</Text>
               <Text style={styles.billVal}>
-                ₹{(order.cgst_amount || 0) + (order.sgst_amount || 0)}
+                ₹{formatPrice(order.cgst_amount || 0)}
+              </Text>
+            </View>
+
+            <View style={styles.billRow}>
+              <Text style={styles.billLabel}>SGST 2.5%</Text>
+              <Text style={styles.billVal}>
+                ₹{formatPrice(order.sgst_amount || 0)}
               </Text>
             </View>
 
             <View style={styles.billRow}>
               <Text style={styles.billLabel}>Delivery Fee</Text>
-              <Text style={styles.billVal}>
-                {order.delivery_charge ? `₹${order.delivery_charge}` : 'FREE'}
+              <Text style={order.delivery_charge ? styles.billVal : styles.billValFree}>
+                {order.delivery_charge ? `₹${formatPrice(order.delivery_charge)}` : 'FREE'}
               </Text>
             </View>
 
             <View style={[styles.billRow, styles.grandTotalRow]}>
               <Text style={styles.grandTotalLabel}>Grand Total</Text>
               <Text style={styles.grandTotalVal}>
-                ₹{order.payable_amount || order.grand_total}
+                ₹{formatPrice(order.payable_amount || order.grand_total)}
               </Text>
             </View>
           </View>
@@ -361,7 +381,10 @@ export default function CustomerOrderDetailsScreen() {
         {/* Delivery Address Snapshot */}
         <View style={styles.sectionCard}>
           <Text style={styles.cardTitle}>Delivery Details</Text>
-          <Text style={styles.infoLabel}>Recipient</Text>
+          <Text style={styles.infoLabel}>Order Placed</Text>
+          <Text style={styles.infoVal}>🕒 {formatOrderDateTime(order.created_at)}</Text>
+
+          <Text style={[styles.infoLabel, { marginTop: 8 }]}>Recipient</Text>
           <Text style={styles.infoVal}>
             {order.customer_name} ({order.customer_phone})
           </Text>
@@ -669,6 +692,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#334155',
   },
+  itemUnitPrice: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
   itemNote: {
     fontSize: 11,
     color: '#64748B',
@@ -697,6 +725,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#334155',
+  },
+  billValFree: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#059669',
   },
   grandTotalRow: {
     borderTopWidth: 1,

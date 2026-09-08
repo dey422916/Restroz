@@ -365,6 +365,7 @@ export default function CouponsScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="e.g. FESTIVE20"
+                placeholderTextColor="#64748b"
                 value={code}
                 onChangeText={(t) => setCode(t.toUpperCase())}
                 autoCapitalize="characters"
@@ -374,6 +375,7 @@ export default function CouponsScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="e.g. 20% off on all items above ₹500"
+                placeholderTextColor="#64748b"
                 value={description}
                 onChangeText={setDescription}
               />
@@ -408,6 +410,7 @@ export default function CouponsScreen() {
                   <TextInput
                     style={styles.input}
                     placeholder="e.g. 20"
+                    placeholderTextColor="#64748b"
                     keyboardType="numeric"
                     value={discountValue}
                     onChangeText={setDiscountValue}
@@ -420,6 +423,7 @@ export default function CouponsScreen() {
                     <TextInput
                       style={styles.input}
                       placeholder="e.g. 150 (Optional)"
+                      placeholderTextColor="#64748b"
                       keyboardType="numeric"
                       value={maxDiscount}
                       onChangeText={setMaxDiscount}
@@ -434,6 +438,7 @@ export default function CouponsScreen() {
                   <TextInput
                     style={styles.input}
                     placeholder="0 for no minimum"
+                    placeholderTextColor="#64748b"
                     keyboardType="numeric"
                     value={minOrderValue}
                     onChangeText={setMinOrderValue}
@@ -445,6 +450,7 @@ export default function CouponsScreen() {
                   <TextInput
                     style={styles.input}
                     placeholder="e.g. 100 (Optional)"
+                    placeholderTextColor="#64748b"
                     keyboardType="numeric"
                     value={usageLimit}
                     onChangeText={setUsageLimit}
@@ -458,6 +464,7 @@ export default function CouponsScreen() {
                   <TextInput
                     style={styles.input}
                     placeholder="YYYY-MM-DD"
+                    placeholderTextColor="#64748b"
                     value={startDate}
                     onChangeText={setStartDate}
                   />
@@ -468,6 +475,7 @@ export default function CouponsScreen() {
                   <TextInput
                     style={styles.input}
                     placeholder="YYYY-MM-DD"
+                    placeholderTextColor="#64748b"
                     value={expiryDate}
                     onChangeText={setExpiryDate}
                   />

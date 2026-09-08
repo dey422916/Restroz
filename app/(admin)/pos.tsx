@@ -16,8 +16,9 @@ import {
   Modal,
   ActivityIndicator,
   useWindowDimensions,
+  RefreshControl,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { productService } from '../../src/services/api/productService';
 import { categoryService } from '../../src/services/api/categoryService';
@@ -30,6 +31,7 @@ import { useAuth } from '../../src/context/AuthContext';
 import { RegisterClosedError } from '../../src/context/PosContext';
 import { formatCurrency, numberToWords } from '../../src/utils/currency';
 import { getOrderSubtotal } from '../../src/utils/gst';
+import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { printService } from '../../src/services/printService';
 import { TableSelectorModal } from '../../src/components/pos/TableSelectorModal';
 import { SplitBillModal } from '../../src/components/pos/SplitBillModal';
@@ -87,6 +89,7 @@ export default function PosScreen() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [tables, setTables] = useState<DiningTable[]>([]);
   const [tablesLoading, setTablesLoading] = useState<boolean>(false);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -127,9 +130,13 @@ export default function PosScreen() {
   const isTablet = windowWidth >= 768;
 
   // Load products, categories, and dining tables
-  const loadInitialData = async () => {
+  const loadInitialData = async (isRefresh: boolean = false) => {
     try {
-      setTablesLoading(true);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setTablesLoading(true);
+      }
       const [prods, cats, tbls] = await Promise.all([
         productService.getProducts(activeRestaurantId),
         categoryService.getCategories(activeRestaurantId),
@@ -138,16 +145,33 @@ export default function PosScreen() {
       setProducts(prods);
       setCategories(cats);
       setTables(tbls);
+      if (refreshOrders) {
+        await refreshOrders();
+      }
     } catch (e) {
       console.warn('POS initial load failed:', e);
     } finally {
       setTablesLoading(false);
+      setRefreshing(false);
     }
+  };
+
+  const onRefresh = () => {
+    loadInitialData(true);
   };
 
   useEffect(() => {
     loadInitialData();
   }, [activeRestaurantId]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      loadInitialData(true);
+      if (refreshOrders) {
+        refreshOrders();
+      }
+    }, [activeRestaurantId, refreshOrders])
+  );
 
   // When cart is cleared, reset KOT state
   useEffect(() => {
@@ -419,6 +443,10 @@ export default function PosScreen() {
         const updated = await updateOrderPricesOnly(createdOrder.id, 'Price & details updated from POS');
         setCreatedOrder(updated);
         setHasUnsentItems(false);
+        if (refreshOrders) {
+          await refreshOrders();
+        }
+        await loadInitialData(true);
       } catch (e: any) {
         Alert.alert('Update Failed', e.message);
       } finally {
@@ -498,6 +526,9 @@ export default function PosScreen() {
       style={styles.stepContainer}
       contentContainerStyle={[styles.chooserContent, { paddingBottom: insets.bottom + 32 }]}
       showsVerticalScrollIndicator={true}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+      }
     >
       {/* Branding & POS Header */}
       <View style={styles.chooserHeader}>
@@ -715,6 +746,9 @@ export default function PosScreen() {
         <ScrollView
           contentContainerStyle={[styles.tablesGridContent, { paddingBottom: insets.bottom + 40 }]}
           showsVerticalScrollIndicator={true}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
         >
           <View style={styles.tablesGrid}>
             {filteredTables.map((t) => {
@@ -777,7 +811,7 @@ export default function PosScreen() {
                         #{activeOrd.order_number}
                       </Text>
                       <Text style={styles.tableActiveOrderVal} numberOfLines={1}>
-                        {formatCurrency(activeOrd.payable_amount)} • {activeOrd.items?.length || 0} items
+                        {formatCurrency(activeOrd.payable_amount)} • {activeOrd.items?.length || 0} items • 🕒 {formatOrderDateTime(activeOrd.created_at)}
                       </Text>
                     </View>
                   ) : (
@@ -851,7 +885,7 @@ export default function PosScreen() {
             </Text>
             {createdOrder && (
               <Text style={styles.cartActiveOrderNum}>
-                Order #{createdOrder.order_number} ({createdOrder.status.toUpperCase()})
+                Order #{createdOrder.order_number} ({createdOrder.status.toUpperCase()}) • 🕒 {formatOrderDateTime(createdOrder.created_at)}
               </Text>
             )}
           </View>
@@ -1382,6 +1416,8 @@ export default function PosScreen() {
               numColumns={numColumns}
               columnWrapperStyle={styles.gridRow}
               contentContainerStyle={{ paddingBottom: 85 }}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               renderItem={({ item }) => {
                 const inCart = cartItems.find((ci) => ci.product_id === item.id);
                 const isVeg = item.food_type === 'veg';
@@ -1574,7 +1610,7 @@ export default function PosScreen() {
                   </Text>
                   <Text style={styles.viewOrderModalSub}>
                     {viewTableModalData.order
-                      ? `Active Order #${viewTableModalData.order.order_number}`
+                      ? `Active Order #${viewTableModalData.order.order_number} • 🕒 ${formatOrderDateTime(viewTableModalData.order.created_at)}`
                       : 'No Active Order'}
                   </Text>
                 </View>
@@ -1625,11 +1661,8 @@ export default function PosScreen() {
                         {viewTableModalData.order.customer_name || 'Dine-In Guest'}
                       </Text>
                       <Text style={styles.modalMetaText}>
-                        <Text style={{ fontWeight: '800' }}>Time:</Text>{' '}
-                        {new Date(viewTableModalData.order.created_at).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
+                        <Text style={{ fontWeight: '800' }}>Order Date & Time:</Text>{' '}
+                        {formatOrderDateTime(viewTableModalData.order.created_at)}
                       </Text>
                     </View>
 

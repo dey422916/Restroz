@@ -2,6 +2,7 @@ import { Order, KOT, RestaurantSettings, OrderItem } from '../types';
 import { formatCurrency, numberToWords } from '../utils/currency';
 import { getOrderSubtotal } from '../utils/gst';
 import { cleanCustomerOrderNotes } from '../utils/orderNotes';
+import { formatOrderDateTime } from '../utils/dateUtils';
 import { supabase } from './supabase';
 
 const isWebEnvironment = typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -143,22 +144,16 @@ export const printService = {
    */
   async printKotThermal(order: Order, settings: RestaurantSettings, kot?: KOT, isReprint: boolean = false): Promise<void> {
     const activeKot = kot || (order.kots && order.kots[0]);
-    let kotNum = activeKot?.kot_number || 'KOT-0001';
+    let kotNum = activeKot?.kot_number || 'KOT-001';
 
-    const rawDate = activeKot?.created_at ? new Date(activeKot.created_at) : new Date();
-    const formattedDate = rawDate.toLocaleDateString('en-GB', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
-    const formattedTime = rawDate.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    });
+    const formattedOrderDateTime = formatOrderDateTime(activeKot?.created_at || order.created_at);
 
     const paperSize = settings.kot_paper_size || '80mm';
     const showReprintBanner = isReprint || Boolean(activeKot?.kitchen_notes && activeKot.kitchen_notes.includes('[AUTO_PRINTED]'));
+    const isSupplementary =
+      Boolean(kotNum.includes('SUP')) ||
+      Boolean(activeKot?.kitchen_notes && activeKot.kitchen_notes.toUpperCase().includes('SUP')) ||
+      Boolean(order.kots && order.kots.length > 1 && activeKot?.id !== order.kots[0]?.id);
 
     // Print ONLY the specific items for this KOT (for delta KOTs, only the newly added/increased items)
     const itemsToPrint: Array<{ name: string; quantity: number; notes?: string }> = [];
@@ -253,6 +248,7 @@ export const printService = {
          .bill-no { font-size: 16px; font-weight: bold; margin: 3px 0; }
          .date-time { font-size: 13px; margin: 2px 0; }
          .reprint-banner { font-size: 16px; font-weight: 900; letter-spacing: 2px; color: #d97706; margin-bottom: 6px; }
+         .sup-banner { font-size: 16px; font-weight: 900; letter-spacing: 2px; color: #000; margin-bottom: 6px; }
          table th { font-size: 14px; font-weight: 900; padding: 8px; border-bottom: 2px solid #000; background-color: #f1f5f9; }`
       : is58
       ? `@page { size: 58mm auto; margin: 1mm 1.5mm; }
@@ -261,6 +257,7 @@ export const printService = {
          .bill-no { font-size: 11px; font-weight: bold; margin: 1px 0; }
          .date-time { font-size: 10px; margin: 1px 0; }
          .reprint-banner { font-size: 12px; font-weight: 900; letter-spacing: 1px; color: #000; margin-bottom: 2px; }
+         .sup-banner { font-size: 12px; font-weight: 900; letter-spacing: 1px; color: #000; margin-bottom: 2px; }
          table th { font-size: 11px; font-weight: 900; padding: 3px 0; border-bottom: 1px solid #000; }`
       : `@page { size: 80mm auto; margin: 2mm 3mm; }
          body { width: 74mm; margin: 0 auto; padding: 2mm 0; font-size: 12px; line-height: 1.25; color: #000; }
@@ -268,6 +265,7 @@ export const printService = {
          .bill-no { font-size: 13px; font-weight: bold; margin: 2px 0; }
          .date-time { font-size: 11px; margin: 1px 0; }
          .reprint-banner { font-size: 14px; font-weight: 900; letter-spacing: 1.5px; color: #000; margin-bottom: 4px; }
+         .sup-banner { font-size: 14px; font-weight: 900; letter-spacing: 1.5px; color: #000; margin-bottom: 4px; }
          table th { font-size: 13px; font-weight: 900; padding: 4px 0; border-bottom: 1px solid #000; }`;
 
     const html = `
@@ -292,12 +290,13 @@ export const printService = {
         </head>
         <body>
           ${showReprintBanner ? `<div class="center reprint-banner">*** REPRINT ***</div>` : ''}
-          <div class="center kot-title">KOT #${kotNum}</div>
+          ${isSupplementary ? `<div class="center sup-banner">*** SUPPLEMENTARY KOT (SUP) ***</div>` : ''}
+          <div class="center kot-title">${kotNum.startsWith('KOT') ? kotNum : `KOT #${kotNum}`}${isSupplementary && !kotNum.toUpperCase().includes('SUP') ? ' (SUP)' : ''}</div>
 
           <div class="dashed"></div>
           
           <div class="center bill-no">Bill No.: ${order.order_number}</div>
-          <div class="center date-time">Date: ${formattedDate} ${formattedTime}</div>
+          <div class="center date-time">Date & Time: ${formattedOrderDateTime}</div>
 
           <div class="dashed"></div>
 
@@ -360,18 +359,7 @@ export const printService = {
     settings: RestaurantSettings,
     billedBy: string = 'Ratnadeep Dey'
   ): Promise<void> {
-    const rawDate = order.created_at ? new Date(order.created_at) : new Date();
-    const formattedDate = rawDate.toLocaleDateString('en-GB', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
-    const formattedTime = rawDate.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    });
+    const formattedOrderDateTime = formatOrderDateTime(order.created_at);
 
     const kotRefs =
       (order.kots || []).map((k) => k.kot_number).join(', ') ||
@@ -417,13 +405,25 @@ export const printService = {
 
     const subTotalNum = getOrderSubtotal(order);
     const subTotalStr = subTotalNum.toFixed(2);
-    const taxTotal = (order.cgst_amount || 0) + (order.sgst_amount || 0);
-    const taxTotalStr = taxTotal.toFixed(2);
-    const billTotalStr = `INR ${order.grand_total.toFixed(2)}`;
+    const taxTotal = (order.cgst_amount || 0) + (order.sgst_amount || 0) + (order.igst_amount || 0);
     const roundOffStr = order.round_off
       ? `INR ${(order.round_off > 0 ? '+' : '') + order.round_off.toFixed(2)}`
       : 'INR 0.00';
     const payableAmountStr = `INR ${order.payable_amount.toFixed(2)}`;
+
+    // Preserved Historical Tax & Setting Determination
+    const effectiveGstRegistered =
+      settings.is_gst_enabled !== false &&
+      (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()));
+    const isTaxInvoice =
+      taxTotal > 0 || (effectiveGstRegistered && settings.tax_invoice_enabled !== false && Boolean(settings.gstin?.trim()));
+
+    const dynamicTaxRate =
+      Number(settings.default_tax_rate) > 0 ? Number(settings.default_tax_rate) : 5.0;
+    const halfTaxRateStr = (dynamicTaxRate / 2).toFixed(1);
+
+    const invoiceNumber = order.invoice_number || order.order_number;
+    const customerGstin = order.customer_gstin;
 
     const orderTypeLabel =
       order.order_type === 'dine_in'
@@ -433,7 +433,6 @@ export const printService = {
         : 'Delivery';
 
     const logoUrl = formatLogoDataUri(settings?.logo_url || (order as any)?.restaurant?.logo_url);
-    console.log('FINAL THERMAL LOGO SRC:\n', logoUrl);
 
     const billPaperSize = settings.bill_paper_size || settings.kot_paper_size || '80mm';
     const is58 = billPaperSize === '58mm';
@@ -471,7 +470,7 @@ export const printService = {
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Bill #${order.order_number} (${billPaperSize})</title>
+          <title>${isTaxInvoice ? 'Tax Invoice' : 'Retail Bill'} #${invoiceNumber} (${billPaperSize})</title>
           <style>
             ${billPageCss}
             * {
@@ -515,16 +514,24 @@ export const printService = {
             </div>
           </div>
           ${settings.address ? `<div class="center legal-meta">${settings.address}</div>` : ''}
-          ${settings.gstin ? `<div class="center legal-meta">GSTIN: <b>${settings.gstin}</b></div>` : ''}
+          ${isTaxInvoice && settings.gstin ? `<div class="center legal-meta">GSTIN: <b>${settings.gstin}</b></div>` : ''}
           ${settings.phone ? `<div class="center legal-meta">Phone: ${settings.phone}</div>` : ''}
 
           <div class="dashed"></div>
 
           <div class="flex-between">
-            <span><b>Bill No.:</b> ${order.order_number}</span>
+            <span><b>${isTaxInvoice ? 'Invoice No.:' : 'Bill No.:'}</b> ${invoiceNumber}</span>
+            <span style="font-weight: 800;">${isTaxInvoice ? 'TAX INVOICE' : 'RETAIL BILL'}</span>
           </div>
+          <div><b>Order ID:</b> ${order.order_number}</div>
           <div><b>KOT No.:</b> ${kotRefs}</div>
-          <div><b>Date:</b> ${formattedDate} ${formattedTime}</div>
+          <div><b>Date & Time:</b> ${formattedOrderDateTime}</div>
+          ${
+            isTaxInvoice
+              ? `<div><b>Place of Supply:</b> ${settings.state || 'West Bengal'} (${settings.state_code || '19'})</div>
+                 <div><b>Reverse Charge:</b> No</div>`
+              : ''
+          }
 
           <div style="margin-top: 4px;"></div>
           <div class="flex-between">
@@ -533,6 +540,7 @@ export const printService = {
           </div>
           <div><b>Customer:</b> ${order.customer_name || 'Walk-in Customer'}</div>
           ${order.customer_phone ? `<div><b>Phone:</b> ${order.customer_phone}</div>` : ''}
+          ${isTaxInvoice && customerGstin ? `<div><b>Customer GSTIN (B2B):</b> ${customerGstin}</div>` : ''}
           ${order.table_number ? `<div><b>Table:</b> ${order.table_number}</div>` : ''}
           ${order.delivery_address ? `<div><b>Address:</b> ${order.delivery_address}</div>` : ''}
 
@@ -570,20 +578,32 @@ export const printService = {
               : ''
           }
 
+          ${
+            isTaxInvoice && taxTotal > 0
+              ? `
           <div class="flex-between">
             <span>Taxable Amount:</span>
-            <span>${Math.max(0, subTotalNum - (order.discount_amount || 0) - (order.coupon_discount || 0)).toFixed(2)}</span>
+            <span>${(order.taxable_amount !== undefined && order.taxable_amount > 0 ? order.taxable_amount : Math.max(0, subTotalNum - (order.discount_amount || 0) - (order.coupon_discount || 0))).toFixed(2)}</span>
           </div>
 
           <div class="flex-between">
-            <span>CGST (2.5%):</span>
+            <span>CGST (${halfTaxRateStr}%):</span>
             <span>${(order.cgst_amount || 0).toFixed(2)}</span>
           </div>
 
           <div class="flex-between">
-            <span>SGST (2.5%):</span>
+            <span>SGST (${halfTaxRateStr}%):</span>
             <span>${(order.sgst_amount || 0).toFixed(2)}</span>
           </div>
+
+          ${
+            order.igst_amount && order.igst_amount > 0
+              ? `<div class="flex-between"><span>IGST:</span><span>${order.igst_amount.toFixed(2)}</span></div>`
+              : ''
+          }
+          `
+              : ''
+          }
 
           ${
             order.delivery_charge
@@ -712,7 +732,20 @@ export const printService = {
     const kotRefs = (order.kots || []).map((k) => k.kot_number).join(', ') || 'N/A';
     const isPaid = order.payment_status === 'paid';
     const logoUrl = formatLogoDataUri(settings?.logo_url || (order as any)?.restaurant?.logo_url);
-    console.log('FINAL INVOICE LOGO SRC:\n', logoUrl);
+
+    const taxTotal = (order.cgst_amount || 0) + (order.sgst_amount || 0) + (order.igst_amount || 0);
+    const effectiveGstRegistered =
+      settings.is_gst_enabled !== false &&
+      (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()));
+    const isTaxInvoice =
+      taxTotal > 0 || (effectiveGstRegistered && settings.tax_invoice_enabled !== false && Boolean(settings.gstin?.trim()));
+
+    const dynamicTaxRate =
+      Number(settings.default_tax_rate) > 0 ? Number(settings.default_tax_rate) : 5.0;
+    const halfTaxRateStr = (dynamicTaxRate / 2).toFixed(1);
+
+    const invoiceNumber = order.invoice_number || order.order_number;
+    const customerGstin = order.customer_gstin;
 
     const itemsHtml = (order.items || [])
       .filter((i) => i.quantity > 0)
@@ -721,7 +754,7 @@ export const printService = {
         <tr>
           <td style="padding: 7px; border: 1px solid #cbd5e1; text-align: center;">${idx + 1}</td>
           <td style="padding: 7px; border: 1px solid #cbd5e1; font-weight: bold;">${i.product_name}</td>
-          <td style="padding: 7px; border: 1px solid #cbd5e1; text-align: center;">996331</td>
+          ${isTaxInvoice ? `<td style="padding: 7px; border: 1px solid #cbd5e1; text-align: center;">${(i as any).hsn_code || '996331'}</td>` : ''}
           <td style="padding: 7px; border: 1px solid #cbd5e1; text-align: center; font-weight: bold;">${i.quantity}</td>
           <td style="padding: 7px; border: 1px solid #cbd5e1; text-align: right;">${formatCurrency(i.unit_price)}</td>
           <td style="padding: 7px; border: 1px solid #cbd5e1; text-align: right; font-weight: bold;">${formatCurrency(i.total)}</td>
@@ -757,23 +790,31 @@ export const printService = {
                 <div class="brand">${settings.name || 'Restaurant'}</div>
                 <div style="font-size: 13px; font-weight: 600; color: #475569;">${settings.legal_name || ''}</div>
                 <div>${settings.address || ''}</div>
-                <div>GSTIN: <b>${settings.gstin || ''}</b></div>
+                ${isTaxInvoice && settings.gstin ? `<div>GSTIN: <b>${settings.gstin}</b></div>` : ''}
                 <div>Contact: ${settings.phone || ''}</div>
               </div>
             </div>
             <div style="text-align: right;">
-              <h2 style="margin: 0; color: #0f172a; font-size: 20px;">TAX INVOICE</h2>
-              <div style="font-size: 13px; font-weight: 900; margin-top: 4px;">Invoice #: ${order.order_number}</div>
-              <div>Date: ${new Date(order.created_at).toLocaleDateString('en-IN')} ${new Date(order.created_at).toLocaleTimeString('en-IN')}</div>
+              <h2 style="margin: 0; color: #0f172a; font-size: 20px;">${isTaxInvoice ? 'TAX INVOICE' : 'RETAIL INVOICE'}</h2>
+              <div style="font-size: 13px; font-weight: 900; margin-top: 4px;">${isTaxInvoice ? 'Invoice #:' : 'Bill #:'} ${invoiceNumber}</div>
+              <div>Order ID: <b>${order.order_number}</b></div>
+              <div>Order Date & Time: <b>${formatOrderDateTime(order.created_at)}</b></div>
               <div>Order Type: <b>${order.order_type.toUpperCase()}</b></div>
               ${order.table_number ? `<div>Table: <b>${order.table_number}</b></div>` : ''}
               <div>KOT Ref: <b>${kotRefs}</b></div>
+              ${
+                isTaxInvoice
+                  ? `<div>Place of Supply: <b>${settings.state || 'West Bengal'} (${settings.state_code || '19'})</b></div>
+                     <div>Reverse Charge: <b>No</b></div>`
+                  : ''
+              }
             </div>
           </div>
 
           <div class="meta-box">
             <div><b>Customer Name:</b> ${order.customer_name || 'Walk-in Guest'}</div>
             <div><b>Phone Number:</b> ${order.customer_phone || 'N/A'}</div>
+            ${isTaxInvoice && customerGstin ? `<div style="grid-column: span 2;"><b>Customer GSTIN (B2B):</b> <b>${customerGstin}</b></div>` : ''}
             ${order.delivery_address ? `<div style="grid-column: span 2;"><b>Delivery Address:</b> ${order.delivery_address}${order.delivery_landmark ? ` (Landmark: ${order.delivery_landmark})` : ''}</div>` : ''}
             <div><b>Payment Status:</b> <span style="font-weight: 900; color: ${isPaid ? '#16a34a' : '#e11d48'}">${isPaid ? 'PAID' : 'UNPAID / COD'}</span></div>
             <div><b>Payment Mode:</b> ${order.payments && order.payments.length > 0 ? order.payments[0].payment_method.toUpperCase() : 'N/A'}</div>
@@ -784,7 +825,7 @@ export const printService = {
               <tr>
                 <th style="width: 30px; text-align: center;">#</th>
                 <th>Item Description</th>
-                <th style="width: 70px; text-align: center;">HSN/SAC</th>
+                ${isTaxInvoice ? '<th style="width: 70px; text-align: center;">HSN/SAC</th>' : ''}
                 <th style="width: 50px; text-align: center;">Qty</th>
                 <th style="width: 90px; text-align: right;">Rate (₹)</th>
                 <th style="width: 100px; text-align: right;">Amount (₹)</th>
@@ -798,9 +839,16 @@ export const printService = {
               <div class="row"><span>Item Subtotal:</span><span>${formatCurrency(getOrderSubtotal(order))}</span></div>
               ${order.discount_amount ? `<div class="row" style="color: #16a34a;"><span>Discount ${order.discount_type === 'percentage' ? `(${order.discount_value || ''}%)` : (order.discount_value ? `(₹${order.discount_value})` : '')}:</span><span>-${formatCurrency(order.discount_amount)}</span></div>` : ''}
               ${order.coupon_discount ? `<div class="row" style="color: #16a34a;"><span>Coupon (${order.coupon_code || ''}):</span><span>-${formatCurrency(order.coupon_discount)}</span></div>` : ''}
-              <div class="row"><span>Taxable Amount:</span><span>${formatCurrency(Math.max(0, getOrderSubtotal(order) - (order.discount_amount || 0) - (order.coupon_discount || 0)))}</span></div>
-              <div class="row"><span>CGST (2.5%):</span><span>${formatCurrency(order.cgst_amount)}</span></div>
-              <div class="row"><span>SGST (2.5%):</span><span>${formatCurrency(order.sgst_amount)}</span></div>
+              ${
+                isTaxInvoice && taxTotal > 0
+                  ? `
+              <div class="row"><span>Taxable Amount:</span><span>${formatCurrency(order.taxable_amount !== undefined && order.taxable_amount > 0 ? order.taxable_amount : Math.max(0, getOrderSubtotal(order) - (order.discount_amount || 0) - (order.coupon_discount || 0)))}</span></div>
+              <div class="row"><span>CGST (${halfTaxRateStr}%):</span><span>${formatCurrency(order.cgst_amount)}</span></div>
+              <div class="row"><span>SGST (${halfTaxRateStr}%):</span><span>${formatCurrency(order.sgst_amount)}</span></div>
+              ${order.igst_amount && order.igst_amount > 0 ? `<div class="row"><span>IGST:</span><span>${formatCurrency(order.igst_amount)}</span></div>` : ''}
+              `
+                  : ''
+              }
               ${order.delivery_charge ? `<div class="row"><span>Delivery Charge:</span><span>${formatCurrency(order.delivery_charge)}</span></div>` : ''}
               ${order.service_charge ? `<div class="row"><span>Service Charge:</span><span>${formatCurrency(order.service_charge)}</span></div>` : ''}
               ${order.round_off ? `<div class="row"><span>Round Off:</span><span>${order.round_off > 0 ? '+' : ''}${formatCurrency(order.round_off)}</span></div>` : ''}
@@ -814,12 +862,6 @@ export const printService = {
             </div>
           </div>
 
-          <div class="footer">
-            <div>This is a computer generated invoice and requires no physical signature.</div>
-            <div style="font-weight: 700; margin-top: 2px;">Thank you for dining at ${settings.name || 'Ratnadeep Restaurant'}!</div>
-          </div>
-        </body>
-      </html>
     `;
 
     try {

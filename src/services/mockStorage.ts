@@ -325,14 +325,24 @@ export const mockStorage = {
     return list.filter((o: Order) => o.restaurant_id === restaurantId);
   },
   saveOrders: (orders: Order[], restaurantId?: string) => {
-    if (restaurantId) {
-      const existing = (inMemoryData[ORDERS_KEY] || []).filter((o: Order) => o.restaurant_id !== restaurantId);
-      const scoped = orders.filter((o: Order) => o.restaurant_id === restaurantId);
-      inMemoryData[ORDERS_KEY] = [...scoped, ...existing];
-    } else {
-      inMemoryData[ORDERS_KEY] = orders;
-    }
-    AsyncStorage.setItem(ORDERS_KEY, JSON.stringify(inMemoryData[ORDERS_KEY])).catch(() => {});
+    const existing = inMemoryData[ORDERS_KEY] || [];
+    const map = new Map<string, Order>();
+    existing.forEach((o: Order) => {
+      if (o && o.id) map.set(o.id, o);
+    });
+    orders.forEach((o: Order) => {
+      if (o && o.id) {
+        if (restaurantId && !o.restaurant_id) {
+          o.restaurant_id = restaurantId;
+        }
+        map.set(o.id, { ...(map.get(o.id) || {}), ...o });
+      }
+    });
+    const merged = Array.from(map.values()).sort(
+      (a, b) => new Date(b.created_at || '').getTime() - new Date(a.created_at || '').getTime()
+    );
+    inMemoryData[ORDERS_KEY] = merged;
+    AsyncStorage.setItem(ORDERS_KEY, JSON.stringify(merged)).catch(() => {});
   },
 
   getKots: (restaurantId?: string): KOT[] => {

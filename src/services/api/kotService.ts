@@ -4,6 +4,7 @@ import { settingsService } from './settingsService';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import { auditService } from './auditService';
 import { DEFAULT_RESTAURANT_ID } from './restaurantService';
+import { clearOrdersCache } from './orderService';
 
 // High-performance in-memory cache for KOTs per tenant (10s TTL)
 const inMemoryKotsCache: Record<string, { timestamp: number; data: KOT[] }> = {};
@@ -15,6 +16,24 @@ export function clearKotsCache(restaurantId?: string) {
   } else {
     Object.keys(inMemoryKotsCache).forEach((k) => delete inMemoryKotsCache[k]);
   }
+}
+
+function isSameDay(date1: Date, date2: Date): boolean {
+  return (
+    date1.getFullYear() === date2.getFullYear() &&
+    date1.getMonth() === date2.getMonth() &&
+    date1.getDate() === date2.getDate()
+  );
+}
+
+function getTodayDateBounds(): { startISO: string; endISO: string } {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  return {
+    startISO: start.toISOString(),
+    endISO: end.toISOString(),
+  };
 }
 
 export const kotService = {
@@ -57,16 +76,88 @@ export const kotService = {
     return local;
   },
 
+  /**
+   * Generates a unique sequential KOT number for a new order, resetting daily.
+   * Format: KOT-001, KOT-002, KOT-003...
+   */
+  async generateNextUniqueKotNumber(restaurantId: string): Promise<string> {
+    const settings = await settingsService.getSettings(restaurantId);
+    const prefix = settings.kot_prefix || 'KOT-';
+    const now = new Date();
+    const { startISO, endISO } = getTodayDateBounds();
+    let maxSeq = 0;
+
+    if (isSupabaseConfigured) {
+      try {
+        const { data } = await supabase
+          .from('kots')
+          .select('kot_number, created_at')
+          .eq('restaurant_id', restaurantId)
+          .gte('created_at', startISO)
+          .lte('created_at', endISO)
+          .order('created_at', { ascending: false });
+
+        if (data && data.length > 0) {
+          for (const row of data) {
+            if (row.kot_number) {
+              const baseMatch = row.kot_number.replace(/-SUP.*$/i, '').match(/(\d+)/);
+              if (baseMatch) {
+                const num = parseInt(baseMatch[1], 10);
+                if (!isNaN(num) && num > maxSeq) {
+                  maxSeq = num;
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Supabase daily kot_number lookup failed:', e);
+      }
+    }
+
+    const localKots = mockStorage.getKots(restaurantId);
+    for (const k of localKots) {
+      if (k.kot_number && k.created_at) {
+        const kotDate = new Date(k.created_at);
+        if (isSameDay(kotDate, now)) {
+          const baseMatch = k.kot_number.replace(/-SUP.*$/i, '').match(/(\d+)/);
+          if (baseMatch) {
+            const num = parseInt(baseMatch[1], 10);
+            if (!isNaN(num) && num > maxSeq) {
+              maxSeq = num;
+            }
+          }
+        }
+      }
+    }
+
+    const nextSeq = (maxSeq + 1).toString().padStart(3, '0');
+    return `${prefix}${nextSeq}`;
+  },
+
   async generateKot(order: Order, kitchenNotes?: string, itemsToInclude?: OrderItem[]): Promise<KOT> {
     const targetRestId = order.restaurant_id || DEFAULT_RESTAURANT_ID;
     const settings = await settingsService.getSettings(targetRestId);
     const existingKots = await this.getKots(targetRestId);
-    const orderKots = existingKots.filter((k) => k.order_id === order.id);
+    
+    // Find all existing KOTs for THIS specific order
+    const orderKots = (order.kots && order.kots.length > 0)
+      ? order.kots
+      : existingKots.filter((k) => k.order_id === order.id);
     const isSupplementary = orderKots.length > 0;
 
-    const kotSeq = (existingKots.length + 1).toString().padStart(4, '0');
-    const baseKotNumber = `${settings.kot_prefix || 'KOT-'}${kotSeq}`;
-    const kotNumber = isSupplementary ? `${baseKotNumber}-SUP` : baseKotNumber;
+    let kotNumber: string;
+    if (isSupplementary) {
+      // Re-use the existing KOT number from the same order and append SUP
+      const initialKot = orderKots[0];
+      const rawNum = initialKot?.kot_number || `${settings.kot_prefix || 'KOT-'}001`;
+      const baseKotNumber = rawNum.replace(/-SUP.*$/i, '').replace(/\s*\(SUP.*\)$/i, '').trim();
+      const supCount = orderKots.length;
+      kotNumber = supCount === 1 ? `${baseKotNumber}-SUP` : `${baseKotNumber}-SUP${supCount}`;
+    } else {
+      // Brand new order -> Generate next unique sequential KOT number resetting daily
+      kotNumber = await this.generateNextUniqueKotNumber(targetRestId);
+    }
 
     // If itemsToInclude is passed, generate KOT for those specific items; otherwise use all order.items
     const targetItems = itemsToInclude || order.items || [];
@@ -82,12 +173,12 @@ export const kotService = {
     const noteText =
       kitchenNotes ||
       (isSupplementary
-        ? `[SUPPLEMENTARY KOT] ${order.notes ? order.notes : 'New items added'}`
+        ? `[SUPPLEMENTARY KOT - SUP] ${order.notes ? order.notes : 'New items added'}`
         : order.notes || '');
 
     const newKot: KOT = {
       id: 'kot-' + Date.now() + Math.random().toString(36).substr(2, 4),
-      restaurant_id: order.restaurant_id,
+      restaurant_id: targetRestId,
       kot_number: kotNumber,
       order_id: order.id,
       order_number: order.order_number,
@@ -114,7 +205,23 @@ export const kotService = {
             order_number: order.order_number,
             items_count: items.length,
           });
-          await this.getKots();
+
+          // Also update order in local mock storage
+          const localOrders = mockStorage.getOrders(targetRestId);
+          const orderIdx = localOrders.findIndex((o) => o.id === order.id);
+          if (orderIdx !== -1) {
+            const currentKots = localOrders[orderIdx].kots || [];
+            localOrders[orderIdx] = {
+              ...localOrders[orderIdx],
+              status: 'kot_generated',
+              kots: [...currentKots, { ...data, items } as KOT],
+            };
+            mockStorage.saveOrders(localOrders, targetRestId);
+          }
+
+          clearKotsCache(targetRestId);
+          clearOrdersCache(targetRestId);
+          await this.getKots(targetRestId, true);
           return { ...data, items } as KOT;
         }
       } catch (e) {
@@ -122,8 +229,23 @@ export const kotService = {
       }
     }
 
+    clearKotsCache(targetRestId);
+    clearOrdersCache(targetRestId);
     existingKots.unshift(newKot);
     mockStorage.saveKots(existingKots, targetRestId);
+
+    const localOrders = mockStorage.getOrders(targetRestId);
+    const orderIdx = localOrders.findIndex((o) => o.id === order.id);
+    if (orderIdx !== -1) {
+      const currentKots = localOrders[orderIdx].kots || [];
+      localOrders[orderIdx] = {
+        ...localOrders[orderIdx],
+        status: 'kot_generated',
+        kots: [...currentKots, newKot],
+      };
+      mockStorage.saveOrders(localOrders, targetRestId);
+    }
+
     return newKot;
   },
 
@@ -139,10 +261,9 @@ export const kotService = {
     const noteText = `⚠️ CANCELLED ITEM: ${cancelledQty}x ${item.product_name} (${item.old_quantity} -> ${item.new_quantity}). Reason: ${reasonText}`;
 
     const targetRestId = order.restaurant_id || DEFAULT_RESTAURANT_ID;
-    const settings = await settingsService.getSettings(targetRestId);
     const existingKots = await this.getKots(targetRestId);
-    const kotSeq = (existingKots.length + 1).toString().padStart(4, '0');
-    const kotNumber = `${settings.kot_prefix || 'KOT-'}${kotSeq}-CNL`;
+    const baseKotNum = await this.generateNextUniqueKotNumber(targetRestId);
+    const kotNumber = `${baseKotNum}-CNL`;
 
     const cancelItem: KOTItem = {
       id: 'kot-item-' + Date.now(),

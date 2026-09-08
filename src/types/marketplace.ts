@@ -62,9 +62,12 @@ export interface CustomerCart {
   restaurantLogo?: string | null;
   items: CustomerCartItem[];
   subtotal: number;
+  discount: number;
+  taxableAmount: number;
+  cgst: number;
+  sgst: number;
   taxTotal: number;
   deliveryFee: number;
-  discount: number;
   couponCode?: string;
   payableAmount: number;
 }

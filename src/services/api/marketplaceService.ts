@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+import { clearOrdersCache } from './orderService';
 import {
   CustomerAddress,
   CustomerOrderProgress,
@@ -12,6 +13,8 @@ import {
 } from '../../types/marketplace';
 import { Order, Product, UserProfile, Restaurant, Category } from '../../types';
 import { couponService } from './couponService';
+import { settingsService } from './settingsService';
+import { calculateOrderTotals } from '../../utils/gst';
 import { parseBannerUrls } from '../../utils/mediaUtils';
 import { isValidPhoneNumber, validatePhoneNumberOrThrow } from '../../utils/phone';
 
@@ -557,7 +560,7 @@ export const marketplaceService = {
       // Enforce online orders status check in fallback path
       const { data: pubProf } = await supabase
         .from('restaurant_public_profiles')
-        .select('is_open, marketplace_enabled, accepts_delivery')
+        .select('is_open, marketplace_enabled, accepts_delivery, minimum_order_value')
         .eq('restaurant_id', payload.restaurant_id)
         .maybeSingle();
 
@@ -601,10 +604,10 @@ export const marketplaceService = {
         }
 
         const unitPrice = prod.discounted_price || prod.price;
-        const lineSub = unitPrice * item.quantity;
-        const taxRate = prod.tax_rate || 5.0;
-        const taxAmount = (lineSub * taxRate) / 100.0;
-        const lineTotal = lineSub + taxAmount;
+        const lineSub = Math.round((unitPrice * item.quantity) * 100) / 100;
+        const taxRate = Number(prod.tax_rate) || 5.0;
+        const taxAmount = Math.round(((lineSub * taxRate) / 100.0) * 100) / 100;
+        const lineTotal = lineSub;
         subtotal += lineSub;
 
         // Deduct stock
@@ -629,6 +632,13 @@ export const marketplaceService = {
           subtotal: lineSub,
           total: lineTotal,
         });
+      }
+
+      subtotal = Math.round(subtotal * 100) / 100;
+
+      // Minimum order value validation in fallback path
+      if (pubProf?.minimum_order_value && Number(pubProf.minimum_order_value) > 0 && subtotal < Number(pubProf.minimum_order_value)) {
+        throw new Error(`Order subtotal (₹${subtotal}) is below the minimum order value of ₹${pubProf.minimum_order_value}. Please add items worth ₹${Number(pubProf.minimum_order_value) - subtotal} more.`);
       }
 
       // 1. Server-side coupon validation and calculation BEFORE any order record insertion
@@ -678,13 +688,25 @@ export const marketplaceService = {
         }
       }
 
-      const discountedSubtotal = Math.max(0, subtotal - serverCouponDiscount);
-      const taxTotal = (discountedSubtotal * 5.0) / 100.0;
-      const cgst = taxTotal / 2.0;
-      const sgst = taxTotal / 2.0;
-      const grandTotal = discountedSubtotal + taxTotal;
-      const payableAmount = Math.max(0, Math.round(grandTotal));
-      const roundOff = payableAmount - grandTotal;
+      const restSettings = await settingsService.getSettings(payload.restaurant_id).catch(() => null);
+      const isGstEnabled = restSettings
+        ? (restSettings.is_gst_enabled ?? (restSettings.gst_registered ?? Boolean(restSettings.gstin?.trim())))
+        : true;
+      const taxRate = restSettings?.default_tax_rate !== undefined ? restSettings.default_tax_rate : 5.0;
+
+      const calc = calculateOrderTotals({
+        items: orderItemsToInsert,
+        couponDiscount: serverCouponDiscount,
+        deliveryCharge: 0,
+        isGstEnabled,
+        taxRate,
+      });
+
+      const cgst = calc.cgstAmount;
+      const sgst = calc.sgstAmount;
+      const grandTotal = calc.rawTotal;
+      const payableAmount = calc.payableAmount;
+      const roundOff = calc.roundOff;
       const orderNumber = 'DEL-' + Math.floor(1000 + Math.random() * 9000);
 
       let addrText = '';
@@ -715,7 +737,7 @@ export const marketplaceService = {
           discount_amount: 0,
           coupon_code: validCoupon ? validCoupon.code : null,
           coupon_discount: serverCouponDiscount,
-          delivery_charge: 0,
+          delivery_charge: calc.deliveryCharge || 0,
           service_charge: 0,
           round_off: roundOff,
           grand_total: grandTotal,
@@ -740,7 +762,8 @@ export const marketplaceService = {
         }
       }
 
-      // 5. Record audit log
+      // 5. Record audit log & clear cache
+      clearOrdersCache(payload.restaurant_id);
       try {
         await supabase.from('audit_logs').insert({
           restaurant_id: payload.restaurant_id,
@@ -770,13 +793,14 @@ export const marketplaceService = {
     if (!userId) return [];
 
     try {
-      // 1. Direct fetch with valid PostgREST relationship syntax (restaurants, order_items)
+      // 1. Direct fetch with valid PostgREST relationship syntax (restaurants, order_items, kots)
       const { data: rawOrders, error: ordersErr } = await supabase
         .from('orders')
         .select(`
           *,
           restaurant:restaurants(id, name, slug, logo_url, address, phone),
-          items:order_items(*)
+          items:order_items(*),
+          kots:kots(id, kot_number, status, created_at)
         `)
         .eq('customer_id', userId)
         .order('created_at', { ascending: false });
@@ -787,7 +811,7 @@ export const marketplaceService = {
         // 2. Resilient fallback: base orders query without foreign relationships
         const { data: fallbackOrders, error: fbErr } = await supabase
           .from('orders')
-          .select('*, items:order_items(*)')
+          .select('*, items:order_items(*), kots:kots(id, kot_number, status, created_at)')
           .eq('customer_id', userId)
           .order('created_at', { ascending: false });
 
@@ -850,7 +874,7 @@ export const marketplaceService = {
     if (!userId) return { orders: [], hasMore: false, nextPage: null };
 
     const page = options.page || 1;
-    const pageSize = options.pageSize || 20;
+    const pageSize = options.pageSize || 15;
     const from = (page - 1) * pageSize;
     const to = from + pageSize; // queries pageSize + 1 to evaluate hasMore without COUNT(*)
 
@@ -860,7 +884,8 @@ export const marketplaceService = {
         .select(`
           *,
           restaurant:restaurants(id, name, slug, logo_url, address, phone),
-          items:order_items(*)
+          items:order_items(*),
+          kots:kots(id, kot_number, status, created_at)
         `)
         .eq('customer_id', userId)
         .in('status', ['delivered', 'completed', 'cancelled'])
@@ -871,7 +896,7 @@ export const marketplaceService = {
         console.warn('Direct getCustomerOrderHistoryPaginated error, using resilient fallback:', ordersErr);
         const { data: fallbackOrders, error: fbErr } = await supabase
           .from('orders')
-          .select('*, items:order_items(*)')
+          .select('*, items:order_items(*), kots:kots(id, kot_number, status, created_at)')
           .eq('customer_id', userId)
           .in('status', ['delivered', 'completed', 'cancelled'])
           .order('created_at', { ascending: false })
@@ -979,7 +1004,8 @@ export const marketplaceService = {
         .select(`
           *,
           restaurant:restaurants(id, name, slug, logo_url, address, phone),
-          items:order_items(*)
+          items:order_items(*),
+          kots:kots(id, kot_number, status, created_at)
         `)
         .eq('id', orderId)
         .eq('customer_id', userId)
@@ -989,7 +1015,7 @@ export const marketplaceService = {
         console.warn('Direct getOrderDetails query error, using fallback:', error);
         const { data: fbData, error: fbErr } = await supabase
           .from('orders')
-          .select('*, items:order_items(*)')
+          .select('*, items:order_items(*), kots:kots(id, kot_number, status, created_at)')
           .eq('id', orderId)
           .eq('customer_id', userId)
           .maybeSingle();
@@ -1029,17 +1055,120 @@ export const marketplaceService = {
     }
   },
 
-  // 9. Cancel Customer Order (Before preparation)
+  // 9. Cancel Customer Order (Before KOT is printed/generated by Admin only)
   async cancelCustomerOrder(orderId: string, reason: string): Promise<any> {
-    const { data, error } = await supabase.rpc('cancel_customer_order', {
-      p_order_id: orderId,
-      p_reason: reason,
-    });
+    const userId = await this.getAuthUserId();
+    if (!userId) throw new Error('Authentication required.');
 
-    if (error) {
-      throw new Error(error.message);
+    const trimmedReason = (reason || '').trim() || 'Cancelled by customer';
+
+    // 1. Fetch current order with customer and status verification
+    const { data: order, error: orderErr } = await supabase
+      .from('orders')
+      .select('id, restaurant_id, order_type, status, customer_id, notes, items:order_items(*)')
+      .eq('id', orderId)
+      .maybeSingle();
+
+    if (orderErr || !order) {
+      throw new Error('Order not found.');
     }
-    return data;
+
+    if (order.customer_id && order.customer_id !== userId) {
+      throw new Error('Unauthorized to cancel this order.');
+    }
+
+    if (order.status === 'cancelled') {
+      return order;
+    }
+
+    if (['completed', 'delivered'].includes(order.status)) {
+      throw new Error('Cannot cancel an order that is already completed or delivered.');
+    }
+
+    // 2. Strictly check if KOT has already been printed or generated
+    const { data: kots } = await supabase
+      .from('kots')
+      .select('id')
+      .eq('order_id', orderId);
+
+    const hasKot = (kots && kots.length > 0) || order.status === 'kot_generated';
+
+    if (hasKot) {
+      throw new Error('This order cannot be cancelled because the kitchen has already generated/printed the KOT.');
+    }
+
+    // 3. Execute cancellation
+    const cancelNotes = `[CANCELLED] Reason: ${trimmedReason} | Cancelled by Customer At: ${new Date().toLocaleTimeString()}`;
+    const fullNotes = order.notes ? `${order.notes} • ${cancelNotes}` : cancelNotes;
+
+    try {
+      await supabase.rpc('cancel_customer_order', {
+        p_order_id: orderId,
+        p_reason: trimmedReason,
+      });
+    } catch (rpcErr) {
+      console.warn('cancel_customer_order RPC fallback:', rpcErr);
+    }
+
+    const { data: updatedOrder, error: updateErr } = await supabase
+      .from('orders')
+      .update({
+        status: 'cancelled',
+        notes: fullNotes,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', orderId)
+      .select('*, items:order_items(*)')
+      .single();
+
+    if (updateErr) {
+      throw new Error(updateErr.message || 'Failed to cancel order.');
+    }
+
+    // 4. Record status timeline event
+    try {
+      await supabase.from('order_status_events').insert({
+        order_id: orderId,
+        restaurant_id: order.restaurant_id,
+        old_status: order.status,
+        new_status: 'cancelled',
+        actor_type: 'CUSTOMER',
+        note: `Cancelled by Customer: ${trimmedReason}`,
+        created_at: new Date().toISOString(),
+      });
+    } catch (evErr) {
+      console.warn('Failed to insert order status event for cancellation:', evErr);
+    }
+
+    // 5. Restore inventory stock for cancelled items
+    if (order.items && order.items.length > 0) {
+      for (const item of order.items) {
+        if (item.product_id && item.quantity > 0) {
+          try {
+            const { data: prod } = await supabase
+              .from('products')
+              .select('stock_quantity')
+              .eq('id', item.product_id)
+              .single();
+
+            if (prod && prod.stock_quantity !== null && prod.stock_quantity !== undefined) {
+              await supabase
+                .from('products')
+                .update({
+                  stock_quantity: prod.stock_quantity + item.quantity,
+                  is_available: true,
+                })
+                .eq('id', item.product_id);
+            }
+          } catch (stkErr) {
+            console.warn('Stock restore exception on customer cancellation:', stkErr);
+          }
+        }
+      }
+    }
+
+    clearOrdersCache(order.restaurant_id);
+    return updatedOrder;
   },
 
   // 10. Update Delivery Order Status (For Restaurant Staff / Admin)

@@ -164,7 +164,8 @@ export const productService = {
           }
           if (data) {
             console.log('✅ Product updated in Supabase:', data.id, 'restaurant_id:', data.restaurant_id);
-            await this.getProducts(targetRestId);
+            clearProductsCache(targetRestId);
+            await this.getProducts(targetRestId, true);
             return data as Product;
           }
         } else {
@@ -180,7 +181,8 @@ export const productService = {
           }
           if (data) {
             console.log('✅ Product inserted in Supabase:', data.id, 'restaurant_id:', data.restaurant_id);
-            await this.getProducts(targetRestId);
+            clearProductsCache(targetRestId);
+            await this.getProducts(targetRestId, true);
             return data as Product;
           }
         }
@@ -191,26 +193,31 @@ export const productService = {
     }
 
     // Local fallback
+    clearProductsCache(targetRestId);
     if (product.id) {
       const updated = mockStorage.updateProduct(product.id, payload);
       if (!updated) throw new Error('Product not found in local cache.');
+      await this.getProducts(targetRestId, true);
       return updated;
     } else {
-      return mockStorage.addProduct(payload as Omit<Product, 'id'>);
+      const added = mockStorage.addProduct(payload as Omit<Product, 'id'>);
+      await this.getProducts(targetRestId, true);
+      return added;
     }
   },
 
   async deleteProduct(id: string, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<{ deleted: boolean; deactivated: boolean }> {
+    clearProductsCache(restaurantId);
     if (isSupabaseConfigured) {
       try {
         const { error } = await supabase.from('products').delete().eq('id', id);
         if (!error) {
-          await this.getProducts(restaurantId);
+          await this.getProducts(restaurantId, true);
           return { deleted: true, deactivated: false };
         }
         // If error (e.g. referenced in order_items), fallback to deactivation
         await supabase.from('products').update({ is_active: false, is_available: false }).eq('id', id);
-        await this.getProducts(restaurantId);
+        await this.getProducts(restaurantId, true);
         return { deleted: false, deactivated: true };
       } catch (e: any) {
         console.error('Supabase delete product error:', e);
@@ -218,6 +225,7 @@ export const productService = {
       }
     }
     mockStorage.deleteProduct(id);
+    await this.getProducts(restaurantId, true);
     return { deleted: true, deactivated: false };
   },
 
@@ -256,8 +264,10 @@ export const productService = {
     rows: CsvProductRow[],
     restaurantId: string = DEFAULT_RESTAURANT_ID
   ): Promise<{ imported: number; importedCount: number; errors: string[] }> {
+    const targetRestId = restaurantId || DEFAULT_RESTAURANT_ID;
+
     // Check bulk product limit upfront atomically
-    const limitCheck = await subscriptionGuardService.checkPlanLimit(restaurantId, 'PRODUCTS', rows.length);
+    const limitCheck = await subscriptionGuardService.checkPlanLimit(targetRestId, 'PRODUCTS', rows.length);
     if (!limitCheck.allowed) {
       throw new Error(limitCheck.message || `Your plan limit does not permit importing ${rows.length} new products. Please upgrade your subscription.`);
     }
@@ -265,26 +275,33 @@ export const productService = {
     const errors: string[] = [];
     let imported = 0;
 
-    const existingCategories = await (await import('./categoryService')).categoryService.getCategories(restaurantId);
+    const { categoryService } = await import('./categoryService');
+    const existingCategories = await categoryService.getCategories(targetRestId, true);
     const catMap = new Map<string, string>();
-    existingCategories.forEach((c) => catMap.set(c.name.toLowerCase(), c.id));
+    existingCategories.forEach((c) => catMap.set(c.name.toLowerCase().trim(), c.id));
 
     const categoryIdByName = async (catName: string): Promise<string> => {
-      const cleanName = catName.trim();
+      const cleanName = (catName || 'General').trim();
       const lower = cleanName.toLowerCase();
       if (catMap.has(lower)) {
         return catMap.get(lower)!;
       }
-      const newCat = await (await import('./categoryService')).categoryService.saveCategory({
+      const newCat = await categoryService.saveCategory({
         name: cleanName,
-        restaurant_id: restaurantId,
-      });
+        restaurant_id: targetRestId,
+      }, targetRestId);
       catMap.set(lower, newCat.id);
       return newCat.id;
     };
 
+    // Pre-fetch existing products in this restaurant for idempotent updates/SKU matching
+    const existingProducts = await this.getProducts(targetRestId);
+    const existingSkuMap = new Map<string, Product>();
+    existingProducts.forEach((p) => existingSkuMap.set(p.sku.toUpperCase().trim(), p));
+
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
+      const rowNum = i + 2; // Row 1 is header, data starts at Row 2
       try {
         const catId = await categoryIdByName(row.category || 'General');
 
@@ -293,8 +310,11 @@ export const productService = {
         if (ft.includes('non') || ft === 'non-veg' || ft === 'nv') foodType = 'non-veg';
         else if (ft.includes('egg')) foodType = 'egg';
 
+        const existingProd = existingSkuMap.get(row.sku.toUpperCase().trim());
+
         await this.saveProduct({
-          restaurant_id: restaurantId,
+          id: existingProd?.id,
+          restaurant_id: targetRestId,
           name: row.name,
           sku: row.sku,
           category_id: catId,
@@ -309,11 +329,12 @@ export const productService = {
           image_url: row.imageUrl || undefined,
           is_available: true,
           is_active: true,
-        }, restaurantId);
+        }, targetRestId);
 
         imported++;
       } catch (err: any) {
-        errors.push(`Row ${i + 1} (${row.name || 'Unnamed'}): ${err.message}`);
+        console.error(`Bulk import error on row ${rowNum}:`, err);
+        errors.push(`Row ${rowNum} (${row.name || 'Unnamed'}): ${err.message || String(err)}`);
       }
     }
 

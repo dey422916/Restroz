@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   Dimensions,
   Platform,
+  RefreshControl,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { productService } from '../../../src/services/api/productService';
@@ -26,6 +27,7 @@ import { DEFAULT_RESTAURANT_ID } from '../../../src/services/api/restaurantServi
 import { Product, Category, DiningTable, OrderItem, Order, Coupon, PaymentMethod, SavedAddress } from '../../../src/types';
 import { formatCurrency } from '../../../src/utils/currency';
 import { calculateOrderTotals, getOrderSubtotal } from '../../../src/utils/gst';
+import { formatOrderDateTime } from '../../../src/utils/dateUtils';
 import { findMatchingTable } from '../../../src/utils/qr';
 import { cleanCustomerOrderNotes } from '../../../src/utils/orderNotes';
 import { RealtimeOrderStatus } from '../../../src/components/customer/RealtimeOrderStatus';
@@ -78,7 +80,9 @@ export default function CustomerDigitalMenuScreen() {
   // Customer Active & History Orders from Supabase
   const [customerOrders, setCustomerOrders] = useState<Order[]>([]);
   const [loadingOrders, setLoadingOrders] = useState<boolean>(false);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
   const [submittingOrder, setSubmittingOrder] = useState<boolean>(false);
+  const [restSettingsData, setRestSettingsData] = useState<any>(null);
 
   // Modals
   const [showCart, setShowCart] = useState<boolean>(false);
@@ -93,31 +97,6 @@ export default function CustomerDigitalMenuScreen() {
     });
     return () => subscription?.remove();
   }, []);
-
-  // Load menu, categories, and table info
-  useEffect(() => {
-    let isMounted = true;
-    tableService.resolveTable(tableId || 'general').then(async (resolvedTable) => {
-      if (!isMounted) return;
-      setTable(resolvedTable);
-      const restId = resolvedTable?.restaurant_id || DEFAULT_RESTAURANT_ID;
-      const [prods, cats, restSettings] = await Promise.all([
-        productService.getProducts(restId),
-        categoryService.getCategories(restId),
-        settingsService.getPublicRestaurantInfo(restId),
-      ]);
-      if (!isMounted) return;
-      setProducts(prods);
-      setCategories(cats);
-      setRestaurantInfo({
-        name: (resolvedTable as any)?.restaurant_name || restSettings?.name || 'Restaurant',
-        logo_url: restSettings?.logo_url,
-      });
-    });
-    return () => {
-      isMounted = false;
-    };
-  }, [tableId]);
 
   // Load saved addresses on auth change
   const loadSavedAddresses = useCallback(async () => {
@@ -165,6 +144,45 @@ export default function CustomerDigitalMenuScreen() {
     },
     [user]
   );
+
+  const loadMenuData = useCallback(async (isRefresh: boolean = false) => {
+    if (isRefresh) setRefreshing(true);
+    try {
+      const resolvedTable = await tableService.resolveTable(tableId || 'general');
+      setTable(resolvedTable);
+      const restId = resolvedTable?.restaurant_id || DEFAULT_RESTAURANT_ID;
+      const [prods, cats, restSettings] = await Promise.all([
+        productService.getProducts(restId),
+        categoryService.getCategories(restId),
+        settingsService.getSettings(restId).catch(() => settingsService.getPublicRestaurantInfo(restId)),
+      ]);
+      setProducts(prods);
+      setCategories(cats);
+      setRestSettingsData(restSettings);
+      setRestaurantInfo({
+        name: (resolvedTable as any)?.restaurant_name || restSettings?.name || 'Restaurant',
+        logo_url: restSettings?.logo_url,
+      });
+      if (user?.id) {
+        await Promise.all([
+          loadCustomerOrders(false),
+          loadSavedAddresses(),
+        ]);
+      }
+    } catch (e) {
+      console.warn('Failed to load menu data:', e);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [tableId, user?.id, loadCustomerOrders, loadSavedAddresses]);
+
+  useEffect(() => {
+    loadMenuData(false);
+  }, [loadMenuData]);
+
+  const onRefresh = useCallback(() => {
+    loadMenuData(true);
+  }, [loadMenuData]);
 
   // Stable Supabase Realtime Subscription without channel collisions or UI reload flickers
   useEffect(() => {
@@ -224,10 +242,10 @@ export default function CustomerDigitalMenuScreen() {
   }, [user?.id, table?.restaurant_id, loadCustomerOrders]);
 
   const activeOrders = customerOrders.filter(
-    (o) => o.status !== 'delivered' && o.status !== 'completed' && o.status !== 'cancelled'
+    (o) => !['delivered', 'completed', 'cancelled', 'settled'].includes(o.status)
   );
   const historyOrders = customerOrders.filter(
-    (o) => o.status === 'delivered' || o.status === 'completed' || o.status === 'cancelled'
+    (o) => ['delivered', 'completed', 'cancelled', 'settled'].includes(o.status)
   );
 
   const addToCart = (product: Product) => {
@@ -473,7 +491,17 @@ export default function CustomerDigitalMenuScreen() {
     }
   };
 
-  const totals = calculateOrderTotals({ items: cartItems, coupon: appliedCoupon });
+  const isGstEnabled = restSettingsData
+    ? (restSettingsData.is_gst_enabled ?? (restSettingsData.gst_registered ?? Boolean(restSettingsData.gstin?.trim())))
+    : true;
+  const taxRate = restSettingsData?.default_tax_rate !== undefined ? restSettingsData.default_tax_rate : 5.0;
+
+  const totals = calculateOrderTotals({
+    items: cartItems,
+    coupon: appliedCoupon,
+    isGstEnabled,
+    taxRate,
+  });
 
   // Filter products by category and search text (name, SKU, category)
   const filteredProducts = products.filter((p) => {
@@ -647,7 +675,13 @@ export default function CustomerDigitalMenuScreen() {
         </View>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={true} contentContainerStyle={{ paddingBottom: insets.bottom + 90 }}>
+      <ScrollView
+        showsVerticalScrollIndicator={true}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 90 }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
         {/* Search Bar */}
         <View style={styles.searchContainer}>
           <TextInput
@@ -1125,12 +1159,14 @@ export default function CustomerDigitalMenuScreen() {
                   </View>
                 )}
 
-                <View style={styles.receiptSummaryRow}>
-                  <Text style={{ fontSize: 11, color: '#64748b' }}>GST (CGST + SGST)</Text>
-                  <Text style={{ fontSize: 11, fontWeight: '700' }}>
-                    {formatCurrency(totals.cgstAmount + totals.sgstAmount)}
-                  </Text>
-                </View>
+                {totals.totalTax > 0 && (
+                  <View style={styles.receiptSummaryRow}>
+                    <Text style={{ fontSize: 11, color: '#64748b' }}>GST ({(taxRate).toFixed(1)}%)</Text>
+                    <Text style={{ fontSize: 11, fontWeight: '700' }}>
+                      {formatCurrency(totals.cgstAmount + totals.sgstAmount)}
+                    </Text>
+                  </View>
+                )}
 
                 <View style={[styles.receiptSummaryRow, { borderTopWidth: 1, borderColor: '#e2e8f0', paddingTop: 6, marginTop: 4 }]}>
                   <Text style={{ fontSize: 14, fontWeight: '900', color: '#0f172a' }}>Grand Total</Text>
@@ -1354,8 +1390,8 @@ export default function CustomerDigitalMenuScreen() {
                           <Text style={{ fontSize: 13, fontWeight: '900', color: '#0f172a' }}>
                             Order #{ord.order_number}
                           </Text>
-                          <Text style={{ fontSize: 10, color: '#64748b', marginTop: 1 }}>
-                            Placed: {new Date(ord.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                          <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                            🕒 Placed: {formatOrderDateTime(ord.created_at)}
                           </Text>
                         </View>
                         <View style={{ alignItems: 'flex-end' }}>
@@ -1412,6 +1448,9 @@ export default function CustomerDigitalMenuScreen() {
 
               <ScrollView style={{ marginTop: 8 }}>
                 <View style={styles.detailMetaBox}>
+                  <Text style={styles.detailMetaRow}>
+                    <Text style={{ fontWeight: 'bold' }}>Order Date & Time:</Text> {formatOrderDateTime(selectedOrderDetail.created_at)}
+                  </Text>
                   <Text style={styles.detailMetaRow}>
                     Status: <Text style={{ fontWeight: 'bold', color: '#2563eb' }}>{selectedOrderDetail.status.toUpperCase()}</Text>
                   </Text>

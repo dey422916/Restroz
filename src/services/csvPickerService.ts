@@ -1,12 +1,30 @@
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
 import { validateCsvRows, CsvProductRow, CsvValidationError } from '../utils/validators';
+
+function parseCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"' || char === "'") {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      result.push(current.trim().replace(/^["']|["']$/g, ''));
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  result.push(current.trim().replace(/^["']|["']$/g, ''));
+  return result;
+}
 
 export const csvPickerService = {
   async pickAndParseCsv(): Promise<{ validRows: CsvProductRow[]; errors: CsvValidationError[]; fileName: string } | null> {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['text/csv', 'text/comma-separated-values', 'application/csv'],
+        type: ['text/csv', 'text/comma-separated-values', 'application/csv', 'application/vnd.ms-excel'],
         copyToCacheDirectory: true,
       });
 
@@ -51,17 +69,17 @@ export const csvPickerService = {
       if (lines.length < 2) {
         return {
           validRows: [],
-          errors: [{ rowIndex: 1, field: 'file', message: 'Selected CSV file is empty' }],
+          errors: [{ rowIndex: 1, field: 'file', message: 'Selected CSV file has no product data rows.' }],
           fileName: asset.name,
         };
       }
 
-      const headers = lines[0].split(',').map((h) => h.trim().replace(/^"|"$/g, ''));
+      const headers = parseCsvLine(lines[0]);
       const rawObjects = lines.slice(1).map((line) => {
-        const values = line.split(',').map((v) => v.trim().replace(/^"|"$/g, ''));
-        const obj: any = {};
+        const values = parseCsvLine(line);
+        const obj: Record<string, string> = {};
         headers.forEach((h, idx) => {
-          obj[h] = values[idx] || '';
+          obj[h] = values[idx] !== undefined ? values[idx] : '';
         });
         return obj;
       });

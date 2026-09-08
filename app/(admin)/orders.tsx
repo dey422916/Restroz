@@ -15,22 +15,26 @@ import {
   Dimensions,
   Image,
   useWindowDimensions,
+  RefreshControl,
 } from 'react-native';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { orderService, resolveOrderSource } from '../../src/services/api/orderService';
+import { orderService, resolveOrderSource, clearOrdersCache } from '../../src/services/api/orderService';
 import { productService } from '../../src/services/api/productService';
 import { tableService } from '../../src/services/api/tableService';
-import { kotService } from '../../src/services/api/kotService';
+import { kotService, clearKotsCache } from '../../src/services/api/kotService';
 import { printService, formatLogoDataUri } from '../../src/services/printService';
-import { Order, OrderItem, OrderStatus, OrderSource, Product, DiningTable, RestaurantSettings, PaymentMethod } from '../../src/types';
+import { Order, OrderItem, OrderStatus, PaymentStatus, OrderSource, Product, DiningTable, RestaurantSettings, PaymentMethod } from '../../src/types';
 import { formatCurrency, numberToWords } from '../../src/utils/currency';
 import { getOrderSubtotal, calculateOrderTotals } from '../../src/utils/gst';
+import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { useAuth } from '../../src/context/AuthContext';
 import { useSettings } from '../../src/context/SettingsContext';
 import { printedKotTracker } from '../../src/utils/printedKotTracker';
 import { cleanCustomerOrderNotes } from '../../src/utils/orderNotes';
 import { isValidPhoneNumber } from '../../src/utils/phone';
+import { validateGSTIN } from '../../src/utils/validators';
+import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
 
 export default function OrdersScreen() {
   const insets = useSafeAreaInsets();
@@ -43,6 +47,7 @@ export default function OrdersScreen() {
   const [tables, setTables] = useState<DiningTable[]>([]);
 
   const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
   const [search, setSearch] = useState<string>('');
   const [categoryTab, setCategoryTab] = useState<'pos' | 'online' | 'qr'>('pos');
   const [tabFilter, setTabFilter] = useState<'all' | 'active' | 'completed' | 'cancelled'>('active');
@@ -60,7 +65,8 @@ export default function OrdersScreen() {
   const [editDeliveryAddress, setEditDeliveryAddress] = useState<string>('');
   const [editTableId, setEditTableId] = useState<string>('');
   const [editNotes, setEditNotes] = useState<string>('');
-  const [editDiscount, setEditDiscount] = useState<string>('0');
+  const [editDiscountType, setEditDiscountType] = useState<'none' | 'fixed' | 'percentage'>('none');
+  const [editDiscountValue, setEditDiscountValue] = useState<string>('0');
   const [editReason, setEditReason] = useState<string>('');
   const [savingEdit, setSavingEdit] = useState<boolean>(false);
   const [prodSearch, setProdSearch] = useState<string>('');
@@ -74,6 +80,7 @@ export default function OrdersScreen() {
   const [payMethod, setPayMethod] = useState<PaymentMethod>('cash');
   const [payReceived, setPayReceived] = useState<boolean>(true);
   const [payTxnRef, setPayTxnRef] = useState<string>('');
+  const [payCustomerGstin, setPayCustomerGstin] = useState<string>('');
   const [payDiscountType, setPayDiscountType] = useState<'none' | 'fixed' | 'percentage'>('none');
   const [payDiscountValue, setPayDiscountValue] = useState<string>('');
   const [closingOrder, setClosingOrder] = useState<boolean>(false);
@@ -86,39 +93,133 @@ export default function OrdersScreen() {
     return Math.floor((windowWidth - 28 - 14) / 2);
   }, [isTwoColumn, windowWidth]);
 
-  const loadData = async () => {
+  const [ordersPage, setOrdersPage] = useState<number>(1);
+  const [hasMoreOrders, setHasMoreOrders] = useState<boolean>(false);
+  const [loadingMore, setLoadingMore] = useState<boolean>(false);
+  const [debouncedSearch, setDebouncedSearch] = useState<string>('');
+
+  // Debounce search query so server-side search runs smoothly
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [search]);
+
+  const loadData = useCallback(
+    async (isRefresh: boolean = false) => {
+      if (!activeRestaurantId) return;
+      try {
+        if (isRefresh) {
+          setRefreshing(true);
+        } else {
+          setLoading(true);
+        }
+        clearOrdersCache(activeRestaurantId);
+
+        const [ordersRes, prodList, tableList] = await Promise.all([
+          orderService.getOrdersPaginated({
+            restaurantId: activeRestaurantId,
+            page: 1,
+            pageSize: 15,
+            orderCategory: categoryTab,
+            statusGroup: tabFilter,
+            search: debouncedSearch.trim() || undefined,
+          }),
+          productService.getProducts(activeRestaurantId),
+          tableService.getTables(activeRestaurantId),
+        ]);
+
+        setOrders(ordersRes.orders);
+        setOrdersPage(1);
+        setHasMoreOrders(ordersRes.hasMore);
+        setProducts(prodList);
+        setTables(tableList);
+      } catch (err: any) {
+        console.warn('Failed to load orders data:', err);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [activeRestaurantId, categoryTab, tabFilter, debouncedSearch]
+  );
+
+  const loadMoreOrders = async () => {
+    if (!activeRestaurantId || loadingMore || !hasMoreOrders) return;
     try {
-      setLoading(true);
-      const [orderList, prodList, tableList] = await Promise.all([
-        orderService.getOrders(activeRestaurantId),
-        productService.getProducts(activeRestaurantId),
-        tableService.getTables(activeRestaurantId),
-      ]);
-      setOrders(orderList);
-      setProducts(prodList);
-      setTables(tableList);
-    } catch (err: any) {
-      console.warn('Failed to load orders data:', err);
+      setLoadingMore(true);
+      const nextPage = ordersPage + 1;
+      const res = await orderService.getOrdersPaginated({
+        restaurantId: activeRestaurantId,
+        page: nextPage,
+        pageSize: 15,
+        orderCategory: categoryTab,
+        statusGroup: tabFilter,
+        search: debouncedSearch.trim() || undefined,
+      });
+
+      setOrders((prev) => {
+        const existingIds = new Set(prev.map((o) => o.id));
+        const newOnes = res.orders.filter((o) => !existingIds.has(o.id));
+        return [...prev, ...newOnes];
+      });
+      setOrdersPage(nextPage);
+      setHasMoreOrders(res.hasMore);
+    } catch (e) {
+      console.warn('Failed to load more orders:', e);
     } finally {
-      setLoading(false);
+      setLoadingMore(false);
     }
   };
 
+  const onRefresh = useCallback(() => {
+    loadData(true);
+  }, [loadData]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
   useFocusEffect(
     useCallback(() => {
-      loadData();
-    }, [activeRestaurantId])
+      loadData(true);
+    }, [loadData])
   );
 
+  // Realtime subscription for incoming orders and status updates
+  useEffect(() => {
+    if (!isSupabaseConfigured || !activeRestaurantId) return;
+
+    const chName = `admin_orders_realtime_${activeRestaurantId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const channel = supabase
+      .channel(chName)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'orders',
+          filter: `restaurant_id=eq.${activeRestaurantId}`,
+        },
+        () => {
+          loadData(true);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [activeRestaurantId, loadData]);
+
   // Auto-navigate to the correct tab/filter when redirected from KOT dispatch
-  // Does NOT open the popup — popup should only appear after Settle Order
   const handledOpenOrderIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (openOrderId && orders.length > 0 && handledOpenOrderIdRef.current !== openOrderId) {
       handledOpenOrderIdRef.current = openOrderId;
       const targetOrder = orders.find((o) => o.id === openOrderId);
       if (targetOrder) {
-        // Switch to the correct category tab
         if (isPosOrder(targetOrder)) {
           setCategoryTab('pos');
         } else if (isOnlineDeliveryOrder(targetOrder)) {
@@ -131,111 +232,99 @@ export default function OrdersScreen() {
     }
   }, [openOrderId, orders]);
 
-  const [historyPage, setHistoryPage] = useState<number>(1);
-  const [historyHasMore, setHistoryHasMore] = useState<boolean>(true);
-  const [loadingMoreHistory, setLoadingMoreHistory] = useState<boolean>(false);
-
-  const loadMoreHistoryOrders = async () => {
-    if (!activeRestaurantId || loadingMoreHistory || !historyHasMore) return;
-    try {
-      setLoadingMoreHistory(true);
-      const nextPage = historyPage + 1;
-      const res = await orderService.getOrdersPaginated({
-        restaurantId: activeRestaurantId,
-        statusGroup: 'completed',
-        page: nextPage,
-        pageSize: 30,
-      });
-
-      setOrders((prev) => {
-        const existingIds = new Set(prev.map((o) => o.id));
-        const newOnes = res.orders.filter((o) => !existingIds.has(o.id));
-        return [...prev, ...newOnes];
-      });
-      setHistoryPage(nextPage);
-      setHistoryHasMore(res.hasMore);
-    } catch (e) {
-      console.warn('Failed to load more completed orders:', e);
-    } finally {
-      setLoadingMoreHistory(false);
-    }
-  };
-
-  useEffect(() => {
-    // 45-second low-frequency reconciliation fetch (Realtime handles instant changes)
-    const interval = setInterval(async () => {
-      if (activeRestaurantId) {
-        const refreshed = await orderService.getOrders(activeRestaurantId);
-        setOrders(refreshed);
-      }
-    }, 45000);
-    return () => clearInterval(interval);
-  }, [activeRestaurantId]);
-
-  // Categorized order partitions
+  // Categorized order partitions helper for display badges
   const isOnlineDeliveryOrder = (o: Order): boolean => {
-    const src = resolveOrderSource(o);
-    if (src === 'CUSTOMER_APP') return true;
-    if (o.order_type === 'delivery') return true;
-    if (Boolean(o.delivery_address && o.delivery_address.trim())) return true;
-    if (o.notes?.includes('[ONLINE_DELIVERY]') || o.notes?.includes('[DELIVERY]')) return true;
-    if (o.created_by === 'CUSTOMER_APP' || o.created_by === 'CUSTOMER') return true;
-    return false;
+    return resolveOrderSource(o) === 'CUSTOMER_APP';
   };
 
   const isQrDigitalMenuOrder = (o: Order): boolean => {
-    // Explicitly exclude any delivery / online app order from QR tab
-    if (isOnlineDeliveryOrder(o)) return false;
-    // POS orders with [POS] tag should never be classified as QR
-    if (o.notes?.includes('[POS]')) return false;
-    const src = resolveOrderSource(o);
-    if (src === 'CUSTOMER_QR') return true;
-    if (o.notes?.includes('[QR_DINE_IN]') || o.notes?.includes('[QR_ORDER]') || o.notes?.includes('QR')) return true;
-    if (o.order_type === 'dine_in' && o.created_by !== 'POS_STAFF') {
-      return Boolean(o.table_id || o.table_number);
-    }
-    return false;
+    return resolveOrderSource(o) === 'CUSTOMER_QR';
   };
 
   const isPosOrder = (o: Order): boolean => {
-    if (isOnlineDeliveryOrder(o) || isQrDigitalMenuOrder(o)) return false;
-    const src = resolveOrderSource(o);
-    return Boolean(src === 'POS' || o.created_by === 'POS_STAFF' || o.notes?.includes('[POS]'));
+    return resolveOrderSource(o) === 'POS';
   };
 
-  const onlineOrders = orders.filter(isOnlineDeliveryOrder);
-  const qrOrders = orders.filter(isQrDigitalMenuOrder);
-  const posOrders = orders.filter(isPosOrder);
+  const isDispatchedDeliveryOrder = (ord: Order | null | undefined): boolean => {
+    if (!ord) return false;
+    const isDeliveryOrOnline =
+      resolveOrderSource(ord) === 'CUSTOMER_APP' ||
+      ord.order_type === 'delivery' ||
+      Boolean(ord.delivery_address && ord.delivery_address.trim());
+    const isDispatched =
+      ord.status === 'out_for_delivery' ||
+      ord.status === 'delivered' ||
+      ord.status === 'completed';
+    return isDeliveryOrOnline && isDispatched;
+  };
 
-  const currentCategoryOrders =
-    categoryTab === 'pos'
-      ? posOrders
-      : categoryTab === 'online'
-      ? onlineOrders
-      : qrOrders;
+  const isKotButtonDisabled = (ord: Order): boolean => {
+    const kots = ord.kots || [];
+    const hasKotRecords = kots.length > 0;
+    const hasKotStatus = ['kot_generated', 'preparing', 'ready', 'out_for_delivery', 'served', 'completed', 'delivered'].includes(ord.status);
 
-  // Filtered orders within active category and status
-  const filteredOrders = currentCategoryOrders.filter((o) => {
-    const isActive = ['confirmed', 'held', 'kot_generated', 'preparing', 'ready', 'served', 'out_for_delivery'].includes(o.status);
-    const isCompleted = ['delivered', 'completed'].includes(o.status);
-    if (tabFilter === 'active' && !isActive) return false;
-    if (tabFilter === 'completed' && !isCompleted) return false;
-    if (tabFilter === 'cancelled' && o.status !== 'cancelled') return false;
+    const totalOrderedQty = (ord.items || []).reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+    const totalKotQty = kots.reduce((sum, kot) => {
+      return sum + (kot.items || []).reduce((kSum, ki) => kSum + (Number(ki.quantity) || 0), 0);
+    }, 0);
 
-    if (search) {
-      const q = search.toLowerCase();
-      return (
-        o.order_number.toLowerCase().includes(q) ||
-        (o.customer_name && o.customer_name.toLowerCase().includes(q)) ||
-        (o.customer_phone && o.customer_phone.includes(q)) ||
-        (o.table_number && o.table_number.toLowerCase().includes(q))
-      );
+    // 1. If we have actual KOT records:
+    if (hasKotRecords) {
+      // If new items were added (total ordered items > total KOT covered items) -> KOT button must be ENABLED
+      if (totalOrderedQty > totalKotQty) {
+        return false;
+      }
+      // If all items are covered by KOTs -> KOT button is DISABLED
+      return true;
     }
-    return true;
-  });
+
+    // 2. If no KOT records in array, but status is already kot_generated or higher -> DISABLED
+    if (hasKotStatus) {
+      return true;
+    }
+
+    // 3. Otherwise (new order with unprinted items, pending, confirmed) -> ENABLED
+    return false;
+  };
+
+  const isFinalStatus = useCallback(
+    (st?: string) => ['completed', 'delivered', 'cancelled', 'settled'].includes(st || ''),
+    []
+  );
+
+  const filteredOrders = useMemo(() => {
+    return orders.filter((o) => {
+      // 1. Status group filtering
+      if (tabFilter === 'active') {
+        if (isFinalStatus(o.status)) return false;
+      } else if (tabFilter === 'completed') {
+        if (!['completed', 'delivered', 'settled'].includes(o.status || '')) return false;
+      } else if (tabFilter === 'cancelled') {
+        if (o.status !== 'cancelled') return false;
+      }
+
+      // 2. Category filtering
+      if (categoryTab === 'online') {
+        if (!isOnlineDeliveryOrder(o)) return false;
+      } else if (categoryTab === 'qr') {
+        if (!isQrDigitalMenuOrder(o)) return false;
+      } else if (categoryTab === 'pos') {
+        if (!isPosOrder(o)) return false;
+      }
+
+      return true;
+    });
+  }, [orders, tabFilter, categoryTab, isFinalStatus]);
 
   // Open Edit Modal
   const openEditModal = (ord: Order) => {
+    if (isDispatchedDeliveryOrder(ord)) {
+      Alert.alert(
+        'Modification Locked',
+        'This delivery/online order has already been dispatched. Adding or modifying items is not allowed from the admin panel.'
+      );
+      return;
+    }
     setEditOrderModal(ord);
     setEditItems(
       (ord.items || []).map((i) => {
@@ -256,13 +345,28 @@ export default function OrdersScreen() {
     setEditDeliveryAddress(ord.delivery_address || '');
     setEditTableId(ord.table_id || '');
     setEditNotes(cleanCustomerOrderNotes(ord.notes));
-    setEditDiscount(String(ord.discount_amount || 0));
+    const resolvedDiscType = ord.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none');
+    setEditDiscountType(resolvedDiscType);
+    setEditDiscountValue(
+      ord.discount_value !== undefined
+        ? String(ord.discount_value)
+        : ord.discount_amount > 0
+        ? String(ord.discount_amount)
+        : '0'
+    );
     setEditReason('Item adjustment / guest request');
     setProdSearch('');
   };
 
   // Add Product to Edit list
   const handleAddProductToEdit = (prod: Product) => {
+    if (isDispatchedDeliveryOrder(editOrderModal)) {
+      Alert.alert(
+        'Adding Items Locked',
+        'Items cannot be added to a dispatched delivery or online order.'
+      );
+      return;
+    }
     const existingIdx = editItems.findIndex((i) => i.product_id === prod.id);
     const prodPrice = Number(prod.price) || 0;
     if (existingIdx !== -1) {
@@ -297,6 +401,17 @@ export default function OrdersScreen() {
 
   // Adjust item quantity in Edit modal
   const handleAdjustEditQty = (productId: string, newQty: number) => {
+    if (isDispatchedDeliveryOrder(editOrderModal)) {
+      const origItem = editOrderModal?.items?.find((i) => i.product_id === productId);
+      const origQty = origItem ? Number(origItem.quantity) || 0 : 0;
+      if (newQty > origQty) {
+        Alert.alert(
+          'Action Not Allowed',
+          'Cannot increase item quantities on a dispatched delivery or online order.'
+        );
+        return;
+      }
+    }
     if (newQty <= 0) {
       setEditItems(editItems.filter((i) => i.product_id !== productId));
     } else {
@@ -322,18 +437,37 @@ export default function OrdersScreen() {
   // Live recalculated totals for Edit Modal
   const editTotals = useMemo(() => {
     if (!editOrderModal) return null;
-    const disc = parseFloat(editDiscount) || 0;
-    const discType = editOrderModal.discount_type && editOrderModal.discount_type !== 'none'
-      ? editOrderModal.discount_type
-      : (disc > 0 ? 'fixed' : undefined);
+    const numDisc = parseFloat(editDiscountValue) || 0;
+    const currentSubtotal = editItems.reduce(
+      (sum, item) => sum + (Number(item.unit_price) * Number(item.quantity)),
+      0
+    );
+
+    const validatedEditDiscount =
+      editDiscountType === 'percentage'
+        ? Math.min(Math.max(0, numDisc), 100)
+        : editDiscountType === 'fixed'
+        ? Math.min(Math.max(0, numDisc), currentSubtotal)
+        : 0;
+
+    let recalculatedCouponDiscount = editOrderModal.coupon_discount || 0;
+    if (editOrderModal.coupon_code && editOrderModal.coupon_discount) {
+      recalculatedCouponDiscount = Math.min(editOrderModal.coupon_discount, currentSubtotal);
+    }
+
+    const isGstEnabled = settings?.is_gst_enabled ?? (settings?.gst_registered ?? Boolean(settings?.gstin?.trim()));
+    const taxRate = settings?.default_tax_rate !== undefined ? settings.default_tax_rate : 5.0;
+
     return calculateOrderTotals({
       items: editItems,
-      discountType: discType,
-      discountValue: disc,
-      couponDiscount: editOrderModal.coupon_discount || 0,
+      discountType: editDiscountType === 'none' ? undefined : editDiscountType,
+      discountValue: validatedEditDiscount,
+      couponDiscount: recalculatedCouponDiscount,
       deliveryCharge: editOrderModal.delivery_charge || 0,
+      isGstEnabled,
+      taxRate,
     });
-  }, [editOrderModal, editItems, editDiscount]);
+  }, [editOrderModal, editItems, editDiscountType, editDiscountValue, settings]);
 
   // Save Edit Order
   const handleSaveEditOrder = async () => {
@@ -341,6 +475,22 @@ export default function OrdersScreen() {
     if (editItems.length === 0) {
       Alert.alert('Empty Order', 'An order must contain at least one item.');
       return;
+    }
+
+    if (isDispatchedDeliveryOrder(editOrderModal)) {
+      const oldItemsMap = new Map<string, number>();
+      (editOrderModal.items || []).forEach((i) => oldItemsMap.set(i.product_id, Number(i.quantity) || 0));
+      const hasAddedItems = editItems.some((i) => {
+        const prev = oldItemsMap.get(i.product_id);
+        return prev === undefined || (Number(i.quantity) || 0) > prev;
+      });
+      if (hasAddedItems) {
+        Alert.alert(
+          'Adding Items Locked',
+          'Adding new items or increasing quantities is not permitted for dispatched delivery and online orders.'
+        );
+        return;
+      }
     }
 
     if (editCustomerPhone.trim()) {
@@ -356,6 +506,14 @@ export default function OrdersScreen() {
     setSavingEdit(true);
     try {
       const selectedTbl = tables.find((t) => t.id === editTableId);
+      const numDisc = parseFloat(editDiscountValue) || 0;
+      const validatedEditDiscount =
+        editDiscountType === 'percentage'
+          ? Math.min(Math.max(0, numDisc), 100)
+          : editDiscountType === 'fixed'
+          ? Math.min(Math.max(0, numDisc), editTotals?.subtotal || 0)
+          : 0;
+
       const updated = await orderService.editActiveOrder({
         orderId: editOrderModal.id,
         updatedItems: editItems,
@@ -367,7 +525,11 @@ export default function OrdersScreen() {
         notes: editNotes.trim()
           ? (editOrderModal.notes?.includes('[POS]') ? `[POS] ${editNotes.trim()}` : editNotes.trim())
           : (editOrderModal.notes?.includes('[POS]') ? '[POS]' : ''),
-        discountAmount: parseFloat(editDiscount) || 0,
+        discountType: editDiscountType,
+        discountValue: validatedEditDiscount,
+        discountAmount: editTotals?.discountAmount ?? 0,
+        couponCode: editOrderModal.coupon_code || undefined,
+        couponDiscount: editTotals?.couponDiscount ?? editOrderModal.coupon_discount ?? 0,
         reason: editReason.trim() || 'Active order modified from POS',
       });
 
@@ -375,6 +537,8 @@ export default function OrdersScreen() {
         printService.printKotThermal(updated, settings, (updated as any).latest_kot);
       }
 
+      clearOrdersCache(updated.restaurant_id || activeRestaurantId);
+      clearKotsCache(updated.restaurant_id || activeRestaurantId);
       setOrders((prev) => prev.map((o) => (o.id === updated.id ? { ...o, ...updated } : o)));
 
       Alert.alert(
@@ -384,7 +548,7 @@ export default function OrdersScreen() {
         }`
       );
       setEditOrderModal(null);
-      await loadData();
+      await loadData(true);
     } catch (err: any) {
       Alert.alert('Update Failed', err.message);
     } finally {
@@ -444,7 +608,18 @@ export default function OrdersScreen() {
 
     setCancellingOrder(true);
     try {
-      await orderService.cancelActiveOrder(cancelOrderModal.id, finalReason);
+      const res = await orderService.cancelActiveOrder(cancelOrderModal.id, finalReason);
+      setOrders((prev) => {
+        if (tabFilter === 'active') {
+          return prev.filter((o) => o.id !== cancelOrderModal.id);
+        } else if (tabFilter === 'cancelled') {
+          const exists = prev.some((o) => o.id === cancelOrderModal.id);
+          return exists ? prev.map((o) => (o.id === cancelOrderModal.id ? res : o)) : [res, ...prev];
+        } else if (tabFilter === 'all') {
+          return prev.map((o) => (o.id === cancelOrderModal.id ? res : o));
+        }
+        return prev;
+      });
       Alert.alert(
         'Order Cancelled',
         `Order #${cancelOrderModal.order_number} has been cancelled.\nInventory stock restored and table released safely.`
@@ -465,6 +640,7 @@ export default function OrdersScreen() {
       if (!confirmed) return;
       try {
         setLoading(true);
+        setOrders((prev) => prev.filter((o) => o.id !== order.id));
         await orderService.deleteOrder(order.id);
         await loadData();
       } catch (err: any) {
@@ -485,6 +661,7 @@ export default function OrdersScreen() {
           style: 'destructive',
           onPress: async () => {
             setLoading(true);
+            setOrders((prev) => prev.filter((o) => o.id !== order.id));
             await orderService.deleteOrder(order.id);
             await loadData();
             setLoading(false);
@@ -500,6 +677,7 @@ export default function OrdersScreen() {
       if (!confirmed) return;
       try {
         setLoading(true);
+        setOrders((prev) => prev.filter((o) => o.status !== 'cancelled'));
         const count = await orderService.deleteCancelledOrders();
         await loadData();
       } catch (err: any) {
@@ -520,6 +698,7 @@ export default function OrdersScreen() {
           style: 'destructive',
           onPress: async () => {
             setLoading(true);
+            setOrders((prev) => prev.filter((o) => o.status !== 'cancelled'));
             const count = await orderService.deleteCancelledOrders();
             await loadData();
             setLoading(false);
@@ -532,18 +711,83 @@ export default function OrdersScreen() {
   const handlePrintOrGenerateKot = async (order: Order) => {
     try {
       const isOnlineDelivery = isOnlineDeliveryOrder(order);
-      const hasExistingKot = Boolean(order.kots && order.kots.length > 0);
+      const isQr = isQrDigitalMenuOrder(order);
+      const kots = order.kots || [];
+      const hasExistingKot = kots.length > 0;
 
-      if (isOnlineDelivery && !hasExistingKot) {
-        // Generate and persist initial KOT in database
-        const newKot = await kotService.generateKot(order, 'Online Delivery Kitchen Slip');
+      // Calculate total item quantity ordered vs total item quantity covered in KOTs
+      const totalOrderedQty = (order.items || []).reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+      const totalKotQty = kots.reduce((sum, kot) => {
+        return sum + (kot.items || []).reduce((kSum, ki) => kSum + (Number(ki.quantity) || 0), 0);
+      }, 0);
+
+      const hasUnkotdItems = totalOrderedQty > totalKotQty;
+
+      if (!hasExistingKot || hasUnkotdItems) {
+        // Calculate unprinted supplementary items if this is an addition to an existing order
+        let itemsToGenerate: OrderItem[] | undefined = undefined;
+        if (hasExistingKot && hasUnkotdItems) {
+          const existingKotItemQuantities = new Map<string, number>();
+          for (const kot of kots) {
+            for (const ki of kot.items || []) {
+              const current = existingKotItemQuantities.get(ki.product_name) || 0;
+              existingKotItemQuantities.set(ki.product_name, current + Number(ki.quantity || 0));
+            }
+          }
+
+          const supplementaryItems: OrderItem[] = [];
+          for (const item of order.items || []) {
+            const kotCoveredQty = existingKotItemQuantities.get(item.product_name) || 0;
+            const unprintedQty = (Number(item.quantity) || 0) - kotCoveredQty;
+            if (unprintedQty > 0) {
+              supplementaryItems.push({
+                ...item,
+                quantity: unprintedQty,
+              });
+            }
+          }
+          if (supplementaryItems.length > 0) {
+            itemsToGenerate = supplementaryItems;
+          }
+        }
+
+        const kotReason = isOnlineDelivery
+          ? 'Online Delivery Kitchen Slip'
+          : isQr
+          ? (hasExistingKot ? 'QR Digital Menu Supplementary Slip' : 'QR Digital Menu Kitchen Slip')
+          : (hasExistingKot ? 'Supplementary Kitchen Slip' : 'Kitchen Slip');
+
+        const newKot = await kotService.generateKot(order, kotReason, itemsToGenerate);
         await printService.printKotThermal(order, settings, newKot, false);
         await printedKotTracker.markKotAsAutoPrinted(newKot.id, newKot.kitchen_notes);
         await orderService.updateOrderStatus(order.id, 'kot_generated');
-        await loadData();
-        Alert.alert('🖨️ KOT Generated & Printed', `KOT #${newKot.kot_number} generated for kitchen.`);
+
+        // Optimistically update order state immediately so KOT button disables instantly
+        setOrders((prev) =>
+          prev.map((o) => {
+            if (o.id === order.id) {
+              const currentKots = o.kots || [];
+              return {
+                ...o,
+                status: 'kot_generated',
+                kots: [...currentKots, newKot],
+              };
+            }
+            return o;
+          })
+        );
+
+        clearOrdersCache(order.restaurant_id || activeRestaurantId);
+        clearKotsCache(order.restaurant_id || activeRestaurantId);
+        await loadData(true);
+        Alert.alert(
+          '🖨️ KOT Generated & Printed',
+          hasExistingKot
+            ? `Supplementary KOT #${newKot.kot_number} generated for new items.`
+            : `KOT #${newKot.kot_number} generated for kitchen.`
+        );
       } else {
-        // Manual reprint of existing KOT
+        // Manual reprint of existing KOT - same KOT is printed
         const activeKot = order.kots && order.kots.length > 0 ? order.kots[order.kots.length - 1] : undefined;
         await printService.printKotThermal(order, settings, activeKot, true);
         Alert.alert('🖨️ KOT Reprinted', `Kitchen slip reprinted for Order #${order.order_number}.`);
@@ -576,12 +820,26 @@ export default function OrdersScreen() {
           text: 'Payment Received (Paid & Delivered)',
           onPress: async () => {
             try {
+              // Optimistically update local orders
+              setOrders((prev) => {
+                if (tabFilter === 'active') {
+                  return prev.filter((o) => o.id !== order.id);
+                } else if (tabFilter === 'completed') {
+                  const updated = { ...order, status: 'completed' as OrderStatus, payment_status: 'paid' as PaymentStatus };
+                  const exists = prev.some((o) => o.id === order.id);
+                  return exists ? prev.map((o) => (o.id === order.id ? updated : o)) : [updated, ...prev];
+                } else if (tabFilter === 'all') {
+                  return prev.map((o) => (o.id === order.id ? { ...o, status: 'completed' as OrderStatus, payment_status: 'paid' as PaymentStatus } : o));
+                }
+                return prev;
+              });
               await orderService.updateOrderStatus(order.id, 'completed');
               await orderService.updatePaymentStatus(order.id, 'paid');
               await loadData();
               Alert.alert('✅ Completed', `Order #${order.order_number} marked Delivered & Paid.`);
             } catch (e: any) {
               Alert.alert('Error', e.message);
+              await loadData();
             }
           },
         },
@@ -589,11 +847,25 @@ export default function OrdersScreen() {
           text: 'Delivered (Keep Payment UNPAID)',
           onPress: async () => {
             try {
+              // Optimistically update local orders
+              setOrders((prev) => {
+                if (tabFilter === 'active') {
+                  return prev.filter((o) => o.id !== order.id);
+                } else if (tabFilter === 'completed') {
+                  const updated = { ...order, status: 'completed' as OrderStatus };
+                  const exists = prev.some((o) => o.id === order.id);
+                  return exists ? prev.map((o) => (o.id === order.id ? updated : o)) : [updated, ...prev];
+                } else if (tabFilter === 'all') {
+                  return prev.map((o) => (o.id === order.id ? { ...o, status: 'completed' as OrderStatus } : o));
+                }
+                return prev;
+              });
               await orderService.updateOrderStatus(order.id, 'completed');
               await loadData();
               Alert.alert('✅ Delivered', `Order #${order.order_number} marked Delivered (Payment Unpaid).`);
             } catch (e: any) {
               Alert.alert('Error', e.message);
+              await loadData();
             }
           },
         },
@@ -607,6 +879,7 @@ export default function OrdersScreen() {
     setPayMethod('cash');
     setPayReceived(true);
     setPayTxnRef('');
+    setPayCustomerGstin(order.customer_gstin || '');
     setPayDiscountType(order.discount_type || (order.discount_amount > 0 ? 'fixed' : 'none'));
     setPayDiscountValue(
       order.discount_value !== undefined
@@ -625,6 +898,11 @@ export default function OrdersScreen() {
       : payDiscountType === 'fixed'
       ? Math.min(Math.max(0, numPayDiscount), paySubtotal)
       : 0;
+
+  const payGstinValidation = useMemo(() => {
+    if (!payCustomerGstin.trim()) return { isValid: true, error: null };
+    return validateGSTIN(payCustomerGstin);
+  }, [payCustomerGstin]);
 
   const payTotals = useMemo(() => {
     if (!payOrderModal) return null;
@@ -655,6 +933,9 @@ export default function OrdersScreen() {
       };
     }
 
+    const isGstEnabled = settings?.is_gst_enabled ?? (settings?.gst_registered ?? Boolean(settings?.gstin?.trim()));
+    const taxRate = settings?.default_tax_rate !== undefined ? settings.default_tax_rate : 5.0;
+
     return calculateOrderTotals({
       items: payOrderModal.items || [],
       subtotal: paySubtotal,
@@ -662,12 +943,19 @@ export default function OrdersScreen() {
       discountValue: validatedPayDiscount,
       couponDiscount: payOrderModal.coupon_discount || 0,
       deliveryCharge: payOrderModal.delivery_charge || 0,
+      isGstEnabled,
+      taxRate,
     });
-  }, [payOrderModal, payDiscountType, validatedPayDiscount, paySubtotal]);
+  }, [payOrderModal, payDiscountType, validatedPayDiscount, paySubtotal, settings]);
 
   // Close & Pay Order confirmation
   const handleConfirmCloseAndPay = async () => {
     if (!payOrderModal) return;
+
+    if (!payGstinValidation.isValid) {
+      Alert.alert('Invalid GSTIN', payGstinValidation.error || 'Please enter a valid 15-digit GSTIN.');
+      return;
+    }
 
     setClosingOrder(true);
     try {
@@ -685,6 +973,20 @@ export default function OrdersScreen() {
         grandTotal: payTotals?.rawTotal,
         roundOff: payTotals?.roundOff,
         payableAmount: payTotals?.payableAmount,
+        customer_gstin: payCustomerGstin.trim().toUpperCase() || undefined,
+      });
+
+      // Instantly synchronize local orders state without waiting for slow network roundtrip
+      setOrders((prev) => {
+        if (tabFilter === 'active') {
+          return prev.filter((o) => o.id !== completed.id);
+        } else if (tabFilter === 'completed') {
+          const exists = prev.some((o) => o.id === completed.id);
+          return exists ? prev.map((o) => (o.id === completed.id ? completed : o)) : [completed, ...prev];
+        } else if (tabFilter === 'all') {
+          return prev.map((o) => (o.id === completed.id ? completed : o));
+        }
+        return prev;
       });
 
       Alert.alert(
@@ -706,10 +1008,21 @@ export default function OrdersScreen() {
       {/* Top Header */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
-          <View>
-            <Text style={styles.title}>Orders Feed & Operations ({orders.length})</Text>
+          <View style={{ flex: 1, paddingRight: 8 }}>
+            <Text style={styles.title}>Orders Feed & Operations ({filteredOrders.length})</Text>
             <Text style={styles.subTitle}>Live dining, takeaway, online delivery & customer QR orders</Text>
           </View>
+          <TouchableOpacity
+            style={styles.refreshHeaderBtn}
+            onPress={() => onRefresh()}
+            disabled={refreshing || loading}
+          >
+            {refreshing ? (
+              <ActivityIndicator size="small" color="#2563eb" />
+            ) : (
+              <Text style={styles.refreshHeaderBtnText}>🔄 Refresh</Text>
+            )}
+          </TouchableOpacity>
         </View>
 
         {/* 3 Main Order Source Tabs */}
@@ -719,7 +1032,7 @@ export default function OrdersScreen() {
             onPress={() => setCategoryTab('pos')}
           >
             <Text style={[styles.categoryTabText, categoryTab === 'pos' && styles.categoryTabTextActive]}>
-              🍽️ Dine In & Takeaway ({posOrders.length})
+              🍽️ Dine In & Takeaway
             </Text>
           </TouchableOpacity>
 
@@ -729,7 +1042,7 @@ export default function OrdersScreen() {
             onPress={() => setCategoryTab('online')}
           >
             <Text style={[styles.categoryTabText, categoryTab === 'online' && styles.categoryTabTextActive]}>
-              🌐 Online Delivery ({onlineOrders.length})
+              🌐 Online Delivery
             </Text>
           </TouchableOpacity>
 
@@ -738,7 +1051,7 @@ export default function OrdersScreen() {
             onPress={() => setCategoryTab('qr')}
           >
             <Text style={[styles.categoryTabText, categoryTab === 'qr' && styles.categoryTabTextActive]}>
-              📱 QR Digital Menu ({qrOrders.length})
+              📱 QR Digital Menu
             </Text>
           </TouchableOpacity>
         </View>
@@ -746,7 +1059,7 @@ export default function OrdersScreen() {
         {/* Search */}
         <TextInput
           style={styles.search}
-          placeholder="Search by Order #, Customer, Phone, Table..."
+          placeholder="Search all orders by Order #, Customer, Phone, Table..."
           placeholderTextColor="#64748b"
           value={search}
           onChangeText={setSearch}
@@ -755,19 +1068,10 @@ export default function OrdersScreen() {
         {/* Status Sub-filter Pills */}
         <View style={styles.tabRow}>
           {[
-            {
-              id: 'active',
-              label: `🔥 Active (${currentCategoryOrders.filter((o) => ['confirmed', 'held', 'kot_generated', 'preparing', 'ready', 'served', 'out_for_delivery'].includes(o.status)).length})`,
-            },
-            {
-              id: 'completed',
-              label: `✓ Completed (${currentCategoryOrders.filter((o) => ['delivered', 'completed'].includes(o.status)).length})`,
-            },
-            {
-              id: 'cancelled',
-              label: `✕ Cancelled (${currentCategoryOrders.filter((o) => o.status === 'cancelled').length})`,
-            },
-            { id: 'all', label: `All (${currentCategoryOrders.length})` },
+            { id: 'active', label: '🔥 Active' },
+            { id: 'completed', label: '✓ Completed' },
+            { id: 'cancelled', label: '✕ Cancelled' },
+            { id: 'all', label: 'All Orders' },
           ].map((tab) => (
             <TouchableOpacity
               key={tab.id}
@@ -789,7 +1093,20 @@ export default function OrdersScreen() {
           <Text style={styles.loadingText}>Fetching live orders from Supabase...</Text>
         </View>
       ) : filteredOrders.length === 0 ? (
-        <View style={styles.centerLoading}>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={[styles.centerLoading, { flexGrow: 1 }]}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={['#2563eb']}
+              tintColor="#2563eb"
+            />
+          }
+          alwaysBounceVertical={true}
+          showsVerticalScrollIndicator={false}
+        >
           <Text style={{ fontSize: 36 }}>📋</Text>
           <Text style={styles.emptyTitle}>No Orders Found</Text>
           <Text style={styles.emptySub}>
@@ -797,21 +1114,40 @@ export default function OrdersScreen() {
               ? 'No active orders right now. Create an order in the POS terminal!'
               : 'No orders match your current filter.'}
           </Text>
-          <TouchableOpacity
-            style={styles.emptyBtn}
-            onPress={() => router.push('/(admin)/pos')}
-          >
-            <Text style={styles.emptyBtnText}>Go to POS Terminal</Text>
-          </TouchableOpacity>
-        </View>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 14, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <TouchableOpacity
+              style={styles.refreshEmptyBtn}
+              onPress={() => onRefresh()}
+              disabled={refreshing || loading}
+            >
+              <Text style={styles.refreshEmptyBtnText}>🔄 Refresh Orders</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.emptyBtn}
+              onPress={() => router.push('/(admin)/pos')}
+            >
+              <Text style={styles.emptyBtnText}>Go to POS Terminal</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
       ) : (
         <ScrollView
+          style={{ flex: 1 }}
           contentContainerStyle={[
             styles.list,
             isTwoColumn && styles.listGrid,
-            { paddingBottom: 24 },
+            { paddingBottom: 36, flexGrow: 1 },
           ]}
           showsVerticalScrollIndicator={true}
+          alwaysBounceVertical={true}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={['#2563eb']}
+              tintColor="#2563eb"
+            />
+          }
         >
           {tabFilter === 'cancelled' && filteredOrders.length > 0 && (
             <View style={{ marginBottom: 12, flexDirection: 'row', justifyContent: 'flex-end', width: '100%' }}>
@@ -844,7 +1180,7 @@ export default function OrdersScreen() {
             const source: OrderSource = resolveOrderSource(order);
             const isCustomerQr = source === 'CUSTOMER_QR';
             const isCustomerApp = source === 'CUSTOMER_APP';
-            const createdTime = order.created_at ? new Date(order.created_at).toLocaleTimeString() : 'Just now';
+            const createdTime = formatOrderDateTime(order.created_at);
 
             // Real table resolution with section
             const linkedTable = tables.find((t) => t.id === order.table_id || t.table_number === order.table_number);
@@ -1046,7 +1382,8 @@ export default function OrdersScreen() {
                   <View style={styles.cardActionsGrid}>
                     {isActive && (() => {
                       const isOnlineDelivery = isCustomerApp || order.order_type === 'delivery' || isOnlineDeliveryOrder(order);
-                      const hasKot = Boolean((order.kots && order.kots.length > 0) || ['kot_generated', 'preparing', 'ready', 'out_for_delivery', 'served', 'completed', 'delivered'].includes(order.status));
+                      const isKotDisabled = isKotButtonDisabled(order);
+                      const hasKot = isKotDisabled;
                       const isDispatched = order.status === 'out_for_delivery' || ['delivered', 'completed'].includes(order.status);
 
                       return (
@@ -1054,25 +1391,16 @@ export default function OrdersScreen() {
                           {/* ROW 1: 3 Buttons (KOT, Dispatch/Delivered/View, Hold/Resume) */}
                           <View style={styles.cardActionRow}>
                             {/* BUTTON 1: KOT Action */}
-                            {isOnlineDelivery ? (
-                              hasKot ? (
-                                <TouchableOpacity
-                                  style={[styles.gridActionBtn, styles.actionDisabledBg]}
-                                  disabled={true}
-                                >
-                                  <Text style={styles.actionBtnTextMuted}>✓ KOT Generated</Text>
-                                </TouchableOpacity>
-                              ) : (
-                                <TouchableOpacity
-                                  testID={`order-kot-btn-${order.id}`}
-                                  style={[styles.gridActionBtn, styles.actionKotBg]}
-                                  onPress={() => handlePrintOrGenerateKot(order)}
-                                >
-                                  <Text style={styles.actionBtnTextKot}>🖨️ KOT</Text>
-                                </TouchableOpacity>
-                              )
+                            {isKotDisabled ? (
+                              <TouchableOpacity
+                                style={[styles.gridActionBtn, styles.actionDisabledBg]}
+                                disabled={true}
+                              >
+                                <Text style={styles.actionBtnTextMuted}>✓ KOT Generated</Text>
+                              </TouchableOpacity>
                             ) : (
                               <TouchableOpacity
+                                testID={`order-kot-btn-${order.id}`}
                                 style={[styles.gridActionBtn, styles.actionKotBg]}
                                 onPress={() => handlePrintOrGenerateKot(order)}
                               >
@@ -1142,12 +1470,27 @@ export default function OrdersScreen() {
 
                           {/* ROW 2: 3 Buttons (Edit, Cancel, Settle) */}
                           <View style={[styles.cardActionRow, { marginTop: 6 }]}>
-                            <TouchableOpacity
-                              style={[styles.gridActionBtn, styles.actionEditBg]}
-                              onPress={() => openEditModal(order)}
-                            >
-                              <Text style={styles.actionBtnTextBlue}>✏️ Edit</Text>
-                            </TouchableOpacity>
+                            {isDispatchedDeliveryOrder(order) ? (
+                              <TouchableOpacity
+                                style={[styles.gridActionBtn, styles.actionDisabledBg]}
+                                disabled={true}
+                                onPress={() =>
+                                  Alert.alert(
+                                    'Adding Items Locked',
+                                    'This delivery/online order is already dispatched. Adding items is not permitted.'
+                                  )
+                                }
+                              >
+                                <Text style={styles.actionBtnTextMuted}>🔒 Edit Locked</Text>
+                              </TouchableOpacity>
+                            ) : (
+                              <TouchableOpacity
+                                style={[styles.gridActionBtn, styles.actionEditBg]}
+                                onPress={() => openEditModal(order)}
+                              >
+                                <Text style={styles.actionBtnTextBlue}>✏️ Edit</Text>
+                              </TouchableOpacity>
+                            )}
 
                             <TouchableOpacity
                               style={[styles.gridActionBtn, styles.actionCancelBg]}
@@ -1222,34 +1565,51 @@ export default function OrdersScreen() {
               );
             })}
 
-          {/* Load More Completed Orders Button */}
-          {(tabFilter === 'completed' || tabFilter === 'cancelled' || tabFilter === 'all') && historyHasMore && (
-            <View style={{ width: '100%', paddingVertical: 16, alignItems: 'center' }}>
+          {/* Load More Orders Button (15 items per batch) */}
+          {hasMoreOrders ? (
+            <View style={{ width: '100%', paddingVertical: 18, alignItems: 'center' }}>
               <TouchableOpacity
                 style={{
                   backgroundColor: '#FFFFFF',
                   borderWidth: 1.5,
                   borderColor: '#0F172A',
-                  paddingVertical: 10,
-                  paddingHorizontal: 24,
+                  paddingVertical: 12,
+                  paddingHorizontal: 28,
                   borderRadius: 24,
                   flexDirection: 'row',
                   alignItems: 'center',
                   gap: 8,
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.05,
+                  shadowRadius: 4,
+                  elevation: 2,
                 }}
-                onPress={loadMoreHistoryOrders}
-                disabled={loadingMoreHistory}
+                onPress={loadMoreOrders}
+                disabled={loadingMore}
+                activeOpacity={0.7}
               >
-                {loadingMoreHistory ? (
-                  <ActivityIndicator size="small" color="#0F172A" />
+                {loadingMore ? (
+                  <>
+                    <ActivityIndicator size="small" color="#0F172A" />
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                      Loading next 15 orders...
+                    </Text>
+                  </>
                 ) : (
                   <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
-                    ⬇️ Load More Past Orders
+                    ⬇️ Load More Orders
                   </Text>
                 )}
               </TouchableOpacity>
             </View>
-          )}
+          ) : orders.length > 0 ? (
+            <View style={{ width: '100%', paddingVertical: 16, alignItems: 'center' }}>
+              <Text style={{ fontSize: 12, color: '#94a3b8', fontWeight: '600' }}>
+                ✓ All {orders.length} orders loaded
+              </Text>
+            </View>
+          ) : null}
         </ScrollView>
       )}
 
@@ -1282,7 +1642,7 @@ export default function OrdersScreen() {
                     Edit Order #{editOrderModal?.order_number}
                   </Text>
                   <Text style={styles.modalSubTitle}>
-                    Add/remove items & recalculate order bill
+                    Add/remove items & recalculate bill • 🕒 {formatOrderDateTime(editOrderModal?.created_at)}
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -1317,7 +1677,11 @@ export default function OrdersScreen() {
                       </TouchableOpacity>
                       <Text style={styles.stepperQty}>{itm.quantity}</Text>
                       <TouchableOpacity
-                        style={styles.stepperBtn}
+                        style={[
+                          styles.stepperBtn,
+                          isDispatchedDeliveryOrder(editOrderModal) && { opacity: 0.3 }
+                        ]}
+                        disabled={isDispatchedDeliveryOrder(editOrderModal)}
                         onPress={() => handleAdjustEditQty(itm.product_id, itm.quantity + 1)}
                       >
                         <Text style={styles.stepperBtnText}>+</Text>
@@ -1329,27 +1693,38 @@ export default function OrdersScreen() {
                 ))}
 
                 {/* Search & Add New Products */}
-                <Text style={styles.fieldSectionHeader}>Add Items to Order:</Text>
-                <TextInput
-                  style={styles.fieldInput}
-                  placeholder="Search catalog dishes to add..."
-                  value={prodSearch}
-                  onChangeText={setProdSearch}
-                />
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 6 }}>
-                  {products
-                    .filter((p) => !prodSearch || p.name.toLowerCase().includes(prodSearch.toLowerCase()))
-                    .slice(0, 8)
-                    .map((p) => (
-                      <TouchableOpacity
-                        key={p.id}
-                        style={styles.addProdChip}
-                        onPress={() => handleAddProductToEdit(p)}
-                      >
-                        <Text style={styles.addProdChipText}>+ {p.name} ({formatCurrency(p.price)})</Text>
-                      </TouchableOpacity>
-                    ))}
-                </ScrollView>
+                {isDispatchedDeliveryOrder(editOrderModal) ? (
+                  <View style={{ backgroundColor: '#fef2f2', borderColor: '#fecaca', borderWidth: 1, borderRadius: 8, padding: 10, marginVertical: 8 }}>
+                    <Text style={{ fontSize: 12, color: '#dc2626', fontWeight: '700' }}>
+                      🔒 Adding items is disabled because this delivery order is already dispatched.
+                    </Text>
+                  </View>
+                ) : (
+                  <>
+                    <Text style={styles.fieldSectionHeader}>Add Items to Order:</Text>
+                    <TextInput
+                      style={styles.fieldInput}
+                      placeholder="Search catalog dishes to add..."
+                      placeholderTextColor="#64748b"
+                      value={prodSearch}
+                      onChangeText={setProdSearch}
+                    />
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 6 }}>
+                      {products
+                        .filter((p) => !prodSearch || p.name.toLowerCase().includes(prodSearch.toLowerCase()))
+                        .slice(0, 8)
+                        .map((p) => (
+                          <TouchableOpacity
+                            key={p.id}
+                            style={styles.addProdChip}
+                            onPress={() => handleAddProductToEdit(p)}
+                          >
+                            <Text style={styles.addProdChipText}>+ {p.name} ({formatCurrency(p.price)})</Text>
+                          </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                  </>
+                )}
 
                 {/* Table Selector (If Dine In) */}
                 {editOrderModal?.order_type === 'dine_in' && (
@@ -1421,19 +1796,69 @@ export default function OrdersScreen() {
                 )}
 
                 {/* Discount */}
-                <Text style={styles.fieldLabel}>Discount Amount (₹):</Text>
-                <TextInput
-                  style={styles.fieldInput}
-                  keyboardType="numeric"
-                  value={editDiscount}
-                  onChangeText={setEditDiscount}
-                />
+                <Text style={styles.fieldLabel}>Discount:</Text>
+                <View style={styles.discountTypeRow}>
+                  <TouchableOpacity
+                    style={[styles.discTypeBtn, editDiscountType === 'none' && styles.discTypeBtnActive]}
+                    onPress={() => {
+                      setEditDiscountType('none');
+                      setEditDiscountValue('0');
+                    }}
+                  >
+                    <Text style={[styles.discTypeText, editDiscountType === 'none' && styles.discTypeTextActive]}>
+                      No Discount
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.discTypeBtn, editDiscountType === 'fixed' && styles.discTypeBtnActive]}
+                    onPress={() => setEditDiscountType('fixed')}
+                  >
+                    <Text style={[styles.discTypeText, editDiscountType === 'fixed' && styles.discTypeTextActive]}>
+                      ₹ Rupees
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.discTypeBtn, editDiscountType === 'percentage' && styles.discTypeBtnActive]}
+                    onPress={() => setEditDiscountType('percentage')}
+                  >
+                    <Text style={[styles.discTypeText, editDiscountType === 'percentage' && styles.discTypeTextActive]}>
+                      % Percentage
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {editDiscountType !== 'none' && (
+                  <View style={{ marginTop: 8 }}>
+                    <Text style={[styles.fieldLabel, { fontSize: 12, color: '#64748b' }]}>
+                      {editDiscountType === 'fixed'
+                        ? `Discount Amount in ₹ (Max: ₹${(editTotals?.subtotal || 0).toFixed(2)})`
+                        : 'Discount Percentage (0 – 100%)'}
+                    </Text>
+                    <TextInput
+                      style={styles.fieldInput}
+                      keyboardType="numeric"
+                      placeholder={editDiscountType === 'fixed' ? 'e.g. 50' : 'e.g. 10'}
+                      value={editDiscountValue === '0' ? '' : editDiscountValue}
+                      onChangeText={(val) => {
+                        const clean = val.replace(/[^0-9.]/g, '');
+                        if (editDiscountType === 'percentage') {
+                          const parsed = parseFloat(clean);
+                          if (!isNaN(parsed) && parsed > 100) return;
+                        }
+                        setEditDiscountValue(clean);
+                      }}
+                    />
+                  </View>
+                )}
 
                 {/* Reason for Modification */}
                 <Text style={styles.fieldLabel}>Reason for Edit (Audit Log):</Text>
                 <TextInput
                   style={styles.fieldInput}
                   placeholder="e.g. Added 1x Naan, reduced 1x Biryani per guest request"
+                  placeholderTextColor="#64748b"
                   value={editReason}
                   onChangeText={setEditReason}
                 />
@@ -1477,14 +1902,24 @@ export default function OrdersScreen() {
                     </View>
                     {editTotals.discountAmount > 0 && (
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-                        <Text style={{ fontSize: 12, color: '#16a34a', fontWeight: '600' }}>Discount:</Text>
+                        <Text style={{ fontSize: 12, color: '#16a34a', fontWeight: '600' }}>
+                          Discount {editDiscountType === 'percentage' && editDiscountValue ? `(${editDiscountValue}%)` : ''}:
+                        </Text>
                         <Text style={{ fontSize: 12, fontWeight: '700', color: '#16a34a' }}>-{formatCurrency(editTotals.discountAmount)}</Text>
                       </View>
                     )}
                     {editTotals.couponDiscount > 0 && (
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-                        <Text style={{ fontSize: 12, color: '#16a34a', fontWeight: '600' }}>Coupon Discount:</Text>
+                        <Text style={{ fontSize: 12, color: '#16a34a', fontWeight: '600' }}>
+                          Coupon Discount {editOrderModal?.coupon_code ? `(${editOrderModal.coupon_code})` : ''}:
+                        </Text>
                         <Text style={{ fontSize: 12, fontWeight: '700', color: '#16a34a' }}>-{formatCurrency(editTotals.couponDiscount)}</Text>
+                      </View>
+                    )}
+                    {(editTotals.discountAmount > 0 || editTotals.couponDiscount > 0) && (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <Text style={{ fontSize: 12, color: '#64748b' }}>Taxable Amount:</Text>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.taxableSubtotal)}</Text>
                       </View>
                     )}
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -1531,6 +1966,9 @@ export default function OrdersScreen() {
         <View style={[styles.modalOverlay, { paddingHorizontal: 20 }]}>
           <View style={styles.cancelModalContent}>
             <Text style={styles.cancelModalTitle}>Cancel Order #{cancelOrderModal?.order_number}</Text>
+            <Text style={{ fontSize: 11.5, color: '#64748B', fontWeight: '600', marginBottom: 4 }}>
+              🕒 Placed on: {formatOrderDateTime(cancelOrderModal?.created_at)}
+            </Text>
             <Text style={styles.cancelModalSub}>
               ⚠️ Order will be marked as cancelled, inventory stock will be restored, and dining table will be released.
             </Text>
@@ -1567,6 +2005,7 @@ export default function OrdersScreen() {
             <TextInput
               style={styles.fieldInput}
               placeholder="Enter specific cancellation notes..."
+              placeholderTextColor="#64748b"
               value={cancelCustomReason}
               onChangeText={setCancelCustomReason}
             />
@@ -1624,7 +2063,7 @@ export default function OrdersScreen() {
                     Close Order & Settle Bill #{payOrderModal?.order_number}
                   </Text>
                   <Text style={styles.modalSubTitle}>
-                    {payOrderModal?.order_type.toUpperCase()} • {payOrderModal?.table_number ? `Table ${payOrderModal.table_number}` : payOrderModal?.customer_name}
+                    {payOrderModal?.order_type.toUpperCase()} • {payOrderModal?.table_number ? `Table ${payOrderModal.table_number}` : payOrderModal?.customer_name} • 🕒 {formatOrderDateTime(payOrderModal?.created_at)}
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -1686,6 +2125,7 @@ export default function OrdersScreen() {
                       <TextInput
                         style={styles.discInput}
                         placeholder={payDiscountType === 'fixed' ? 'e.g. 100' : 'e.g. 10'}
+                        placeholderTextColor="#64748b"
                         value={payDiscountValue}
                         onChangeText={(val) => {
                           const clean = val.replace(/[^0-9.]/g, '');
@@ -1820,15 +2260,40 @@ export default function OrdersScreen() {
                 <TextInput
                   style={styles.fieldInput}
                   placeholder="e.g. UPI-998811 or Card Auth #4411"
+                  placeholderTextColor="#64748b"
                   value={payTxnRef}
                   onChangeText={setPayTxnRef}
                 />
 
+                {/* Customer GSTIN for B2B Billing (Optional) */}
+                {settings?.is_gst_enabled !== false && (
+                  <View style={{ marginTop: 8 }}>
+                    <Text style={styles.fieldLabel}>Customer GSTIN (Optional for B2B Invoice):</Text>
+                    <TextInput
+                      style={[
+                        styles.fieldInput,
+                        !payGstinValidation.isValid && { borderColor: '#ef4444', borderWidth: 1.5 },
+                      ]}
+                      placeholder="15-digit GSTIN (e.g. 19AAAAA0000A1Z5)"
+                      placeholderTextColor="#64748b"
+                      value={payCustomerGstin}
+                      onChangeText={(v) => setPayCustomerGstin(v.toUpperCase().trim())}
+                      maxLength={15}
+                      autoCapitalize="characters"
+                    />
+                    {!payGstinValidation.isValid && payGstinValidation.error && (
+                      <Text style={{ color: '#ef4444', fontSize: 10, marginTop: 3, fontWeight: '700' }}>
+                        ⚠️ {payGstinValidation.error}
+                      </Text>
+                    )}
+                  </View>
+                )}
+
                 {/* Confirm Close Button */}
                 <TouchableOpacity
-                  style={[styles.saveModalBtn, closingOrder && styles.btnDisabled]}
+                  style={[styles.saveModalBtn, (closingOrder || !payGstinValidation.isValid) && styles.btnDisabled]}
                   onPress={handleConfirmCloseAndPay}
-                  disabled={closingOrder}
+                  disabled={closingOrder || !payGstinValidation.isValid}
                 >
                   {closingOrder ? (
                     <ActivityIndicator color="#ffffff" />
@@ -1847,176 +2312,221 @@ export default function OrdersScreen() {
       {/* ============================================================ */}
       {/* 4. VIEW FINAL BILL MODAL                                     */}
       {/* ============================================================ */}
-      {viewOrderModal && (
-        <Modal visible={Boolean(viewOrderModal)} transparent animationType="slide">
-          <View
-            style={[
-              styles.modalOverlay,
-              {
-                paddingTop: Platform.OS === 'web' ? 16 : insets.top + 8,
-                paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 12,
-              },
-            ]}
-          >
+      {viewOrderModal && (() => {
+        const isTaxInvoice =
+          (viewOrderModal.cgst_amount || 0) > 0 ||
+          (viewOrderModal.sgst_amount || 0) > 0 ||
+          (settings?.is_gst_enabled !== false && settings?.tax_invoice_enabled !== false && Boolean(settings?.gstin?.trim()));
+        const invNo = viewOrderModal.invoice_number || viewOrderModal.order_number;
+        const dynamicTaxRate = Number(settings?.default_tax_rate) > 0 ? Number(settings.default_tax_rate) : 5.0;
+        const halfRate = (dynamicTaxRate / 2).toFixed(1);
+
+        return (
+          <Modal visible={Boolean(viewOrderModal)} transparent animationType="slide">
             <View
               style={[
-                styles.modalContent,
+                styles.modalOverlay,
                 {
-                  maxHeight: Platform.OS === 'web' ? windowHeight * 0.9 : Math.min(windowHeight * 0.86, windowHeight - insets.top - insets.bottom - 24),
-                  maxWidth: 580,
-                  display: 'flex',
+                  paddingTop: Platform.OS === 'web' ? 16 : insets.top + 8,
+                  paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 12,
                 },
               ]}
             >
-              <View style={styles.modalHeader}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                  {formatLogoDataUri(activeRestaurant?.logo_url || settings.logo_url) ? (
-                    <Image
-                      source={{ uri: formatLogoDataUri(activeRestaurant?.logo_url || settings.logo_url) }}
-                      style={{ width: 44, height: 44, borderRadius: 6 }}
-                      resizeMode="contain"
-                    />
-                  ) : null}
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.modalTitle}>Tax Invoice #{viewOrderModal.order_number}</Text>
-                    <Text style={styles.modalSubTitle}>
-                      {activeRestaurant?.name || settings.name} • GSTIN: {settings.gstin}
-                    </Text>
-                  </View>
-                </View>
-                <TouchableOpacity
-                  onPress={() => setViewOrderModal(null)}
-                  style={styles.modalCloseBtn}
-                >
-                  <Text style={styles.modalCloseText}>✕</Text>
-                </TouchableOpacity>
-              </View>
-
-              <ScrollView
-                showsVerticalScrollIndicator={true}
-                style={{ flexShrink: 1 }}
-                contentContainerStyle={{ paddingBottom: 24 }}
+              <View
+                style={[
+                  styles.modalContent,
+                  {
+                    maxHeight: Platform.OS === 'web' ? windowHeight * 0.9 : Math.min(windowHeight * 0.86, windowHeight - insets.top - insets.bottom - 24),
+                    maxWidth: 580,
+                    display: 'flex',
+                  },
+                ]}
               >
-                <View style={styles.billBreakdownBox}>
-                  <View style={styles.billRow}>
-                    <Text><Text style={{ fontWeight: '700' }}>Order Type:</Text> {viewOrderModal.order_type.toUpperCase()}</Text>
-                    <Text><Text style={{ fontWeight: '700' }}>Table:</Text> {viewOrderModal.table_number || 'N/A'}</Text>
-                  </View>
-                  <View style={styles.billRow}>
-                    <Text><Text style={{ fontWeight: '700' }}>Customer:</Text> {viewOrderModal.customer_name || 'Guest'}</Text>
-                    <Text><Text style={{ fontWeight: '700' }}>Phone:</Text> {viewOrderModal.customer_phone || 'N/A'}</Text>
-                  </View>
-                  <View style={styles.billRow}>
-                    <Text><Text style={{ fontWeight: '700' }}>Status:</Text> {viewOrderModal.status.toUpperCase()}</Text>
-                    <Text>
-                      <Text style={{ fontWeight: '700' }}>Payment:</Text>{' '}
-                      <Text style={{ color: viewOrderModal.payment_status === 'paid' ? '#16a34a' : '#e11d48', fontWeight: 'bold' }}>
-                        {viewOrderModal.payment_status.toUpperCase()}
+                <View style={styles.modalHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                    {formatLogoDataUri(activeRestaurant?.logo_url || settings.logo_url) ? (
+                      <Image
+                        source={{ uri: formatLogoDataUri(activeRestaurant?.logo_url || settings.logo_url) }}
+                        style={{ width: 44, height: 44, borderRadius: 6 }}
+                        resizeMode="contain"
+                      />
+                    ) : null}
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.modalTitle}>
+                        {isTaxInvoice ? 'Tax Invoice' : 'Retail Bill'} #{invNo}
                       </Text>
-                    </Text>
-                  </View>
-
-                  <View style={{ borderTopWidth: 1, borderColor: '#cbd5e1', marginVertical: 8 }} />
-
-                  {(viewOrderModal.items || []).map((itm, i) => (
-                    <View key={itm.id || i} style={styles.billRow}>
-                      <Text>{itm.quantity}x {itm.product_name}</Text>
-                      <Text style={{ fontWeight: 'bold' }}>{formatCurrency(itm.total)}</Text>
-                    </View>
-                  ))}
-
-                  <View style={{ borderTopWidth: 1, borderColor: '#cbd5e1', marginVertical: 8 }} />
-
-                  <View style={styles.billRow}>
-                    <Text>Subtotal:</Text>
-                    <Text>{formatCurrency(getOrderSubtotal(viewOrderModal))}</Text>
-                  </View>
-
-                  {Boolean(viewOrderModal.discount_amount) && (
-                    <View style={styles.billRow}>
-                      <Text style={{ color: '#16a34a', fontWeight: '700' }}>
-                        Discount {viewOrderModal.discount_type === 'percentage' ? `(${viewOrderModal.discount_value || ''}%)` : (viewOrderModal.discount_value ? `(₹${viewOrderModal.discount_value})` : '')}:
-                      </Text>
-                      <Text style={{ color: '#16a34a', fontWeight: '800' }}>
-                        -{formatCurrency(viewOrderModal.discount_amount)}
+                      <Text style={styles.modalSubTitle}>
+                        {activeRestaurant?.name || settings.name}
+                        {isTaxInvoice && settings.gstin ? ` • GSTIN: ${settings.gstin}` : ''}
                       </Text>
                     </View>
-                  )}
-
-                  {Boolean(viewOrderModal.coupon_discount) && (
-                    <View style={styles.billRow}>
-                      <Text style={{ color: '#16a34a', fontWeight: '700' }}>
-                        Coupon ({viewOrderModal.coupon_code || ''}):
-                      </Text>
-                      <Text style={{ color: '#16a34a', fontWeight: '800' }}>
-                        -{formatCurrency(viewOrderModal.coupon_discount)}
-                      </Text>
-                    </View>
-                  )}
-
-                  <View style={styles.billRow}>
-                    <Text>Taxable Amount:</Text>
-                    <Text>{formatCurrency(Math.max(0, getOrderSubtotal(viewOrderModal) - (viewOrderModal.discount_amount || 0) - (viewOrderModal.coupon_discount || 0)))}</Text>
                   </View>
-
-                  <View style={styles.billRow}>
-                    <Text>CGST (2.5%):</Text>
-                    <Text>{formatCurrency(viewOrderModal.cgst_amount)}</Text>
-                  </View>
-                  <View style={styles.billRow}>
-                    <Text>SGST (2.5%):</Text>
-                    <Text>{formatCurrency(viewOrderModal.sgst_amount)}</Text>
-                  </View>
-
-                  {Boolean(viewOrderModal.delivery_charge) && (
-                    <View style={styles.billRow}>
-                      <Text>Delivery Charge:</Text>
-                      <Text>{formatCurrency(viewOrderModal.delivery_charge)}</Text>
-                    </View>
-                  )}
-
-                  {Boolean(viewOrderModal.round_off) && (
-                    <View style={styles.billRow}>
-                      <Text>Round Off:</Text>
-                      <Text>{viewOrderModal.round_off > 0 ? '+' : ''}{formatCurrency(viewOrderModal.round_off)}</Text>
-                    </View>
-                  )}
-
-                  <View style={[styles.billRow, styles.billTotalRow]}>
-                    <Text style={styles.billTotalLabel}>Grand Total:</Text>
-                    <Text style={styles.billTotalVal}>{formatCurrency(viewOrderModal.payable_amount)}</Text>
-                  </View>
-                  <Text style={styles.wordsText}>({numberToWords(viewOrderModal.payable_amount)})</Text>
-                </View>
-
-                {/* Print and Share buttons */}
-                <View style={{ flexDirection: 'row', gap: 6, marginTop: 12 }}>
                   <TouchableOpacity
-                    style={styles.printBtnSmall}
-                    onPress={() => printService.printFinalReceiptThermal(viewOrderModal, settings, user?.full_name)}
+                    onPress={() => setViewOrderModal(null)}
+                    style={styles.modalCloseBtn}
                   >
-                    <Text style={styles.printBtnSmallText}>🖨️ Thermal Bill</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.printKotBtnSmall}
-                    onPress={() => printService.printKotThermal(viewOrderModal, settings)}
-                  >
-                    <Text style={styles.printKotBtnSmallText}>🖨️ KOT Slip</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.shareBtnSmall}
-                    onPress={() => printService.printTaxInvoiceA4(viewOrderModal, settings)}
-                  >
-                    <Text style={styles.shareBtnSmallText}>📄 Tax Invoice A4</Text>
+                    <Text style={styles.modalCloseText}>✕</Text>
                   </TouchableOpacity>
                 </View>
-              </ScrollView>
+
+                <ScrollView
+                  showsVerticalScrollIndicator={true}
+                  style={{ flexShrink: 1 }}
+                  contentContainerStyle={{ paddingBottom: 24 }}
+                >
+                  <View style={styles.billBreakdownBox}>
+                    <View style={styles.billRow}>
+                      <Text><Text style={{ fontWeight: '700' }}>Order Date & Time:</Text> {formatOrderDateTime(viewOrderModal.created_at)}</Text>
+                    </View>
+                    <View style={styles.billRow}>
+                      <Text><Text style={{ fontWeight: '700' }}>Order ID:</Text> {viewOrderModal.order_number}</Text>
+                      <Text><Text style={{ fontWeight: '700' }}>Type:</Text> {viewOrderModal.order_type.toUpperCase()}</Text>
+                    </View>
+                    {viewOrderModal.table_number ? (
+                      <View style={styles.billRow}>
+                        <Text><Text style={{ fontWeight: '700' }}>Table:</Text> {viewOrderModal.table_number}</Text>
+                      </View>
+                    ) : null}
+                    <View style={styles.billRow}>
+                      <Text><Text style={{ fontWeight: '700' }}>Customer:</Text> {viewOrderModal.customer_name || 'Walk-in Guest'}</Text>
+                      <Text><Text style={{ fontWeight: '700' }}>Phone:</Text> {viewOrderModal.customer_phone || 'N/A'}</Text>
+                    </View>
+                    {isTaxInvoice && viewOrderModal.customer_gstin ? (
+                      <View style={styles.billRow}>
+                        <Text><Text style={{ fontWeight: '700' }}>Customer GSTIN (B2B):</Text> <Text style={{ fontWeight: 'bold', color: '#1e40af' }}>{viewOrderModal.customer_gstin}</Text></Text>
+                      </View>
+                    ) : null}
+                    {isTaxInvoice ? (
+                      <View style={styles.billRow}>
+                        <Text><Text style={{ fontWeight: '700' }}>Place of Supply:</Text> {settings?.state || 'West Bengal'} ({settings?.state_code || '19'})</Text>
+                        <Text><Text style={{ fontWeight: '700' }}>Reverse Charge:</Text> No</Text>
+                      </View>
+                    ) : null}
+                    <View style={styles.billRow}>
+                      <Text><Text style={{ fontWeight: '700' }}>Status:</Text> {viewOrderModal.status.toUpperCase()}</Text>
+                      <Text>
+                        <Text style={{ fontWeight: '700' }}>Payment:</Text>{' '}
+                        <Text style={{ color: viewOrderModal.payment_status === 'paid' ? '#16a34a' : '#e11d48', fontWeight: 'bold' }}>
+                          {viewOrderModal.payment_status.toUpperCase()}
+                        </Text>
+                      </Text>
+                    </View>
+
+                    <View style={{ borderTopWidth: 1, borderColor: '#cbd5e1', marginVertical: 8 }} />
+
+                    {(viewOrderModal.items || []).map((itm, i) => (
+                      <View key={itm.id || i} style={styles.billRow}>
+                        <Text>
+                          {itm.quantity}x {itm.product_name}
+                          {isTaxInvoice ? ` (${itm.hsn_code || '996331'})` : ''}
+                        </Text>
+                        <Text style={{ fontWeight: 'bold' }}>{formatCurrency(itm.total)}</Text>
+                      </View>
+                    ))}
+
+                    <View style={{ borderTopWidth: 1, borderColor: '#cbd5e1', marginVertical: 8 }} />
+
+                    <View style={styles.billRow}>
+                      <Text>Subtotal:</Text>
+                      <Text>{formatCurrency(getOrderSubtotal(viewOrderModal))}</Text>
+                    </View>
+
+                    {Boolean(viewOrderModal.discount_amount) && (
+                      <View style={styles.billRow}>
+                        <Text style={{ color: '#16a34a', fontWeight: '700' }}>
+                          Discount {viewOrderModal.discount_type === 'percentage' ? `(${viewOrderModal.discount_value || ''}%)` : (viewOrderModal.discount_value ? `(₹${viewOrderModal.discount_value})` : '')}:
+                        </Text>
+                        <Text style={{ color: '#16a34a', fontWeight: '800' }}>
+                          -{formatCurrency(viewOrderModal.discount_amount)}
+                        </Text>
+                      </View>
+                    )}
+
+                    {Boolean(viewOrderModal.coupon_discount) && (
+                      <View style={styles.billRow}>
+                        <Text style={{ color: '#16a34a', fontWeight: '700' }}>
+                          Coupon ({viewOrderModal.coupon_code || ''}):
+                        </Text>
+                        <Text style={{ color: '#16a34a', fontWeight: '800' }}>
+                          -{formatCurrency(viewOrderModal.coupon_discount)}
+                        </Text>
+                      </View>
+                    )}
+
+                    {isTaxInvoice && (viewOrderModal.cgst_amount || 0) + (viewOrderModal.sgst_amount || 0) > 0 ? (
+                      <>
+                        <View style={styles.billRow}>
+                          <Text>Taxable Amount:</Text>
+                          <Text>{formatCurrency(viewOrderModal.taxable_amount !== undefined && viewOrderModal.taxable_amount > 0 ? viewOrderModal.taxable_amount : Math.max(0, getOrderSubtotal(viewOrderModal) - (viewOrderModal.discount_amount || 0) - (viewOrderModal.coupon_discount || 0)))}</Text>
+                        </View>
+
+                        <View style={styles.billRow}>
+                          <Text>CGST ({halfRate}%):</Text>
+                          <Text>{formatCurrency(viewOrderModal.cgst_amount)}</Text>
+                        </View>
+                        <View style={styles.billRow}>
+                          <Text>SGST ({halfRate}%):</Text>
+                          <Text>{formatCurrency(viewOrderModal.sgst_amount)}</Text>
+                        </View>
+                        {viewOrderModal.igst_amount && viewOrderModal.igst_amount > 0 ? (
+                          <View style={styles.billRow}>
+                            <Text>IGST:</Text>
+                            <Text>{formatCurrency(viewOrderModal.igst_amount)}</Text>
+                          </View>
+                        ) : null}
+                      </>
+                    ) : null}
+
+                    {Boolean(viewOrderModal.delivery_charge) && (
+                      <View style={styles.billRow}>
+                        <Text>Delivery Charge:</Text>
+                        <Text>{formatCurrency(viewOrderModal.delivery_charge)}</Text>
+                      </View>
+                    )}
+
+                    {Boolean(viewOrderModal.round_off) && (
+                      <View style={styles.billRow}>
+                        <Text>Round Off:</Text>
+                        <Text>{viewOrderModal.round_off > 0 ? '+' : ''}{formatCurrency(viewOrderModal.round_off)}</Text>
+                      </View>
+                    )}
+
+                    <View style={[styles.billRow, styles.billTotalRow]}>
+                      <Text style={styles.billTotalLabel}>Grand Total:</Text>
+                      <Text style={styles.billTotalVal}>{formatCurrency(viewOrderModal.payable_amount)}</Text>
+                    </View>
+                    <Text style={styles.wordsText}>({numberToWords(viewOrderModal.payable_amount)})</Text>
+                  </View>
+
+                  {/* Print and Share buttons */}
+                  <View style={{ flexDirection: 'row', gap: 6, marginTop: 12 }}>
+                    <TouchableOpacity
+                      style={styles.printBtnSmall}
+                      onPress={() => printService.printFinalReceiptThermal(viewOrderModal, settings, user?.full_name)}
+                    >
+                      <Text style={styles.printBtnSmallText}>🖨️ Thermal Bill</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.printKotBtnSmall}
+                      onPress={() => printService.printKotThermal(viewOrderModal, settings)}
+                    >
+                      <Text style={styles.printKotBtnSmallText}>🖨️ KOT Slip</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.shareBtnSmall}
+                      onPress={() => printService.printTaxInvoiceA4(viewOrderModal, settings)}
+                    >
+                      <Text style={styles.shareBtnSmallText}>📄 Tax Invoice A4</Text>
+                    </TouchableOpacity>
+                  </View>
+                </ScrollView>
+              </View>
             </View>
-          </View>
-        </Modal>
-      )}
+          </Modal>
+        );
+      })()}
     </SafeAreaView>
   );
 }
@@ -2035,7 +2545,40 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
   },
   headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 8,
+  },
+  refreshHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#eff6ff',
+    borderWidth: 1.5,
+    borderColor: '#bfdbfe',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    gap: 4,
+  },
+  refreshHeaderBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#2563eb',
+  },
+  refreshEmptyBtn: {
+    marginTop: 14,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1.5,
+    borderColor: '#bfdbfe',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  refreshEmptyBtnText: {
+    color: '#2563eb',
+    fontSize: 12,
+    fontWeight: '800',
   },
   title: {
     fontSize: 18,
@@ -2475,6 +3018,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     fontSize: 12,
+    color: '#0f172a',
   },
   editItemRow: {
     flexDirection: 'row',

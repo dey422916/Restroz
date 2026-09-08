@@ -15,6 +15,7 @@ import { printService } from '../../src/services/printService';
 import { KOT, RestaurantSettings } from '../../src/types';
 import { useSettings } from '../../src/context/SettingsContext';
 import { useAuth } from '../../src/context/AuthContext';
+import { formatOrderDateTime } from '../../src/utils/dateUtils';
 
 export default function KotScreen() {
   const insets = useSafeAreaInsets();
@@ -85,6 +86,7 @@ export default function KotScreen() {
         <TextInput
           style={styles.search}
           placeholder="Search KOT #, Order #, Table..."
+          placeholderTextColor="#64748b"
           value={search}
           onChangeText={setSearch}
         />
@@ -134,7 +136,7 @@ export default function KotScreen() {
             filteredKots.map((kot) => {
               const isSupplementary = kot.kot_number.includes('-SUP');
               const isCancellation = kot.kot_number.includes('-CNL');
-              const timeString = kot.created_at ? new Date(kot.created_at).toLocaleTimeString() : 'Just now';
+              const timeString = formatOrderDateTime(kot.created_at);
 
               return (
                 <View
@@ -329,6 +331,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     fontSize: 12,
+    color: '#0f172a',
     marginBottom: 8,
   },
   tabRow: {

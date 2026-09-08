@@ -13,6 +13,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Dimensions,
+  RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { categoryService } from '../../src/services/api/categoryService';
@@ -27,6 +28,7 @@ export default function CategoriesScreen() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
   const [search, setSearch] = useState<string>('');
 
   // Modals
@@ -43,9 +45,13 @@ export default function CategoriesScreen() {
 
   const windowHeight = Dimensions.get('window').height;
 
-  const loadData = async () => {
+  const loadData = async (isRefresh: boolean = false) => {
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       const [cats, prods] = await Promise.all([
         categoryService.getCategories(activeRestaurantId),
         productService.getProducts(activeRestaurantId),
@@ -56,7 +62,12 @@ export default function CategoriesScreen() {
       Alert.alert('Load Error', err.message || 'Failed to load categories.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  };
+
+  const onRefresh = () => {
+    loadData(true);
   };
 
   useEffect(() => {
@@ -188,6 +199,7 @@ export default function CategoriesScreen() {
         <TextInput
           style={styles.search}
           placeholder="Search categories by name or slug..."
+          placeholderTextColor="#64748b"
           value={search}
           onChangeText={setSearch}
         />
@@ -206,6 +218,9 @@ export default function CategoriesScreen() {
             { paddingBottom: 24 },
           ]}
           showsVerticalScrollIndicator={true}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
         >
           {filteredCategories.length === 0 ? (
             <View style={styles.emptyBox}>
@@ -328,6 +343,7 @@ export default function CategoriesScreen() {
                 <TextInput
                   style={styles.fieldInput}
                   placeholder="e.g. Biryani, Starters, Chinese"
+                  placeholderTextColor="#64748b"
                   value={formName}
                   onChangeText={(v) => {
                     setFormName(v);
@@ -342,6 +358,7 @@ export default function CategoriesScreen() {
                 <TextInput
                   style={styles.fieldInput}
                   placeholder="e.g. biryani"
+                  placeholderTextColor="#64748b"
                   value={formSlug}
                   onChangeText={setFormSlug}
                 />
@@ -351,6 +368,7 @@ export default function CategoriesScreen() {
                 <TextInput
                   style={styles.fieldInput}
                   placeholder="1"
+                  placeholderTextColor="#64748b"
                   keyboardType="numeric"
                   value={formDisplayOrder}
                   onChangeText={setFormDisplayOrder}
@@ -361,6 +379,7 @@ export default function CategoriesScreen() {
                 <TextInput
                   style={[styles.fieldInput, { height: 50 }]}
                   placeholder="Category description..."
+                  placeholderTextColor="#64748b"
                   value={formDesc}
                   onChangeText={setFormDesc}
                 />
@@ -673,6 +692,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     fontSize: 12,
     fontWeight: '600',
+    color: '#0f172a',
   },
   checkRow: {
     flexDirection: 'row',

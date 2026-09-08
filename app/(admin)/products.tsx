@@ -15,6 +15,7 @@ import {
   Platform,
   Dimensions,
   useWindowDimensions,
+  RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -25,6 +26,8 @@ import { useAuth } from '../../src/context/AuthContext';
 import { Product, Category, FoodType } from '../../src/types';
 import { formatCurrency } from '../../src/utils/currency';
 import { DEFAULT_RESTAURANT_ID } from '../../src/services/api/restaurantService';
+import { subscriptionGuardService } from '../../src/services/api/subscriptionGuardService';
+import { downloadSampleProductsCsv } from '../../src/utils/sampleCsv';
 
 export default function ProductsScreen() {
   const router = useRouter();
@@ -33,6 +36,7 @@ export default function ProductsScreen() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
   const [search, setSearch] = useState<string>('');
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   const [stockFilter, setStockFilter] = useState<'all' | 'instock' | 'outofstock' | 'inactive'>('all');
@@ -68,13 +72,17 @@ export default function ProductsScreen() {
 
   const { height: windowHeight } = useWindowDimensions();
 
-  const loadData = async () => {
+  const loadData = async (isRefresh: boolean = false) => {
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       const targetRestId = activeRestaurantId || DEFAULT_RESTAURANT_ID;
       const [prods, cats] = await Promise.all([
-        productService.getProducts(targetRestId),
-        categoryService.getCategories(targetRestId),
+        productService.getProducts(targetRestId, isRefresh),
+        categoryService.getCategories(targetRestId, isRefresh),
       ]);
       setProducts(prods);
       setCategories(cats);
@@ -82,7 +90,12 @@ export default function ProductsScreen() {
       Alert.alert('Load Error', err.message || 'Failed to load products.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  };
+
+  const onRefresh = () => {
+    loadData(true);
   };
 
   useEffect(() => {
@@ -109,7 +122,24 @@ export default function ProductsScreen() {
     setModalError(null);
   };
 
-  const openAddModal = () => {
+  const openAddModal = async () => {
+    try {
+      const limitCheck = await subscriptionGuardService.checkPlanLimit(activeRestaurantId, 'PRODUCTS', 1);
+      if (!limitCheck.allowed) {
+        Alert.alert(
+          'Plan Limit Reached',
+          'Plan limit reached. Please upgrade or contact Super Admin.',
+          [
+            { text: 'Upgrade Plan', onPress: () => router.push('/(admin)/my-plan' as any) },
+            { text: 'OK', style: 'cancel' }
+          ]
+        );
+        return;
+      }
+    } catch (e) {
+      // allow proceeding if check fails
+    }
+
     resetForm();
     setFormSku(`SKU-${Date.now().toString().slice(-6)}`);
     setShowProductModal(true);
@@ -200,7 +230,10 @@ export default function ProductsScreen() {
         sku: trimmedSku,
         category_id: effectiveCatId,
         price: priceNum,
-        discounted_price: formDiscountedPrice ? parseFloat(formDiscountedPrice) : undefined,
+        discounted_price:
+          formDiscountedPrice && formDiscountedPrice.trim() !== '' && !isNaN(parseFloat(formDiscountedPrice))
+            ? parseFloat(formDiscountedPrice)
+            : undefined,
         stock_quantity: stockNum,
         food_type: formFoodType,
         unit: formUnit.trim() || 'portion',
@@ -215,17 +248,28 @@ export default function ProductsScreen() {
 
       console.log('✅ Product saved in Supabase successfully:', saved.id, saved.name, saved.restaurant_id);
 
+      // Immediately reflect the updated product in the local state without waiting for network re-fetch
+      setProducts((prev) => {
+        const idx = prev.findIndex((p) => p.id === saved.id);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = saved;
+          return updated;
+        }
+        return [saved, ...prev];
+      });
+
       // Close modal and reset form
       setShowProductModal(false);
       resetForm();
 
-      // Clear any search & category filter so the newly added product is visible immediately
+      // Clear any search & category filter so the newly added/updated product is visible immediately
       setSearch('');
       setSelectedCatId(null);
       setStockFilter('all');
 
-      // Re-fetch products from Supabase immediately
-      await loadData();
+      // Re-fetch fresh products from Supabase immediately
+      await loadData(true);
 
       Alert.alert(
         'Success',
@@ -258,7 +302,7 @@ export default function ProductsScreen() {
               } else {
                 Alert.alert('Deleted', `"${p.name}" was permanently removed.`);
               }
-              await loadData();
+              await loadData(true);
             } catch (err: any) {
               Alert.alert('Delete Failed', err.message);
             }
@@ -272,7 +316,7 @@ export default function ProductsScreen() {
     try {
       const targetRestId = activeRestaurantId || DEFAULT_RESTAURANT_ID;
       await productService.toggleProductActive(p.id, !p.is_active, targetRestId);
-      await loadData();
+      await loadData(true);
     } catch (err: any) {
       Alert.alert('Update Failed', err.message);
     }
@@ -297,7 +341,7 @@ export default function ProductsScreen() {
       await productService.updateStock(stockModalProduct.id, newQty, targetRestId);
       Alert.alert('Stock Updated', `Stock for "${stockModalProduct.name}" set to ${newQty}.`);
       setStockModalProduct(null);
-      await loadData();
+      await loadData(true);
     } catch (err: any) {
       Alert.alert('Update Failed', err.message);
     } finally {
@@ -338,12 +382,20 @@ export default function ProductsScreen() {
           >
             <Text style={styles.csvBtnText}>📂 CSV IMPORT</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.csvBtn, { backgroundColor: '#f1f5f9', borderColor: '#cbd5e1' }]}
+            onPress={downloadSampleProductsCsv}
+          >
+            <Text style={[styles.csvBtnText, { color: '#334155' }]}>📥 SAMPLE CSV</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Search Input */}
         <TextInput
           style={styles.search}
           placeholder="Search products by dish name or SKU..."
+          placeholderTextColor="#64748b"
           value={search}
           onChangeText={setSearch}
         />
@@ -428,6 +480,9 @@ export default function ProductsScreen() {
             { paddingBottom: 24 },
           ]}
           showsVerticalScrollIndicator={true}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
         >
           {filteredProducts.length === 0 ? (
             <View style={styles.emptyBox}>
@@ -711,6 +766,7 @@ export default function ProductsScreen() {
                     <TextInput
                       style={styles.imageUrlInput}
                       placeholder="Or enter direct image URL..."
+                      placeholderTextColor="#64748b"
                       value={formImageUrl}
                       onChangeText={setFormImageUrl}
                     />
@@ -722,6 +778,7 @@ export default function ProductsScreen() {
                 <TextInput
                   style={styles.fieldInput}
                   placeholder="e.g. Special Chicken Biryani"
+                  placeholderTextColor="#64748b"
                   value={formName}
                   onChangeText={setFormName}
                   testID="product-form-name-input"
@@ -732,6 +789,7 @@ export default function ProductsScreen() {
                 <TextInput
                   style={[styles.fieldInput, { textTransform: 'uppercase' } as any]}
                   placeholder="e.g. CB-9R9MOX"
+                  placeholderTextColor="#64748b"
                   value={formSku}
                   onChangeText={setFormSku}
                   testID="product-form-sku-input"
@@ -801,6 +859,7 @@ export default function ProductsScreen() {
                     <TextInput
                       style={styles.fieldInput}
                       placeholder="250"
+                      placeholderTextColor="#64748b"
                       keyboardType="numeric"
                       value={formPrice}
                       onChangeText={setFormPrice}
@@ -813,6 +872,7 @@ export default function ProductsScreen() {
                     <TextInput
                       style={styles.fieldInput}
                       placeholder="Optional"
+                      placeholderTextColor="#64748b"
                       keyboardType="numeric"
                       value={formDiscountedPrice}
                       onChangeText={setFormDiscountedPrice}
@@ -827,6 +887,7 @@ export default function ProductsScreen() {
                     <TextInput
                       style={styles.fieldInput}
                       placeholder="50"
+                      placeholderTextColor="#64748b"
                       keyboardType="numeric"
                       value={formStock}
                       onChangeText={setFormStock}
@@ -838,6 +899,7 @@ export default function ProductsScreen() {
                     <TextInput
                       style={styles.fieldInput}
                       placeholder="portion / plate / bottle"
+                      placeholderTextColor="#64748b"
                       value={formUnit}
                       onChangeText={setFormUnit}
                     />
@@ -851,6 +913,7 @@ export default function ProductsScreen() {
                     <TextInput
                       style={styles.fieldInput}
                       placeholder="5"
+                      placeholderTextColor="#64748b"
                       keyboardType="numeric"
                       value={formTaxRate}
                       onChangeText={setFormTaxRate}
@@ -862,6 +925,7 @@ export default function ProductsScreen() {
                     <TextInput
                       style={styles.fieldInput}
                       placeholder="996331"
+                      placeholderTextColor="#64748b"
                       value={formHsn}
                       onChangeText={setFormHsn}
                     />
@@ -873,6 +937,7 @@ export default function ProductsScreen() {
                 <TextInput
                   style={styles.fieldInput}
                   placeholder="15"
+                  placeholderTextColor="#64748b"
                   keyboardType="numeric"
                   value={formPrepTime}
                   onChangeText={setFormPrepTime}
@@ -883,6 +948,7 @@ export default function ProductsScreen() {
                 <TextInput
                   style={[styles.fieldInput, { height: 60, textAlignVertical: 'top' }]}
                   placeholder="Describe ingredients, flavor profile, and spice level..."
+                  placeholderTextColor="#64748b"
                   multiline
                   numberOfLines={3}
                   value={formDesc}
@@ -1525,6 +1591,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     fontSize: 10,
+    color: '#0f172a',
   },
   fieldLabel: {
     fontSize: 11,
@@ -1542,6 +1609,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     fontSize: 12,
     fontWeight: '600',
+    color: '#0f172a',
   },
   catChoicePill: {
     paddingHorizontal: 12,

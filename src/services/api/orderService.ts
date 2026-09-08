@@ -6,9 +6,11 @@ import { settingsService } from './settingsService';
 import { kotService } from './kotService';
 import { auditService } from './auditService';
 import { subscriptionService } from './subscriptionService';
+import { couponService } from './couponService';
 import { getOrderSubtotal, calculateOrderTotals } from '../../utils/gst';
 import { isValidPhoneNumber, validatePhoneNumberOrThrow } from '../../utils/phone';
 import { DEFAULT_RESTAURANT_ID } from './restaurantService';
+import { attachDiscountToNotes, extractDiscountFromNotes, attachGstinToNotes, extractGstinFromNotes } from '../../utils/orderNotes';
 
 export const resolveOrderSource = (ord: Partial<Order>): OrderSource => {
   // 1. ONLINE DELIVERY (Customer app / Web delivery):
@@ -63,12 +65,15 @@ export const normalizeOrderStatus = (ord: Partial<Order>): OrderStatus => {
 };
 
 export interface GetOrdersPaginatedOptions {
-  restaurantId: string;
+  restaurantId?: string;
+  customerId?: string;
+  tableId?: string;
   page?: number;
   pageSize?: number;
-  statusGroup?: 'active' | 'completed' | 'all';
+  statusGroup?: 'active' | 'completed' | 'cancelled' | 'all';
   status?: OrderStatus | 'all';
   orderType?: Order['order_type'] | 'all';
+  orderCategory?: 'pos' | 'online' | 'qr' | 'all';
   search?: string;
 }
 
@@ -96,7 +101,8 @@ export const orderService = {
 
   async generateNextOrderNumber(
     prefix: string = 'INV-',
-    restaurantId: string = DEFAULT_RESTAURANT_ID
+    restaurantId: string = DEFAULT_RESTAURANT_ID,
+    requireDbAtomic: boolean = true
   ): Promise<string> {
     if (isSupabaseConfigured) {
       try {
@@ -108,11 +114,31 @@ export const orderService = {
         }
         if (error) {
           console.warn('get_next_order_number RPC returned error:', error);
+          if (requireDbAtomic) {
+            throw new Error('Unable to generate invoice number. Please check your connection and retry.');
+          }
         }
-      } catch (err) {
+      } catch (err: any) {
         console.warn('get_next_order_number RPC exception:', err);
+        if (requireDbAtomic) {
+          throw new Error(
+            err.message?.includes('Unable to generate invoice number')
+              ? err.message
+              : 'Unable to generate invoice number. Please check your connection and retry.'
+          );
+        }
       }
+    } else if (requireDbAtomic && !isSupabaseConfigured) {
+      // Local/mock storage sequential atomic increment
+      const mockSettings = mockStorage.getSettings();
+      const seq = (mockSettings as any).next_order_seq || 1;
+      const curYear = new Date().getFullYear();
+      const num = `${prefix || mockSettings.invoice_prefix || 'INV-'}${curYear}-${String(seq).padStart(5, '0')}`;
+      mockStorage.saveSettings({ ...mockSettings, next_order_seq: seq + 1 } as any);
+      return num;
     }
+
+    // Temporary/offline non-final identifiers fallback ONLY if requireDbAtomic is explicitly false
     const curYear = new Date().getFullYear();
     const uniqueSuffix = Date.now().toString().slice(-6);
     return `${prefix}${curYear}-${uniqueSuffix}`;
@@ -141,15 +167,43 @@ export const orderService = {
         const { data, error } = await query;
 
         if (!error && data) {
-          const sanitizedOrders = (data as Order[])
-            .filter((ord) => ord.restaurant_id === restaurantId)
-            .map((ord) => ({
+          const rawOrders = (data as Order[]).filter((ord) => ord.restaurant_id === restaurantId);
+          const orderIds = rawOrders.map((o) => o.id);
+          let directKots: any[] = [];
+          if (orderIds.length > 0) {
+            try {
+              const { data: fetchedKots } = await supabase
+                .from('kots')
+                .select('*, items:kot_items(*)')
+                .in('order_id', orderIds);
+              if (fetchedKots) directKots = fetchedKots;
+            } catch (e) {
+              console.warn('Direct KOT fetch in getOrders error:', e);
+            }
+          }
+          const localAllKots = mockStorage.getKots(restaurantId);
+
+          const sanitizedOrders = rawOrders.map((ord) => {
+            const disc = extractDiscountFromNotes(ord.notes);
+            const orderDirectKots = directKots.filter((k) => k.order_id === ord.id);
+            const orderLocalKots = localAllKots.filter((k) => k.order_id === ord.id);
+            const resolvedKots = (ord.kots && ord.kots.length > 0)
+              ? ord.kots
+              : (orderDirectKots.length > 0 ? orderDirectKots : orderLocalKots);
+            const gstin = extractGstinFromNotes(ord.notes);
+            return {
               ...ord,
               restaurant_id: ord.restaurant_id || restaurantId,
               order_source: resolveOrderSource(ord),
               status: normalizeOrderStatus(ord),
+              kots: resolvedKots,
               subtotal: getOrderSubtotal(ord),
-            }));
+              discount_type: ord.discount_type || disc?.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none'),
+              discount_value: ord.discount_value !== undefined ? ord.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (ord.discount_amount || 0)),
+              customer_gstin: ord.customer_gstin || gstin || undefined,
+              invoice_number: ord.invoice_number || ord.order_number,
+            };
+          });
 
           inMemoryOrdersCache[restaurantId] = {
             timestamp: now,
@@ -163,15 +217,27 @@ export const orderService = {
       }
     }
     const local = mockStorage.getOrders(restaurantId);
+    const localAllKots = mockStorage.getKots(restaurantId);
     const result = local
       .filter((ord) => ord.restaurant_id === restaurantId)
-      .map((ord) => ({
-        ...ord,
-        restaurant_id: ord.restaurant_id || restaurantId,
-        order_source: resolveOrderSource(ord),
-        status: normalizeOrderStatus(ord),
-        subtotal: getOrderSubtotal(ord),
-      }));
+      .map((ord) => {
+        const orderLocalKots = localAllKots.filter((k) => k.order_id === ord.id);
+        const resolvedKots = (ord.kots && ord.kots.length > 0) ? ord.kots : orderLocalKots;
+        const disc = extractDiscountFromNotes(ord.notes);
+        const gstin = extractGstinFromNotes(ord.notes);
+        return {
+          ...ord,
+          restaurant_id: ord.restaurant_id || restaurantId,
+          order_source: resolveOrderSource(ord),
+          status: normalizeOrderStatus(ord),
+          kots: resolvedKots,
+          subtotal: getOrderSubtotal(ord),
+          discount_type: ord.discount_type || disc?.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none'),
+          discount_value: ord.discount_value !== undefined ? ord.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (ord.discount_amount || 0)),
+          customer_gstin: ord.customer_gstin || gstin || undefined,
+          invoice_number: ord.invoice_number || ord.order_number,
+        };
+      });
 
     inMemoryOrdersCache[restaurantId] = {
       timestamp: now,
@@ -183,38 +249,43 @@ export const orderService = {
   /**
    * Egress-Optimized Paginated Orders Query
    * Queries pageSize + 1 to detect hasMore without count: 'exact' overhead.
+   * Default pageSize = 15 per user requirements.
    */
   async getOrdersPaginated(options: GetOrdersPaginatedOptions): Promise<PaginatedOrdersResult> {
     const {
       restaurantId,
+      customerId,
+      tableId,
       page = 1,
-      pageSize = 30,
+      pageSize = 15,
       statusGroup = 'all',
       status = 'all',
       orderType = 'all',
+      orderCategory = 'all',
       search,
     } = options;
 
-    if (!restaurantId) {
+    if (!restaurantId && !customerId) {
       return { orders: [], hasMore: false, nextPage: null, totalLoaded: 0 };
     }
 
     if (isSupabaseConfigured) {
       try {
-        const from = (page - 1) * pageSize;
-        const to = from + pageSize; // fetches pageSize + 1 records
-
         let query = supabase
           .from('orders')
           .select('*, items:order_items(*), payments:payments(*), kots:kots(*, items:kot_items(*))')
-          .eq('restaurant_id', restaurantId)
-          .order('created_at', { ascending: false })
-          .range(from, to);
+          .order('created_at', { ascending: false });
 
-        if (statusGroup === 'active') {
-          query = query.not('status', 'in', '("completed","delivered","cancelled")');
-        } else if (statusGroup === 'completed') {
-          query = query.in('status', ['completed', 'delivered', 'cancelled']);
+        if (restaurantId) {
+          query = query.eq('restaurant_id', restaurantId);
+        }
+
+        if (customerId) {
+          query = query.eq('customer_id', customerId);
+        }
+
+        if (tableId) {
+          query = query.eq('table_id', tableId);
         }
 
         if (status !== 'all') {
@@ -226,9 +297,11 @@ export const orderService = {
         }
 
         if (search && search.trim()) {
-          const s = search.trim();
-          query = query.or(`order_number.ilike.%${s}%,customer_name.ilike.%${s}%,customer_phone.ilike.%${s}%`);
+          const s = search.trim().replace(/[,\(\)]/g, ' ');
+          query = query.or(`order_number.ilike.%${s}%,customer_name.ilike.%${s}%,customer_phone.ilike.%${s}%,table_number.ilike.%${s}%`);
         }
+
+        query = query.limit(100);
 
         const { data, error } = await query;
 
@@ -238,24 +311,86 @@ export const orderService = {
         }
 
         const rawList = (data as Order[]) || [];
-        const hasMore = rawList.length > pageSize;
-        const pageItems = hasMore ? rawList.slice(0, pageSize) : rawList;
+        const orderIds = rawList.map((o) => o.id);
+        let directKots: any[] = [];
+        if (orderIds.length > 0) {
+          try {
+            const { data: fetchedKots } = await supabase
+              .from('kots')
+              .select('*, items:kot_items(*)')
+              .in('order_id', orderIds);
+            if (fetchedKots) directKots = fetchedKots;
+          } catch (e) {
+            console.warn('Direct KOT fetch in getOrdersPaginated error:', e);
+          }
+        }
+        const localAllKots = mockStorage.getKots(restaurantId);
 
-        const sanitized = pageItems
-          .filter((ord) => ord.restaurant_id === restaurantId)
-          .map((ord) => ({
-            ...ord,
-            restaurant_id: ord.restaurant_id || restaurantId,
-            order_source: resolveOrderSource(ord),
-            status: normalizeOrderStatus(ord),
-            subtotal: getOrderSubtotal(ord),
-          }));
+        const sanitized = rawList
+          .filter((ord) => !restaurantId || ord.restaurant_id === restaurantId)
+          .map((ord) => {
+            const disc = extractDiscountFromNotes(ord.notes);
+            const orderDirectKots = directKots.filter((k) => k.order_id === ord.id);
+            const orderLocalKots = localAllKots.filter((k) => k.order_id === ord.id);
+            const resolvedKots = (ord.kots && ord.kots.length > 0)
+              ? ord.kots
+              : (orderDirectKots.length > 0 ? orderDirectKots : orderLocalKots);
+
+            const gstin = extractGstinFromNotes(ord.notes);
+            return {
+              ...ord,
+              restaurant_id: ord.restaurant_id || restaurantId || '',
+              order_source: resolveOrderSource(ord),
+              status: normalizeOrderStatus(ord),
+              kots: resolvedKots,
+              subtotal: getOrderSubtotal(ord),
+              discount_type: ord.discount_type || disc?.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none'),
+              discount_value: ord.discount_value !== undefined ? ord.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (ord.discount_amount || 0)),
+              customer_gstin: ord.customer_gstin || gstin || undefined,
+              invoice_number: ord.invoice_number || ord.order_number,
+            };
+          });
+
+        let filtered = sanitized;
+
+        // Ensure statusGroup filter is strictly applied in JavaScript layer
+        if (statusGroup === 'active') {
+          filtered = filtered.filter((o) => !['completed', 'delivered', 'cancelled', 'settled'].includes(o.status));
+        } else if (statusGroup === 'completed') {
+          filtered = filtered.filter((o) => ['completed', 'delivered', 'settled'].includes(o.status));
+        } else if (statusGroup === 'cancelled') {
+          filtered = filtered.filter((o) => o.status === 'cancelled');
+        }
+
+        if (status !== 'all') {
+          filtered = filtered.filter((o) => o.status === status);
+        }
+
+        if (orderType !== 'all') {
+          filtered = filtered.filter((o) => o.order_type === orderType);
+        }
+
+        if (orderCategory === 'online') {
+          filtered = filtered.filter((o) => o.order_source === 'CUSTOMER_APP' || o.order_type === 'delivery' || Boolean(o.delivery_address));
+        } else if (orderCategory === 'qr') {
+          filtered = filtered.filter((o) => o.order_source === 'CUSTOMER_QR' || Boolean(o.notes?.includes('QR')));
+        } else if (orderCategory === 'pos') {
+          filtered = filtered.filter((o) => o.order_source === 'POS' || o.created_by === 'POS_STAFF');
+        }
+
+        const from = (page - 1) * pageSize;
+        const pageItems = filtered.slice(from, from + pageSize);
+        const hasMore = filtered.length > from + pageSize;
+
+        if (restaurantId && sanitized.length > 0) {
+          mockStorage.saveOrders(sanitized, restaurantId);
+        }
 
         return {
-          orders: sanitized,
+          orders: pageItems,
           hasMore,
           nextPage: hasMore ? page + 1 : null,
-          totalLoaded: sanitized.length,
+          totalLoaded: pageItems.length,
         };
       } catch (err) {
         console.warn('getOrdersPaginated failed, falling back to local storage:', err);
@@ -264,12 +399,32 @@ export const orderService = {
 
     // Local / Offline fallback pagination
     const allLocal = mockStorage.getOrders(restaurantId);
-    let filtered = allLocal.filter((ord) => ord.restaurant_id === restaurantId);
+    const localAllKots = mockStorage.getKots(restaurantId);
+    let filtered = allLocal
+      .filter((ord) => !restaurantId || ord.restaurant_id === restaurantId)
+      .map((ord) => {
+        const orderLocalKots = localAllKots.filter((k) => k.order_id === ord.id);
+        const resolvedKots = (ord.kots && ord.kots.length > 0) ? ord.kots : orderLocalKots;
+        return {
+          ...ord,
+          kots: resolvedKots,
+        };
+      });
+
+    if (customerId) {
+      filtered = filtered.filter((o) => o.customer_id === customerId);
+    }
+
+    if (tableId) {
+      filtered = filtered.filter((o) => o.table_id === tableId);
+    }
 
     if (statusGroup === 'active') {
-      filtered = filtered.filter((o) => !['completed', 'delivered', 'cancelled'].includes(o.status));
+      filtered = filtered.filter((o) => !['completed', 'delivered', 'cancelled', 'settled'].includes(o.status));
     } else if (statusGroup === 'completed') {
-      filtered = filtered.filter((o) => ['completed', 'delivered', 'cancelled'].includes(o.status));
+      filtered = filtered.filter((o) => ['completed', 'delivered', 'settled'].includes(o.status));
+    } else if (statusGroup === 'cancelled') {
+      filtered = filtered.filter((o) => o.status === 'cancelled');
     }
 
     if (status !== 'all') {
@@ -280,26 +435,44 @@ export const orderService = {
       filtered = filtered.filter((o) => o.order_type === orderType);
     }
 
+    if (orderCategory === 'online') {
+      filtered = filtered.filter((o) => o.order_type === 'delivery' || o.order_source === 'CUSTOMER_APP' || Boolean(o.delivery_address));
+    } else if (orderCategory === 'qr') {
+      filtered = filtered.filter((o) => o.order_source === 'CUSTOMER_QR' || Boolean(o.notes?.includes('QR')));
+    } else if (orderCategory === 'pos') {
+      filtered = filtered.filter((o) => o.order_source === 'POS' || o.created_by === 'POS_STAFF');
+    }
+
     if (search && search.trim()) {
       const s = search.trim().toLowerCase();
       filtered = filtered.filter(
         (o) =>
           o.order_number?.toLowerCase().includes(s) ||
           o.customer_name?.toLowerCase().includes(s) ||
-          o.customer_phone?.includes(s)
+          o.customer_phone?.includes(s) ||
+          o.table_number?.toLowerCase().includes(s) ||
+          o.notes?.toLowerCase().includes(s)
       );
     }
 
     const from = (page - 1) * pageSize;
     const to = from + pageSize;
     const hasMore = filtered.length > to;
-    const pageItems = filtered.slice(from, to).map((ord) => ({
-      ...ord,
-      restaurant_id: ord.restaurant_id || restaurantId,
-      order_source: resolveOrderSource(ord),
-      status: normalizeOrderStatus(ord),
-      subtotal: getOrderSubtotal(ord),
-    }));
+    const pageItems = filtered.slice(from, to).map((ord) => {
+      const disc = extractDiscountFromNotes(ord.notes);
+      const gstin = extractGstinFromNotes(ord.notes);
+      return {
+        ...ord,
+        restaurant_id: ord.restaurant_id || restaurantId || '',
+        order_source: resolveOrderSource(ord),
+        status: normalizeOrderStatus(ord),
+        subtotal: getOrderSubtotal(ord),
+        discount_type: ord.discount_type || disc?.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none'),
+        discount_value: ord.discount_value !== undefined ? ord.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (ord.discount_amount || 0)),
+        customer_gstin: ord.customer_gstin || gstin || undefined,
+        invoice_number: ord.invoice_number || ord.order_number,
+      };
+    });
 
     return {
       orders: pageItems,
@@ -307,6 +480,23 @@ export const orderService = {
       nextPage: hasMore ? page + 1 : null,
       totalLoaded: pageItems.length,
     };
+  },
+
+  async getCustomerOrdersPaginated(options: {
+    customerId: string;
+    statusGroup?: 'active' | 'history' | 'all';
+    page?: number;
+    pageSize?: number;
+  }): Promise<PaginatedOrdersResult> {
+    const { customerId, statusGroup = 'all', page = 1, pageSize = 15 } = options;
+    if (!customerId) return { orders: [], hasMore: false, nextPage: null, totalLoaded: 0 };
+
+    return this.getOrdersPaginated({
+      customerId,
+      statusGroup: statusGroup === 'history' ? 'completed' : statusGroup === 'active' ? 'active' : 'all',
+      page,
+      pageSize,
+    });
   },
 
   async verifyOrderTenantAccess(order: Order, requiredRestaurantId?: string): Promise<boolean> {
@@ -397,11 +587,17 @@ export const orderService = {
           if (!hasAccess) {
             return null;
           }
+          const disc = extractDiscountFromNotes(ord.notes);
+          const gstin = extractGstinFromNotes(ord.notes);
           return {
             ...ord,
             order_source: resolveOrderSource(ord),
             status: normalizeOrderStatus(ord),
             subtotal: getOrderSubtotal(ord),
+            discount_type: ord.discount_type || disc?.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none'),
+            discount_value: ord.discount_value !== undefined ? ord.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (ord.discount_amount || 0)),
+            customer_gstin: ord.customer_gstin || gstin || undefined,
+            invoice_number: ord.invoice_number || ord.order_number,
           };
         }
       } catch (err) {
@@ -415,11 +611,17 @@ export const orderService = {
       if (!hasAccess) {
         return null;
       }
+      const disc = extractDiscountFromNotes(found.notes);
+      const gstin = extractGstinFromNotes(found.notes);
       return {
         ...found,
         order_source: resolveOrderSource(found),
         status: normalizeOrderStatus(found),
         subtotal: getOrderSubtotal(found),
+        discount_type: found.discount_type || disc?.discount_type || (found.discount_amount > 0 ? 'fixed' : 'none'),
+        discount_value: found.discount_value !== undefined ? found.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (found.discount_amount || 0)),
+        customer_gstin: found.customer_gstin || gstin || undefined,
+        invoice_number: found.invoice_number || found.order_number,
       };
     }
     return null;
@@ -482,7 +684,7 @@ export const orderService = {
               orderKots = [
                 {
                   id: 'kot-' + ord.id,
-                  kot_number: `KOT-${ord.order_number?.replace(/^[^\d]*/, '') || '0001'}`,
+                  kot_number: `KOT-${(ord.order_number?.replace(/^[^\d]*/, '') || '001').padStart(3, '0')}`,
                   order_id: ord.id,
                   order_number: ord.order_number,
                   order_type: ord.order_type,
@@ -500,11 +702,17 @@ export const orderService = {
               ];
             }
 
+            const disc = extractDiscountFromNotes(ord.notes);
+            const gstin = extractGstinFromNotes(ord.notes);
             return {
               ...ord,
               order_source: resolveOrderSource(ord),
               status: normalizeOrderStatus(ord),
               subtotal: getOrderSubtotal(ord),
+              discount_type: ord.discount_type || disc?.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none'),
+              discount_value: ord.discount_value !== undefined ? ord.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (ord.discount_amount || 0)),
+              customer_gstin: ord.customer_gstin || gstin || undefined,
+              invoice_number: ord.invoice_number || ord.order_number,
               kots: orderKots,
             };
           }) as Order[];
@@ -515,12 +723,20 @@ export const orderService = {
     }
 
     const all = mockStorage.getOrders();
-    return all.filter((o) => o.customer_id === customerId).map((ord) => ({
-      ...ord,
-      order_source: resolveOrderSource(ord),
-      status: normalizeOrderStatus(ord),
-      subtotal: getOrderSubtotal(ord),
-    }));
+    return all.filter((o) => o.customer_id === customerId).map((ord) => {
+      const disc = extractDiscountFromNotes(ord.notes);
+      const gstin = extractGstinFromNotes(ord.notes);
+      return {
+        ...ord,
+        order_source: resolveOrderSource(ord),
+        status: normalizeOrderStatus(ord),
+        subtotal: getOrderSubtotal(ord),
+        discount_type: ord.discount_type || disc?.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none'),
+        discount_value: ord.discount_value !== undefined ? ord.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (ord.discount_amount || 0)),
+        customer_gstin: ord.customer_gstin || gstin || undefined,
+        invoice_number: ord.invoice_number || ord.order_number,
+      };
+    });
   },
 
   async createOrder(
@@ -612,10 +828,22 @@ export const orderService = {
     const validCustomerId = orderData.customer_id && uuidRegex.test(orderData.customer_id) ? orderData.customer_id : null;
     const validCreatedBy = orderData.created_by && uuidRegex.test(orderData.created_by) ? orderData.created_by : null;
 
+    const finalNotesWithDisc = attachDiscountToNotes(
+      finalNotes,
+      orderData.discount_type || (orderData.discount_amount && orderData.discount_amount > 0 ? 'fixed' : 'none'),
+      orderData.discount_value !== undefined ? orderData.discount_value : (orderData.discount_amount || 0)
+    );
+    const finalNotesWithDiscAndGstin = attachGstinToNotes(
+      finalNotesWithDisc,
+      orderData.customer_gstin
+    );
+
     const newOrder: Order = {
       id: 'ord-' + Date.now() + Math.random().toString(36).substr(2, 4),
       restaurant_id: targetRestaurantId,
       order_number: orderNumber,
+      invoice_number: orderData.invoice_number || orderNumber,
+      customer_gstin: orderData.customer_gstin,
       order_source: resolvedSource,
       order_type: orderData.order_type || 'dine_in',
       table_id: resolvedTableId || undefined,
@@ -630,7 +858,10 @@ export const orderService = {
       delivery_charge: orderData.delivery_charge || 0,
       status: orderData.status || 'confirmed',
       subtotal: computedSubtotal,
+      discount_type: orderData.discount_type || (orderData.discount_amount && orderData.discount_amount > 0 ? 'fixed' : 'none'),
+      discount_value: orderData.discount_value !== undefined ? orderData.discount_value : (orderData.discount_amount || 0),
       discount_amount: orderData.discount_amount || 0,
+      taxable_amount: orderData.taxable_amount,
       coupon_code: orderData.coupon_code,
       coupon_discount: orderData.coupon_discount || 0,
       cgst_amount: orderData.cgst_amount || 0,
@@ -642,7 +873,7 @@ export const orderService = {
       payable_amount: orderData.payable_amount || 0,
       paid_amount: isPaid ? (orderData.payable_amount || 0) : 0,
       payment_status: isPaid ? 'paid' : 'unpaid',
-      notes: finalNotes,
+      notes: finalNotesWithDiscAndGstin,
       items: orderData.items || [],
       payments: orderData.payments || [],
       kots: orderData.kots || [],
@@ -675,13 +906,18 @@ export const orderService = {
                 ...rpcData,
                 order_source: 'CUSTOMER_QR',
                 items: rpcData.items || newOrder.items || [],
+                customer_gstin: newOrder.customer_gstin,
+                invoice_number: newOrder.invoice_number,
               };
               try {
                 await tableService.updateTableStatus(resolvedTableId, 'occupied');
               } catch (tErr) {
                 console.warn('Table status update warning:', tErr);
               }
-              mockStorage.saveOrders([parsedOrder, ...mockStorage.getOrders().filter((o) => o.id !== parsedOrder.id)]);
+              const localOrders = mockStorage.getOrders(targetRestaurantId);
+              mockStorage.saveOrders([parsedOrder, ...localOrders.filter((o) => o.id !== parsedOrder.id)], targetRestaurantId);
+              clearOrdersCache(targetRestaurantId);
+              await this.getOrders(targetRestaurantId, true);
               return parsedOrder;
             }
           } catch (rpcEx) {
@@ -689,7 +925,7 @@ export const orderService = {
           }
         }
 
-        const { items, payments, kots, order_source, ...orderRecord } = newOrder;
+        const { items, payments, kots, order_source, discount_type, discount_value, taxable_amount, customer_gstin, invoice_number, ...orderRecord } = newOrder;
         let dbPayload = {
           ...orderRecord,
           restaurant_id: targetRestaurantId,
@@ -703,12 +939,13 @@ export const orderService = {
           .select()
           .single();
 
-        // If duplicate order number, retry with unique timestamp suffix
+        // If duplicate order number detected, retry with atomic database sequence
         if (orderError && (orderError.code === '23505' || orderError.message?.includes('duplicate key'))) {
-          console.warn('Duplicate order number detected, retrying with unique suffix...');
-          orderNumber = `${settings.invoice_prefix || 'INV-'}${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`;
+          console.warn('Duplicate order number detected, retrying with next atomic database sequence...');
+          orderNumber = await this.generateNextOrderNumber(settings.invoice_prefix || 'INV-', targetRestaurantId, true);
           dbPayload.order_number = orderNumber;
           newOrder.order_number = orderNumber;
+          newOrder.invoice_number = orderNumber;
           const retryRes = await supabase
             .from('orders')
             .insert([dbPayload])
@@ -879,6 +1116,8 @@ export const orderService = {
     tableId?: string;
     tableNumber?: string;
     notes?: string;
+    discountType?: 'none' | 'fixed' | 'percentage';
+    discountValue?: number;
     discountAmount?: number;
     couponCode?: string;
     couponDiscount?: number;
@@ -895,7 +1134,9 @@ export const orderService = {
       tableId,
       tableNumber,
       notes,
-      discountAmount = 0,
+      discountType,
+      discountValue,
+      discountAmount,
       couponCode,
       couponDiscount = 0,
       reason,
@@ -948,6 +1189,19 @@ export const orderService = {
           quantity: diffQty,
         });
       }
+    }
+
+    // Prohibit adding items if delivery / online order is already dispatched
+    const isDeliveryOrOnline =
+      resolveOrderSource(existingOrder) === 'CUSTOMER_APP' ||
+      existingOrder.order_type === 'delivery' ||
+      Boolean(existingOrder.delivery_address && existingOrder.delivery_address.trim());
+    const isDispatched =
+      existingOrder.status === 'out_for_delivery' ||
+      existingOrder.status === 'delivered';
+
+    if (isDeliveryOrOnline && isDispatched && addedItems.length > 0) {
+      throw new Error('Adding items or increasing item quantities is not permitted for dispatched delivery and online orders.');
     }
 
     // Check removed or reduced items
@@ -1028,14 +1282,69 @@ export const orderService = {
       };
     });
 
+    const newSubtotal = normalizedItems.reduce((sum, item) => sum + (Number(item.unit_price) * Number(item.quantity)), 0);
+    const effectiveCouponCode = couponCode !== undefined ? couponCode : (existingOrder.coupon_code || undefined);
+    let effectiveCouponDiscount = couponDiscount;
+
+    // Recalculate coupon discount if order has a coupon code
+    if (effectiveCouponCode) {
+      try {
+        const validation = await couponService.validateCouponCode(
+          effectiveCouponCode,
+          newSubtotal,
+          existingOrder.restaurant_id
+        );
+        if (validation.isValid && validation.discountAmount > 0) {
+          effectiveCouponDiscount = validation.discountAmount;
+        } else if (effectiveCouponDiscount === undefined || effectiveCouponDiscount === 0) {
+          effectiveCouponDiscount = existingOrder.coupon_discount ? Math.min(existingOrder.coupon_discount, newSubtotal) : 0;
+        }
+      } catch (cpnErr) {
+        console.warn('Coupon recalculation in editActiveOrder fallback:', cpnErr);
+        if (effectiveCouponDiscount === undefined || effectiveCouponDiscount === 0) {
+          effectiveCouponDiscount = existingOrder.coupon_discount ? Math.min(existingOrder.coupon_discount, newSubtotal) : 0;
+        }
+      }
+    } else if (effectiveCouponDiscount === undefined && existingOrder.coupon_discount) {
+      effectiveCouponDiscount = Math.min(existingOrder.coupon_discount, newSubtotal);
+    }
+
+    // Resolve effective discount type and value so percentages dynamically recalculate on new subtotal
+    const effectiveDiscountType =
+      discountType !== undefined
+        ? discountType
+        : (existingOrder.discount_type && existingOrder.discount_type !== 'none'
+            ? existingOrder.discount_type
+            : (discountAmount !== undefined && discountAmount > 0 ? 'fixed' : 'none'));
+
+    let effectiveDiscountValue = 0;
+    if (discountValue !== undefined) {
+      effectiveDiscountValue = discountValue;
+    } else if (existingOrder.discount_value !== undefined) {
+      effectiveDiscountValue = existingOrder.discount_value;
+    } else if (effectiveDiscountType === 'percentage') {
+      effectiveDiscountValue = existingOrder.subtotal && existingOrder.discount_amount
+        ? (existingOrder.discount_amount / existingOrder.subtotal) * 100
+        : 0;
+    } else if (discountAmount !== undefined) {
+      effectiveDiscountValue = discountAmount;
+    } else {
+      effectiveDiscountValue = existingOrder.discount_amount || 0;
+    }
+
+    const restSettings = await settingsService.getSettings(existingOrder.restaurant_id);
+    const isGstEnabled = (restSettings.is_gst_enabled !== undefined && restSettings.is_gst_enabled !== null)
+      ? Boolean(restSettings.is_gst_enabled)
+      : (restSettings.gst_registered !== undefined ? Boolean(restSettings.gst_registered) : Boolean(restSettings.gstin));
+
     const calculated = calculateOrderTotals({
       items: normalizedItems,
-      discountType: existingOrder.discount_type && existingOrder.discount_type !== 'none'
-        ? existingOrder.discount_type
-        : (discountAmount > 0 ? 'fixed' : undefined),
-      discountValue: discountAmount,
-      couponDiscount: couponDiscount,
+      discountType: effectiveDiscountType !== 'none' ? effectiveDiscountType : undefined,
+      discountValue: effectiveDiscountValue,
+      couponDiscount: effectiveCouponDiscount,
       deliveryCharge: deliveryCharge,
+      isGstEnabled,
+      taxRate: restSettings.default_tax_rate !== undefined ? Number(restSettings.default_tax_rate) : 5.0,
     });
 
     // Handle table changes
@@ -1046,6 +1355,12 @@ export const orderService = {
       await tableService.updateTableStatus(tableId, 'occupied');
     }
 
+    const updatedNotes = attachDiscountToNotes(
+      notes ?? existingOrder.notes,
+      effectiveDiscountType,
+      effectiveDiscountValue
+    );
+
     const updatePayload: Record<string, any> = {
       customer_name: customerName ?? existingOrder.customer_name,
       customer_phone: customerPhone ?? existingOrder.customer_phone,
@@ -1054,10 +1369,10 @@ export const orderService = {
       delivery_charge: deliveryCharge,
       table_id: tableId ?? existingOrder.table_id,
       table_number: tableNumber ?? existingOrder.table_number,
-      notes: notes ?? existingOrder.notes,
+      notes: updatedNotes,
       subtotal: calculated.subtotal,
       discount_amount: calculated.discountAmount,
-      coupon_code: couponCode,
+      coupon_code: effectiveCouponCode || null,
       coupon_discount: calculated.couponDiscount,
       cgst_amount: calculated.cgstAmount,
       sgst_amount: calculated.sgstAmount,
@@ -1105,7 +1420,15 @@ export const orderService = {
             new_payable_amount: updatedOrder.payable_amount,
             reason: reason || 'Active order edited from POS',
           });
-          await this.getOrders(existingOrder.restaurant_id);
+          const localOrders = mockStorage.getOrders(existingOrder.restaurant_id);
+          const orderIndex = localOrders.findIndex((o) => o.id === orderId);
+          if (orderIndex !== -1) {
+            localOrders[orderIndex] = { ...localOrders[orderIndex], ...updatedOrder, items: normalizedItems };
+          } else {
+            localOrders.unshift({ ...updatedOrder, items: normalizedItems });
+          }
+          mockStorage.saveOrders(localOrders, existingOrder.restaurant_id);
+          await this.getOrders(existingOrder.restaurant_id, true);
           const finalResult = {
             ...updatedOrder,
             latest_kot: generatedKot,
@@ -1304,6 +1627,8 @@ export const orderService = {
     grandTotal?: number;
     roundOff?: number;
     payableAmount?: number;
+    customerGstin?: string;
+    customer_gstin?: string;
   }): Promise<Order> {
     const {
       orderId,
@@ -1321,7 +1646,10 @@ export const orderService = {
       grandTotal,
       roundOff,
       payableAmount,
+      customerGstin,
+      customer_gstin,
     } = params;
+    const effectiveCustomerGstin = customer_gstin || customerGstin;
 
     const order = await this.getOrderById(orderId);
     if (!order) throw new Error('Order not found');
@@ -1344,11 +1672,18 @@ export const orderService = {
       created_at: new Date().toISOString(),
     };
 
-    const updatePayload: any = {
+    const updatedNotes = attachDiscountToNotes(
+      notes ? (order.notes ? `${order.notes} • ${notes}` : notes) : order.notes,
+      discountType !== 'none' ? discountType : undefined,
+      discountValue
+    );
+    const finalNotesWithGstin = effectiveCustomerGstin ? attachGstinToNotes(updatedNotes, effectiveCustomerGstin) : updatedNotes;
+
+    const updatePayload: Record<string, any> = {
       status: finalOrderStatus,
       payment_status: finalPaymentStatus,
       paid_amount: finalPaidAmount,
-      notes: notes ? (order.notes ? `${order.notes} • ${notes}` : notes) : order.notes,
+      notes: finalNotesWithGstin,
       updated_at: new Date().toISOString(),
     };
 
@@ -1377,7 +1712,12 @@ export const orderService = {
           .select('*, items:order_items(*), payments:payments(*), kots:kots(*, items:kot_items(*))')
           .single();
 
-        if (!error && updated) {
+        if (error) {
+          console.warn('Supabase closeAndPayOrder update error:', error);
+          throw error;
+        }
+
+        if (updated) {
           clearOrdersCache(updated.restaurant_id);
           await auditService.log('CLOSE_ORDER', {
             order_number: updated.order_number,
@@ -1387,7 +1727,15 @@ export const orderService = {
             status: updated.status,
             discount_amount: discountAmount,
           });
-          await this.getOrders(updated.restaurant_id);
+          const localOrders = mockStorage.getOrders(updated.restaurant_id);
+          const orderIndex = localOrders.findIndex((o) => o.id === orderId);
+          if (orderIndex !== -1) {
+            localOrders[orderIndex] = { ...localOrders[orderIndex], ...updated };
+          } else {
+            localOrders.unshift(updated);
+          }
+          mockStorage.saveOrders(localOrders, updated.restaurant_id);
+          await this.getOrders(updated.restaurant_id, true);
           return {
             ...updated,
             order_source: resolveOrderSource(updated),
@@ -1497,7 +1845,13 @@ export const orderService = {
 
           clearOrdersCache(data.restaurant_id);
           await auditService.log('UPDATE_ORDER_STATUS', { order_id: orderId, status });
-          await this.getOrders(data.restaurant_id);
+          const localOrders = mockStorage.getOrders(data.restaurant_id);
+          const idx = localOrders.findIndex((o) => o.id === orderId);
+          if (idx !== -1) {
+            localOrders[idx] = { ...localOrders[idx], status };
+            mockStorage.saveOrders(localOrders, data.restaurant_id);
+          }
+          await this.getOrders(data.restaurant_id, true);
           return {
             ...data,
             order_source: resolveOrderSource(data),
@@ -1633,6 +1987,7 @@ export const orderService = {
       grand_total?: number;
       round_off?: number;
       payable_amount?: number;
+      customer_gstin?: string;
     }
   ): Promise<Order> {
     const target = await this.getOrderById(orderId);
@@ -1641,19 +1996,27 @@ export const orderService = {
     const finalPayable = params.payable_amount !== undefined ? params.payable_amount : target.payable_amount;
     const finalPaid = Math.max(finalPayable, params.amount);
 
-    const updatePayload: any = {
+    const updatedNotes = attachDiscountToNotes(
+      target.notes,
+      params.discount_type !== 'none' ? params.discount_type : undefined,
+      params.discount_value
+    );
+    const finalNotesWithGstin = params.customer_gstin ? attachGstinToNotes(updatedNotes, params.customer_gstin) : updatedNotes;
+
+    const updatePayload: Record<string, any> = {
       status: 'completed',
       payment_status: 'paid',
       paid_amount: finalPaid,
+      notes: finalNotesWithGstin,
       updated_at: new Date().toISOString(),
     };
 
     if (params.discount_amount !== undefined) updatePayload.discount_amount = params.discount_amount;
-    if (params.cgst_amount !== undefined) updatePayload.cgst_amount = params.cgst_amount;
-    if (params.sgst_amount !== undefined) updatePayload.sgst_amount = params.sgst_amount;
-    if (params.grand_total !== undefined) updatePayload.grand_total = params.grand_total;
+    if (params.cgst_amount !== undefined && params.cgst_amount > 0) updatePayload.cgst_amount = params.cgst_amount;
+    if (params.sgst_amount !== undefined && params.sgst_amount > 0) updatePayload.sgst_amount = params.sgst_amount;
+    if (params.grand_total !== undefined && (params.grand_total > 0 || (target.grand_total || 0) <= 0)) updatePayload.grand_total = params.grand_total;
     if (params.round_off !== undefined) updatePayload.round_off = params.round_off;
-    if (params.payable_amount !== undefined) updatePayload.payable_amount = params.payable_amount;
+    if (params.payable_amount !== undefined && (params.payable_amount > 0 || (target.payable_amount || 0) <= 0)) updatePayload.payable_amount = params.payable_amount;
 
     if (isSupabaseConfigured) {
       try {
@@ -1679,8 +2042,22 @@ export const orderService = {
           await this.releaseTableIfSafe(target.table_id, orderId);
         }
 
-        if (!error && updated) {
-          await this.getOrders(target.restaurant_id);
+        if (error) {
+          console.warn('Supabase closeAndSettleOrder update error:', error);
+          throw error;
+        }
+
+        if (updated) {
+          clearOrdersCache(target.restaurant_id);
+          const localOrders = mockStorage.getOrders(target.restaurant_id);
+          const orderIndex = localOrders.findIndex((o) => o.id === orderId);
+          if (orderIndex !== -1) {
+            localOrders[orderIndex] = { ...localOrders[orderIndex], ...updated };
+          } else {
+            localOrders.unshift(updated);
+          }
+          mockStorage.saveOrders(localOrders, target.restaurant_id);
+          await this.getOrders(target.restaurant_id, true);
           return {
             ...updated,
             order_source: resolveOrderSource(updated),

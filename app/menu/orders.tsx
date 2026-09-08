@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Modal,
   Platform,
+  RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,6 +16,7 @@ import { orderService } from '../../src/services/api/orderService';
 import { Order } from '../../src/types';
 import { formatCurrency } from '../../src/utils/currency';
 import { getOrderSubtotal } from '../../src/utils/gst';
+import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { RealtimeOrderStatus } from '../../src/components/customer/RealtimeOrderStatus';
 import { useAuth } from '../../src/context/AuthContext';
 import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
@@ -25,31 +27,92 @@ export default function CustomerOrdersScreen() {
   const { user } = useAuth();
   const isWeb = Platform.OS === 'web';
 
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [activeOrders, setActiveOrders] = useState<Order[]>([]);
+  const [historyOrders, setHistoryOrders] = useState<Order[]>([]);
+  const [historyPage, setHistoryPage] = useState<number>(1);
+  const [historyHasMore, setHistoryHasMore] = useState<boolean>(false);
+  const [loadingMoreHistory, setLoadingMoreHistory] = useState<boolean>(false);
+
   const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
   const [tab, setTab] = useState<'active' | 'history'>('active');
   const [selectedOrderDetail, setSelectedOrderDetail] = useState<Order | null>(null);
 
-  const fetchOrders = useCallback(async () => {
+  const fetchOrders = useCallback(async (isRefresh: boolean = false) => {
     if (!user) {
-      setOrders([]);
+      setActiveOrders([]);
+      setHistoryOrders([]);
       setLoading(false);
+      setRefreshing(false);
       return;
     }
-    setLoading(true);
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     try {
-      const data = await orderService.getCustomerOrders(user.id);
-      setOrders(data);
+      const [activeRes, historyRes] = await Promise.all([
+        orderService.getCustomerOrdersPaginated({
+          customerId: user.id,
+          statusGroup: 'active',
+          page: 1,
+          pageSize: 15,
+        }),
+        orderService.getCustomerOrdersPaginated({
+          customerId: user.id,
+          statusGroup: 'history',
+          page: 1,
+          pageSize: 15,
+        }),
+      ]);
+
+      setActiveOrders(activeRes.orders);
+      setHistoryOrders(historyRes.orders);
+      setHistoryHasMore(historyRes.hasMore);
+      setHistoryPage(1);
     } catch (err) {
       console.warn('Failed to load orders:', err);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [user]);
 
+  const loadMoreHistory = async () => {
+    if (!user || loadingMoreHistory || !historyHasMore) return;
+    try {
+      setLoadingMoreHistory(true);
+      const nextPage = historyPage + 1;
+      const res = await orderService.getCustomerOrdersPaginated({
+        customerId: user.id,
+        statusGroup: 'history',
+        page: nextPage,
+        pageSize: 15,
+      });
+
+      setHistoryOrders((prev) => {
+        const existingIds = new Set(prev.map((o) => o.id));
+        const newOnes = res.orders.filter((o) => !existingIds.has(o.id));
+        return [...prev, ...newOnes];
+      });
+      setHistoryPage(nextPage);
+      setHistoryHasMore(res.hasMore);
+    } catch (e) {
+      console.warn('Failed to load more customer history orders:', e);
+    } finally {
+      setLoadingMoreHistory(false);
+    }
+  };
+
+  const onRefresh = useCallback(() => {
+    fetchOrders(true);
+  }, [fetchOrders]);
+
   useEffect(() => {
     if (!user?.id) {
-      setOrders([]);
+      setActiveOrders([]);
+      setHistoryOrders([]);
       setLoading(false);
       return;
     }
@@ -59,7 +122,7 @@ export default function CustomerOrdersScreen() {
     // Fast polling fallback for instantaneous delivery status sync
     const pollInterval = setInterval(() => {
       fetchOrders();
-    }, 3000);
+    }, 4500);
 
     let channel: any = null;
     if (isSupabaseConfigured) {
@@ -84,14 +147,20 @@ export default function CustomerOrdersScreen() {
     };
   }, [user?.id, fetchOrders]);
 
-  const activeOrders = orders.filter(
-    (o) => !['delivered', 'completed', 'cancelled'].includes(o.status)
-  );
-  const historyOrders = orders.filter((o) =>
-    ['delivered', 'completed', 'cancelled'].includes(o.status)
+  const isFinalStatus = useCallback(
+    (st?: string) => ['completed', 'delivered', 'cancelled', 'settled'].includes(st || ''),
+    []
   );
 
-  const displayedOrders = tab === 'active' ? activeOrders : historyOrders;
+  const safeActiveOrders = useMemo(() => {
+    return activeOrders.filter((o) => !isFinalStatus(o.status));
+  }, [activeOrders, isFinalStatus]);
+
+  const safeHistoryOrders = useMemo(() => {
+    return historyOrders.filter((o) => isFinalStatus(o.status));
+  }, [historyOrders, isFinalStatus]);
+
+  const displayedOrders = tab === 'active' ? safeActiveOrders : safeHistoryOrders;
 
   return (
     <View style={[styles.container, { paddingTop: isWeb ? 8 : insets.top, paddingBottom: isWeb ? 0 : insets.bottom }]}>
@@ -111,7 +180,7 @@ export default function CustomerOrdersScreen() {
           onPress={() => setTab('active')}
         >
           <Text style={[styles.tabText, tab === 'active' && styles.tabTextActive]}>
-            LIVE ORDERS ({activeOrders.length})
+            LIVE ORDERS ({safeActiveOrders.length})
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -119,7 +188,7 @@ export default function CustomerOrdersScreen() {
           onPress={() => setTab('history')}
         >
           <Text style={[styles.tabText, tab === 'history' && styles.tabTextActive]}>
-            ORDER HISTORY ({historyOrders.length})
+            ORDER HISTORY ({safeHistoryOrders.length})
           </Text>
         </TouchableOpacity>
       </View>
@@ -158,9 +227,12 @@ export default function CustomerOrdersScreen() {
         <ScrollView
           style={styles.scrollList}
           contentContainerStyle={{ paddingBottom: insets.bottom + 19 + 20 }}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
         >
-          {displayedOrders.map((ord) => {
-            const itemCount = ord.items?.reduce((sum, i) => sum + i.quantity, 0) || ord.items?.length || 0;
+          {displayedOrders.map((ord: Order) => {
+            const itemCount = ord.items?.reduce((sum: number, i) => sum + i.quantity, 0) || ord.items?.length || 0;
 
             return (
               <View key={ord.id} style={styles.orderCard}>
@@ -168,7 +240,7 @@ export default function CustomerOrdersScreen() {
                   <View>
                     <Text style={styles.orderNumber}>Order #{ord.order_number}</Text>
                     <Text style={styles.orderMeta}>
-                      Placed: {new Date(ord.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                      🕒 {formatOrderDateTime(ord.created_at)}
                     </Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
@@ -208,6 +280,40 @@ export default function CustomerOrdersScreen() {
               </View>
             );
           })}
+
+          {/* Load More Button for History */}
+          {tab === 'history' && historyHasMore && (
+            <View style={{ width: '100%', paddingVertical: 18, alignItems: 'center' }}>
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#FFFFFF',
+                  borderWidth: 1.5,
+                  borderColor: '#0F172A',
+                  paddingVertical: 10,
+                  paddingHorizontal: 24,
+                  borderRadius: 24,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+                onPress={loadMoreHistory}
+                disabled={loadingMoreHistory}
+              >
+                {loadingMoreHistory ? (
+                  <>
+                    <ActivityIndicator size="small" color="#0F172A" />
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                      Loading next 15 orders...
+                    </Text>
+                  </>
+                ) : (
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                    ⬇️ Load More Orders
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
         </ScrollView>
       )}
 
@@ -227,7 +333,7 @@ export default function CustomerOrdersScreen() {
                 <ScrollView style={{ marginVertical: 8 }}>
                   <View style={styles.detailMetaBox}>
                     <Text style={styles.detailMetaRow}>
-                      Placed At: {new Date(selectedOrderDetail.created_at).toLocaleString()}
+                      🕒 Placed: {formatOrderDateTime(selectedOrderDetail.created_at)}
                     </Text>
                     {selectedOrderDetail.delivery_address && (
                       <Text style={styles.detailMetaRow}>

@@ -33,9 +33,12 @@ const initialCart: CustomerCart = {
   restaurantLogo: null,
   items: [],
   subtotal: 0,
+  discount: 0,
+  taxableAmount: 0,
+  cgst: 0,
+  sgst: 0,
   taxTotal: 0,
   deliveryFee: 0,
-  discount: 0,
   couponCode: undefined,
   payableAmount: 0,
 };
@@ -60,42 +63,48 @@ export const CustomerCartProvider: React.FC<{ children: React.ReactNode }> = ({ 
     pendingQuantity: 1,
   });
 
-  const { subtotal, taxTotal, deliveryFee, discount, payableAmount, itemCount } = useMemo(() => {
+  const { subtotal, discount, taxableAmount, cgst, sgst, taxTotal, deliveryFee, payableAmount, itemCount } = useMemo(() => {
     let sub = 0;
-    let tax = 0;
     let count = 0;
 
     items.forEach((item) => {
-      const lineSub = item.price * item.quantity;
-      const lineTax = (lineSub * (item.tax_rate || 5.0)) / 100;
+      const lineSub = (Number(item.price) || 0) * (Number(item.quantity) || 1);
       sub += lineSub;
-      tax += lineTax;
-      count += item.quantity;
+      count += Number(item.quantity) || 1;
     });
+
+    const roundedSubtotal = Math.round(sub * 100) / 100;
 
     let calculatedDiscount = couponDiscount;
     if (appliedCouponObj) {
       if (appliedCouponObj.discount_type === 'percentage') {
-        const pctDisc = (sub * (appliedCouponObj.discount_value || 0)) / 100;
+        const pctDisc = (roundedSubtotal * (appliedCouponObj.discount_value || 0)) / 100;
         calculatedDiscount = appliedCouponObj.max_discount ? Math.min(pctDisc, appliedCouponObj.max_discount) : pctDisc;
       } else {
-        calculatedDiscount = Math.min(appliedCouponObj.discount_value || 0, sub);
+        calculatedDiscount = Math.min(appliedCouponObj.discount_value || 0, roundedSubtotal);
       }
-      if (appliedCouponObj.min_order_value && sub < appliedCouponObj.min_order_value) {
+      if (appliedCouponObj.min_order_value && roundedSubtotal < appliedCouponObj.min_order_value) {
         calculatedDiscount = 0;
       }
     }
 
-    const disc = Math.round(Math.min(calculatedDiscount, sub) * 100) / 100;
-    const fee = 0; // Flat or waived delivery fee
-    const gross = sub - disc + tax + fee;
-    const payable = Math.max(0, Math.round(gross));
+    const disc = Math.round(Math.min(calculatedDiscount, roundedSubtotal) * 100) / 100;
+    const taxable = Math.max(0, Math.round((roundedSubtotal - disc) * 100) / 100);
+    const cgstAmt = Math.round((taxable * 0.025) * 100) / 100; // 2.5% CGST
+    const sgstAmt = Math.round((taxable * 0.025) * 100) / 100; // 2.5% SGST
+    const totalTax = Math.round((cgstAmt + sgstAmt) * 100) / 100; // 5.0% GST
+    const fee = 0; // Flat or waived delivery fee (FREE)
+    const gross = Math.round((taxable + totalTax + fee) * 100) / 100;
+    const payable = Math.max(0, gross);
 
     return {
-      subtotal: Math.round(sub * 100) / 100,
-      taxTotal: Math.round(tax * 100) / 100,
-      deliveryFee: fee,
+      subtotal: roundedSubtotal,
       discount: disc,
+      taxableAmount: taxable,
+      cgst: cgstAmt,
+      sgst: sgstAmt,
+      taxTotal: totalTax,
+      deliveryFee: fee,
       payableAmount: payable,
       itemCount: count,
     };
@@ -107,9 +116,12 @@ export const CustomerCartProvider: React.FC<{ children: React.ReactNode }> = ({ 
     restaurantLogo,
     items,
     subtotal,
+    discount,
+    taxableAmount,
+    cgst,
+    sgst,
     taxTotal,
     deliveryFee,
-    discount,
     couponCode,
     payableAmount,
   };

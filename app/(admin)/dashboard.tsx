@@ -287,13 +287,48 @@ export default function DashboardScreen() {
     }
   };
 
-  // Open Close Register Dialog
+  const [unsettledOrdersForClose, setUnsettledOrdersForClose] = useState<Order[]>([]);
+
+  // Open Close Register Dialog (Restricted until all orders are settled)
   const handleInitiateCloseRegister = async () => {
     if (!activeRegister) return;
-    const recon = await dayRegisterService.calculateRegisterReconciliation(activeRegister, activeRestaurantId);
-    setLiveReconciliation(recon);
-    setCountedCashInput(recon.expected_cash.toString());
-    setShowCloseModal(true);
+    try {
+      const unsettled = await dayRegisterService.getUnsettledOrders(activeRestaurantId);
+      setUnsettledOrdersForClose(unsettled);
+
+      if (unsettled.length > 0) {
+        const orderListPreview = unsettled
+          .slice(0, 5)
+          .map((o) => `#${o.order_number}`)
+          .join(', ');
+        const moreCount = unsettled.length > 5 ? ` and ${unsettled.length - 5} more` : '';
+        const msg = `Cannot close register until all orders are settled.\n\nThere are ${unsettled.length} active/unsettled order(s): ${orderListPreview}${moreCount}.\n\nPlease settle or cancel all orders before closing the register.`;
+
+        if (Platform.OS === 'web') {
+          const gotoOrders = typeof window !== 'undefined' ? window.confirm(`${msg}\n\nClick OK to go to Orders feed.`) : false;
+          if (gotoOrders) {
+            router.push('/(admin)/orders' as any);
+          }
+        } else {
+          Alert.alert('Unsettled Orders Pending', msg, [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'View Orders',
+              onPress: () => router.push('/(admin)/orders' as any),
+            },
+          ]);
+        }
+        return;
+      }
+
+      const recon = await dayRegisterService.calculateRegisterReconciliation(activeRegister, activeRestaurantId);
+      setLiveReconciliation(recon);
+      setCountedCashInput(recon.expected_cash.toString());
+      setShowCloseModal(true);
+    } catch (err: any) {
+      if (Platform.OS === 'web') window.alert(err.message);
+      else Alert.alert('Error', err.message);
+    }
   };
 
   // Handle Close Register Submit
@@ -308,6 +343,19 @@ export default function DashboardScreen() {
 
     setSubmittingClose(true);
     try {
+      const unsettled = await dayRegisterService.getUnsettledOrders(activeRestaurantId);
+      if (unsettled.length > 0) {
+        setUnsettledOrdersForClose(unsettled);
+        const orderListPreview = unsettled
+          .slice(0, 5)
+          .map((o) => `#${o.order_number}`)
+          .join(', ');
+        const moreCount = unsettled.length > 5 ? ` and ${unsettled.length - 5} more` : '';
+        throw new Error(
+          `Cannot close register: There are ${unsettled.length} unsettled order(s) (${orderListPreview}${moreCount}). Please settle or cancel all orders before closing the register.`
+        );
+      }
+
       const closed = await dayRegisterService.closeRegister({
         register_id: activeRegister.id,
         actual_cash_counted: counted,
@@ -318,6 +366,7 @@ export default function DashboardScreen() {
 
       setActiveRegister(null);
       setShowCloseModal(false);
+      setUnsettledOrdersForClose([]);
       await loadData();
       setViewingZReport(closed);
 
@@ -330,6 +379,7 @@ export default function DashboardScreen() {
           : `Cash Shortage: -₹${Math.abs(diff).toFixed(2)}`;
       const msg = `Register CLOSED for ${closed.register_date}.\n${diffText}\nZ-Report generated.`;
       if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Register Closed', msg);
     } catch (err: any) {
       if (Platform.OS === 'web') window.alert(err.message);
       else Alert.alert('Close Register Error', err.message);
@@ -1760,6 +1810,46 @@ export default function DashboardScreen() {
               Complete physical cash count and verify shift sales before generating the official Z-Report.
             </Text>
 
+            {unsettledOrdersForClose.length > 0 && (
+              <View
+                style={{
+                  backgroundColor: '#fee2e2',
+                  borderWidth: 1.5,
+                  borderColor: '#ef4444',
+                  borderRadius: 8,
+                  padding: 12,
+                  marginBottom: 14,
+                }}
+              >
+                <Text style={{ color: '#b91c1c', fontWeight: '800', fontSize: 13, marginBottom: 4 }}>
+                  ⚠️ Cannot Close Register: {unsettledOrdersForClose.length} Unsettled Order(s) Pending
+                </Text>
+                <Text style={{ color: '#7f1d1d', fontSize: 12, lineHeight: 16 }}>
+                  Orders: {unsettledOrdersForClose.slice(0, 5).map((o) => `#${o.order_number}`).join(', ')}
+                  {unsettledOrdersForClose.length > 5 ? ` and ${unsettledOrdersForClose.length - 5} more` : ''}.
+                  All orders must be settled or cancelled before closing the shift.
+                </Text>
+                <TouchableOpacity
+                  style={{
+                    marginTop: 8,
+                    backgroundColor: '#b91c1c',
+                    paddingVertical: 6,
+                    paddingHorizontal: 12,
+                    borderRadius: 6,
+                    alignSelf: 'flex-start',
+                  }}
+                  onPress={() => {
+                    setShowCloseModal(false);
+                    router.push('/(admin)/orders' as any);
+                  }}
+                >
+                  <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 12 }}>
+                    ➡️ Go to Orders to Settle
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* Complete Reconciliation Snapshot Grid */}
             <View style={styles.reconCard}>
               {/* 1. Opening Cash */}
@@ -1899,14 +1989,20 @@ export default function DashboardScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 testID="confirm-close-register-btn"
-                style={[styles.submitBtn, { backgroundColor: '#dc2626' }]}
+                style={[
+                  styles.submitBtn,
+                  { backgroundColor: '#dc2626' },
+                  (submittingClose || unsettledOrdersForClose.length > 0) && { opacity: 0.5 },
+                ]}
                 onPress={handleCloseRegisterSubmit}
-                disabled={submittingClose}
+                disabled={submittingClose || unsettledOrdersForClose.length > 0}
               >
                 {submittingClose ? (
                   <ActivityIndicator color="#ffffff" />
                 ) : (
-                  <Text style={styles.submitBtnText}>Confirm & Close Register</Text>
+                  <Text style={styles.submitBtnText}>
+                    {unsettledOrdersForClose.length > 0 ? '⚠️ Settle All Orders First' : 'Confirm & Close Register'}
+                  </Text>
                 )}
               </TouchableOpacity>
             </View>

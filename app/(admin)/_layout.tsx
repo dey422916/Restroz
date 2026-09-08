@@ -7,14 +7,16 @@ import { usePos } from '../../src/context/PosContext';
 import { useSettings } from '../../src/context/SettingsContext';
 import { subscriptionService, SubscriptionAccessStatus } from '../../src/services/api/subscriptionService';
 import { SubscriptionLockOverlay } from '../../src/components/common/SubscriptionLockOverlay';
+import { useNewOrderTracker } from '../../src/hooks/useNewOrderTracker';
 
 export default function AdminLayout() {
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const router = useRouter();
   const { user, role, isSuperAdmin, isAdmin, activeRestaurantId, activeRestaurant, hasPermission, loading, logout } = useAuth();
-  const { pendingCustomerOrders } = usePos();
+  const { pendingCustomerOrders, activeOrders } = usePos();
   const { settings, isOnlineOrdersEnabled, toggleOnlineOrders } = useSettings();
+  const { newCounts } = useNewOrderTracker(activeRestaurantId, activeOrders);
 
   const [togglingOnline, setTogglingOnline] = useState<boolean>(false);
   const [subAccess, setSubAccess] = useState<SubscriptionAccessStatus | null>(null);
@@ -192,7 +194,16 @@ export default function AdminLayout() {
               </TouchableOpacity>
             )}
 
-            {pendingCustomerOrders.length > 0 && (
+            {newCounts.totalNewCount > 0 ? (
+              <TouchableOpacity
+                style={styles.alertBadge}
+                onPress={() => router.push('/(admin)/orders')}
+              >
+                <Text style={styles.alertBadgeText}>
+                  🔔 {newCounts.totalNewCount} New ({newCounts.onlineNewCount > 0 ? `${newCounts.onlineNewCount} Online` : ''}{newCounts.onlineNewCount > 0 && newCounts.qrNewCount > 0 ? ', ' : ''}{newCounts.qrNewCount > 0 ? `${newCounts.qrNewCount} QR` : ''})
+                </Text>
+              </TouchableOpacity>
+            ) : pendingCustomerOrders.length > 0 ? (
               <TouchableOpacity
                 style={styles.alertBadge}
                 onPress={() => router.push('/(admin)/orders')}
@@ -201,7 +212,7 @@ export default function AdminLayout() {
                   🔔 QR Orders ({pendingCustomerOrders.length})
                 </Text>
               </TouchableOpacity>
-            )}
+            ) : null}
 
             <TouchableOpacity
               style={styles.logoutBtn}
@@ -246,6 +257,8 @@ export default function AdminLayout() {
         >
           {navTabs.map((tab) => {
             const active = isTabActive(tab);
+            const isOrdersTab = tab.route === '/(admin)/orders';
+            const hasNew = isOrdersTab && newCounts.totalNewCount > 0;
             return (
               <TouchableOpacity
                 key={tab.route}
@@ -255,9 +268,18 @@ export default function AdminLayout() {
                 accessibilityState={{ selected: active }}
                 accessibilityLabel={tab.label}
               >
-                <Text style={[styles.tabChipText, active && styles.tabChipTextActive]}>
-                  {tab.label}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={[styles.tabChipText, active && styles.tabChipTextActive]}>
+                    {tab.label}
+                  </Text>
+                  {hasNew && (
+                    <View style={styles.tabBadgePill}>
+                      <Text style={styles.tabBadgePillText}>
+                        {newCounts.totalNewCount} New
+                      </Text>
+                    </View>
+                  )}
+                </View>
               </TouchableOpacity>
             );
           })}
@@ -489,5 +511,17 @@ const styles = StyleSheet.create({
   screenBody: {
     flex: 1,
     backgroundColor: '#f8fafc',
+  },
+  tabBadgePill: {
+    backgroundColor: '#ef4444',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 8,
+  },
+  tabBadgePillText: {
+    color: '#ffffff',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.2,
   },
 });

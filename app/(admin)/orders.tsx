@@ -35,6 +35,8 @@ import { cleanCustomerOrderNotes } from '../../src/utils/orderNotes';
 import { isValidPhoneNumber } from '../../src/utils/phone';
 import { validateGSTIN } from '../../src/utils/validators';
 import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
+import { useNotification } from '../../src/context/NotificationContext';
+import { useNewOrderTracker } from '../../src/hooks/useNewOrderTracker';
 
 export default function OrdersScreen() {
   const insets = useSafeAreaInsets();
@@ -42,9 +44,17 @@ export default function OrdersScreen() {
   const { openOrderId } = useLocalSearchParams<{ openOrderId?: string }>();
   const { user, activeRestaurantId, activeRestaurant } = useAuth();
   const { settings } = useSettings();
+  const { showToast, playOrderBell } = useNotification();
   const [orders, setOrders] = useState<Order[]>([]);
+  const [allTenantOrders, setAllTenantOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [tables, setTables] = useState<DiningTable[]>([]);
+
+  // Track new/unread incoming orders for Online Marketplace and QR Digital Menu
+  const { seenOrderIds, newCounts, isOrderNew, markAsSeen, markMultipleAsSeen } = useNewOrderTracker(
+    activeRestaurantId,
+    allTenantOrders.length > 0 ? allTenantOrders : orders
+  );
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -117,7 +127,7 @@ export default function OrdersScreen() {
         }
         clearOrdersCache(activeRestaurantId);
 
-        const [ordersRes, prodList, tableList] = await Promise.all([
+        const [ordersRes, prodList, tableList, fullTenantOrders] = await Promise.all([
           orderService.getOrdersPaginated({
             restaurantId: activeRestaurantId,
             page: 1,
@@ -128,9 +138,11 @@ export default function OrdersScreen() {
           }),
           productService.getProducts(activeRestaurantId),
           tableService.getTables(activeRestaurantId),
+          orderService.getOrders(activeRestaurantId, isRefresh),
         ]);
 
         setOrders(ordersRes.orders);
+        setAllTenantOrders(fullTenantOrders || []);
         setOrdersPage(1);
         setHasMoreOrders(ordersRes.hasMore);
         setProducts(prodList);
@@ -202,7 +214,18 @@ export default function OrdersScreen() {
           table: 'orders',
           filter: `restaurant_id=eq.${activeRestaurantId}`,
         },
-        () => {
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const newOrd = payload.new as Order;
+            const src = resolveOrderSource(newOrd);
+            if (src === 'CUSTOMER_APP') {
+              showToast('info', '🌐 New Online Order!', `Order #${newOrd.order_number || ''} received from marketplace.`);
+              playOrderBell();
+            } else if (src === 'CUSTOMER_QR') {
+              showToast('info', '📱 New QR Order!', `Order #${newOrd.order_number || ''} received from table QR.`);
+              playOrderBell();
+            }
+          }
           loadData(true);
         }
       )
@@ -211,7 +234,7 @@ export default function OrdersScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [activeRestaurantId, loadData]);
+  }, [activeRestaurantId, loadData, showToast, playOrderBell]);
 
   // Auto-navigate to the correct tab/filter when redirected from KOT dispatch
   const handledOpenOrderIdRef = useRef<string | null>(null);
@@ -318,6 +341,7 @@ export default function OrdersScreen() {
 
   // Open Edit Modal
   const openEditModal = (ord: Order) => {
+    markAsSeen(ord.id);
     if (isDispatchedDeliveryOrder(ord)) {
       Alert.alert(
         'Modification Locked',
@@ -875,6 +899,7 @@ export default function OrdersScreen() {
   };
 
   const openPayModal = (order: Order) => {
+    markAsSeen(order.id);
     setPayOrderModal(order);
     setPayMethod('cash');
     setPayReceived(true);
@@ -1041,18 +1066,37 @@ export default function OrdersScreen() {
             style={[styles.categoryTabBtn, categoryTab === 'online' && styles.categoryTabBtnActive]}
             onPress={() => setCategoryTab('online')}
           >
-            <Text style={[styles.categoryTabText, categoryTab === 'online' && styles.categoryTabTextActive]}>
-              🌐 Online Delivery
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 5 }}>
+              <Text style={[styles.categoryTabText, categoryTab === 'online' && styles.categoryTabTextActive]}>
+                🌐 Online Orders
+              </Text>
+              {newCounts.onlineNewCount > 0 && (
+                <View style={styles.newBadgePillOnline}>
+                  <Text style={styles.newBadgePillText}>
+                    {newCounts.onlineNewCount} New
+                  </Text>
+                </View>
+              )}
+            </View>
           </TouchableOpacity>
 
           <TouchableOpacity
+            testID="orders-tab-qr"
             style={[styles.categoryTabBtn, categoryTab === 'qr' && styles.categoryTabBtnActive]}
             onPress={() => setCategoryTab('qr')}
           >
-            <Text style={[styles.categoryTabText, categoryTab === 'qr' && styles.categoryTabTextActive]}>
-              📱 QR Digital Menu
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 5 }}>
+              <Text style={[styles.categoryTabText, categoryTab === 'qr' && styles.categoryTabTextActive]}>
+                📱 QR Orders
+              </Text>
+              {newCounts.qrNewCount > 0 && (
+                <View style={styles.newBadgePillQr}>
+                  <Text style={styles.newBadgePillText}>
+                    {newCounts.qrNewCount} New
+                  </Text>
+                </View>
+              )}
+            </View>
           </TouchableOpacity>
         </View>
 
@@ -1180,6 +1224,7 @@ export default function OrdersScreen() {
             const source: OrderSource = resolveOrderSource(order);
             const isCustomerQr = source === 'CUSTOMER_QR';
             const isCustomerApp = source === 'CUSTOMER_APP';
+            const isNew = isOrderNew(order);
             const createdTime = formatOrderDateTime(order.created_at);
 
             // Real table resolution with section
@@ -1219,31 +1264,47 @@ export default function OrdersScreen() {
                   isTwoColumn && { width: cardWidth },
                   isCancelled && styles.cardCancelled,
                   isCompleted && styles.cardCompleted,
+                  isNew && (isCustomerApp ? styles.cardNewOnline : styles.cardNewQr),
                 ]}
               >
-                {/* Card Header: Order #, Unified Type Badge, Status Badge */}
+                {/* Card Header: Order #, Unified Type Badge, NEW badge, Status Badge */}
                 <View style={styles.cardHeader}>
                   <View style={styles.cardHeaderLeft}>
                     <Text style={styles.orderNum}>#{order.order_number}</Text>
                     <View style={[styles.typeBadge, typeBadgeStyle]}>
                       <Text style={[styles.typeBadgeText, typeBadgeTextStyle]}>{typeBadgeLabel}</Text>
                     </View>
+                    {isNew && (
+                      <View style={styles.newOrderBadge}>
+                        <Text style={styles.newOrderBadgeText}>🔥 NEW</Text>
+                      </View>
+                    )}
                   </View>
 
-                  <View
-                    style={[
-                      styles.statusBadge,
-                      order.status === 'held'
-                        ? { backgroundColor: '#fef3c7', borderColor: '#fde047' }
-                        : order.status === 'out_for_delivery'
-                        ? styles.statusOutForDelivery
-                        : isCompleted
-                        ? styles.statusCompleted
-                        : isCancelled
-                        ? styles.statusCancelled
-                        : styles.statusConfirmed,
-                    ]}
-                  >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    {isNew && (
+                      <TouchableOpacity
+                        style={styles.markSeenBtn}
+                        onPress={() => markAsSeen(order.id)}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      >
+                        <Text style={styles.markSeenBtnText}>✓ Mark Seen</Text>
+                      </TouchableOpacity>
+                    )}
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        order.status === 'held'
+                          ? { backgroundColor: '#fef3c7', borderColor: '#fde047' }
+                          : order.status === 'out_for_delivery'
+                          ? styles.statusOutForDelivery
+                          : isCompleted
+                          ? styles.statusCompleted
+                          : isCancelled
+                          ? styles.statusCancelled
+                          : styles.statusConfirmed,
+                      ]}
+                    >
                     <Text
                       style={[
                         styles.statusBadgeText,
@@ -1270,6 +1331,7 @@ export default function OrdersScreen() {
                     </Text>
                   </View>
                 </View>
+              </View>
 
                 {/* Customer & Floor Information */}
                 <View style={styles.metaRow}>
@@ -1444,7 +1506,10 @@ export default function OrdersScreen() {
                             ) : (
                               <TouchableOpacity
                                 style={[styles.gridActionBtn, styles.actionViewBg]}
-                                onPress={() => setViewOrderModal(order)}
+                                onPress={() => {
+                                  markAsSeen(order.id);
+                                  setViewOrderModal(order);
+                                }}
                               >
                                 <Text style={styles.actionBtnTextDark}>👁️ View</Text>
                               </TouchableOpacity>
@@ -1514,7 +1579,10 @@ export default function OrdersScreen() {
                       <View style={styles.cardActionRow}>
                         <TouchableOpacity
                           style={[styles.gridActionBtn, styles.actionViewBg]}
-                          onPress={() => setViewOrderModal(order)}
+                          onPress={() => {
+                            markAsSeen(order.id);
+                            setViewOrderModal(order);
+                          }}
                         >
                           <Text style={styles.actionBtnTextDark}>👁️ Bill</Text>
                         </TouchableOpacity>
@@ -3246,5 +3314,74 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  newBadgePillOnline: {
+    backgroundColor: '#2563eb',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  newBadgePillQr: {
+    backgroundColor: '#7c3aed',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  newBadgePillText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.2,
+  },
+  newOrderBadge: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#ef4444',
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginLeft: 6,
+  },
+  newOrderBadgeText: {
+    color: '#dc2626',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  cardNewOnline: {
+    borderColor: '#3b82f6',
+    borderWidth: 1.5,
+    backgroundColor: '#f8fafc',
+    shadowColor: '#3b82f6',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  cardNewQr: {
+    borderColor: '#8b5cf6',
+    borderWidth: 1.5,
+    backgroundColor: '#faf5ff',
+    shadowColor: '#8b5cf6',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  markSeenBtn: {
+    backgroundColor: '#f1f5f9',
+    borderColor: '#cbd5e1',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  markSeenBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
   },
 });

@@ -293,6 +293,18 @@ export const dayRegisterService = {
   },
 
   /**
+   * Get all active / unsettled orders for a restaurant.
+   * An order is considered unsettled if its status is neither 'completed' nor 'cancelled',
+   * or if its payment_status is not 'paid'.
+   */
+  async getUnsettledOrders(restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<Order[]> {
+    const allOrders = await orderService.getOrders(restaurantId);
+    return allOrders.filter(
+      (ord) => ord.status !== 'cancelled' && (ord.status !== 'completed' || ord.payment_status !== 'paid')
+    );
+  },
+
+  /**
    * Close the currently open register, compute discrepancy and produce Z-Report
    */
   async closeRegister(params: {
@@ -315,6 +327,19 @@ export const dayRegisterService = {
     // Prevent closing an already closed register twice
     if (targetRegister.status === 'closed') {
       throw new Error(`Register for ${targetRegister.register_date} has already been closed.`);
+    }
+
+    // Strict restriction: All orders must be settled or cancelled before closing the register
+    const unsettledOrders = await this.getUnsettledOrders(targetRestId);
+    if (unsettledOrders.length > 0) {
+      const orderListPreview = unsettledOrders
+        .slice(0, 5)
+        .map((o) => `#${o.order_number}`)
+        .join(', ');
+      const moreCount = unsettledOrders.length > 5 ? ` and ${unsettledOrders.length - 5} more` : '';
+      throw new Error(
+        `Cannot close register: There are ${unsettledOrders.length} unsettled order(s) (${orderListPreview}${moreCount}). Please settle or cancel all orders before closing the register.`
+      );
     }
 
     const now = new Date();

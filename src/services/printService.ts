@@ -52,78 +52,80 @@ export function formatLogoDataUri(urlOrBase64?: string | null): string {
 async function executeIsolatedPrint(html: string): Promise<void> {
   if (isWebEnvironment) {
     return new Promise<void>((resolve) => {
-      // Remove previous print iframe if existing
-      const existing = document.getElementById('ratnadeep-pos-print-frame');
-      if (existing) {
-        try { existing.remove(); } catch (_) {}
-      }
+      try {
+        // Clean up any existing print iframe
+        const existing = document.getElementById('ratnadeep-pos-print-frame');
+        if (existing) {
+          try { existing.remove(); } catch (_) {}
+        }
 
-      const iframe = document.createElement('iframe');
-      iframe.id = 'ratnadeep-pos-print-frame';
-      iframe.name = 'ratnadeep-pos-print-frame';
-      // Use in-DOM rendered dimensions with low opacity so modern browsers do not suppress print()
-      iframe.style.position = 'fixed';
-      iframe.style.right = '0';
-      iframe.style.bottom = '0';
-      iframe.style.width = '1px';
-      iframe.style.height = '1px';
-      iframe.style.border = 'none';
-      iframe.style.opacity = '0.01';
-      iframe.style.zIndex = '-9999';
-      document.body.appendChild(iframe);
+        const iframe = document.createElement('iframe');
+        iframe.id = 'ratnadeep-pos-print-frame';
+        iframe.name = 'ratnadeep-pos-print-frame';
+        // Position off-screen with non-zero dimensions so Chromium renders print styles fully
+        iframe.style.position = 'fixed';
+        iframe.style.top = '-9999px';
+        iframe.style.left = '-9999px';
+        iframe.style.width = '320px';
+        iframe.style.height = '480px';
+        iframe.style.border = 'none';
+        iframe.style.visibility = 'hidden';
+        document.body.appendChild(iframe);
 
-      const triggerPrint = () => {
-        try {
-          iframe.contentWindow?.focus();
-          iframe.contentWindow?.print();
-        } catch (e) {
-          console.warn('Iframe print failed, falling back to window.print():', e);
+        const performPrint = () => {
           try {
-            window.print();
-          } catch (winErr) {
-            console.warn('Direct window.print fallback failed:', winErr);
-          }
-        } finally {
-          setTimeout(() => {
-            try { iframe.remove(); } catch (_) {}
-            resolve();
-          }, 300);
-        }
-      };
-
-      const doc = iframe.contentWindow?.document || iframe.contentDocument;
-      if (doc) {
-        doc.open();
-        doc.write(html);
-        doc.close();
-
-        // Wait for all images inside the iframe to fully load before printing
-        const imgs = Array.from(doc.images);
-        if (imgs.length === 0) {
-          setTimeout(triggerPrint, 100);
-        } else {
-          let finished = false;
-          const finalize = () => {
-            if (!finished) {
-              finished = true;
-              setTimeout(triggerPrint, 100);
+            if (iframe.contentWindow) {
+              iframe.contentWindow.focus();
+              iframe.contentWindow.print();
             }
-          };
+          } catch (e) {
+            console.warn('Iframe print failed, falling back to window.print():', e);
+            try {
+              window.print();
+            } catch (winErr) {
+              console.warn('Direct window.print fallback failed:', winErr);
+            }
+          } finally {
+            resolve();
+          }
+        };
 
-          Promise.all(
-            imgs.map((img) => {
-              if (img.complete) return Promise.resolve(null);
-              return new Promise((res) => {
-                img.onload = res;
-                img.onerror = res;
-              });
-            })
-          ).then(finalize);
+        const doc = iframe.contentWindow?.document || iframe.contentDocument;
+        if (doc) {
+          doc.open();
+          doc.write(html);
+          doc.close();
 
-          // Safety fallback timeout
-          setTimeout(finalize, 600);
+          // Ensure images and fonts are loaded before triggering print dialog
+          const imgs = Array.from(doc.images);
+          if (imgs.length === 0) {
+            setTimeout(performPrint, 200);
+          } else {
+            let fired = false;
+            const onComplete = () => {
+              if (!fired) {
+                fired = true;
+                setTimeout(performPrint, 200);
+              }
+            };
+
+            Promise.all(
+              imgs.map((img) => {
+                if (img.complete) return Promise.resolve(null);
+                return new Promise((res) => {
+                  img.onload = res;
+                  img.onerror = res;
+                });
+              })
+            ).then(onComplete);
+
+            setTimeout(onComplete, 800);
+          }
+        } else {
+          resolve();
         }
-      } else {
+      } catch (err) {
+        console.warn('executeIsolatedPrint error:', err);
         resolve();
       }
     });

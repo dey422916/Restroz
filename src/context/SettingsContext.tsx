@@ -17,10 +17,10 @@ interface SettingsContextType {
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
 
 export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { activeRestaurantId, activeRestaurant } = useAuth();
+  const { activeRestaurantId, activeRestaurant, user } = useAuth();
 
   const [settings, setSettings] = useState<RestaurantSettings>({
-    id: activeRestaurantId || 'rest-1',
+    id: activeRestaurantId || '',
     name: activeRestaurant?.name || 'Restaurant POS',
     legal_name: activeRestaurant?.name || 'Restaurant POS Pvt Ltd',
     address: activeRestaurant?.address || 'Main Road',
@@ -40,47 +40,72 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [isOnlineOrdersEnabled, setIsOnlineOrdersEnabled] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(true);
 
-  const fetchLatestSettings = useCallback(async () => {
+  // Keep a ref to activeRestaurant to avoid re-triggering effects when object identity changes
+  const activeRestaurantRef = React.useRef(activeRestaurant);
+  useEffect(() => {
+    activeRestaurantRef.current = activeRestaurant;
+  }, [activeRestaurant]);
+
+  const isMountedRef = React.useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const fetchLatestSettings = useCallback(async (targetRestId?: string) => {
+    const idToFetch = targetRestId || activeRestaurantId;
+    if (!idToFetch || !user?.id) {
+      setLoading(false);
+      return;
+    }
     try {
       const [s, onlineStatus] = await Promise.all([
-        settingsService.getSettings(activeRestaurantId),
-        activeRestaurantId
-          ? marketplaceService.getRestaurantOnlineStatus(activeRestaurantId)
-          : Promise.resolve(true),
+        settingsService.getSettings(idToFetch),
+        marketplaceService.getRestaurantOnlineStatus(idToFetch),
       ]);
+
+      if (!isMountedRef.current) return;
 
       setIsOnlineOrdersEnabled(onlineStatus);
 
-      // Ensure activeRestaurant's name, logo, and banner override default if settings record is fresh
-      const merged: RestaurantSettings = {
+      setSettings((prev) => ({
+        ...prev,
         ...s,
-        name: activeRestaurant?.name || s.name || 'Restaurant POS',
-        logo_url: activeRestaurant?.logo_url || s.logo_url || '',
-        phone: activeRestaurant?.phone || s.phone || '',
-        address: activeRestaurant?.address || s.address || '',
-        banner_url: s.banner_url || '',
-        banner_urls: s.banner_urls || [],
-        gallery_urls: s.gallery_urls || [],
-        restaurant_id: activeRestaurantId,
+        name: activeRestaurantRef.current?.name || s.name || prev.name || 'Restaurant POS',
+        logo_url: activeRestaurantRef.current?.logo_url || s.logo_url || prev.logo_url || '',
+        phone: activeRestaurantRef.current?.phone || s.phone || prev.phone || '',
+        address: activeRestaurantRef.current?.address || s.address || prev.address || '',
+        banner_url: s.banner_url || prev.banner_url || '',
+        banner_urls: s.banner_urls && s.banner_urls.length > 0 ? s.banner_urls : (prev.banner_urls || []),
+        gallery_urls: s.gallery_urls && s.gallery_urls.length > 0 ? s.gallery_urls : (prev.gallery_urls || []),
+        restaurant_id: idToFetch,
         online_orders_enabled: onlineStatus,
-      };
-      setSettings(merged);
-      return merged;
+      }));
+    } catch (e) {
+      console.warn('SettingsContext fetch error:', e);
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
-  }, [activeRestaurantId, activeRestaurant]);
+  }, [activeRestaurantId, user?.id]);
 
   useEffect(() => {
-    fetchLatestSettings();
+    if (!activeRestaurantId || !user?.id) {
+      setLoading(false);
+      return;
+    }
 
-    // Supabase Realtime subscription on restaurant_settings & restaurant_public_profiles for active restaurant
-    if (isSupabaseConfigured && activeRestaurantId) {
-      const settingsChName = `sub_settings_${activeRestaurantId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      const profileChName = `sub_pub_prof_${activeRestaurantId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    // Initial fetch once per restaurant
+    fetchLatestSettings(activeRestaurantId);
 
-      const settingsChannel = supabase
-        .channel(settingsChName)
+    // Exactly one single Realtime channel per activeRestaurantId
+    if (isSupabaseConfigured) {
+      const channelName = `realtime_settings_${activeRestaurantId}`;
+      const channel = supabase
+        .channel(channelName)
         .on(
           'postgres_changes',
           {
@@ -91,18 +116,21 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           },
           (payload) => {
             if (payload.new && (payload.new as any).id) {
+              const newRec = payload.new as any;
               setSettings((prev) => ({
                 ...prev,
-                ...(payload.new as RestaurantSettings),
-                name: activeRestaurant?.name || (payload.new as any).name || prev.name,
+                ...newRec,
+                name: activeRestaurantRef.current?.name || newRec.name || prev.name,
+                default_tax_rate: newRec.default_tax_rate !== undefined ? Number(newRec.default_tax_rate) : prev.default_tax_rate,
+                tax_rate: newRec.tax_rate !== undefined ? Number(newRec.tax_rate) : prev.tax_rate,
+                cgst_rate: newRec.cgst_rate !== undefined ? Number(newRec.cgst_rate) : prev.cgst_rate,
+                sgst_rate: newRec.sgst_rate !== undefined ? Number(newRec.sgst_rate) : prev.sgst_rate,
+                gstin: newRec.gstin !== undefined ? newRec.gstin : prev.gstin,
+                auto_print_kot: newRec.kot_auto_print !== undefined ? Boolean(newRec.kot_auto_print) : prev.auto_print_kot,
               }));
             }
           }
         )
-        .subscribe();
-
-      const profileChannel = supabase
-        .channel(profileChName)
         .on(
           'postgres_changes',
           {
@@ -127,11 +155,10 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         .subscribe();
 
       return () => {
-        supabase.removeChannel(settingsChannel);
-        supabase.removeChannel(profileChannel);
+        supabase.removeChannel(channel);
       };
     }
-  }, [fetchLatestSettings, activeRestaurantId, activeRestaurant]);
+  }, [activeRestaurantId, user?.id, fetchLatestSettings]);
 
   const updateSettings = async (newSettings: Partial<RestaurantSettings>): Promise<RestaurantSettings> => {
     const updated = await settingsService.saveSettings(newSettings, activeRestaurantId);
@@ -158,7 +185,8 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const refreshSettings = async (): Promise<RestaurantSettings> => {
     setLoading(true);
-    return fetchLatestSettings();
+    await fetchLatestSettings();
+    return settings;
   };
 
   return (

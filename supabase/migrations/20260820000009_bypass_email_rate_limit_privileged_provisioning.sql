@@ -129,7 +129,7 @@ BEGIN
     ELSE
         -- 4. User does not exist: Provision new Supabase Auth User with confirmed email (Zero SMTP / Zero rate limits)
         v_user_id := gen_random_uuid();
-        v_enc_pwd := crypt(COALESCE(NULLIF(TRIM(p_password), ''), 'Ratnadeep1@'), gen_salt('bf'));
+        v_enc_pwd := crypt(COALESCE(NULLIF(TRIM(p_password), ''), 'RestroZ_Privileged_Default123!'), gen_salt('bf'));
 
         INSERT INTO auth.users (
             instance_id, id, aud, role, email, encrypted_password,

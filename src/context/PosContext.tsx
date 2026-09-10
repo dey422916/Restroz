@@ -20,7 +20,6 @@ import { useNotification } from './NotificationContext';
 import { useAuth } from './AuthContext';
 import { printService } from '../services/printService';
 import { supabase, isSupabaseConfigured } from '../services/supabase';
-import { DEFAULT_RESTAURANT_ID } from '../services/api/restaurantService';
 import { printedKotTracker } from '../utils/printedKotTracker';
 
 // Custom error to represent expected register closed validation
@@ -122,7 +121,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [pendingCustomerOrders, setPendingCustomerOrders] = useState<Order[]>([]);
 
   const refreshOrders = useCallback(async () => {
-    if (!activeRestaurantId) return;
+    if (!activeRestaurantId || !user) return;
     clearOrdersCache(activeRestaurantId);
     const orders = await orderService.getOrders(activeRestaurantId, true);
     setActiveOrders(orders);
@@ -132,13 +131,15 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const pending = orders.filter((o) => o.status === 'draft' && o.customer_name);
     setPendingCustomerOrders(pending);
-  }, [activeRestaurantId]);
+  }, [activeRestaurantId, user]);
 
   useEffect(() => {
-    refreshOrders();
+    if (activeRestaurantId && user) {
+      refreshOrders();
+    }
 
-    // Setup Supabase Realtime Listener for Instant Order Notifications strictly scoped to activeRestaurantId
-    if (isSupabaseConfigured && activeRestaurantId) {
+    // Setup Supabase Realtime Listener for Instant Order Notifications strictly scoped to activeRestaurantId for authenticated users
+    if (isSupabaseConfigured && activeRestaurantId && user) {
       const channelName = `realtime_orders_${activeRestaurantId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       const ordersChannel = supabase
         .channel(channelName)
@@ -164,14 +165,14 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return () => {
         supabase.removeChannel(ordersChannel);
       };
-    } else if (!isSupabaseConfigured && activeRestaurantId) {
+    } else if (!isSupabaseConfigured && activeRestaurantId && user) {
       // Fallback polling for offline/local mode
       const interval = setInterval(() => {
         refreshOrders();
       }, 5000);
       return () => clearInterval(interval);
     }
-  }, [activeRestaurantId, refreshOrders, showToast, playOrderBell]);
+  }, [activeRestaurantId, user, refreshOrders, showToast, playOrderBell]);
 
   const setOrderType = (type: OrderType) => {
     setOrderTypeState(type);

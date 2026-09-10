@@ -20,7 +20,6 @@ import { categoryService } from '../../src/services/api/categoryService';
 import { productService } from '../../src/services/api/productService';
 import { useAuth } from '../../src/context/AuthContext';
 import { Category, Product } from '../../src/types';
-import { DEFAULT_RESTAURANT_ID } from '../../src/services/api/restaurantService';
 
 export default function CategoriesScreen() {
   const insets = useSafeAreaInsets();
@@ -108,7 +107,7 @@ export default function CategoriesScreen() {
 
     setSavingCategory(true);
     try {
-      const targetRestId = activeRestaurantId || DEFAULT_RESTAURANT_ID;
+      const targetRestId = activeRestaurantId;
       await categoryService.saveCategory({
         id: editingCategory?.id,
         restaurant_id: targetRestId,

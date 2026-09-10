@@ -2,7 +2,6 @@ import { Product, FoodType } from '../../types';
 import { mockStorage } from '../mockStorage';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import { CsvProductRow } from '../../utils/validators';
-import { DEFAULT_RESTAURANT_ID } from './restaurantService';
 import { subscriptionGuardService } from './subscriptionGuardService';
 import { storageService } from './storageService';
 
@@ -21,11 +20,12 @@ export function clearProductsCache(restaurantId?: string) {
 export const productService = {
   clearProductsCache,
 
-  async getProducts(restaurantId: string = DEFAULT_RESTAURANT_ID, forceRefresh: boolean = false): Promise<Product[]> {
-    const targetRestId = restaurantId || DEFAULT_RESTAURANT_ID;
+  async getProducts(restaurantId?: string, forceRefresh: boolean = false): Promise<Product[]> {
+    const targetRestId = restaurantId || '';
     const now = Date.now();
-    if (!forceRefresh && inMemoryProductsCache[targetRestId] && (now - inMemoryProductsCache[targetRestId].timestamp < PRODUCTS_CACHE_TTL)) {
-      return inMemoryProductsCache[targetRestId].data;
+    const cacheKey = targetRestId || '__all__';
+    if (!forceRefresh && inMemoryProductsCache[cacheKey] && (now - inMemoryProductsCache[cacheKey].timestamp < PRODUCTS_CACHE_TTL)) {
+      return inMemoryProductsCache[cacheKey].data;
     }
 
     if (isSupabaseConfigured) {
@@ -42,7 +42,7 @@ export const productService = {
         const { data, error } = await query;
         if (!error && data) {
           const list = (data as Product[]).map(p => ({ ...p, restaurant_id: p.restaurant_id || targetRestId }));
-          inMemoryProductsCache[targetRestId] = {
+          inMemoryProductsCache[cacheKey] = {
             timestamp: now,
             data: list,
           };
@@ -54,15 +54,19 @@ export const productService = {
       }
     }
     const local = mockStorage.getProducts();
-    inMemoryProductsCache[targetRestId] = {
+    const filtered = targetRestId ? local.filter(p => p.restaurant_id === targetRestId) : local;
+    inMemoryProductsCache[cacheKey] = {
       timestamp: now,
-      data: local,
+      data: filtered,
     };
-    return local;
+    return filtered;
   },
 
-  async saveProduct(product: Partial<Product>, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<Product> {
+  async saveProduct(product: Partial<Product>, restaurantId?: string): Promise<Product> {
     const targetRestId = product.restaurant_id || restaurantId;
+    if (!targetRestId) {
+      throw new Error('Restaurant ID is required to save product.');
+    }
 
     // Check Plan Product Limit if creating a new product
     if (!product.id) {
@@ -206,7 +210,7 @@ export const productService = {
     }
   },
 
-  async deleteProduct(id: string, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<{ deleted: boolean; deactivated: boolean }> {
+  async deleteProduct(id: string, restaurantId?: string): Promise<{ deleted: boolean; deactivated: boolean }> {
     clearProductsCache(restaurantId);
     if (isSupabaseConfigured) {
       try {
@@ -229,7 +233,7 @@ export const productService = {
     return { deleted: true, deactivated: false };
   },
 
-  async toggleAvailability(id: string, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<Product> {
+  async toggleAvailability(id: string, restaurantId?: string): Promise<Product> {
     const products = await this.getProducts(restaurantId);
     const product = products.find((p) => p.id === id);
     if (!product) throw new Error('Product not found.');
@@ -238,7 +242,7 @@ export const productService = {
     return this.saveProduct({ ...product, is_available: newAvailable }, restaurantId);
   },
 
-  async toggleProductActive(id: string, active?: boolean, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<Product> {
+  async toggleProductActive(id: string, active?: boolean, restaurantId?: string): Promise<Product> {
     const products = await this.getProducts(restaurantId);
     const product = products.find((p) => p.id === id);
     if (!product) throw new Error('Product not found.');
@@ -247,7 +251,7 @@ export const productService = {
     return this.saveProduct({ ...product, is_active: newActive }, restaurantId);
   },
 
-  async updateStock(id: string, newStock: number, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<Product> {
+  async updateStock(id: string, newStock: number, restaurantId?: string): Promise<Product> {
     const products = await this.getProducts(restaurantId);
     const product = products.find((p) => p.id === id);
     if (!product) throw new Error('Product not found.');
@@ -262,9 +266,12 @@ export const productService = {
 
   async bulkImportProducts(
     rows: CsvProductRow[],
-    restaurantId: string = DEFAULT_RESTAURANT_ID
+    restaurantId?: string
   ): Promise<{ imported: number; importedCount: number; errors: string[] }> {
-    const targetRestId = restaurantId || DEFAULT_RESTAURANT_ID;
+    const targetRestId = restaurantId;
+    if (!targetRestId) {
+      throw new Error('Restaurant ID is required for bulk product import.');
+    }
 
     // Check bulk product limit upfront atomically
     const limitCheck = await subscriptionGuardService.checkPlanLimit(targetRestId, 'PRODUCTS', rows.length);

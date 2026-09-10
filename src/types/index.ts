@@ -42,6 +42,7 @@ export interface UserProfile {
   email: string;
   full_name: string;
   phone?: string;
+  avatar_url?: string;
   role: UserRole;
   created_at: string;
   updated_at?: string;
@@ -67,6 +68,9 @@ export interface RestaurantSettings {
   invoice_prefix: string;
   kot_prefix: string;
   default_tax_rate: number;
+  tax_rate?: number;
+  cgst_rate?: number;
+  sgst_rate?: number;
   gst_registered?: boolean;
   is_gst_enabled?: boolean;
   tax_invoice_enabled?: boolean;

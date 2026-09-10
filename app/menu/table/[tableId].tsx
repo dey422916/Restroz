@@ -23,8 +23,8 @@ import { orderService } from '../../../src/services/api/orderService';
 import { couponService } from '../../../src/services/api/couponService';
 import { addressService } from '../../../src/services/api/addressService';
 import { settingsService } from '../../../src/services/api/settingsService';
-import { DEFAULT_RESTAURANT_ID } from '../../../src/services/api/restaurantService';
-import { Product, Category, DiningTable, OrderItem, Order, Coupon, PaymentMethod, SavedAddress } from '../../../src/types';
+import { restaurantService } from '../../../src/services/api/restaurantService';
+import { Product, Category, DiningTable, OrderItem, Order, Coupon, PaymentMethod, SavedAddress, RestaurantSettings } from '../../../src/types';
 import { formatCurrency } from '../../../src/utils/currency';
 import { calculateOrderTotals, getOrderSubtotal } from '../../../src/utils/gst';
 import { formatOrderDateTime } from '../../../src/utils/dateUtils';
@@ -149,16 +149,20 @@ export default function CustomerDigitalMenuScreen() {
     if (isRefresh) setRefreshing(true);
     try {
       const resolvedTable = await tableService.resolveTable(tableId || 'general');
+      if (!resolvedTable || !resolvedTable.restaurant_id) {
+        console.warn('Unable to resolve table context for identifier:', tableId);
+        return;
+      }
       setTable(resolvedTable);
-      const restId = resolvedTable?.restaurant_id || DEFAULT_RESTAURANT_ID;
+      const restId = resolvedTable.restaurant_id;
       const [prods, cats, restSettings] = await Promise.all([
         productService.getProducts(restId),
         categoryService.getCategories(restId),
-        settingsService.getSettings(restId).catch(() => settingsService.getPublicRestaurantInfo(restId)),
+        settingsService.getPublicRestaurantInfo(restId),
       ]);
       setProducts(prods);
       setCategories(cats);
-      setRestSettingsData(restSettings);
+      setRestSettingsData(restSettings as RestaurantSettings);
       setRestaurantInfo({
         name: (resolvedTable as any)?.restaurant_name || restSettings?.name || 'Restaurant',
         logo_url: restSettings?.logo_url,
@@ -423,8 +427,11 @@ export default function CustomerDigitalMenuScreen() {
 
       const targetRestaurantId =
         activeTable?.restaurant_id ||
-        table?.restaurant_id ||
-        DEFAULT_RESTAURANT_ID;
+        table?.restaurant_id;
+
+      if (!targetRestaurantId) {
+        throw new Error('Unable to identify restaurant for this table. Please scan the QR code again.');
+      }
 
       const currentTableNum =
         activeTable?.table_number ||

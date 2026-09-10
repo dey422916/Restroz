@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator, useWindowDimensions, Image } from 'react-native';
 import { Slot, useRouter, usePathname } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCustomerCart } from '../../src/context/CustomerCartContext';
@@ -18,6 +18,8 @@ export default function MarketplaceLayout() {
   const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 768;
   const { itemCount } = useCustomerCart();
   const { user, role, loading, superAdminMarketplacePreview, setSuperAdminMarketplacePreview } = useAuth();
 
@@ -36,7 +38,7 @@ export default function MarketplaceLayout() {
 
   if (!loading && user && (role === 'ADMIN' || role === 'STAFF' || (role === 'SUPER_ADMIN' && !superAdminMarketplacePreview))) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: customerColors.background }}>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
         <ActivityIndicator size="large" color={customerColors.primary} />
       </View>
     );
@@ -104,42 +106,103 @@ export default function MarketplaceLayout() {
           </View>
         )}
 
+        {/* Desktop Web Top Navigation Bar */}
+        {isDesktop && (
+          <View style={styles.desktopNavbar}>
+            <View style={styles.desktopNavInner}>
+              <TouchableOpacity
+                style={styles.desktopLogoWrap}
+                onPress={() => router.push('/(marketplace)')}
+                activeOpacity={0.8}
+              >
+                <Image
+                  source={require('../../assets/images/restroz_logo.png')}
+                  style={styles.desktopLogo}
+                  resizeMode="contain"
+                />
+                <View>
+                  <Text style={styles.desktopBrandName}>RestroZ</Text>
+                  <Text style={styles.desktopBrandSub}>Every flavor, one place</Text>
+                </View>
+              </TouchableOpacity>
+
+              <View style={styles.desktopNavLinks}>
+                {TABS.map((tab) => {
+                  const active = isTabActive(tab);
+                  const isCart = tab.name === 'Cart';
+                  const isProfile = tab.name === 'Profile';
+
+                  return (
+                    <TouchableOpacity
+                      key={tab.name}
+                      style={[styles.desktopNavLink, active && styles.desktopNavLinkActive]}
+                      onPress={() => handleTabPress(tab)}
+                      activeOpacity={0.8}
+                    >
+                      {isProfile && user?.avatar_url ? (
+                        <Image source={{ uri: user.avatar_url }} style={styles.navAvatarDesktop} />
+                      ) : (
+                        <Text style={styles.desktopNavIcon}>{tab.icon}</Text>
+                      )}
+                      <Text style={[styles.desktopNavText, active && styles.desktopNavTextActive]}>
+                        {tab.name}
+                      </Text>
+                      {isCart && itemCount > 0 && (
+                        <View style={styles.desktopCartBadge}>
+                          <Text style={styles.desktopCartBadgeText}>{itemCount}</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* Main Content */}
         <View style={styles.content}>
           <Slot />
         </View>
 
-        {/* Safe Bottom Navigation Bar */}
-        <View style={[styles.bottomNavWrapper, { paddingBottom: bottomInset }]}>
-          <View style={styles.bottomNavInner}>
-            {TABS.map((tab) => {
-              const active = isTabActive(tab);
-              const isCart = tab.name === 'Cart';
+        {/* Mobile Bottom Navigation Bar (hidden on desktop) */}
+        {!isDesktop && (
+          <View style={[styles.bottomNavWrapper, { paddingBottom: bottomInset }]}>
+            <View style={styles.bottomNavInner}>
+              {TABS.map((tab) => {
+                const active = isTabActive(tab);
+                const isCart = tab.name === 'Cart';
+                const isProfile = tab.name === 'Profile';
 
-              return (
-                <TouchableOpacity
-                  key={tab.name}
-                  style={styles.navItem}
-                  onPress={() => handleTabPress(tab)}
-                  activeOpacity={0.7}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                  <View style={styles.iconWrap}>
-                    <Text style={{ fontSize: 20 }}>{tab.icon}</Text>
-                    {isCart && itemCount > 0 && (
-                      <View style={styles.cartBadge}>
-                        <Text style={styles.cartBadgeText}>{itemCount}</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={[styles.navLabel, active && styles.navLabelActive]}>
-                    {tab.name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+                return (
+                  <TouchableOpacity
+                    key={tab.name}
+                    style={styles.navItem}
+                    onPress={() => handleTabPress(tab)}
+                    activeOpacity={0.7}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <View style={styles.iconWrap}>
+                      {isProfile && user?.avatar_url ? (
+                        <Image source={{ uri: user.avatar_url }} style={styles.navAvatarMobile} />
+                      ) : (
+                        <Text style={{ fontSize: 20 }}>{tab.icon}</Text>
+                      )}
+                      {isCart && itemCount > 0 && (
+                        <View style={styles.cartBadge}>
+                          <Text style={styles.cartBadgeText}>{itemCount}</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={[styles.navLabel, active && styles.navLabelActive]}>
+                      {tab.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
-        </View>
+        )}
       </View>
     </SafeAreaView>
   );
@@ -148,14 +211,104 @@ export default function MarketplaceLayout() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: customerColors.background,
+    backgroundColor: '#FAF9F6',
   },
   container: {
     flex: 1,
-    backgroundColor: customerColors.background,
+    backgroundColor: '#FAF9F6',
   },
   content: {
     flex: 1,
+  },
+  desktopNavbar: {
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#EDEBE6',
+    shadowColor: '#1E293B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 3,
+    zIndex: 100,
+  },
+  desktopNavInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    maxWidth: 1240,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+  },
+  desktopLogoWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  desktopLogo: {
+    width: 38,
+    height: 38,
+  },
+  desktopBrandName: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: customerColors.primary,
+    letterSpacing: -0.5,
+  },
+  desktopBrandSub: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 1,
+    letterSpacing: 0.2,
+  },
+  desktopNavLinks: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  desktopNavLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  desktopNavLinkActive: {
+    backgroundColor: '#FFF4EB',
+    borderColor: '#FED7AA',
+  },
+  desktopNavIcon: {
+    fontSize: 15,
+  },
+  desktopNavText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  desktopNavTextActive: {
+    color: customerColors.primary,
+    fontWeight: '800',
+  },
+  desktopCartBadge: {
+    backgroundColor: customerColors.primary,
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    marginLeft: 2,
+  },
+  desktopCartBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
   },
   bottomNavWrapper: {
     backgroundColor: '#FFFFFF',
@@ -254,5 +407,16 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontSize: 12,
     fontWeight: '800',
+  },
+  navAvatarDesktop: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    marginRight: 2,
+  },
+  navAvatarMobile: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
   },
 });

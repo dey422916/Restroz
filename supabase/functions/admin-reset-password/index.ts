@@ -131,7 +131,9 @@ serve(async (req) => {
       {
         user_id: caller.id,
         action: "RESET_MEMBER_PASSWORD",
-        details: {
+        entity_type: "STAFF",
+        entity_id: userId,
+        new_values: {
           target_user_id: userId,
           target_email: targetProfile?.email || updatedUser?.user?.email,
           target_role: targetProfile?.role,

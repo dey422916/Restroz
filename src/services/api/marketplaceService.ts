@@ -386,19 +386,24 @@ export const marketplaceService = {
     const userId = await this.getAuthUserId();
     if (!userId) throw new Error('Not authenticated.');
 
-    // Parallelize: Unset old defaults and set new default simultaneously
-    await Promise.all([
-      supabase
+    try {
+      await supabase
         .from('customer_addresses')
         .update({ is_default: false, updated_at: new Date().toISOString() })
         .eq('user_id', userId)
-        .neq('id', addressId),
-      supabase
-        .from('customer_addresses')
-        .update({ is_default: true, updated_at: new Date().toISOString() })
-        .eq('id', addressId)
-        .eq('user_id', userId),
-    ]);
+        .eq('is_default', true)
+        .neq('id', addressId);
+    } catch (e) {
+      console.warn('Non-blocking: could not unset prior default address:', e);
+    }
+
+    const { error } = await supabase
+      .from('customer_addresses')
+      .update({ is_default: true, updated_at: new Date().toISOString() })
+      .eq('id', addressId)
+      .eq('user_id', userId);
+
+    if (error) throw error;
   },
 
   async createCustomerAddress(
@@ -411,22 +416,54 @@ export const marketplaceService = {
       validatePhoneNumberOrThrow(payload.phone, 'Contact Phone Number');
     }
 
-    // If marked default, unset other defaults in parallel
+    // If marked default, unset previous default safely (non-blocking)
     if (payload.is_default) {
-      await supabase
-        .from('customer_addresses')
-        .update({ is_default: false, updated_at: new Date().toISOString() })
-        .eq('user_id', userId);
+      try {
+        await supabase
+          .from('customer_addresses')
+          .update({ is_default: false, updated_at: new Date().toISOString() })
+          .eq('user_id', userId)
+          .eq('is_default', true);
+      } catch (e) {
+        console.warn('Non-blocking: could not unset prior default address:', e);
+      }
     }
 
-    const { data, error } = await supabase
+    const insertPayload: any = {
+      user_id: userId,
+      label: payload.label || 'Home',
+      full_name: payload.full_name || '',
+      phone: payload.phone || '',
+      address_line1: payload.address_line1,
+      address_line2: payload.address_line2 || null,
+      landmark: payload.landmark || null,
+      city: payload.city || 'Kolkata',
+      state: payload.state || 'West Bengal',
+      postal_code: payload.postal_code || '',
+      is_default: Boolean(payload.is_default),
+    };
+
+    let { data, error } = await supabase
       .from('customer_addresses')
-      .insert({
-        ...payload,
-        user_id: userId,
-      })
+      .insert(insertPayload)
       .select()
       .maybeSingle();
+
+    // Fallback if database table is missing full_name/phone columns
+    if (error && (error.message?.includes('full_name') || error.message?.includes('phone') || error.code === '42703')) {
+      const fallbackPayload = { ...insertPayload };
+      delete fallbackPayload.full_name;
+      delete fallbackPayload.phone;
+
+      const fallbackRes = await supabase
+        .from('customer_addresses')
+        .insert(fallbackPayload)
+        .select()
+        .maybeSingle();
+
+      data = fallbackRes.data ? { ...fallbackRes.data, full_name: payload.full_name, phone: payload.phone } : null;
+      error = fallbackRes.error;
+    }
 
     if (error || !data) throw error || new Error('Failed to create address.');
     return data;
@@ -444,20 +481,47 @@ export const marketplaceService = {
     }
 
     if (payload.is_default) {
-      await supabase
-        .from('customer_addresses')
-        .update({ is_default: false, updated_at: new Date().toISOString() })
-        .eq('user_id', userId)
-        .neq('id', id);
+      try {
+        await supabase
+          .from('customer_addresses')
+          .update({ is_default: false, updated_at: new Date().toISOString() })
+          .eq('user_id', userId)
+          .eq('is_default', true)
+          .neq('id', id);
+      } catch (e) {
+        console.warn('Non-blocking: could not unset prior default address on update:', e);
+      }
     }
 
-    const { data, error } = await supabase
+    const updatePayload: any = {
+      ...payload,
+      updated_at: new Date().toISOString(),
+    };
+
+    let { data, error } = await supabase
       .from('customer_addresses')
-      .update({ ...payload, updated_at: new Date().toISOString() })
+      .update(updatePayload)
       .eq('id', id)
       .eq('user_id', userId)
       .select()
       .maybeSingle();
+
+    if (error && (error.message?.includes('full_name') || error.message?.includes('phone') || error.code === '42703')) {
+      const fallbackPayload = { ...updatePayload };
+      delete fallbackPayload.full_name;
+      delete fallbackPayload.phone;
+
+      const fallbackRes = await supabase
+        .from('customer_addresses')
+        .update(fallbackPayload)
+        .eq('id', id)
+        .eq('user_id', userId)
+        .select()
+        .maybeSingle();
+
+      data = fallbackRes.data ? { ...fallbackRes.data, full_name: payload.full_name, phone: payload.phone } : null;
+      error = fallbackRes.error;
+    }
 
     if (error || !data) throw error || new Error('Failed to update address.');
     return data;
@@ -465,9 +529,20 @@ export const marketplaceService = {
 
   async deleteCustomerAddress(id: string): Promise<void> {
     const userId = await this.getAuthUserId();
-    if (!userId) return;
+    if (!userId) throw new Error('Not authenticated.');
 
-    await supabase.from('customer_addresses').delete().eq('id', id).eq('user_id', userId);
+    console.log('[DEV_LOG] deleteCustomerAddress called with id:', id, 'userId:', userId);
+    const { error } = await supabase
+      .from('customer_addresses')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('[DEV_LOG] Supabase deleteCustomerAddress error:', error);
+      throw error;
+    }
+    console.log('[DEV_LOG] Supabase response: deleteCustomerAddress succeeded for id:', id);
   },
 
   // 5. Create Customer Delivery Order via Server-Side Atomic RPC & Resilient Execution
@@ -769,7 +844,9 @@ export const marketplaceService = {
           restaurant_id: payload.restaurant_id,
           user_id: user.id,
           action: 'CUSTOMER_ORDER_PLACED',
-          details: {
+          entity_type: 'ORDER',
+          entity_id: orderId,
+          new_values: {
             order_id: orderId,
             order_number: orderNumber,
             payable_amount: payableAmount,
@@ -1281,14 +1358,20 @@ export const marketplaceService = {
   },
 
   // 13. Update Customer Profile
-  async updateCustomerProfile(userId: string, data: { full_name?: string; phone?: string }): Promise<void> {
+  async updateCustomerProfile(
+    userId: string,
+    data: { full_name?: string; phone?: string; avatar_url?: string }
+  ): Promise<void> {
+    const updatePayload: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    };
+    if (data.full_name !== undefined) updatePayload.full_name = data.full_name;
+    if (data.phone !== undefined) updatePayload.phone = data.phone;
+    if (data.avatar_url !== undefined) updatePayload.avatar_url = data.avatar_url;
+
     const { error } = await supabase
       .from('profiles')
-      .update({
-        full_name: data.full_name,
-        phone: data.phone,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', userId);
 
     if (error) {

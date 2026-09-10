@@ -357,7 +357,7 @@ export default function RestaurantDetailsScreen() {
         full_name: cleanName,
         email: cleanEmail,
         phone: newMemberPhone.trim() || undefined,
-        password: newMemberPassword.trim() || (newMemberRole === 'ADMIN' ? 'Ratnadeep1@' : 'Staff12345!'),
+        password: newMemberPassword.trim() || undefined,
         role: newMemberRole,
         preset: newMemberRole === 'STAFF' ? newMemberPreset : undefined,
       });
@@ -1429,7 +1429,7 @@ export default function RestaurantDetailsScreen() {
               <Text style={styles.label}>Initial Password (Optional)</Text>
               <TextInput
                 style={styles.input}
-                placeholder={newMemberRole === 'ADMIN' ? 'Default: Ratnadeep1@' : 'Default: Staff12345!'}
+                placeholder="Enter password (or auto-generate)"
                 secureTextEntry
                 value={newMemberPassword}
                 onChangeText={setNewMemberPassword}

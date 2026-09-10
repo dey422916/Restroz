@@ -126,8 +126,12 @@ export const newOrderNotificationService = {
   isOrderNew(order: Order, seenIds: Set<string>): boolean {
     if (!order || !order.id) return false;
 
-    // Exclude completed or cancelled orders
-    if (order.status === 'completed' || order.status === 'cancelled') {
+    // Exclude terminal/inactive orders (completed, delivered, cancelled)
+    if (
+      order.status === 'completed' ||
+      order.status === 'delivered' ||
+      order.status === 'cancelled'
+    ) {
       return false;
     }
 

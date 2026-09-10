@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Modal,
   Alert,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
@@ -21,6 +22,8 @@ import { formatPrice } from '../../src/utils/currency';
 
 export default function DeliveryCheckoutScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 860;
   const { user, loading: authLoading } = useAuth();
   const { cart, clearCart, removeCoupon } = useCustomerCart();
 
@@ -228,272 +231,314 @@ export default function DeliveryCheckoutScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Text style={{ fontSize: 18, color: '#0F172A' }}>←</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Delivery & Payment</Text>
-        <View style={{ width: 24 }} />
-      </View>
-
       <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
-        {/* Authentication Notice if Guest */}
-        {!user && (
-          <View style={styles.loginBanner}>
-            <Text style={{ fontSize: 20 }}>🔐</Text>
-            <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={styles.loginBannerTitle}>Account Login Required</Text>
-              <Text style={styles.loginBannerSub}>
-                Please log in to save addresses and track your live deliveries.
-              </Text>
-            </View>
-            <TouchableOpacity
-              style={styles.loginBtnSmall}
-              onPress={() => router.push('/(auth)/login')}
-            >
-              <Text style={styles.loginBtnSmallText}>Log In</Text>
+        <View style={styles.pageInner}>
+          {/* Header */}
+          <View style={styles.header}>
+            <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
+              <Text style={{ fontSize: 18, color: '#0F172A' }}>←</Text>
             </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Delivery Address Section */}
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>📍 Delivery Address</Text>
-            {user && (
-              <TouchableOpacity onPress={() => setAddModalVisible(true)}>
-                <Text style={styles.linkText}>+ Add New</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {loadingAddresses ? (
-            <ActivityIndicator size="small" color={customerColors.primary} />
-          ) : addresses.length === 0 ? (
-            <View style={styles.noAddressBox}>
-              <Text style={styles.noAddressText}>No saved delivery addresses found.</Text>
-              <TouchableOpacity
-                style={styles.addAddrBtn}
-                onPress={() => setAddModalVisible(true)}
-              >
-                <Text style={styles.addAddrBtnText}>+ Add Delivery Address</Text>
-              </TouchableOpacity>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={styles.headerTitle}>Delivery & Payment</Text>
+              <Text style={styles.headerSubtitle}>Complete your order details and delivery address</Text>
             </View>
-          ) : (
-            addresses.map((addr) => {
-              const isSelected = addr.id === selectedAddressId;
-              return (
+          </View>
+
+          {/* Desktop Dual-Column or Mobile Stack */}
+          <View style={[styles.mainLayout, isDesktop && styles.mainLayoutDesktop]}>
+            {/* Left Column: Delivery Address, Contact & Payment Mode */}
+            <View style={[styles.leftColumn, isDesktop && styles.leftColumnDesktop]}>
+              {/* Authentication Notice if Guest */}
+              {!user && (
+                <View style={styles.loginBanner}>
+                  <Text style={{ fontSize: 20 }}>🔐</Text>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.loginBannerTitle}>Account Login Required</Text>
+                    <Text style={styles.loginBannerSub}>
+                      Please log in to save addresses and track your live deliveries.
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.loginBtnSmall}
+                    onPress={() => router.push('/(auth)/login')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.loginBtnSmallText}>Log In</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Delivery Address Section */}
+              <View style={styles.sectionCard}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>📍 Delivery Address</Text>
+                  {user && (
+                    <TouchableOpacity onPress={() => setAddModalVisible(true)} activeOpacity={0.7}>
+                      <Text style={styles.linkText}>+ Add New</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {loadingAddresses ? (
+                  <ActivityIndicator size="small" color={customerColors.primary} />
+                ) : addresses.length === 0 ? (
+                  <View style={styles.noAddressBox}>
+                    <Text style={styles.noAddressText}>No saved delivery addresses found.</Text>
+                    <TouchableOpacity
+                      style={styles.addAddrBtn}
+                      onPress={() => setAddModalVisible(true)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.addAddrBtnText}>+ Add Delivery Address</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  addresses.map((addr) => {
+                    const isSelected = addr.id === selectedAddressId;
+                    return (
+                      <TouchableOpacity
+                        key={addr.id}
+                        style={[styles.addrOption, isSelected && styles.addrOptionSelected]}
+                        onPress={() => setSelectedAddressId(addr.id)}
+                        activeOpacity={0.8}
+                      >
+                        <View style={styles.radioCircle}>
+                          {isSelected && <View style={styles.radioInner} />}
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={styles.addrLabel}>{addr.label.toUpperCase()}</Text>
+                            <Text style={styles.addrName}>• {addr.full_name}</Text>
+                          </View>
+                          <Text style={styles.addrLine}>
+                            {addr.address_line1}
+                            {addr.landmark ? `, Near ${addr.landmark}` : ''}
+                          </Text>
+                          <Text style={styles.addrCity}>
+                            {addr.city}, {addr.postal_code} • Phone: {addr.phone}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+              </View>
+
+              {/* Contact Info */}
+              <View style={styles.sectionCard}>
+                <Text style={styles.sectionTitle}>📞 Contact Details for Delivery</Text>
+                <View style={styles.inputRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.inputLabel}>Name *</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={customerName}
+                      onChangeText={setCustomerName}
+                      placeholder="Full Name"
+                    />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.inputLabel}>Phone *</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={customerPhone}
+                      onChangeText={(v) => setCustomerPhone(v.replace(/[^\d+]/g, ''))}
+                      placeholder="10-digit mobile number"
+                      placeholderTextColor="#64748b"
+                      keyboardType="phone-pad"
+                      maxLength={13}
+                    />
+                    {Boolean(customerPhone && !isValidPhoneNumber(customerPhone)) && (
+                      <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: 3 }}>
+                        ⚠️ Invalid mobile number
+                      </Text>
+                    )}
+                  </View>
+                </View>
+
+                <Text style={[styles.inputLabel, { marginTop: 12 }]}>Delivery Instructions</Text>
+                <TextInput
+                  style={styles.input}
+                  value={deliveryNotes}
+                  onChangeText={setDeliveryNotes}
+                  placeholder="e.g. Leave at door, call on arrival, extra spicy..."
+                />
+              </View>
+
+              {/* Payment Method Section */}
+              <View style={styles.sectionCard}>
+                <Text style={styles.sectionTitle}>💳 Payment Method</Text>
+
+                {/* Cash on Delivery (COD) Option */}
                 <TouchableOpacity
-                  key={addr.id}
-                  style={[styles.addrOption, isSelected && styles.addrOptionSelected]}
-                  onPress={() => setSelectedAddressId(addr.id)}
+                  style={[styles.payOption, paymentMethod === 'cod' && styles.payOptionSelected]}
+                  onPress={() => setPaymentMethod('cod')}
+                  activeOpacity={0.8}
                 >
                   <View style={styles.radioCircle}>
-                    {isSelected && <View style={styles.radioInner} />}
+                    {paymentMethod === 'cod' && <View style={styles.radioInner} />}
                   </View>
                   <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Text style={styles.addrLabel}>{addr.label.toUpperCase()}</Text>
-                      <Text style={styles.addrName}>• {addr.full_name}</Text>
-                    </View>
-                    <Text style={styles.addrLine}>
-                      {addr.address_line1}
-                      {addr.landmark ? `, Near ${addr.landmark}` : ''}
-                    </Text>
-                    <Text style={styles.addrCity}>
-                      {addr.city}, {addr.postal_code} • Phone: {addr.phone}
+                    <Text style={styles.payTitle}>💵 Cash on Delivery (COD)</Text>
+                    <Text style={styles.paySub}>Pay cash or UPI directly to delivery agent on arrival</Text>
+                  </View>
+                  <View style={styles.badgeActive}>
+                    <Text style={styles.badgeTextActive}>RECOMMENDED</Text>
+                  </View>
+                </TouchableOpacity>
+
+                {/* Online Payment (Phase 6 placeholder) */}
+                <TouchableOpacity
+                  style={[styles.payOption, paymentMethod === 'online' && styles.payOptionSelected]}
+                  onPress={() => setPaymentMethod('online')}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.radioCircle}>
+                    {paymentMethod === 'online' && <View style={styles.radioInner} />}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.payTitle}>💳 Online Payment (UPI / Cards / NetBanking)</Text>
+                    <Text style={styles.paySub}>
+                      Online gateway integration (creates confirmed pending payment order)
                     </Text>
                   </View>
                 </TouchableOpacity>
-              );
-            })
-          )}
-        </View>
-
-        {/* Contact Info */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>📞 Contact Details for Delivery</Text>
-          <View style={styles.inputRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.inputLabel}>Name *</Text>
-              <TextInput
-                style={styles.input}
-                value={customerName}
-                onChangeText={setCustomerName}
-                placeholder="Full Name"
-              />
-            </View>
-            <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={styles.inputLabel}>Phone *</Text>
-              <TextInput
-                style={styles.input}
-                value={customerPhone}
-                onChangeText={(v) => setCustomerPhone(v.replace(/[^\d+]/g, ''))}
-                placeholder="10-digit mobile number"
-                placeholderTextColor="#64748b"
-                keyboardType="phone-pad"
-                maxLength={13}
-              />
-              {Boolean(customerPhone && !isValidPhoneNumber(customerPhone)) && (
-                <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: 3 }}>
-                  ⚠️ Invalid mobile number
-                </Text>
-              )}
-            </View>
-          </View>
-
-          <Text style={[styles.inputLabel, { marginTop: 10 }]}>Delivery Instructions</Text>
-          <TextInput
-            style={styles.input}
-            value={deliveryNotes}
-            onChangeText={setDeliveryNotes}
-            placeholder="e.g. Leave at door, call on arrival, extra spicy..."
-          />
-        </View>
-
-        {/* Order & Coupon Summary Section */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>🧾 Order & Price Summary</Text>
-
-          {isBelowMinOrder && (
-            <View style={styles.minOrderCard}>
-              <View style={styles.minOrderCardHeader}>
-                <Text style={{ fontSize: 15 }}>⚠️</Text>
-                <Text style={styles.minOrderCardTitle}>
-                  Minimum Order Value: ₹{minOrderValue}
-                </Text>
-              </View>
-              <Text style={styles.minOrderCardSub}>
-                Your order subtotal is ₹{formatPrice(cart.subtotal)}. Please add items worth{' '}
-                <Text style={styles.minOrderCardHighlight}>₹{formatPrice(remainingForMinOrder)}</Text>{' '}
-                more to place this order.
-              </Text>
-            </View>
-          )}
-
-          <View style={styles.summaryItemRow}>
-            <Text style={styles.summaryLabel}>Item Subtotal ({cart.items.length} items)</Text>
-            <Text style={styles.summaryValue}>₹{formatPrice(cart.subtotal)}</Text>
-          </View>
-
-          {cart.couponCode && cart.discount > 0 ? (
-            <View style={[styles.summaryItemRow, { backgroundColor: '#ECFDF5', padding: 8, borderRadius: 8, marginVertical: 4 }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.summaryLabel, { color: '#065F46', fontWeight: '700' }]}>
-                  🏷️ Coupon ({cart.couponCode})
-                </Text>
-                <Text style={{ fontSize: 11, color: '#059669' }}>Discount applied</Text>
-              </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={[styles.summaryValue, { color: '#065F46', fontWeight: '800' }]}>
-                  -₹{formatPrice(cart.discount)}
-                </Text>
-                <TouchableOpacity onPress={removeCoupon}>
-                  <Text style={{ fontSize: 11, color: '#DC2626', fontWeight: '700', marginTop: 2 }}>✕ Remove</Text>
-                </TouchableOpacity>
               </View>
             </View>
-          ) : null}
 
-          {cart.discount > 0 && (
-            <View style={styles.summaryItemRow}>
-              <Text style={styles.summaryLabel}>Taxable Amount</Text>
-              <Text style={styles.summaryValue}>₹{formatPrice(cart.taxableAmount)}</Text>
+            {/* Right Column: Order Summary & Place Order */}
+            <View style={[styles.rightColumn, isDesktop && styles.rightColumnDesktop]}>
+              <View style={styles.sectionCard}>
+                <Text style={styles.sectionTitle}>🧾 Order & Price Summary</Text>
+
+                {isBelowMinOrder && (
+                  <View style={styles.minOrderCard}>
+                    <View style={styles.minOrderCardHeader}>
+                      <Text style={{ fontSize: 15 }}>⚠️</Text>
+                      <Text style={styles.minOrderCardTitle}>
+                        Minimum Order: ₹{minOrderValue}
+                      </Text>
+                    </View>
+                    <Text style={styles.minOrderCardSub}>
+                      Your order subtotal is ₹{formatPrice(cart.subtotal)}. Add items worth{' '}
+                      <Text style={styles.minOrderCardHighlight}>₹{formatPrice(remainingForMinOrder)}</Text>{' '}
+                      more to place this order.
+                    </Text>
+                  </View>
+                )}
+
+                <View style={styles.summaryItemRow}>
+                  <Text style={styles.summaryLabel}>Item Subtotal ({cart.items.length} items)</Text>
+                  <Text style={styles.summaryValue}>₹{formatPrice(cart.subtotal)}</Text>
+                </View>
+
+                {cart.couponCode && cart.discount > 0 ? (
+                  <View style={[styles.summaryItemRow, { backgroundColor: '#ECFDF5', padding: 8, borderRadius: 8, marginVertical: 4 }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.summaryLabel, { color: '#065F46', fontWeight: '700' }]}>
+                        🏷️ Coupon ({cart.couponCode})
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#059669' }}>Discount applied</Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={[styles.summaryValue, { color: '#065F46', fontWeight: '800' }]}>
+                        -₹{formatPrice(cart.discount)}
+                      </Text>
+                      <TouchableOpacity onPress={removeCoupon}>
+                        <Text style={{ fontSize: 11, color: '#DC2626', fontWeight: '700', marginTop: 2 }}>✕ Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : null}
+
+                {cart.discount > 0 && (
+                  <View style={styles.summaryItemRow}>
+                    <Text style={styles.summaryLabel}>Taxable Amount</Text>
+                    <Text style={styles.summaryValue}>₹{formatPrice(cart.taxableAmount)}</Text>
+                  </View>
+                )}
+
+                <View style={styles.summaryItemRow}>
+                  <Text style={styles.summaryLabel}>CGST (2.5%)</Text>
+                  <Text style={styles.summaryValue}>₹{formatPrice(cart.cgst)}</Text>
+                </View>
+
+                <View style={styles.summaryItemRow}>
+                  <Text style={styles.summaryLabel}>SGST (2.5%)</Text>
+                  <Text style={styles.summaryValue}>₹{formatPrice(cart.sgst)}</Text>
+                </View>
+
+                <View style={styles.summaryItemRow}>
+                  <Text style={styles.summaryLabel}>Delivery Fee</Text>
+                  <Text style={[styles.summaryValue, { color: '#16A34A', fontWeight: '800' }]}>FREE</Text>
+                </View>
+
+                <View style={{ height: 1, backgroundColor: '#E2E8F0', marginVertical: 12 }} />
+
+                <View style={styles.summaryItemRow}>
+                  <Text style={[styles.summaryLabel, { fontSize: 16, fontWeight: '800', color: '#0F172A' }]}>
+                    Grand Total
+                  </Text>
+                  <Text style={[styles.summaryValue, { fontSize: 20, fontWeight: '900', color: customerColors.primary }]}>
+                    ₹{formatPrice(cart.payableAmount)}
+                  </Text>
+                </View>
+
+                {/* Desktop Place Order Button */}
+                {isDesktop && (
+                  <TouchableOpacity
+                    style={[
+                      styles.desktopPlaceOrderBtn,
+                      isBelowMinOrder && styles.placeOrderBtnWarning,
+                      placingOrder && styles.placeOrderBtnDisabled,
+                    ]}
+                    onPress={handlePlaceOrder}
+                    disabled={placingOrder}
+                    activeOpacity={0.85}
+                  >
+                    {placingOrder ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.desktopPlaceOrderBtnText}>
+                        {isBelowMinOrder ? `Min Order ₹${minOrderValue}` : 'Place Order Now ✓'}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
-          )}
-
-          <View style={styles.summaryItemRow}>
-            <Text style={styles.summaryLabel}>CGST 2.5%</Text>
-            <Text style={styles.summaryValue}>₹{formatPrice(cart.cgst)}</Text>
           </View>
-
-          <View style={styles.summaryItemRow}>
-            <Text style={styles.summaryLabel}>SGST 2.5%</Text>
-            <Text style={styles.summaryValue}>₹{formatPrice(cart.sgst)}</Text>
-          </View>
-
-          <View style={styles.summaryItemRow}>
-            <Text style={styles.summaryLabel}>Delivery Fee</Text>
-            <Text style={[styles.summaryValue, { color: '#16A34A', fontWeight: '700' }]}>FREE</Text>
-          </View>
-
-          <View style={{ height: 1, backgroundColor: '#E2E8F0', marginVertical: 8 }} />
-
-          <View style={styles.summaryItemRow}>
-            <Text style={[styles.summaryLabel, { fontSize: 15, fontWeight: '800', color: '#0F172A' }]}>
-              Grand Total
-            </Text>
-            <Text style={[styles.summaryValue, { fontSize: 16, fontWeight: '900', color: '#0F172A' }]}>
-              ₹{formatPrice(cart.payableAmount)}
-            </Text>
-          </View>
-        </View>
-
-        {/* Payment Method Section */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>💳 Payment Method</Text>
-
-          {/* Cash on Delivery (COD) Option */}
-          <TouchableOpacity
-            style={[styles.payOption, paymentMethod === 'cod' && styles.payOptionSelected]}
-            onPress={() => setPaymentMethod('cod')}
-          >
-            <View style={styles.radioCircle}>
-              {paymentMethod === 'cod' && <View style={styles.radioInner} />}
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.payTitle}>💵 Cash on Delivery (COD)</Text>
-              <Text style={styles.paySub}>Pay cash or UPI directly to delivery agent on arrival</Text>
-            </View>
-            <View style={styles.badgeActive}>
-              <Text style={styles.badgeTextActive}>RECOMMENDED</Text>
-            </View>
-          </TouchableOpacity>
-
-          {/* Online Payment (Phase 6 placeholder) */}
-          <TouchableOpacity
-            style={[styles.payOption, paymentMethod === 'online' && styles.payOptionSelected]}
-            onPress={() => setPaymentMethod('online')}
-          >
-            <View style={styles.radioCircle}>
-              {paymentMethod === 'online' && <View style={styles.radioInner} />}
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.payTitle}>💳 Online Payment (UPI / Cards / NetBanking)</Text>
-              <Text style={styles.paySub}>
-                Gateway integration scheduled for Phase 6 (creates pending payment order)
-              </Text>
-            </View>
-          </TouchableOpacity>
         </View>
       </ScrollView>
 
-      {/* Place Order Bar */}
-      <View style={styles.footerBar}>
-        <View>
-          <Text style={styles.footerSubLabel}>TOTAL AMOUNT</Text>
-          <Text style={styles.footerAmount}>₹{formatPrice(cart.payableAmount)}</Text>
-        </View>
+      {/* Mobile Place Order Bar (hidden on desktop) */}
+      {!isDesktop && (
+        <View style={styles.footerBar}>
+          <View>
+            <Text style={styles.footerSubLabel}>TOTAL AMOUNT</Text>
+            <Text style={styles.footerAmount}>₹{formatPrice(cart.payableAmount)}</Text>
+          </View>
 
-        <TouchableOpacity
-          style={[
-            styles.placeOrderBtn,
-            isBelowMinOrder && styles.placeOrderBtnWarning,
-            placingOrder && styles.placeOrderBtnDisabled,
-          ]}
-          onPress={handlePlaceOrder}
-          disabled={placingOrder}
-        >
-          {placingOrder ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <Text style={styles.placeOrderBtnText}>
-              {isBelowMinOrder ? `Min Order ₹${minOrderValue}` : 'Place Order Now ✓'}
-            </Text>
-          )}
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={[
+              styles.placeOrderBtn,
+              isBelowMinOrder && styles.placeOrderBtnWarning,
+              placingOrder && styles.placeOrderBtnDisabled,
+            ]}
+            onPress={handlePlaceOrder}
+            disabled={placingOrder}
+            activeOpacity={0.85}
+          >
+            {placingOrder ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={styles.placeOrderBtnText}>
+                {isBelowMinOrder ? `Min Order ₹${minOrderValue}` : 'Place Order Now ✓'}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Add Address Modal */}
       <Modal visible={addModalVisible} animationType="slide" transparent>
@@ -621,56 +666,98 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  pageInner: {
+    width: '100%',
+    maxWidth: 1100,
+    alignSelf: 'center',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    borderRadius: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
   },
   backBtn: {
-    padding: 4,
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
   },
   headerTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '800',
-    color: '#0F172A',
+    color: customerColors.text,
+    letterSpacing: -0.3,
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
   },
   scrollArea: {
     flex: 1,
+    backgroundColor: '#F8FAFC',
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 30,
+    paddingBottom: 80,
+  },
+  mainLayout: {
+    flexDirection: 'column',
+    gap: 16,
+  },
+  mainLayoutDesktop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 20,
+  },
+  leftColumn: {
+    width: '100%',
+  },
+  leftColumnDesktop: {
+    flex: 1,
+  },
+  rightColumn: {
+    width: '100%',
+  },
+  rightColumnDesktop: {
+    width: 380,
+    flexShrink: 0,
   },
   loginBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FEF3C7',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 14,
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: '#FDE68A',
   },
   loginBannerTitle: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '800',
     color: '#92400E',
   },
   loginBannerSub: {
-    fontSize: 11,
+    fontSize: 12,
     color: '#92400E',
     marginTop: 2,
   },
   loginBtnSmall: {
     backgroundColor: '#D97706',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
   },
   loginBtnSmallText: {
     color: '#FFFFFF',
@@ -679,22 +766,30 @@ const styles = StyleSheet.create({
   },
   sectionCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 14,
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
   },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
   },
   sectionTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '800',
-    color: '#0F172A',
+    color: customerColors.text,
   },
   linkText: {
     fontSize: 13,
@@ -702,9 +797,9 @@ const styles = StyleSheet.create({
     color: customerColors.primary,
   },
   noAddressBox: {
-    paddingVertical: 16,
+    paddingVertical: 20,
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
   },
   noAddressText: {
     fontSize: 13,
@@ -713,7 +808,7 @@ const styles = StyleSheet.create({
   addAddrBtn: {
     backgroundColor: customerColors.primaryBg,
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 9,
     borderRadius: 8,
   },
   addAddrBtnText: {
@@ -724,12 +819,12 @@ const styles = StyleSheet.create({
   addrOption: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    padding: 12,
-    borderRadius: 8,
+    padding: 14,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#EEEEEE',
-    marginBottom: 8,
-    gap: 10,
+    borderColor: '#E2E8F0',
+    marginBottom: 10,
+    gap: 12,
     backgroundColor: '#FFFFFF',
   },
   addrOptionSelected: {
@@ -737,9 +832,9 @@ const styles = StyleSheet.create({
     backgroundColor: customerColors.primaryBg,
   },
   radioCircle: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     borderWidth: 2,
     borderColor: '#CBD5E1',
     justifyContent: 'center',
@@ -747,9 +842,9 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   radioInner: {
-    width: 9,
-    height: 9,
-    borderRadius: 4.5,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: customerColors.primary,
   },
   addrLabel: {
@@ -759,47 +854,48 @@ const styles = StyleSheet.create({
   },
   addrName: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
     color: customerColors.text,
   },
   addrLine: {
     fontSize: 13,
-    color: customerColors.text,
-    marginTop: 2,
+    color: '#334155',
+    marginTop: 3,
   },
   addrCity: {
-    fontSize: 11,
+    fontSize: 12,
     color: customerColors.textSecondary,
     marginTop: 2,
   },
   inputRow: {
     flexDirection: 'row',
+    marginTop: 10,
   },
   inputLabel: {
     fontSize: 12,
-    fontWeight: '600',
-    color: customerColors.textSecondary,
-    marginBottom: 4,
+    fontWeight: '700',
+    color: '#475569',
+    marginBottom: 6,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#E8E8E8',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     fontSize: 13,
     color: customerColors.text,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: '#F8FAFC',
   },
   payOption: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 12,
-    borderRadius: 8,
+    padding: 14,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#EEEEEE',
-    marginBottom: 8,
-    gap: 10,
+    borderColor: '#E2E8F0',
+    marginTop: 10,
+    gap: 12,
     backgroundColor: '#FFFFFF',
   },
   payOptionSelected: {
@@ -807,7 +903,7 @@ const styles = StyleSheet.create({
     backgroundColor: customerColors.primaryBg,
   },
   payTitle: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
     color: customerColors.text,
   },
@@ -818,24 +914,41 @@ const styles = StyleSheet.create({
   },
   badgeActive: {
     backgroundColor: '#DCFCE7',
-    paddingHorizontal: 6,
-    paddingVertical: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 6,
   },
   badgeTextActive: {
     color: '#15803D',
-    fontSize: 9,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  desktopPlaceOrderBtn: {
+    backgroundColor: customerColors.primary,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 16,
+    shadowColor: customerColors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  desktopPlaceOrderBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
     fontWeight: '800',
   },
   footerBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
-    borderTopColor: '#EEEEEE',
+    borderTopColor: '#E2E8F0',
   },
   footerSubLabel: {
     fontSize: 10,
@@ -868,9 +981,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFBEB',
     borderWidth: 1,
     borderColor: '#FDE68A',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 12,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 14,
   },
   minOrderCardHeader: {
     flexDirection: 'row',
@@ -984,7 +1097,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   summaryLabel: {
     fontSize: 13,

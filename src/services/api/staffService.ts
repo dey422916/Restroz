@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { supabase, isSupabaseConfigured } from '../supabase';
+import { supabase, isSupabaseConfigured, SUPABASE_URL, SUPABASE_ANON_KEY } from '../supabase';
 import {
   StaffMemberWithDetails,
   RestaurantMemberPermissions,
@@ -185,7 +185,7 @@ export const staffService = {
           const { data: rpcData, error: rpcErr } = await supabase.rpc('provision_privileged_user', {
             p_restaurant_id: restaurantId,
             p_email: cleanEmail,
-            p_password: staffData.password || (memberRole === 'ADMIN' ? 'Ratnadeep1@' : 'Staff12345!'),
+            p_password: staffData.password || undefined,
             p_full_name: cleanName,
             p_phone: staffData.phone?.trim() || null,
             p_role: memberRole,
@@ -226,9 +226,10 @@ export const staffService = {
 
         // If user does not exist, create auth user
         if (!targetUserId) {
-          const tempPassword = staffData.password || (memberRole === 'ADMIN' ? 'Ratnadeep1@' : 'Staff12345!');
-          const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://szpjsibrwxegaopcaukb.supabase.co';
-          const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_Jh0O9Why0grSgCb3WjjpYQ_Uwj7RclD';
+          const tempPassword = staffData.password || `RestroZ_${Math.random().toString(36).slice(2, 10)}!`;
+          if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+            throw new Error('Missing required Supabase environment variables for staff provisioning.');
+          }
 
           const tempClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
             auth: {

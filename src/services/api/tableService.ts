@@ -2,7 +2,6 @@ import { DiningTable, TableSection } from '../../types';
 import { mockStorage } from '../mockStorage';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import { getTableQrUrl } from '../../utils/qr';
-import { DEFAULT_RESTAURANT_ID } from './restaurantService';
 import { subscriptionGuardService } from './subscriptionGuardService';
 
 export const tableService = {
@@ -17,54 +16,43 @@ export const tableService = {
           p_identifier: identifier,
         });
         if (!error && data) {
-          resolved = data as DiningTable;
+          const row = Array.isArray(data) ? data[0] : data;
+          if (row && (row.table_id || row.id)) {
+            resolved = {
+              id: row.table_id || row.id || identifier,
+              table_number: row.table_number || (identifier.startsWith('tbl-') ? identifier.replace('tbl-', 'Table ') : `Table ${identifier}`),
+              restaurant_id: row.restaurant_id,
+              status: (row.table_status || row.status || 'available') as 'available' | 'occupied' | 'reserved',
+              section: (row.section || 'Ground Floor') as TableSection,
+              seating_capacity: Number(row.seating_capacity) || 4,
+              is_active: row.is_active !== undefined ? Boolean(row.is_active) : true,
+              qr_code_hash: row.qr_code_url || row.qr_code_hash || `QR_${identifier}`,
+              restaurant_name: row.restaurant_name,
+              restaurant_slug: row.restaurant_slug,
+            } as DiningTable;
+          }
         }
       } catch (err) {
-        console.warn('resolve_qr_table RPC call failed, checking fallback:', err);
+        console.warn('resolve_qr_table RPC failed, falling back to direct table query:', err);
       }
 
       if (!resolved) {
         try {
-          // Direct query fallback for table_id, qr_code_hash, or table_number
-          const { data: dbTable } = await supabase
+          const { data, error } = await supabase
             .from('tables')
             .select('*')
             .or(`id.eq.${identifier},qr_code_hash.eq.${identifier},table_number.ilike.${identifier}`)
-            .eq('is_active', true)
             .maybeSingle();
 
-          if (dbTable) {
-            resolved = dbTable as DiningTable;
+          if (!error && data) {
+            resolved = data as DiningTable;
           }
-        } catch (err) {
-          console.warn('Direct tables fallback lookup failed:', err);
+        } catch (tblErr) {
+          console.warn('Direct table query error:', tblErr);
         }
       }
 
-      if (resolved && resolved.restaurant_id) {
-        try {
-          // Check for active unsettled dine-in order
-          const { data: activeOrder } = await supabase
-            .from('orders')
-            .select('id, status, payment_status')
-            .eq('restaurant_id', resolved.restaurant_id)
-            .or(`table_id.eq.${resolved.id},table_number.eq.${resolved.table_number}`)
-            .not('status', 'in', '("completed","cancelled")')
-            .neq('payment_status', 'paid')
-            .maybeSingle();
-
-          if (activeOrder) {
-            resolved.status = 'occupied';
-            resolved.current_order_id = activeOrder.id;
-          } else if (resolved.status !== 'reserved') {
-            resolved.status = 'available';
-            resolved.current_order_id = undefined;
-          }
-        } catch (ordErr) {
-          console.warn('Check active table order failed:', ordErr);
-        }
-        return resolved;
-      }
+      return resolved;
     }
 
     // Fallback to local cache for offline/mock
@@ -72,7 +60,7 @@ export const tableService = {
     return all.find(t => t.id === identifier || t.qr_code_hash === identifier || t.table_number.toLowerCase() === identifier.toLowerCase()) || null;
   },
 
-  async getTables(restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<DiningTable[]> {
+  async getTables(restaurantId?: string): Promise<DiningTable[]> {
     if (isSupabaseConfigured) {
       try {
         let query = supabase
@@ -129,8 +117,8 @@ export const tableService = {
     return mockStorage.getTables();
   },
 
-  async saveTable(table: Partial<DiningTable>, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<DiningTable> {
-    const targetRestId = table.restaurant_id || restaurantId;
+  async saveTable(table: Partial<DiningTable>, restaurantId?: string): Promise<DiningTable> {
+    const targetRestId = table.restaurant_id || restaurantId || '';
 
     // Check Plan Table Limit if creating a new table
     if (!table.id) {
@@ -272,7 +260,7 @@ export const tableService = {
     sectionOrRestId: TableSection | string = 'Ground Floor',
     capacity: number = 4,
     startNumber: number = 1,
-    restaurantId: string = DEFAULT_RESTAURANT_ID
+    restaurantId?: string
   ): Promise<{ createdCount: number; tables: DiningTable[] }> {
     let count: number;
     let section: TableSection = 'Ground Floor';
@@ -295,6 +283,10 @@ export const tableService = {
       start = startNumber;
     }
 
+    if (!restId) {
+      throw new Error('Restaurant ID is required to create tables.');
+    }
+
     const tables = await this.bulkCreateTables(count, section, cap, start, restId);
     return { createdCount: tables.length, tables };
   },
@@ -304,8 +296,11 @@ export const tableService = {
     section: TableSection = 'Ground Floor',
     capacity: number = 4,
     startNumber: number = 1,
-    restaurantId: string = DEFAULT_RESTAURANT_ID
+    restaurantId?: string
   ): Promise<DiningTable[]> {
+    if (!restaurantId) {
+      throw new Error('Restaurant ID is required to bulk create tables.');
+    }
     // Check bulk table plan limit upfront
     const limitCheck = await subscriptionGuardService.checkPlanLimit(restaurantId, 'TABLES', count);
     if (!limitCheck.allowed) {

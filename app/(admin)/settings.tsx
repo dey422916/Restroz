@@ -51,6 +51,7 @@ export default function SettingsScreen() {
 
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingGst, setIsSavingGst] = useState(false);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [isUploadingBanner, setIsUploadingBanner] = useState(false);
   const [showUrlModal, setShowUrlModal] = useState(false);
@@ -83,10 +84,10 @@ export default function SettingsScreen() {
       );
       setLogoUrl(settings.logo_url || '');
       setBannerUrls(parseBannerUrls(settings.banner_url || settings.banner_urls));
+      setKotPaperSize(settings.kot_paper_size || '80mm');
+      setBillPaperSize(settings.bill_paper_size || '80mm');
+      setAutoPrintKot(Boolean(settings.auto_print_kot));
     }
-    setKotPaperSize(settings.kot_paper_size || '80mm');
-    setBillPaperSize(settings.bill_paper_size || '80mm');
-    setAutoPrintKot(Boolean(settings.auto_print_kot));
   }, [settings, isDirty, activeRestaurantId]);
 
   const handleSavePrinterSettings = async () => {
@@ -280,9 +281,10 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleSave = async () => {
+  // 1. Save Profile & Branding Info Only (updates restaurants and restaurant_settings profile fields)
+  const handleSaveProfileInfo = async () => {
     if (!canManage) {
-      Alert.alert('Permission Denied', 'Only ADMIN users can save restaurant settings.');
+      Alert.alert('Permission Denied', 'Only ADMIN users can save restaurant profile info.');
       return;
     }
     if (!name.trim()) {
@@ -300,15 +302,10 @@ export default function SettingsScreen() {
         address: address.trim(),
         phone: phone.trim(),
         email: email.trim(),
-        gstin: gstin.trim(),
         logo_url: logoUrl,
         banner_url: bannerPayload,
         banner_urls: bannerUrls,
         gallery_urls: bannerUrls,
-        default_tax_rate: parseFloat(taxRate) >= 0 ? parseFloat(taxRate) : 5.0,
-        gst_registered: gstRegistered,
-        is_gst_enabled: isGstEnabled,
-        tax_invoice_enabled: taxInvoiceEnabled,
       });
 
       if (activeRestaurantId) {
@@ -319,7 +316,6 @@ export default function SettingsScreen() {
             address: address.trim(),
             phone: phone.trim(),
             email: email.trim(),
-            gstin: gstin.trim() || null,
             logo_url: logoUrl || null,
             banner_url: bannerPayload || null,
           }).eq('id', activeRestaurantId),
@@ -335,6 +331,42 @@ export default function SettingsScreen() {
         setAddress(persisted.address || '');
         setPhone(persisted.phone || '');
         setEmail(persisted.email || '');
+        setLogoUrl(persisted.logo_url || '');
+        setBannerUrls(parseBannerUrls(persisted.banner_url || persisted.banner_urls));
+      }
+
+      setIsDirty(false);
+      Alert.alert('Profile Saved', 'Restaurant profile and branding information updated successfully.');
+    } catch (err: any) {
+      Alert.alert('Save Failed', err.message || 'Failed to save restaurant profile.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // 2. Save GST & Tax Settings Only (updates public.restaurant_settings only, NO restaurants PATCH)
+  const handleSaveGstSettings = async () => {
+    if (!canManage) {
+      Alert.alert('Permission Denied', 'Only ADMIN users can save GST settings.');
+      return;
+    }
+
+    const numRate = parseFloat(taxRate);
+    const validatedRate = !isNaN(numRate) && numRate >= 0 ? numRate : 5.0;
+
+    try {
+      setIsSavingGst(true);
+
+      const persisted = await updateSettings({
+        gstin: gstin.trim(),
+        default_tax_rate: validatedRate,
+        tax_rate: validatedRate,
+        gst_registered: gstRegistered,
+        is_gst_enabled: isGstEnabled,
+        tax_invoice_enabled: taxInvoiceEnabled,
+      });
+
+      if (persisted) {
         setGstin(persisted.gstin || '');
         setTaxRate(persisted.default_tax_rate !== undefined ? persisted.default_tax_rate.toString() : '5.0');
         setGstRegistered(
@@ -350,16 +382,17 @@ export default function SettingsScreen() {
             ? Boolean(persisted.tax_invoice_enabled)
             : (persisted.gst_registered !== undefined ? Boolean(persisted.gst_registered) : Boolean(persisted.gstin?.trim()))
         );
-        setLogoUrl(persisted.logo_url || '');
-        setBannerUrls(parseBannerUrls(persisted.banner_url || persisted.banner_urls));
       }
 
       setIsDirty(false);
-      Alert.alert('Success', 'Restaurant information and GST settings updated successfully.');
+      Alert.alert(
+        'GST Settings Saved',
+        `GSTIN: ${gstin.trim() || 'None'}\nGST Rate: ${validatedRate}%\nCGST: ${(validatedRate / 2).toFixed(1)}% | SGST: ${(validatedRate / 2).toFixed(1)}%\nStatus: ${isGstEnabled ? 'Active' : 'Disabled'}`
+      );
     } catch (err: any) {
-      Alert.alert('Save Failed', err.message || 'Failed to save restaurant settings to database.');
+      Alert.alert('Save Failed', err.message || 'Failed to save GST settings.');
     } finally {
-      setIsSaving(false);
+      setIsSavingGst(false);
     }
   };
 
@@ -624,7 +657,7 @@ export default function SettingsScreen() {
 
                 <TouchableOpacity
                   style={[styles.saveBtn, (isSaving || !canManage) && { opacity: 0.6 }]}
-                  onPress={handleSave}
+                  onPress={handleSaveProfileInfo}
                   disabled={isSaving || !canManage}
                 >
                   {isSaving ? (
@@ -945,11 +978,11 @@ export default function SettingsScreen() {
                 </View>
 
                 <TouchableOpacity
-                  style={[styles.saveBtn, (isSaving || !canManage) && { opacity: 0.6 }]}
-                  onPress={handleSave}
-                  disabled={isSaving || !canManage}
+                  style={[styles.saveBtn, (isSavingGst || !canManage) && { opacity: 0.6 }]}
+                  onPress={handleSaveGstSettings}
+                  disabled={isSavingGst || !canManage}
                 >
-                  {isSaving ? (
+                  {isSavingGst ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                       <ActivityIndicator color="#ffffff" size="small" />
                       <Text style={styles.saveBtnText}>Saving...</Text>

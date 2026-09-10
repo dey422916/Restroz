@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   Image,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
@@ -20,6 +21,8 @@ import { formatOrderDateTime } from '../../src/utils/dateUtils';
 
 export default function CustomerOrdersScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 768;
   const { user, loading: authLoading } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'live' | 'history'>('live');
@@ -204,186 +207,194 @@ export default function CustomerOrdersScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header Bar */}
-      <View style={styles.header}>
-        <Image
-          source={require('../../assets/images/restroz_logo.png')}
-          style={styles.headerLogo}
-          resizeMode="contain"
-        />
-        <Text style={styles.headerTitle}>My Orders</Text>
-      </View>
-
-      {/* 2 Tabs: Live Orders vs Order History */}
-      <View style={styles.tabRow}>
-        <TouchableOpacity
-          style={[styles.tabBtn, activeTab === 'live' && styles.tabBtnActive]}
-          onPress={() => setActiveTab('live')}
-        >
-          <Text style={[styles.tabText, activeTab === 'live' && styles.tabTextActive]}>
-            🔥 Live Deliveries ({liveOrders.length})
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tabBtn, activeTab === 'history' && styles.tabBtnActive]}
-          onPress={() => setActiveTab('history')}
-        >
-          <Text style={[styles.tabText, activeTab === 'history' && styles.tabTextActive]}>
-            📜 Order History ({historyOrders.length})
-          </Text>
-        </TouchableOpacity>
-      </View>
-
       <ScrollView
         style={styles.scrollArea}
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {errorMessage ? (
-          <View style={styles.emptyWrap}>
-            <Text style={{ fontSize: 40 }}>⚠️</Text>
-            <Text style={styles.emptyTitle}>Unable to Load Orders</Text>
-            <Text style={styles.emptySub}>{errorMessage}</Text>
-            <TouchableOpacity style={styles.exploreBtn} onPress={loadOrders}>
-              <Text style={styles.exploreBtnText}>🔄 Retry</Text>
-            </TouchableOpacity>
-          </View>
-        ) : displayOrders.length === 0 ? (
-          <View style={styles.emptyWrap}>
-            <Text style={{ fontSize: 40 }}>{activeTab === 'live' ? '🛵' : '📦'}</Text>
-            <Text style={styles.emptyTitle}>
-              {activeTab === 'live' ? 'No Active Deliveries' : 'No Past Orders'}
-            </Text>
-            <Text style={styles.emptySub}>
-              {activeTab === 'live'
-                ? 'When you place an order, live 3-stage tracking will appear here in real time.'
-                : 'Your delivered and completed orders will be archived here.'}
-            </Text>
-            {activeTab === 'live' && (
+        <View style={styles.pageInner}>
+          {/* Header Bar */}
+          <View style={styles.header}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <Image
+                source={require('../../assets/images/restroz_logo.png')}
+                style={styles.headerLogo}
+                resizeMode="contain"
+              />
+              <View>
+                <Text style={styles.headerTitle}>My Orders</Text>
+                <Text style={styles.headerSubtitle}>Track live orders and view order history</Text>
+              </View>
+            </View>
+
+            {/* Segmented Pill Tabs */}
+            <View style={styles.tabRow}>
               <TouchableOpacity
-                style={styles.exploreBtn}
-                onPress={() => router.push('/(marketplace)')}
+                style={[styles.tabBtn, activeTab === 'live' && styles.tabBtnActive]}
+                onPress={() => setActiveTab('live')}
+                activeOpacity={0.8}
               >
-                <Text style={styles.exploreBtnText}>Browse Restaurants</Text>
+                <Text style={[styles.tabText, activeTab === 'live' && styles.tabTextActive]}>
+                  🔥 Live ({liveOrders.length})
+                </Text>
               </TouchableOpacity>
-            )}
+
+              <TouchableOpacity
+                style={[styles.tabBtn, activeTab === 'history' && styles.tabBtnActive]}
+                onPress={() => setActiveTab('history')}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.tabText, activeTab === 'history' && styles.tabTextActive]}>
+                  📜 History ({historyOrders.length})
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        ) : (
-          displayOrders.map((order) => {
-            const rest = (order as any).restaurant;
-            const progress = marketplaceService.mapOrderToCustomerStage(order.status);
-            const isLive = activeTab === 'live';
 
-            return (
-              <View key={order.id} style={styles.orderCard}>
-                {/* Order Header */}
-                <View style={styles.orderCardHeader}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.restName}>{rest?.name || 'Restaurant'}</Text>
-                    <Text style={styles.orderNum}>
-                      Order #{order.order_number} • 🕒 {formatOrderDateTime(order.created_at)}
-                    </Text>
-                  </View>
+          {errorMessage ? (
+            <View style={styles.emptyWrap}>
+              <Text style={{ fontSize: 48 }}>⚠️</Text>
+              <Text style={styles.emptyTitle}>Unable to Load Orders</Text>
+              <Text style={styles.emptySub}>{errorMessage}</Text>
+              <TouchableOpacity style={styles.exploreBtn} onPress={loadOrders} activeOpacity={0.8}>
+                <Text style={styles.exploreBtnText}>🔄 Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : displayOrders.length === 0 ? (
+            <View style={styles.emptyWrap}>
+              <Text style={{ fontSize: 48 }}>{activeTab === 'live' ? '🛵' : '📦'}</Text>
+              <Text style={styles.emptyTitle}>
+                {activeTab === 'live' ? 'No Active Deliveries' : 'No Past Orders'}
+              </Text>
+              <Text style={styles.emptySub}>
+                {activeTab === 'live'
+                  ? 'When you place an order, live 3-stage delivery tracking will appear here in real time.'
+                  : 'Your delivered and completed meal orders will be safely archived here.'}
+              </Text>
+              {activeTab === 'live' && (
+                <TouchableOpacity
+                  style={styles.exploreBtn}
+                  onPress={() => router.push('/(marketplace)')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.exploreBtnText}>Browse Restaurants</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : (
+            displayOrders.map((order) => {
+              const rest = (order as any).restaurant;
+              const progress = marketplaceService.mapOrderToCustomerStage(order.status);
+              const isLive = activeTab === 'live';
 
-                  <View style={[styles.statusBadge, { backgroundColor: `${progress.badgeColor}18` }]}>
-                    <Text style={[styles.statusBadgeText, { color: progress.badgeColor }]}>
-                      {progress.label}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* 3-Stage Tracker for Live Orders */}
-                {isLive && render3StageProgress(order.status)}
-
-                {/* Items Summary */}
-                <View style={styles.itemsSummary}>
-                  {(order.items || []).map((item, idx) => (
-                    <View key={item.id || idx} style={styles.itemRow}>
-                      <Text style={styles.itemQty}>{item.quantity}x</Text>
-                      <Text style={styles.itemName}>{item.product_name || 'Item'}</Text>
-                      <Text style={styles.itemPrice}>₹{formatPrice(item.total || item.unit_price * item.quantity)}</Text>
-                    </View>
-                  ))}
-                </View>
-
-                {/* Footer / Total */}
-                <View style={styles.orderCardFooter}>
-                  <View>
-                    <Text style={styles.payMethod}>
-                      Payment: {order.payment_method ? order.payment_method.toUpperCase() : 'COD'} (
-                      {order.payment_status ? order.payment_status.toUpperCase() : 'UNPAID'})
-                    </Text>
-                    {order.delivery_address && (
-                      <Text style={styles.addressLine} numberOfLines={1}>
-                        📍 {order.delivery_address}
+              return (
+                <View key={order.id} style={styles.orderCard}>
+                  {/* Order Header */}
+                  <View style={styles.orderCardHeader}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.restName}>{rest?.name || 'Restaurant'}</Text>
+                      <Text style={styles.orderNum}>
+                        Order #{order.order_number} • 🕒 {formatOrderDateTime(order.created_at)}
                       </Text>
+                    </View>
+
+                    <View style={[styles.statusBadge, { backgroundColor: `${progress.badgeColor}18` }]}>
+                      <Text style={[styles.statusBadgeText, { color: progress.badgeColor }]}>
+                        {progress.label}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* 3-Stage Tracker for Live Orders */}
+                  {isLive && render3StageProgress(order.status)}
+
+                  {/* Items Summary */}
+                  <View style={styles.itemsSummary}>
+                    {(order.items || []).map((item, idx) => (
+                      <View key={item.id || idx} style={styles.itemRow}>
+                        <View style={styles.qtyBadge}>
+                          <Text style={styles.itemQty}>{item.quantity}x</Text>
+                        </View>
+                        <Text style={styles.itemName}>{item.product_name || 'Item'}</Text>
+                        <Text style={styles.itemPrice}>₹{formatPrice(item.total || item.unit_price * item.quantity)}</Text>
+                      </View>
+                    ))}
+                  </View>
+
+                  {/* Delivery & Payment Note */}
+                  <View style={styles.metaBox}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.payMethod}>
+                        Payment: {order.payment_method ? order.payment_method.toUpperCase() : 'COD'} (
+                        {order.payment_status ? order.payment_status.toUpperCase() : 'UNPAID'})
+                      </Text>
+                      {order.delivery_address && (
+                        <Text style={styles.addressLine} numberOfLines={1}>
+                          📍 {order.delivery_address}
+                        </Text>
+                      )}
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={styles.totalLabel}>TOTAL</Text>
+                      <Text style={styles.totalAmount}>₹{formatPrice(order.payable_amount || order.grand_total || 0)}</Text>
+                    </View>
+                  </View>
+
+                  {/* Card Action Row */}
+                  <View style={styles.cardActions}>
+                    <TouchableOpacity
+                      style={styles.detailBtn}
+                      onPress={() => router.push(`/order/${order.id}` as any)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.detailBtnText}>View Details & Receipt ›</Text>
+                    </TouchableOpacity>
+
+                    {!((order.kots && order.kots.length > 0) || order.status === 'kot_generated') && !['cancelled', 'delivered', 'completed'].includes(order.status) && (
+                      <TouchableOpacity
+                        style={styles.cancelCardBtn}
+                        onPress={() => router.push(`/order/${order.id}` as any)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.cancelCardBtnText}>Cancel Order</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {['completed', 'delivered'].includes(order.status) && (
+                      <TouchableOpacity
+                        style={styles.reorderCardBtn}
+                        onPress={() => router.push(`/order/${order.id}` as any)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.reorderCardBtnText}>🔄 Reorder</Text>
+                      </TouchableOpacity>
                     )}
                   </View>
-
-                  <Text style={styles.totalAmount}>₹{formatPrice(order.payable_amount || order.grand_total || 0)}</Text>
                 </View>
+              );
+            })
+          )}
 
-                {/* Card Action Row */}
-                <View style={styles.cardActions}>
-                  <TouchableOpacity
-                    style={styles.detailBtn}
-                    onPress={() => router.push(`/order/${order.id}` as any)}
-                  >
-                    <Text style={styles.detailBtnText}>View Details & Receipt ›</Text>
-                  </TouchableOpacity>
-
-                  {!((order.kots && order.kots.length > 0) || order.status === 'kot_generated') && !['cancelled', 'delivered', 'completed'].includes(order.status) && (
-                    <TouchableOpacity
-                      style={styles.cancelCardBtn}
-                      onPress={() => router.push(`/order/${order.id}` as any)}
-                    >
-                      <Text style={styles.cancelCardBtnText}>Cancel</Text>
-                    </TouchableOpacity>
-                  )}
-
-                  {['completed', 'delivered'].includes(order.status) && (
-                    <TouchableOpacity
-                      style={styles.reorderCardBtn}
-                      onPress={() => router.push(`/order/${order.id}` as any)}
-                    >
-                      <Text style={styles.reorderCardBtnText}>🔄 Reorder</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-            );
-          })
-        )}
-
-        {/* Load More Past Orders Button */}
-        {activeTab === 'history' && historyHasMore && (
-          <View style={{ paddingVertical: 16, alignItems: 'center' }}>
-            <TouchableOpacity
-              style={{
-                backgroundColor: '#FFFFFF',
-                borderWidth: 1.5,
-                borderColor: customerColors.primary,
-                paddingVertical: 10,
-                paddingHorizontal: 24,
-                borderRadius: 24,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 8,
-              }}
-              onPress={loadMoreHistory}
-              disabled={loadingMoreHistory}
-            >
-              {loadingMoreHistory ? (
-                <ActivityIndicator size="small" color={customerColors.primary} />
-              ) : (
-                <Text style={{ fontSize: 13, fontWeight: '700', color: customerColors.primary }}>
-                  ⬇️ Load More Past Orders
-                </Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        )}
+          {/* Load More Past Orders Button */}
+          {activeTab === 'history' && historyHasMore && (
+            <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+              <TouchableOpacity
+                style={styles.loadMoreBtn}
+                onPress={loadMoreHistory}
+                disabled={loadingMoreHistory}
+                activeOpacity={0.8}
+              >
+                {loadingMoreHistory ? (
+                  <ActivityIndicator size="small" color={customerColors.primary} />
+                ) : (
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: customerColors.primary }}>
+                    ⬇️ Load More Past Orders
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
       </ScrollView>
     </View>
   );
@@ -434,121 +445,159 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  pageInner: {
+    width: '100%',
+    maxWidth: 960,
+    alignSelf: 'center',
+  },
   header: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    gap: 10,
+    borderRadius: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
+    flexWrap: 'wrap',
+    gap: 12,
   },
   headerLogo: {
-    width: 34,
-    height: 34,
+    width: 38,
+    height: 38,
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '800',
-    color: '#0F172A',
+    color: customerColors.text,
+    letterSpacing: -0.3,
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
   },
   tabRow: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    marginTop: 5,
-    paddingTop: 5,
-    paddingBottom: 10,
-    gap: 10,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 4,
+    gap: 4,
   },
   tabBtn: {
-    flex: 1,
-    marginTop: 5,
-    paddingVertical: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 16,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   tabBtnActive: {
-    backgroundColor: customerColors.primary,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
   },
   tabText: {
     fontSize: 12,
-    fontWeight: '700',
-    color: customerColors.textSecondary,
+    fontWeight: '600',
+    color: '#64748B',
   },
   tabTextActive: {
-    color: '#FFFFFF',
+    color: customerColors.primary,
+    fontWeight: '800',
   },
   scrollArea: {
     flex: 1,
+    backgroundColor: '#F8FAFC',
   },
   scrollContent: {
     padding: 16,
     paddingBottom: 70,
   },
   emptyWrap: {
-    padding: 40,
+    padding: 48,
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 10,
   },
   emptyTitle: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 18,
+    fontWeight: '800',
     color: customerColors.text,
   },
   emptySub: {
-    fontSize: 12,
+    fontSize: 13,
     color: customerColors.textSecondary,
     textAlign: 'center',
-    lineHeight: 18,
-    marginBottom: 12,
+    lineHeight: 20,
+    maxWidth: 420,
+    marginBottom: 8,
   },
   exploreBtn: {
     backgroundColor: customerColors.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 10,
+    shadowColor: customerColors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
   },
   exploreBtnText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
   },
   orderCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 14,
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#EEEEEE',
-    elevation: 2,
-    shadowColor: '#000',
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
   },
   orderCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 12,
+    marginBottom: 14,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
   },
   restName: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '800',
     color: customerColors.text,
   },
   orderNum: {
-    fontSize: 11,
-    color: customerColors.textSecondary,
-    marginTop: 2,
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 3,
   },
   statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
   },
   statusBadgeText: {
     fontSize: 11,
@@ -556,10 +605,12 @@ const styles = StyleSheet.create({
   },
   trackerWrap: {
     backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 12,
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
   },
   trackRow: {
     flexDirection: 'row',
@@ -568,86 +619,101 @@ const styles = StyleSheet.create({
   },
   trackStep: {
     alignItems: 'center',
-    width: 75,
+    width: 85,
   },
   stepDot: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#CBD5E1',
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#E2E8F0',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   stepDotActive: {
     backgroundColor: customerColors.primary,
   },
   stepLabel: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '600',
     color: '#94A3B8',
     textAlign: 'center',
   },
   stepLabelActive: {
     color: customerColors.primary,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   trackLine: {
     flex: 1,
     height: 2,
-    backgroundColor: '#EEEEEE',
-    marginHorizontal: 4,
-    marginTop: -14,
+    backgroundColor: '#E2E8F0',
+    marginHorizontal: 6,
+    marginTop: -18,
   },
   trackLineActive: {
     backgroundColor: customerColors.primary,
   },
   itemsSummary: {
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: '#F8F9FA',
-    paddingVertical: 10,
-    gap: 6,
-    marginBottom: 10,
+    paddingVertical: 8,
+    gap: 8,
+    marginBottom: 12,
   },
   itemRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 10,
+  },
+  qtyBadge: {
+    backgroundColor: customerColors.primaryBg,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
   },
   itemQty: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 11,
+    fontWeight: '800',
     color: customerColors.primary,
-    width: 24,
   },
   itemName: {
     fontSize: 13,
-    color: customerColors.text,
+    fontWeight: '600',
+    color: '#1E293B',
     flex: 1,
   },
   itemPrice: {
     fontSize: 13,
-    fontWeight: '600',
-    color: customerColors.text,
+    fontWeight: '700',
+    color: '#334155',
   },
-  orderCardFooter: {
+  metaBox: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-end',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 12,
   },
   payMethod: {
     fontSize: 11,
-    color: customerColors.textSecondary,
+    color: '#64748B',
     fontWeight: '600',
   },
   addressLine: {
-    fontSize: 11,
-    color: customerColors.textSecondary,
-    marginTop: 2,
-    maxWidth: 220,
+    fontSize: 12,
+    color: '#334155',
+    marginTop: 3,
+    maxWidth: 360,
+  },
+  totalLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
   },
   totalAmount: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '800',
     color: customerColors.primary,
   },
@@ -655,25 +721,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-    gap: 8,
+    paddingTop: 8,
+    gap: 10,
   },
   detailBtn: {
     flex: 1,
-    paddingVertical: 6,
+    paddingVertical: 8,
   },
   detailBtnText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
     color: customerColors.primary,
   },
   cancelCardBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
     backgroundColor: '#FEF2F2',
     borderWidth: 1,
     borderColor: '#FECACA',
@@ -684,9 +747,9 @@ const styles = StyleSheet.create({
     color: '#DC2626',
   },
   reorderCardBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
     backgroundColor: '#DCFCE7',
     borderWidth: 1,
     borderColor: '#BBF7D0',
@@ -695,5 +758,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#15803D',
+  },
+  loadMoreBtn: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: customerColors.primary,
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
 });

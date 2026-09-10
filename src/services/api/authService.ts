@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { UserProfile, UserRole } from '../../types';
-import { supabase } from '../supabase';
+import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from '../supabase';
 
 export const authService = {
   /**
@@ -272,8 +272,9 @@ export const authService = {
         targetUserId = existingProf.id;
       } else {
         // Create auth user using an isolated, non-persisted client so caller's active admin session is NEVER altered
-        const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://szpjsibrwxegaopcaukb.supabase.co';
-        const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_Jh0O9Why0grSgCb3WjjpYQ_Uwj7RclD';
+        if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+          throw new Error('Missing required Supabase environment variables for admin provisioning.');
+        }
 
         const tempClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
           auth: {
@@ -366,7 +367,9 @@ export const authService = {
         restaurant_id: restaurantId || null,
         user_id: currentUser.id,
         action: targetRole === 'ADMIN' ? 'CREATE_ADMIN' : 'CREATE_STAFF',
-        details: {
+        entity_type: 'STAFF',
+        entity_id: targetUserId,
+        new_values: {
           created_user_id: targetUserId,
           created_user_email: cleanEmail,
           assigned_role: targetRole,

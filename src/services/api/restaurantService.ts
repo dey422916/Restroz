@@ -1,41 +1,29 @@
 import { supabase } from '../supabase';
 import { Restaurant, RestaurantMember } from '../../types';
 
-export const DEFAULT_RESTAURANT_ID = 'c0000000-0000-0000-0000-000000000001';
-export const DEFAULT_RESTAURANT_SLUG = 'ratnadeep';
+export const DEFAULT_RESTAURANT_SLUG = 'panch-phoron';
 
 export const restaurantService = {
   /**
-   * Get default Ratnadeep tenant
+   * Get default restaurant tenant dynamically from database
    */
-  async getDefaultRestaurant(): Promise<Restaurant> {
+  async getDefaultRestaurant(): Promise<Restaurant | null> {
     try {
+      // 1. Try finding first active restaurant in database
       const { data, error } = await supabase
         .from('restaurants')
         .select('*')
-        .eq('slug', DEFAULT_RESTAURANT_SLUG)
+        .eq('status', 'ACTIVE')
+        .order('created_at', { ascending: true })
+        .limit(1)
         .maybeSingle();
 
-      if (data) return data as Restaurant;
+      if (data && !error) return data as Restaurant;
     } catch (e) {
       console.warn('restaurantService.getDefaultRestaurant query error:', e);
     }
 
-    return {
-      id: DEFAULT_RESTAURANT_ID,
-      name: 'Ratnadeep Restaurant',
-      slug: DEFAULT_RESTAURANT_SLUG,
-      legal_name: 'Ratnadeep Foods Pvt Ltd',
-      phone: '+91 9876543210',
-      email: 'info@ratnadeep.com',
-      address: '123 Main Road, Jubilee Hills',
-      city: 'Hyderabad',
-      state: 'Telangana',
-      country: 'India',
-      timezone: 'Asia/Kolkata',
-      status: 'ACTIVE',
-      created_at: new Date().toISOString(),
-    };
+    return null;
   },
 
   /**
@@ -94,7 +82,16 @@ export const restaurantService = {
         .eq('is_active', true);
 
       if (error) {
-        console.warn('getUserMemberships error:', error.message);
+        console.warn('getUserMemberships relational join error, trying plain select:', error.message);
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from('restaurant_members')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('is_active', true);
+
+        if (!fallbackError && fallbackData) {
+          return fallbackData as RestaurantMember[];
+        }
         return [];
       }
       return (data || []) as RestaurantMember[];
@@ -107,26 +104,46 @@ export const restaurantService = {
   /**
    * Resolve active restaurant context for an authenticated user (Admin/Staff)
    */
-  async getActiveRestaurantContext(userId: string): Promise<{
+  async getActiveRestaurantContext(userId: string, userRole?: string): Promise<{
     restaurantId: string;
     membership: RestaurantMember | null;
     restaurant: Restaurant | null;
   }> {
-    const memberships = await this.getUserMemberships(userId);
-    if (memberships.length > 0) {
-      const primary = memberships[0];
-      return {
-        restaurantId: primary.restaurant_id,
-        membership: primary,
-        restaurant: primary.restaurant || null,
-      };
+    if (userId) {
+      const memberships = await this.getUserMemberships(userId);
+      if (memberships.length > 0) {
+        const primary = memberships[0];
+        let restaurantObj = primary.restaurant || null;
+        if (!restaurantObj && primary.restaurant_id) {
+          restaurantObj = await this.getRestaurantById(primary.restaurant_id);
+        }
+        return {
+          restaurantId: primary.restaurant_id,
+          membership: primary,
+          restaurant: restaurantObj,
+        };
+      }
+
+      // If user is SUPER_ADMIN without specific restaurant_members binding, allow fallback to first active restaurant
+      if (userRole === 'SUPER_ADMIN') {
+        const defaultRest = await this.getDefaultRestaurant();
+        return {
+          restaurantId: defaultRest?.id || '',
+          membership: null,
+          restaurant: defaultRest || null,
+        };
+      }
+
+      // STRICT MULTI-TENANCY: For authenticated ADMIN or STAFF users, do NOT fall back to another restaurant!
+      throw new Error('No active restaurant membership found for this user account. Please contact your system administrator.');
     }
 
+    // Public / anonymous marketplace fallback only
     const defaultRest = await this.getDefaultRestaurant();
     return {
-      restaurantId: defaultRest.id,
+      restaurantId: defaultRest?.id || '',
       membership: null,
-      restaurant: defaultRest,
+      restaurant: defaultRest || null,
     };
   },
 };

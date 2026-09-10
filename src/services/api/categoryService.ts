@@ -1,7 +1,6 @@
 import { Category } from '../../types';
 import { mockStorage } from '../mockStorage';
 import { supabase, isSupabaseConfigured } from '../supabase';
-import { DEFAULT_RESTAURANT_ID } from './restaurantService';
 
 // High-performance in-memory cache for categories per tenant (15s TTL)
 const inMemoryCategoriesCache: Record<string, { timestamp: number; data: Category[] }> = {};
@@ -18,11 +17,12 @@ export function clearCategoriesCache(restaurantId?: string) {
 export const categoryService = {
   clearCategoriesCache,
 
-  async getCategories(restaurantId: string = DEFAULT_RESTAURANT_ID, forceRefresh: boolean = false): Promise<Category[]> {
-    const targetRestId = restaurantId || DEFAULT_RESTAURANT_ID;
+  async getCategories(restaurantId?: string, forceRefresh: boolean = false): Promise<Category[]> {
+    const targetRestId = restaurantId || '';
     const now = Date.now();
-    if (!forceRefresh && inMemoryCategoriesCache[targetRestId] && (now - inMemoryCategoriesCache[targetRestId].timestamp < CATEGORIES_CACHE_TTL)) {
-      return inMemoryCategoriesCache[targetRestId].data;
+    const cacheKey = targetRestId || '__all__';
+    if (!forceRefresh && inMemoryCategoriesCache[cacheKey] && (now - inMemoryCategoriesCache[cacheKey].timestamp < CATEGORIES_CACHE_TTL)) {
+      return inMemoryCategoriesCache[cacheKey].data;
     }
 
     if (isSupabaseConfigured) {
@@ -39,7 +39,7 @@ export const categoryService = {
         const { data, error } = await query;
         if (!error && data) {
           const list = (data as Category[]).map(c => ({ ...c, restaurant_id: c.restaurant_id || targetRestId }));
-          inMemoryCategoriesCache[targetRestId] = {
+          inMemoryCategoriesCache[cacheKey] = {
             timestamp: now,
             data: list,
           };
@@ -51,15 +51,19 @@ export const categoryService = {
       }
     }
     const local = mockStorage.getCategories();
-    inMemoryCategoriesCache[targetRestId] = {
+    const filtered = targetRestId ? local.filter(c => c.restaurant_id === targetRestId) : local;
+    inMemoryCategoriesCache[cacheKey] = {
       timestamp: now,
-      data: local,
+      data: filtered,
     };
-    return local;
+    return filtered;
   },
 
-  async saveCategory(category: Partial<Category>, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<Category> {
-    const targetRestId = category.restaurant_id || restaurantId || DEFAULT_RESTAURANT_ID;
+  async saveCategory(category: Partial<Category>, restaurantId?: string): Promise<Category> {
+    const targetRestId = category.restaurant_id || restaurantId;
+    if (!targetRestId) {
+      throw new Error('Restaurant ID is required to save category.');
+    }
     const name = (category.name || '').trim();
     if (!name) {
       throw new Error('Category Name is required.');

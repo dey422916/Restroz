@@ -22,8 +22,8 @@ const PROFILES_KEY = 'ratnadeep_profiles';
 const AUDIT_KEY = 'ratnadeep_audit_logs';
 
 export const DEFAULT_SETTINGS: RestaurantSettings = {
-  id: 'rest-1',
-  name: 'Ratnadeep Restaurant',
+  id: '',
+  name: 'RestroZ Restaurant',
   legal_name: 'Ratnadeep Foods Pvt Ltd',
   address: 'Road No. 36, Jubilee Hills, Hyderabad - 500033',
   phone: '+91 98765 43210',

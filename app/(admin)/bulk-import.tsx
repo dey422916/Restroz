@@ -7,7 +7,6 @@ import { CsvProductRow, CsvValidationError } from '../../src/utils/validators';
 import { downloadSampleProductsCsv } from '../../src/utils/sampleCsv';
 
 import { useAuth } from '../../src/context/AuthContext';
-import { DEFAULT_RESTAURANT_ID } from '../../src/services/api/restaurantService';
 
 export default function BulkImportScreen() {
   const insets = useSafeAreaInsets();
@@ -40,7 +39,7 @@ export default function BulkImportScreen() {
     if (validRows.length === 0) return;
     setIsImporting(true);
     try {
-      const targetRestId = activeRestaurantId || DEFAULT_RESTAURANT_ID;
+      const targetRestId = activeRestaurantId;
       const res = await productService.bulkImportProducts(validRows, targetRestId);
 
       if (res.importedCount > 0) {

@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RestaurantSettings, PaperSize } from '../../types';
 import { mockStorage } from '../mockStorage';
 import { supabase, isSupabaseConfigured } from '../supabase';
-import { DEFAULT_RESTAURANT_ID } from './restaurantService';
+import { restaurantService } from './restaurantService';
 import { parseBannerUrls } from '../../utils/mediaUtils';
 import { storageService } from './storageService';
 import { marketplaceService } from './marketplaceService';
@@ -11,30 +11,50 @@ const STORAGE_KEY_PRINTER_PREFIX = '@restaurant_printer_settings_';
 const STORAGE_KEY_GST_PREFIX = '@restaurant_gst_settings_';
 
 const RESTAURANT_SETTINGS_COLUMNS = new Set([
-  'id',
-  'restaurant_id',
   'name',
   'legal_name',
   'address',
+  'city',
+  'state',
+  'postal_code',
+  'country',
   'phone',
   'email',
   'gstin',
-  'state',
-  'logo_url',
-  'invoice_prefix',
-  'kot_prefix',
-  'default_tax_rate',
-  'gst_registered',
-  'is_gst_enabled',
-  'tax_invoice_enabled',
+  'fssai',
   'currency',
   'currency_symbol',
+  'tax_rate',
+  'cgst_rate',
+  'sgst_rate',
+  'default_tax_rate',
   'service_charge_rate',
-  'next_order_seq',
-  'kot_paper_size',
-  'bill_paper_size',
-  'auto_print_kot',
-  'created_at',
+  'packaging_charge_rate',
+  'delivery_charge_base',
+  'delivery_charge_per_km',
+  'delivery_radius_km',
+  'free_delivery_above',
+  'theme_color',
+  'primary_color',
+  'header_color',
+  'kot_auto_print',
+  'kot_item_grouping',
+  'auto_generate_kot',
+  'allow_partial_payment',
+  'allow_credit_orders',
+  'enable_table_qr',
+  'enable_delivery',
+  'enable_takeaway',
+  'receipt_header',
+  'receipt_footer',
+  'is_open',
+  'opening_time',
+  'closing_time',
+  'banner_url',
+  'gallery_images',
+  'invoice_sequence_prefix',
+  'invoice_next_number',
+  'restaurant_id',
   'updated_at',
 ]);
 
@@ -44,11 +64,14 @@ function cleanLogoOnly(rawLogoUrl?: string | null): string {
 }
 
 export const settingsService = {
-  async getPublicRestaurantInfo(restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<Partial<RestaurantSettings>> {
+  async getPublicRestaurantInfo(restaurantId?: string): Promise<Partial<RestaurantSettings>> {
+    const targetRestId = restaurantId;
+    if (!targetRestId) return {};
+
     if (isSupabaseConfigured) {
       try {
         const { data, error } = await supabase.rpc('get_public_restaurant_info', {
-          p_restaurant_id: restaurantId,
+          p_restaurant_id: targetRestId,
         });
         if (!error && data) {
           return data as Partial<RestaurantSettings>;
@@ -56,19 +79,47 @@ export const settingsService = {
       } catch (err) {
         console.warn('get_public_restaurant_info RPC failed:', err);
       }
+
+      // Safe fallback to public profiles view (never private restaurant_settings)
+      try {
+        const { data: prof, error: profErr } = await supabase
+          .from('restaurant_public_profiles')
+          .select('*')
+          .eq('restaurant_id', targetRestId)
+          .maybeSingle();
+        if (!profErr && prof) {
+          return {
+            restaurant_id: targetRestId,
+            name: (prof as any).restaurant_name || (prof as any).name || '',
+            logo_url: (prof as any).logo_url || '',
+            banner_url: (prof as any).banner_url || '',
+            banner_urls: (prof as any).banner_urls || [],
+            gallery_urls: (prof as any).gallery_urls || [],
+            phone: (prof as any).phone || '',
+            address: (prof as any).address || '',
+            online_orders_enabled: (prof as any).marketplace_enabled ?? true,
+          };
+        }
+      } catch (profErr) {
+        console.warn('restaurant_public_profiles fallback failed:', profErr);
+      }
     }
-    return this.getSettings(restaurantId);
+    return {};
   },
 
-  async getSettings(restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<RestaurantSettings> {
+  async getSettings(restaurantId?: string): Promise<RestaurantSettings> {
+    const targetRestId = restaurantId || '';
+    if (!targetRestId) {
+      return mockStorage.getSettings();
+    }
     // 0. Load local printer & GST settings cache if available
     let localPrinterSettings: { kot_paper_size?: PaperSize; bill_paper_size?: PaperSize; auto_print_kot?: boolean } | null = null;
     let localGstSettings: { gst_registered?: boolean; is_gst_enabled?: boolean; tax_invoice_enabled?: boolean } | null = null;
 
     try {
       const [cachedPrinterStr, cachedGstStr] = await Promise.all([
-        AsyncStorage.getItem(`${STORAGE_KEY_PRINTER_PREFIX}${restaurantId}`),
-        AsyncStorage.getItem(`${STORAGE_KEY_GST_PREFIX}${restaurantId}`),
+        AsyncStorage.getItem(`${STORAGE_KEY_PRINTER_PREFIX}${targetRestId}`),
+        AsyncStorage.getItem(`${STORAGE_KEY_GST_PREFIX}${targetRestId}`),
       ]);
       if (cachedPrinterStr) {
         localPrinterSettings = JSON.parse(cachedPrinterStr);
@@ -86,20 +137,8 @@ export const settingsService = {
         let { data, error } = await supabase
           .from('restaurant_settings')
           .select('*')
-          .eq('restaurant_id', restaurantId)
+          .eq('restaurant_id', targetRestId)
           .maybeSingle();
-
-        // Fallback for initial legacy migration
-        if (!data) {
-          const fallback = await supabase
-            .from('restaurant_settings')
-            .select('*')
-            .eq('id', 'rest-1')
-            .maybeSingle();
-          if (fallback.data) {
-            data = fallback.data;
-          }
-        }
 
         // 2. Query restaurant record to get latest banner_url and logo_url
         let bannerUrl = '';
@@ -108,12 +147,11 @@ export const settingsService = {
         let restLogo = '';
         let restPhone = '';
         let restAddress = '';
-        let restGstin = '';
 
         const { data: restData } = await supabase
           .from('restaurants')
-          .select('banner_url, logo_url, name, phone, address, gstin')
-          .eq('id', restaurantId)
+          .select('banner_url, logo_url, name, phone, address')
+          .eq('id', targetRestId)
           .maybeSingle();
 
         if (restData) {
@@ -123,37 +161,32 @@ export const settingsService = {
           restLogo = restData.logo_url || '';
           restPhone = restData.phone || '';
           restAddress = restData.address || '';
-          restGstin = restData.gstin || '';
         }
 
         // Extract printer settings directly from Supabase columns or local cache
-        const resolvedKotPaper: PaperSize = (data?.kot_paper_size || localPrinterSettings?.kot_paper_size || '80mm') as PaperSize;
-        const resolvedBillPaper: PaperSize = (data?.bill_paper_size || localPrinterSettings?.bill_paper_size || '80mm') as PaperSize;
-        const resolvedAutoPrint: boolean = data?.auto_print_kot !== undefined && data?.auto_print_kot !== null
-          ? Boolean(data.auto_print_kot)
+        const resolvedKotPaper: PaperSize = (localPrinterSettings?.kot_paper_size || '80mm') as PaperSize;
+        const resolvedBillPaper: PaperSize = (localPrinterSettings?.bill_paper_size || '80mm') as PaperSize;
+        const resolvedAutoPrint: boolean = data?.kot_auto_print !== undefined && data?.kot_auto_print !== null
+          ? Boolean(data.kot_auto_print)
           : (localPrinterSettings?.auto_print_kot !== undefined ? localPrinterSettings.auto_print_kot : false);
 
         // Resolve GST & Tax configuration
-        const effectiveGstin = (data?.gstin || restGstin || '').trim();
-        const resolvedGstRegistered: boolean = data?.gst_registered !== undefined && data?.gst_registered !== null
-          ? Boolean(data.gst_registered)
-          : (localGstSettings?.gst_registered !== undefined ? localGstSettings.gst_registered : Boolean(effectiveGstin));
+        const effectiveGstin = (data?.gstin || '').trim();
+        const resolvedGstRegistered: boolean = localGstSettings?.gst_registered !== undefined
+          ? localGstSettings.gst_registered
+          : Boolean(effectiveGstin);
 
         const resolvedIsGstEnabled: boolean = resolvedGstRegistered
-          ? (data?.is_gst_enabled !== undefined && data?.is_gst_enabled !== null
-              ? Boolean(data.is_gst_enabled)
-              : (localGstSettings?.is_gst_enabled !== undefined ? localGstSettings.is_gst_enabled : Boolean(effectiveGstin)))
+          ? (localGstSettings?.is_gst_enabled !== undefined ? localGstSettings.is_gst_enabled : Boolean(effectiveGstin))
           : false;
 
         const resolvedTaxInvoiceEnabled: boolean = resolvedGstRegistered
-          ? (data?.tax_invoice_enabled !== undefined && data?.tax_invoice_enabled !== null
-              ? Boolean(data.tax_invoice_enabled)
-              : (localGstSettings?.tax_invoice_enabled !== undefined ? localGstSettings.tax_invoice_enabled : Boolean(effectiveGstin)))
+          ? (localGstSettings?.tax_invoice_enabled !== undefined ? localGstSettings.tax_invoice_enabled : Boolean(effectiveGstin))
           : false;
 
         // Sync local cache with Supabase values
         AsyncStorage.setItem(
-          `${STORAGE_KEY_PRINTER_PREFIX}${restaurantId}`,
+          `${STORAGE_KEY_PRINTER_PREFIX}${targetRestId}`,
           JSON.stringify({
             kot_paper_size: resolvedKotPaper,
             bill_paper_size: resolvedBillPaper,
@@ -162,7 +195,7 @@ export const settingsService = {
         ).catch(() => {});
 
         AsyncStorage.setItem(
-          `${STORAGE_KEY_GST_PREFIX}${restaurantId}`,
+          `${STORAGE_KEY_GST_PREFIX}${targetRestId}`,
           JSON.stringify({
             gst_registered: resolvedGstRegistered,
             is_gst_enabled: resolvedIsGstEnabled,
@@ -170,7 +203,7 @@ export const settingsService = {
           })
         ).catch(() => {});
 
-        const cleanLogo = cleanLogoOnly(restLogo || data?.logo_url || '');
+        const cleanLogo = cleanLogoOnly(restLogo || '');
 
         if (data) {
           const loaded: RestaurantSettings = {
@@ -184,20 +217,21 @@ export const settingsService = {
             banner_url: bannerUrl,
             banner_urls: bannerUrls,
             gallery_urls: bannerUrls,
-            restaurant_id: data.restaurant_id || restaurantId,
+            restaurant_id: data.restaurant_id || targetRestId,
             kot_paper_size: resolvedKotPaper,
             bill_paper_size: resolvedBillPaper,
             auto_print_kot: resolvedAutoPrint,
             gst_registered: resolvedGstRegistered,
             is_gst_enabled: resolvedIsGstEnabled,
             tax_invoice_enabled: resolvedTaxInvoiceEnabled,
+            default_tax_rate: Number(data.default_tax_rate ?? data.tax_rate ?? 5.0),
           };
           mockStorage.saveSettings(loaded);
           return loaded;
         } else if (restData) {
           const loaded: RestaurantSettings = {
             ...mockStorage.getSettings(),
-            id: 'rest-' + restaurantId,
+            id: 'rest-' + targetRestId,
             name: restName || 'Restaurant POS',
             logo_url: cleanLogo,
             phone: restPhone || '',
@@ -206,13 +240,14 @@ export const settingsService = {
             banner_url: bannerUrl,
             banner_urls: bannerUrls,
             gallery_urls: bannerUrls,
-            restaurant_id: restaurantId,
+            restaurant_id: targetRestId,
             kot_paper_size: resolvedKotPaper,
             bill_paper_size: resolvedBillPaper,
             auto_print_kot: resolvedAutoPrint,
             gst_registered: resolvedGstRegistered,
             is_gst_enabled: resolvedIsGstEnabled,
             tax_invoice_enabled: resolvedTaxInvoiceEnabled,
+            default_tax_rate: 5.0,
           };
           mockStorage.saveSettings(loaded);
           return loaded;
@@ -236,10 +271,15 @@ export const settingsService = {
 
   async saveSettings(
     settings: Partial<RestaurantSettings>,
-    restaurantId: string = DEFAULT_RESTAURANT_ID
+    restaurantId?: string
   ): Promise<RestaurantSettings> {
-    const current = await this.getSettings(restaurantId);
-    const updated: RestaurantSettings = { ...current, ...settings, restaurant_id: restaurantId };
+    let targetRestId = restaurantId || settings.restaurant_id;
+    if (!targetRestId) {
+      const def = await restaurantService.getDefaultRestaurant();
+      targetRestId = def?.id || '';
+    }
+    const current = await this.getSettings(targetRestId);
+    const updated: RestaurantSettings = { ...current, ...settings, restaurant_id: targetRestId };
 
     const targetKotPaper = updated.kot_paper_size || '80mm';
     const targetBillPaper = updated.bill_paper_size || '80mm';
@@ -259,7 +299,7 @@ export const settingsService = {
     try {
       await Promise.all([
         AsyncStorage.setItem(
-          `${STORAGE_KEY_PRINTER_PREFIX}${restaurantId}`,
+          `${STORAGE_KEY_PRINTER_PREFIX}${targetRestId}`,
           JSON.stringify({
             kot_paper_size: targetKotPaper,
             bill_paper_size: targetBillPaper,
@@ -267,7 +307,7 @@ export const settingsService = {
           })
         ),
         AsyncStorage.setItem(
-          `${STORAGE_KEY_GST_PREFIX}${restaurantId}`,
+          `${STORAGE_KEY_GST_PREFIX}${targetRestId}`,
           JSON.stringify({
             gst_registered: targetGstRegistered,
             is_gst_enabled: targetIsGstEnabled,
@@ -290,25 +330,26 @@ export const settingsService = {
     if (isSupabaseConfigured) {
       // Auto-upload any legacy Base64 to Supabase Storage before updating DB
       const safeLogoUrl = settings.logo_url !== undefined
-        ? await storageService.ensureCdnUrl(settings.logo_url, 'restaurant-assets', `restaurants/${restaurantId}/logos`)
+        ? await storageService.ensureCdnUrl(settings.logo_url, 'restaurant-assets', `restaurants/${targetRestId}/logos`)
         : undefined;
 
       const safeBannerPayload = bannerPayload !== undefined
-        ? (bannerPayload.startsWith('data:') ? await storageService.ensureCdnUrl(bannerPayload, 'restaurant-assets', `restaurants/${restaurantId}/banners`) : bannerPayload)
+        ? (bannerPayload.startsWith('data:') ? await storageService.ensureCdnUrl(bannerPayload, 'restaurant-assets', `restaurants/${targetRestId}/banners`) : bannerPayload)
         : undefined;
 
-      // 1. Update restaurants table (banner_url, logo_url, name, phone, address, gstin)
+      // 1. Update restaurants table (banner_url, logo_url, name, phone, address, legal_name, email)
       const restUpdates: Record<string, any> = {};
       if (safeBannerPayload !== undefined) restUpdates.banner_url = safeBannerPayload || null;
       if (safeLogoUrl !== undefined) restUpdates.logo_url = safeLogoUrl || null;
-      if (settings.name !== undefined) restUpdates.name = settings.name;
-      if (settings.phone !== undefined) restUpdates.phone = settings.phone;
-      if (settings.address !== undefined) restUpdates.address = settings.address;
-      if (settings.gstin !== undefined) restUpdates.gstin = settings.gstin.trim() || null;
+      if (settings.name !== undefined) restUpdates.name = settings.name.trim();
+      if (settings.legal_name !== undefined) restUpdates.legal_name = settings.legal_name.trim();
+      if (settings.phone !== undefined) restUpdates.phone = settings.phone.trim();
+      if (settings.address !== undefined) restUpdates.address = settings.address.trim();
+      if (settings.email !== undefined) restUpdates.email = settings.email.trim();
 
       if (Object.keys(restUpdates).length > 0) {
         try {
-          await supabase.from('restaurants').update(restUpdates).eq('id', restaurantId);
+          await supabase.from('restaurants').update(restUpdates).eq('id', targetRestId);
         } catch (rErr) {
           console.warn('Failed to update restaurants table:', rErr);
         }
@@ -320,7 +361,7 @@ export const settingsService = {
           await supabase
             .from('restaurant_public_profiles')
             .update({ banner_url: safeBannerPayload || null })
-            .eq('restaurant_id', restaurantId);
+            .eq('restaurant_id', targetRestId);
         } catch (pErr) {
           console.warn('Failed to update restaurant_public_profiles banner_url:', pErr);
         }
@@ -334,68 +375,34 @@ export const settingsService = {
           sanitizedSettingsPayload[key] = val;
         }
       });
-      sanitizedSettingsPayload.restaurant_id = restaurantId;
+      sanitizedSettingsPayload.restaurant_id = targetRestId;
       sanitizedSettingsPayload.updated_at = new Date().toISOString();
 
-      // Ensure logo_url contains only pure logo data/URL (no #printer data)
-      const pureLogoUrl = cleanLogoOnly(settings.logo_url !== undefined ? settings.logo_url : current.logo_url);
-      sanitizedSettingsPayload.logo_url = pureLogoUrl || null;
-      sanitizedSettingsPayload.kot_paper_size = targetKotPaper;
-      sanitizedSettingsPayload.bill_paper_size = targetBillPaper;
-      sanitizedSettingsPayload.auto_print_kot = targetAutoPrint;
-      sanitizedSettingsPayload.gst_registered = targetGstRegistered;
-      sanitizedSettingsPayload.is_gst_enabled = targetIsGstEnabled;
-      sanitizedSettingsPayload.tax_invoice_enabled = targetTaxInvoiceEnabled;
-
-      let targetId = current.id;
-      let query;
-      if (targetId && !targetId.startsWith('rest-')) {
-        query = supabase
-          .from('restaurant_settings')
-          .update(sanitizedSettingsPayload)
-          .eq('id', targetId)
-          .select()
-          .single();
-      } else {
-        query = supabase
-          .from('restaurant_settings')
-          .upsert({ ...sanitizedSettingsPayload, restaurant_id: restaurantId }, { onConflict: 'restaurant_id' })
-          .select()
-          .single();
+      if (settings.auto_print_kot !== undefined || updated.auto_print_kot !== undefined) {
+        sanitizedSettingsPayload.kot_auto_print = Boolean(settings.auto_print_kot ?? updated.auto_print_kot);
       }
 
-      let { data, error } = await query;
-
-      // If database does not yet have custom columns (PGRST204), retry omitting native columns
-      if (error && error.code === 'PGRST204') {
-        delete sanitizedSettingsPayload.kot_paper_size;
-        delete sanitizedSettingsPayload.bill_paper_size;
-        delete sanitizedSettingsPayload.auto_print_kot;
-        delete sanitizedSettingsPayload.gst_registered;
-        delete sanitizedSettingsPayload.is_gst_enabled;
-        delete sanitizedSettingsPayload.tax_invoice_enabled;
-
-        if (targetId && !targetId.startsWith('rest-')) {
-          query = supabase
-            .from('restaurant_settings')
-            .update(sanitizedSettingsPayload)
-            .eq('id', targetId)
-            .select()
-            .single();
-        } else {
-          query = supabase
-            .from('restaurant_settings')
-            .upsert({ ...sanitizedSettingsPayload, restaurant_id: restaurantId }, { onConflict: 'restaurant_id' })
-            .select()
-            .single();
-        }
-        const retry = await query;
-        data = retry.data;
-        error = retry.error;
+      if (settings.default_tax_rate !== undefined || settings.tax_rate !== undefined || updated.default_tax_rate !== undefined) {
+        const rate = Number(settings.default_tax_rate ?? settings.tax_rate ?? updated.default_tax_rate ?? 5.0);
+        sanitizedSettingsPayload.default_tax_rate = rate;
+        sanitizedSettingsPayload.tax_rate = rate;
+        sanitizedSettingsPayload.cgst_rate = Number((rate / 2).toFixed(2));
+        sanitizedSettingsPayload.sgst_rate = Number((rate / 2).toFixed(2));
       }
+
+      if (safeBannerPayload !== undefined) {
+        sanitizedSettingsPayload.banner_url = safeBannerPayload || null;
+      }
+
+      const { data, error } = await supabase
+        .from('restaurant_settings')
+        .upsert(sanitizedSettingsPayload, { onConflict: 'restaurant_id' })
+        .select()
+        .single();
 
       if (error) {
         console.error('Supabase restaurant_settings error:', error);
+        throw new Error(`Failed to save restaurant settings: ${error.message || error.details || 'Database error'}`);
       }
 
       const cleanLogo = (settings.logo_url || current.logo_url || '').split('#printer=')[0];
@@ -414,6 +421,7 @@ export const settingsService = {
         gst_registered: targetGstRegistered,
         is_gst_enabled: targetIsGstEnabled,
         tax_invoice_enabled: targetTaxInvoiceEnabled,
+        default_tax_rate: Number(data?.default_tax_rate ?? data?.tax_rate ?? updated.default_tax_rate ?? 5.0),
       };
       mockStorage.saveSettings(persisted);
       try {

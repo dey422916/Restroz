@@ -13,7 +13,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DiningTable, TableSection } from '../../types';
 import { tableService } from '../../services/api/tableService';
 import { useAuth } from '../../context/AuthContext';
-import { DEFAULT_RESTAURANT_ID } from '../../services/api/restaurantService';
 
 interface TableSelectorModalProps {
   isOpen: boolean;

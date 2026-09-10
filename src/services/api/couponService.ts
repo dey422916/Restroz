@@ -1,7 +1,7 @@
 import { Coupon } from '../../types';
 import { mockStorage } from '../mockStorage';
 import { supabase, isSupabaseConfigured } from '../supabase';
-import { DEFAULT_RESTAURANT_ID } from './restaurantService';
+import { restaurantService } from './restaurantService';
 
 export const couponService = {
   async getCoupons(restaurantId?: string): Promise<Coupon[]> {
@@ -20,7 +20,7 @@ export const couponService = {
         if (!error && data) {
           const list = (data as Coupon[]).map(c => ({
             ...c,
-            restaurant_id: c.restaurant_id || restaurantId || DEFAULT_RESTAURANT_ID,
+            restaurant_id: c.restaurant_id || restaurantId || '',
             discount_type: c.discount_type || 'percentage',
             discount_value: Number(c.discount_value) || 0,
             min_order_value: Number(c.min_order_value) || 0,
@@ -67,15 +67,16 @@ export const couponService = {
   async validateCouponCode(
     code: string,
     subtotal: number,
-    restaurantId: string = DEFAULT_RESTAURANT_ID
+    restaurantId?: string
   ): Promise<{ isValid: boolean; message: string; discountAmount: number; coupon?: Coupon }> {
     if (!code || !code.trim()) {
       return { isValid: false, message: 'Please enter a coupon code.', discountAmount: 0 };
     }
 
-    const coupons = await this.getCoupons(restaurantId);
+    const targetRestId = restaurantId || (await restaurantService.getDefaultRestaurant())?.id || '';
+    const coupons = await this.getCoupons(targetRestId);
     const found = coupons.find(
-      (c) => c.code.toUpperCase() === code.trim().toUpperCase() && c.restaurant_id === restaurantId
+      (c) => c.code.toUpperCase() === code.trim().toUpperCase() && c.restaurant_id === targetRestId
     );
 
     if (!found) {
@@ -134,8 +135,8 @@ export const couponService = {
     };
   },
 
-  async saveCoupon(coupon: Partial<Coupon>, restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<Coupon> {
-    const targetRestId = coupon.restaurant_id || restaurantId;
+  async saveCoupon(coupon: Partial<Coupon>, restaurantId?: string): Promise<Coupon> {
+    const targetRestId = coupon.restaurant_id || restaurantId || (await restaurantService.getDefaultRestaurant())?.id || '';
     const cpnId = coupon.id || 'cpn-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
 
     const payload: any = {

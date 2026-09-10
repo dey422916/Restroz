@@ -1,5 +1,25 @@
 node_modules/
+
 screenshots/
+
 scripts/
+
 !scripts/post-export-web.js
+!scripts/build-production-web.js
+
 .expo/
+dist/
+
+# Environment files - do not commit
+.env
+.env.*
+.env.old-backup
+!.env.example
+
+# Local diagnostic / scratch scripts
+scratch/
+
+# Sensitive account and credential files
+*credentials*
+*secrets*
+ACCOUNTS_LOCAL*.md

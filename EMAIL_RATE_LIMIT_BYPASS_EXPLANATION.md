@@ -214,7 +214,7 @@ BEGIN
     ELSE
         -- 4. Create pre-confirmed Auth User (Zero SMTP, Zero Rate Limits)
         v_user_id := gen_random_uuid();
-        v_enc_pwd := crypt(COALESCE(NULLIF(TRIM(p_password), ''), 'Ratnadeep1@'), gen_salt('bf'));
+        v_enc_pwd := crypt(COALESCE(NULLIF(TRIM(p_password), ''), 'PlaceholderSecret123!'), gen_salt('bf'));
 
         INSERT INTO auth.users (
             instance_id, id, aud, role, email, encrypted_password,

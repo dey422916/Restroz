@@ -25,7 +25,6 @@ import { storageService } from '../../src/services/api/storageService';
 import { useAuth } from '../../src/context/AuthContext';
 import { Product, Category, FoodType } from '../../src/types';
 import { formatCurrency } from '../../src/utils/currency';
-import { DEFAULT_RESTAURANT_ID } from '../../src/services/api/restaurantService';
 import { subscriptionGuardService } from '../../src/services/api/subscriptionGuardService';
 import { downloadSampleProductsCsv } from '../../src/utils/sampleCsv';
 
@@ -79,7 +78,7 @@ export default function ProductsScreen() {
       } else {
         setLoading(true);
       }
-      const targetRestId = activeRestaurantId || DEFAULT_RESTAURANT_ID;
+      const targetRestId = activeRestaurantId;
       const [prods, cats] = await Promise.all([
         productService.getProducts(targetRestId, isRefresh),
         categoryService.getCategories(targetRestId, isRefresh),
@@ -213,7 +212,7 @@ export default function ProductsScreen() {
 
     setModalError(null);
     setSavingProduct(true);
-    const targetRestId = activeRestaurantId || DEFAULT_RESTAURANT_ID;
+    const targetRestId = activeRestaurantId;
 
     try {
       console.log('Submitting product to Supabase for restaurant:', targetRestId, {
@@ -295,7 +294,7 @@ export default function ProductsScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              const targetRestId = activeRestaurantId || DEFAULT_RESTAURANT_ID;
+              const targetRestId = activeRestaurantId;
               const res = await productService.deleteProduct(p.id, targetRestId);
               if (res.deactivated) {
                 Alert.alert('Deactivated', `"${p.name}" is referenced in past orders and was safely deactivated.`);
@@ -314,7 +313,7 @@ export default function ProductsScreen() {
 
   const handleToggleActive = async (p: Product) => {
     try {
-      const targetRestId = activeRestaurantId || DEFAULT_RESTAURANT_ID;
+      const targetRestId = activeRestaurantId;
       await productService.toggleProductActive(p.id, !p.is_active, targetRestId);
       await loadData(true);
     } catch (err: any) {
@@ -337,7 +336,7 @@ export default function ProductsScreen() {
 
     setSavingStock(true);
     try {
-      const targetRestId = activeRestaurantId || DEFAULT_RESTAURANT_ID;
+      const targetRestId = activeRestaurantId;
       await productService.updateStock(stockModalProduct.id, newQty, targetRestId);
       Alert.alert('Stock Updated', `Stock for "${stockModalProduct.name}" set to ${newQty}.`);
       setStockModalProduct(null);
@@ -596,11 +595,13 @@ export default function ProductsScreen() {
                     </Text>
 
                     <View style={styles.priceRow}>
-                      <Text style={styles.price}>{formatCurrency(prod.price)}</Text>
-                      {prod.discounted_price && (
-                        <Text style={styles.discPrice}>
-                          {formatCurrency(prod.discounted_price)}
-                        </Text>
+                      {prod.discounted_price && prod.discounted_price < prod.price ? (
+                        <>
+                          <Text style={styles.price}>{formatCurrency(prod.discounted_price)}</Text>
+                          <Text style={styles.discPrice}>{formatCurrency(prod.price)}</Text>
+                        </>
+                      ) : (
+                        <Text style={styles.price}>{formatCurrency(prod.price)}</Text>
                       )}
                       {!prod.is_active && (
                         <View style={styles.inactiveTag}>

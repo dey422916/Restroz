@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { supabase, isSupabaseConfigured } from '../supabase';
+import { supabase, isSupabaseConfigured, SUPABASE_URL, SUPABASE_ANON_KEY } from '../supabase';
 import {
   Restaurant,
   RestaurantMember,
@@ -512,7 +512,7 @@ export const superAdminService = {
       const { data: rpcData, error: rpcErr } = await supabase.rpc('provision_privileged_user', {
         p_restaurant_id: payload.restaurant_id,
         p_email: cleanEmail,
-        p_password: payload.password || 'Ratnadeep1@',
+        p_password: payload.password || undefined,
         p_full_name: cleanName,
         p_phone: payload.phone?.trim() || null,
         p_role: 'ADMIN',
@@ -539,8 +539,9 @@ export const superAdminService = {
 
     if (!targetUserId) {
       // Attempt client-side signup with user-friendly rate limit mapping
-      const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://szpjsibrwxegaopcaukb.supabase.co';
-      const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_Jh0O9Why0grSgCb3WjjpYQ_Uwj7RclD';
+      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+        throw new Error('Missing required Supabase environment variables for restaurant admin provisioning.');
+      }
 
       const tempClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
         auth: {
@@ -552,7 +553,7 @@ export const superAdminService = {
 
       const { data: signUpData, error: signUpErr } = await tempClient.auth.signUp({
         email: cleanEmail,
-        password: payload.password || 'Ratnadeep1@',
+        password: payload.password || `RestroZ_${Math.random().toString(36).slice(2, 10)}!`,
         options: {
           data: {
             full_name: cleanName,

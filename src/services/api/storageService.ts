@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { supabase, isSupabaseConfigured } from '../supabase';
+import { supabase, isSupabaseConfigured, SUPABASE_URL } from '../supabase';
 
 export interface ImageCompressionOptions {
   maxWidth?: number;
@@ -7,9 +7,6 @@ export interface ImageCompressionOptions {
   quality?: number; // 0.1 - 1.0
   format?: 'webp' | 'jpeg' | 'png';
 }
-
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://szpjsibrwxegaopcaukb.supabase.co';
-const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'sb_secret_ENomNqw6PO2RzvfZ6wOyNg_nE0VvfAY';
 
 export function decodeBase64Image(dataString: string): { buffer: Uint8Array; mimeType: string; ext: string } {
   let mimeType = 'image/jpeg';
@@ -273,25 +270,28 @@ export const storageService = {
         return publicUrlData.publicUrl;
       }
 
-      // 2. Direct HTTP upload with service authentication fallback for guaranteed delivery
-      const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${SERVICE_KEY}`,
-          apiKey: SERVICE_KEY,
-          'Content-Type': contentType,
-          'cache-control': '31536000',
-          'x-upsert': 'true',
-        },
-        body: fileBody,
-      });
+      // 2. Direct HTTP upload with session authentication fallback
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      
+      if (token) {
+        const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': contentType,
+            'cache-control': '31536000',
+            'x-upsert': 'true',
+          },
+          body: fileBody,
+        });
 
-      if (res.ok) {
-        return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`;
+        if (res.ok) {
+          return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`;
+        }
       }
 
-      const errText = await res.text();
-      throw new Error(`Storage upload failed: ${errText || error?.message || 'Unknown error'}`);
+      throw new Error(error?.message || 'Storage upload failed.');
     } catch (e: any) {
       console.error(`Storage upload error to ${bucket}/${path}:`, e.message);
       throw new Error(`Failed to upload image to storage: ${e.message}`);
@@ -705,31 +705,29 @@ export const storageService = {
               }
 
               const compressed = await compressAndResizeImage(file, {
-                maxWidth: 300,
-                maxHeight: 300,
-                quality: 0.85,
+                maxWidth: 240,
+                maxHeight: 240,
+                quality: 0.8,
                 format: 'webp',
               });
 
-              const fileExt = compressed.format || 'webp';
-              const timestamp = Date.now();
-              const rand = Math.random().toString(36).substring(2, 7);
-              const userScope = options?.userId || 'users';
-              const fileName = `${timestamp}_${rand}.${fileExt}`;
-              const path = `users/${userScope}/avatars/${fileName}`;
-
-              if (compressed.blob) {
-                const cdnUrl = await storageService.uploadBinary(
-                  'restaurant-assets',
-                  path,
-                  compressed.blob,
-                  `image/${fileExt}`
-                );
-                resolve({ url: cdnUrl, fileName });
+              if (compressed.uri && compressed.uri.startsWith('data:')) {
+                resolve({ url: compressed.uri, fileName: 'avatar.webp' });
                 return;
               }
 
-              reject(new Error('Failed to process avatar image for upload.'));
+              if (compressed.blob) {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  const dataUrl = reader.result as string;
+                  resolve({ url: dataUrl, fileName: 'avatar.webp' });
+                };
+                reader.onerror = () => reject(new Error('Failed to read compressed avatar.'));
+                reader.readAsDataURL(compressed.blob);
+                return;
+              }
+
+              reject(new Error('Failed to process avatar image.'));
             } catch (err) {
               reject(err);
             } finally {
@@ -753,7 +751,7 @@ export const storageService = {
         mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.85,
+        quality: 0.8,
       });
 
       if (result.canceled || !result.assets || result.assets.length === 0) {
@@ -764,30 +762,51 @@ export const storageService = {
       const uri = asset.uri;
 
       const compressed = await compressAndResizeImage(uri, {
-        maxWidth: 300,
-        maxHeight: 300,
-        quality: 0.85,
+        maxWidth: 240,
+        maxHeight: 240,
+        quality: 0.8,
         format: 'webp',
       });
 
       const effectiveUri = compressed.uri || uri;
-      const fileExt = compressed.format || 'webp';
-      const timestamp = Date.now();
-      const rand = Math.random().toString(36).substring(2, 7);
-      const userScope = options?.userId || 'users';
-      const fileName = `${timestamp}_${rand}.${fileExt}`;
-      const path = `users/${userScope}/avatars/${fileName}`;
+      if (effectiveUri.startsWith('data:')) {
+        return { url: effectiveUri, fileName: 'avatar.webp' };
+      }
 
-      const uploadBytes = await getUploadBytesFromUri(effectiveUri);
+      // Read local file as base64 data URL
+      try {
+        const { File } = await import('expo-file-system');
+        if (typeof File === 'function') {
+          const file = new File(effectiveUri);
+          if (typeof file.base64 === 'function') {
+            const b64 = await file.base64();
+            return { url: `data:image/webp;base64,${b64}`, fileName: 'avatar.webp' };
+          }
+        }
+      } catch (fsErr) {
+        console.warn('Modern File API b64 failed, trying legacy:', fsErr);
+      }
 
-      const cdnUrl = await this.uploadBinary(
-        'restaurant-assets',
-        path,
-        uploadBytes,
-        `image/${fileExt}`
-      );
+      try {
+        const LegacyFS = await import('expo-file-system/legacy');
+        const b64 = await LegacyFS.readAsStringAsync(effectiveUri, {
+          encoding: LegacyFS.EncodingType.Base64,
+        });
+        return { url: `data:image/webp;base64,${b64}`, fileName: 'avatar.webp' };
+      } catch (legacyErr) {
+        console.warn('Legacy FS base64 read failed:', legacyErr);
+      }
 
-      return { url: cdnUrl, fileName };
+      const res = await fetch(effectiveUri);
+      const blob = await res.blob();
+      const reader = new FileReader();
+      const dataUrl = await new Promise<string>((res, rej) => {
+        reader.onloadend = () => res(reader.result as string);
+        reader.onerror = rej;
+        reader.readAsDataURL(blob);
+      });
+
+      return { url: dataUrl, fileName: 'avatar.webp' };
     } catch (err: any) {
       console.error('Avatar upload error:', err);
       throw new Error(err.message || 'Failed to select or upload avatar.');

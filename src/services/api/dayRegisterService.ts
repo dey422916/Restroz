@@ -3,7 +3,7 @@ import { DayRegister, Order, Payment } from '../../types';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import { auditService } from './auditService';
 import { orderService } from './orderService';
-import { DEFAULT_RESTAURANT_ID } from './restaurantService';
+import { restaurantService } from './restaurantService';
 
 const STORAGE_KEY_REGISTERS = '@kullad_chai_day_registers';
 
@@ -21,19 +21,20 @@ export const dayRegisterService = {
   /**
    * Get all registers from storage scoped by restaurant
    */
-  async getRegisters(restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<DayRegister[]> {
-    if (isSupabaseConfigured) {
+  async getRegisters(restaurantId?: string): Promise<DayRegister[]> {
+    const targetRestId = restaurantId || (await restaurantService.getDefaultRestaurant())?.id || '';
+    if (isSupabaseConfigured && targetRestId) {
       try {
         const { data, error } = await supabase
           .from('day_registers')
           .select('*')
-          .eq('restaurant_id', restaurantId)
+          .eq('restaurant_id', targetRestId)
           .order('opened_at', { ascending: false });
 
         if (!error && data && data.length > 0) {
           const mapped = data.map((r: any) => ({
             id: r.id,
-            restaurant_id: r.restaurant_id || restaurantId,
+            restaurant_id: r.restaurant_id || targetRestId,
             register_date: r.register_date,
             status: (r.status || 'open').toLowerCase() as 'open' | 'closed',
             opening_cash_float: Number(r.opening_cash_float) || 0,
@@ -50,7 +51,7 @@ export const dayRegisterService = {
             closed_at: r.closed_at || undefined,
             closed_by: r.closed_by || undefined,
           }));
-          await AsyncStorage.setItem(`${STORAGE_KEY_REGISTERS}_${restaurantId}`, JSON.stringify(mapped));
+          await AsyncStorage.setItem(`${STORAGE_KEY_REGISTERS}_${targetRestId}`, JSON.stringify(mapped));
           return mapped;
         }
       } catch (e) {
@@ -59,17 +60,9 @@ export const dayRegisterService = {
     }
 
     try {
-      const data = await AsyncStorage.getItem(`${STORAGE_KEY_REGISTERS}_${restaurantId}`);
+      const data = await AsyncStorage.getItem(`${STORAGE_KEY_REGISTERS}_${targetRestId}`);
       if (data) {
         return JSON.parse(data) as DayRegister[];
-      }
-      // Fallback to legacy key for Ratnadeep
-      if (restaurantId === DEFAULT_RESTAURANT_ID) {
-        const legacy = await AsyncStorage.getItem(STORAGE_KEY_REGISTERS);
-        if (legacy) {
-          const list = JSON.parse(legacy) as DayRegister[];
-          return list.map((r) => ({ ...r, restaurant_id: DEFAULT_RESTAURANT_ID }));
-        }
       }
     } catch (e) {
       console.warn('Failed to load registers from storage:', e);
@@ -80,9 +73,12 @@ export const dayRegisterService = {
   /**
    * Save registers to storage
    */
-  async saveRegisters(registers: DayRegister[], restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<void> {
+  async saveRegisters(registers: DayRegister[], restaurantId?: string): Promise<void> {
     try {
-      await AsyncStorage.setItem(`${STORAGE_KEY_REGISTERS}_${restaurantId}`, JSON.stringify(registers));
+      const targetRestId = restaurantId || registers[0]?.restaurant_id || '';
+      if (targetRestId) {
+        await AsyncStorage.setItem(`${STORAGE_KEY_REGISTERS}_${targetRestId}`, JSON.stringify(registers));
+      }
     } catch (e) {
       console.warn('Failed to save registers to storage:', e);
     }
@@ -91,7 +87,7 @@ export const dayRegisterService = {
   /**
    * Get currently active open register or latest register
    */
-  async getCurrentRegister(restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<DayRegister | null> {
+  async getCurrentRegister(restaurantId?: string): Promise<DayRegister | null> {
     const registers = await this.getRegisters(restaurantId);
     // 1. Find currently open register (only one open register allowed per restaurant)
     const openRegister = registers.find((r) => r.status === 'open');
@@ -108,13 +104,14 @@ export const dayRegisterService = {
   /**
    * Check if the register is currently open for the given restaurant
    */
-  async isRegisterOpen(restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<boolean> {
-    if (isSupabaseConfigured) {
+  async isRegisterOpen(restaurantId?: string): Promise<boolean> {
+    const targetRestId = restaurantId || (await restaurantService.getDefaultRestaurant())?.id || '';
+    if (isSupabaseConfigured && targetRestId) {
       try {
         const { data, error } = await supabase
           .from('day_registers')
           .select('id, status')
-          .eq('restaurant_id', restaurantId)
+          .eq('restaurant_id', targetRestId)
           .eq('status', 'open')
           .limit(1);
 
@@ -129,7 +126,7 @@ export const dayRegisterService = {
       }
     }
 
-    const current = await this.getCurrentRegister(restaurantId);
+    const current = await this.getCurrentRegister(targetRestId);
     return Boolean(current && current.status === 'open');
   },
 
@@ -138,7 +135,7 @@ export const dayRegisterService = {
    */
   async calculateRegisterReconciliation(
     register: DayRegister,
-    restaurantId: string = DEFAULT_RESTAURANT_ID
+    restaurantId?: string
   ): Promise<{
     cash_sales: number;
     upi_sales: number;
@@ -222,7 +219,7 @@ export const dayRegisterService = {
     notes?: string;
     restaurant_id?: string;
   }): Promise<DayRegister> {
-    const targetRestId = params.restaurant_id || DEFAULT_RESTAURANT_ID;
+    const targetRestId = params.restaurant_id || (await restaurantService.getDefaultRestaurant())?.id || '';
     const registers = await this.getRegisters(targetRestId);
 
     // Rule: Allow ONLY ONE open register per restaurant scope at a time
@@ -297,7 +294,7 @@ export const dayRegisterService = {
    * An order is considered unsettled if its status is neither 'completed' nor 'cancelled',
    * or if its payment_status is not 'paid'.
    */
-  async getUnsettledOrders(restaurantId: string = DEFAULT_RESTAURANT_ID): Promise<Order[]> {
+  async getUnsettledOrders(restaurantId?: string): Promise<Order[]> {
     const allOrders = await orderService.getOrders(restaurantId);
     return allOrders.filter(
       (ord) => ord.status !== 'cancelled' && (ord.status !== 'completed' || ord.payment_status !== 'paid')
@@ -314,7 +311,7 @@ export const dayRegisterService = {
     closing_notes?: string;
     restaurant_id?: string;
   }): Promise<DayRegister> {
-    const targetRestId = params.restaurant_id || DEFAULT_RESTAURANT_ID;
+    const targetRestId = params.restaurant_id || (await restaurantService.getDefaultRestaurant())?.id || '';
     const registers = await this.getRegisters(targetRestId);
     const index = registers.findIndex((r) => r.id === params.register_id);
 

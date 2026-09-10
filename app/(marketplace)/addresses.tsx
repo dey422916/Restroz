@@ -9,6 +9,8 @@ import {
   ActivityIndicator,
   Modal,
   Alert,
+  Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
@@ -19,6 +21,8 @@ import { isValidPhoneNumber } from '../../src/utils/phone';
 
 export default function CustomerAddressesScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 768;
   const { user, loading: authLoading } = useAuth();
 
   const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
@@ -154,22 +158,55 @@ export default function CustomerAddressesScreen() {
   };
 
   const handleDelete = (id: string) => {
-    Alert.alert('Delete Address', 'Are you sure you want to remove this delivery address?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          // Optimistic remove
-          setAddresses((prev) => prev.filter((a) => a.id !== id));
-          try {
-            await marketplaceService.deleteCustomerAddress(id);
-          } catch (e) {
-            loadAddresses();
-          }
+    console.log('[DEV_LOG] Delete clicked for address ID:', id);
+
+    const executeDelete = async () => {
+      console.log('[DEV_LOG] Confirmation accepted for address ID:', id);
+      // Optimistic remove
+      setAddresses((prev) => prev.filter((a) => a.id !== id));
+      try {
+        console.log('[DEV_LOG] deleteAddress called for address ID:', id);
+        await marketplaceService.deleteCustomerAddress(id);
+        console.log('[DEV_LOG] Supabase response received successfully for address ID:', id);
+      } catch (e: any) {
+        console.error('[DEV_LOG] Error deleting address:', e);
+        Alert.alert('Error', e.message || 'Failed to remove address.');
+        loadAddresses();
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined') {
+        const confirmed = window.confirm('Are you sure you want to remove this delivery address?');
+        if (confirmed) {
+          executeDelete();
+        } else {
+          console.log('[DEV_LOG] Delete cancelled by user on Web');
+        }
+      } else {
+        executeDelete();
+      }
+    } else {
+      Alert.alert('Delete Address', 'Are you sure you want to remove this delivery address?', [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () => console.log('[DEV_LOG] Delete cancelled by user on Mobile'),
         },
-      },
-    ]);
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: executeDelete,
+        },
+      ]);
+    }
+  };
+
+  const getLabelIcon = (lbl: string) => {
+    const l = lbl.toLowerCase();
+    if (l === 'home') return '🏠';
+    if (l === 'work') return '🏢';
+    return '📍';
   };
 
   if (authLoading || loading) {
@@ -198,75 +235,90 @@ export default function CustomerAddressesScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Delivery Addresses</Text>
-        <TouchableOpacity style={styles.addBtn} onPress={openAddModal}>
-          <Text style={styles.addBtnText}>➕ Add Address</Text>
-        </TouchableOpacity>
-      </View>
-
       <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
-        {addresses.length === 0 ? (
-          <View style={styles.emptyWrap}>
-            <Text style={{ fontSize: 40 }}>📍</Text>
-            <Text style={styles.emptyTitle}>No Addresses Saved</Text>
-            <Text style={styles.emptySub}>
-              Save your home, work, or favorite addresses for fast 1-tap checkout.
-            </Text>
-            <TouchableOpacity style={styles.addBtnPrimary} onPress={openAddModal}>
-              <Text style={styles.addBtnPrimaryText}>+ Add First Address</Text>
+        <View style={styles.pageInner}>
+          {/* Header Banner Box */}
+          <View style={styles.header}>
+            <View>
+              <Text style={styles.headerTitle}>My Delivery Addresses</Text>
+              <Text style={styles.headerSubtitle}>
+                Manage your delivery locations for fast 1-tap ordering
+              </Text>
+            </View>
+            <TouchableOpacity style={styles.addBtn} onPress={openAddModal} activeOpacity={0.8}>
+              <Text style={styles.addBtnText}>+ Add Address</Text>
             </TouchableOpacity>
           </View>
-        ) : (
-          addresses.map((addr) => (
-            <View key={addr.id} style={styles.addressCard}>
-              <View style={styles.cardHeader}>
-                <View style={styles.labelRow}>
-                  <Text style={styles.labelBadge}>{addr.label.toUpperCase()}</Text>
-                  {addr.is_default && (
-                    <View style={styles.defaultBadge}>
-                      <Text style={styles.defaultBadgeText}>DEFAULT</Text>
-                    </View>
-                  )}
-                </View>
 
-                <View style={styles.actionRow}>
-                  {!addr.is_default && (
-                    <TouchableOpacity
-                      style={styles.setDefaultBtn}
-                      onPress={() => handleSetDefault(addr.id)}
-                    >
-                      <Text style={styles.setDefaultBtnText}>★ Set Default</Text>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity
-                    style={styles.editBtn}
-                    onPress={() => openEditModal(addr)}
-                  >
-                    <Text style={{ fontSize: 13 }}>✏️</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.deleteBtn}
-                    onPress={() => handleDelete(addr.id)}
-                  >
-                    <Text style={{ fontSize: 13 }}>🗑️</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              <Text style={styles.recipientName}>{addr.full_name}</Text>
-              <Text style={styles.streetLine}>
-                {addr.address_line1}
-                {addr.landmark ? `, Near ${addr.landmark}` : ''}
+          {addresses.length === 0 ? (
+            <View style={styles.emptyWrap}>
+              <Text style={{ fontSize: 48 }}>📍</Text>
+              <Text style={styles.emptyTitle}>No Addresses Saved Yet</Text>
+              <Text style={styles.emptySub}>
+                Save your home, work, or frequently visited addresses for quick ordering and checkout.
               </Text>
-              <Text style={styles.cityLine}>
-                {addr.city}, {addr.state} - {addr.postal_code}
-              </Text>
-              <Text style={styles.phoneLine}>📞 {addr.phone}</Text>
+              <TouchableOpacity style={styles.addBtnPrimary} onPress={openAddModal} activeOpacity={0.8}>
+                <Text style={styles.addBtnPrimaryText}>+ Add First Address</Text>
+              </TouchableOpacity>
             </View>
-          ))
-        )}
+          ) : (
+            <View style={styles.addressGrid}>
+              {addresses.map((addr) => (
+                <View key={addr.id} style={[styles.addressCard, isDesktop && styles.addressCardDesktop]}>
+                  <View style={styles.cardHeader}>
+                    <View style={styles.labelRow}>
+                      <Text style={{ fontSize: 16 }}>{getLabelIcon(addr.label)}</Text>
+                      <Text style={styles.labelBadge}>{addr.label.toUpperCase()}</Text>
+                      {addr.is_default && (
+                        <View style={styles.defaultBadge}>
+                          <Text style={styles.defaultBadgeText}>DEFAULT</Text>
+                        </View>
+                      )}
+                    </View>
+
+                    <View style={styles.actionRow}>
+                      {!addr.is_default && (
+                        <TouchableOpacity
+                          style={styles.setDefaultBtn}
+                          onPress={() => handleSetDefault(addr.id)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.setDefaultBtnText}>★ Set Default</Text>
+                        </TouchableOpacity>
+                      )}
+                      <TouchableOpacity
+                        style={styles.editBtn}
+                        onPress={() => openEditModal(addr)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 13 }}>✏️</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.deleteBtn}
+                        onPress={() => handleDelete(addr.id)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 13 }}>🗑️</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  <Text style={styles.recipientName}>{addr.full_name}</Text>
+                  <Text style={styles.streetLine}>
+                    {addr.address_line1}
+                    {addr.landmark ? `, Near ${addr.landmark}` : ''}
+                  </Text>
+                  <Text style={styles.cityLine}>
+                    {addr.city}, {addr.state} - {addr.postal_code}
+                  </Text>
+                  <View style={styles.phoneBadge}>
+                    <Text style={styles.phoneLine}>📞 {addr.phone}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
       </ScrollView>
 
       {/* Add/Edit Modal */}
@@ -418,114 +470,168 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 13,
   },
+  pageInner: {
+    width: '100%',
+    maxWidth: 1080,
+    alignSelf: 'center',
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#EEEEEE',
+    borderRadius: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '800',
     color: customerColors.text,
+    letterSpacing: -0.3,
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
   },
   addBtn: {
-    backgroundColor: customerColors.primaryBg,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+    backgroundColor: customerColors.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 10,
+    shadowColor: customerColors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
   },
   addBtnText: {
     fontSize: 13,
     fontWeight: '700',
-    color: customerColors.primary,
+    color: '#FFFFFF',
   },
   scrollArea: {
     flex: 1,
+    backgroundColor: '#F8FAFC',
   },
   scrollContent: {
     padding: 16,
     paddingBottom: 70,
   },
+  addressGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
   emptyWrap: {
-    padding: 40,
+    padding: 48,
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 10,
   },
   emptyTitle: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 18,
+    fontWeight: '800',
     color: customerColors.text,
   },
   emptySub: {
     fontSize: 13,
     color: customerColors.textSecondary,
     textAlign: 'center',
-    lineHeight: 18,
-    marginBottom: 12,
+    lineHeight: 20,
+    maxWidth: 420,
+    marginBottom: 8,
   },
   addBtnPrimary: {
     backgroundColor: customerColors.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 10,
+    shadowColor: customerColors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
   },
   addBtnPrimaryText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
   },
   addressCard: {
+    width: '100%',
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 14,
+    padding: 18,
     borderWidth: 1,
-    borderColor: '#EEEEEE',
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  addressCardDesktop: {
+    flexGrow: 1,
+    flexShrink: 0,
+    flexBasis: 320,
+    maxWidth: 530,
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
   },
   labelRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
   },
   labelBadge: {
     fontSize: 11,
     fontWeight: '800',
     color: customerColors.primary,
     backgroundColor: customerColors.primaryBg,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
   },
   defaultBadge: {
     backgroundColor: '#DCFCE7',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
   },
   defaultBadgeText: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '800',
     color: '#15803D',
   },
   actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
   },
   setDefaultBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 6,
     backgroundColor: '#F0FDF4',
     borderWidth: 1,
@@ -537,34 +643,45 @@ const styles = StyleSheet.create({
     color: '#16A34A',
   },
   editBtn: {
-    padding: 4,
-    borderRadius: 4,
+    padding: 6,
+    borderRadius: 6,
     backgroundColor: '#F1F5F9',
   },
   deleteBtn: {
-    padding: 4,
-    borderRadius: 4,
+    padding: 6,
+    borderRadius: 6,
     backgroundColor: '#FEF2F2',
   },
   recipientName: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '800',
     color: customerColors.text,
-    marginBottom: 2,
+    marginBottom: 4,
   },
   streetLine: {
     fontSize: 13,
-    color: customerColors.text,
-    marginBottom: 2,
+    color: '#334155',
+    lineHeight: 18,
+    marginBottom: 4,
   },
   cityLine: {
     fontSize: 12,
-    color: customerColors.textSecondary,
-    marginBottom: 4,
+    color: '#64748B',
+    marginBottom: 10,
+  },
+  phoneBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
   },
   phoneLine: {
     fontSize: 12,
-    color: customerColors.textSecondary,
+    color: '#475569',
+    fontWeight: '600',
   },
   modalOverlay: {
     flex: 1,

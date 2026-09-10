@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Linking } from 'react-native';
 import { UserProfile, UserRole, Restaurant, RestaurantMember, RestaurantMemberPermissions } from '../types';
 import { authService } from '../services/api/authService';
-import { restaurantService, DEFAULT_RESTAURANT_ID } from '../services/api/restaurantService';
+import { restaurantService } from '../services/api/restaurantService';
 import { staffService } from '../services/api/staffService';
 import { supabase, isSupabaseConfigured } from '../services/supabase';
 import { pendingRedirectUtil } from '../utils/pendingRedirect';
@@ -32,6 +32,7 @@ interface AuthContextType {
   consumePendingTableId: () => Promise<string | null>;
   superAdminMarketplacePreview: boolean;
   setSuperAdminMarketplacePreview: (enabled: boolean) => void;
+  updateUserProfileState: (updates: Partial<UserProfile>) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -40,7 +41,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [pendingTableId, setPendingTableIdState] = useState<string | null>(null);
-  const [activeRestaurantId, setActiveRestaurantId] = useState<string>(DEFAULT_RESTAURANT_ID);
+  const [activeRestaurantId, setActiveRestaurantId] = useState<string>('');
   const [activeRestaurant, setActiveRestaurant] = useState<Restaurant | null>(null);
   const [userMemberships, setUserMemberships] = useState<RestaurantMember[]>([]);
   const [memberPermissions, setMemberPermissions] = useState<RestaurantMemberPermissions | null>(null);
@@ -48,9 +49,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loadRestaurantContext = async (currentUser: UserProfile | null) => {
     if (currentUser?.id) {
+      const normalizedRole = (currentUser.role || '').toUpperCase();
       try {
         const { restaurantId, membership, restaurant } =
-          await restaurantService.getActiveRestaurantContext(currentUser.id);
+          await restaurantService.getActiveRestaurantContext(currentUser.id, normalizedRole);
         const memberships = await restaurantService.getUserMemberships(currentUser.id);
         setUserMemberships(memberships);
         setActiveRestaurantId(restaurantId);
@@ -60,13 +62,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const perms = await staffService.getCurrentUserPermissions(currentUser.id, restaurantId);
         setMemberPermissions(perms);
         return;
-      } catch (e) {
-        console.warn('loadRestaurantContext error:', e);
+      } catch (e: any) {
+        console.warn('loadRestaurantContext error:', e.message || e);
+        // Clean active state so tenant user is not silently bound to another restaurant
+        setActiveRestaurantId('');
+        setActiveRestaurant(null);
+        setUserMemberships([]);
+        setMemberPermissions(null);
+
+        // For ADMIN and STAFF users, propagate the membership error
+        if (normalizedRole === 'ADMIN' || normalizedRole === 'STAFF') {
+          throw e;
+        }
+        return;
       }
     }
-    const def = await restaurantService.getDefaultRestaurant();
-    setActiveRestaurantId(def.id);
-    setActiveRestaurant(def);
+
+    // Truly public / anonymous marketplace & QR behavior
+    // Unauthenticated visitors do not receive an active restaurant ID by default
+    // to prevent background admin/POS queries from mounting.
+    setActiveRestaurantId('');
+    setActiveRestaurant(null);
     setUserMemberships([]);
     setMemberPermissions(null);
   };
@@ -218,6 +234,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const updateUserProfileState = (updates: Partial<UserProfile>) => {
+    setUser((prev) => (prev ? { ...prev, ...updates } : prev));
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -245,6 +265,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         consumePendingTableId,
         superAdminMarketplacePreview,
         setSuperAdminMarketplacePreview,
+        updateUserProfileState,
       }}
     >
       {children}

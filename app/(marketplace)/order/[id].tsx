@@ -9,6 +9,7 @@ import {
   Modal,
   Alert,
   Image,
+  useWindowDimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '../../../src/context/AuthContext';
@@ -32,6 +33,8 @@ const CANCELLATION_REASONS = [
 export default function CustomerOrderDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 860;
   const { user } = useAuth();
   const { clearCart, addToCart } = useCustomerCart();
 
@@ -217,237 +220,257 @@ export default function CustomerOrderDetailsScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.headerBack} onPress={() => router.back()}>
-          <Text style={{ fontSize: 18, color: '#0F172A' }}>←</Text>
-        </TouchableOpacity>
-        {rest?.logo_url ? (
-          <Image
-            source={{ uri: rest.logo_url }}
-            style={{ width: 34, height: 34, borderRadius: 6, marginLeft: 6 }}
-            resizeMode="contain"
-          />
-        ) : null}
-        <View style={{ flex: 1, marginLeft: 8 }}>
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {rest?.name || 'Restaurant'}
-          </Text>
-          <Text style={styles.headerSub}>Order #{order.order_number} • 🕒 {formatOrderDateTime(order.created_at)}</Text>
-        </View>
-        <View style={[styles.statusBadge, { backgroundColor: `${progress.badgeColor}18` }]}>
-          <Text style={[styles.statusBadgeText, { color: progress.badgeColor }]}>
-            {progress.label}
-          </Text>
-        </View>
-      </View>
-
       <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
-        {/* 3-Stage Progress Tracker (Only for non-cancelled) */}
-        {order.status !== 'cancelled' ? (
-          <View style={styles.trackerCard}>
-            <Text style={styles.cardTitle}>Live Delivery Progress</Text>
-            <View style={styles.trackRow}>
-              {/* Step 1 */}
-              <View style={styles.trackStep}>
-                <View style={[styles.stepDot, isStage1Active && styles.stepDotActive]}>
-                  <Text style={{ fontSize: 10, color: '#FFFFFF' }}>✓</Text>
-                </View>
-                <Text style={[styles.stepLabel, isStage1Active && styles.stepLabelActive]}>
-                  Ordered
-                </Text>
-              </View>
-
-              <View style={[styles.trackLine, isStage2Active && styles.trackLineActive]} />
-
-              {/* Step 2 */}
-              <View style={styles.trackStep}>
-                <View style={[styles.stepDot, isStage2Active && styles.stepDotActive]}>
-                  <Text style={{ fontSize: 10, color: isStage2Active ? '#FFFFFF' : '#64748B' }}>
-                    {isStage2Active ? '✓' : '2'}
-                  </Text>
-                </View>
-                <Text style={[styles.stepLabel, isStage2Active && styles.stepLabelActive]}>
-                  Out for Delivery
-                </Text>
-              </View>
-
-              <View style={[styles.trackLine, isStage3Active && styles.trackLineActive]} />
-
-              {/* Step 3 */}
-              <View style={styles.trackStep}>
-                <View style={[styles.stepDot, isStage3Active && styles.stepDotActive]}>
-                  <Text style={{ fontSize: 10, color: isStage3Active ? '#FFFFFF' : '#64748B' }}>
-                    {isStage3Active ? '✓' : '3'}
-                  </Text>
-                </View>
-                <Text style={[styles.stepLabel, isStage3Active && styles.stepLabelActive]}>
-                  Delivered
-                </Text>
-              </View>
-            </View>
-            <Text style={styles.progressDesc}>{progress.description}</Text>
-          </View>
-        ) : (
-          <View style={styles.cancelledBanner}>
-            <Text style={{ fontSize: 24 }}>❌</Text>
+        <View style={styles.pageInner}>
+          {/* Header */}
+          <View style={styles.header}>
+            <TouchableOpacity style={styles.headerBack} onPress={() => router.back()}>
+              <Text style={{ fontSize: 18, color: '#0F172A', fontWeight: '700' }}>←</Text>
+            </TouchableOpacity>
+            {rest?.logo_url ? (
+              <Image
+                source={{ uri: rest.logo_url }}
+                style={{ width: 38, height: 38, borderRadius: 8, marginLeft: 6 }}
+                resizeMode="contain"
+              />
+            ) : null}
             <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={styles.cancelledTitle}>Order Cancelled</Text>
-              <Text style={styles.cancelledSub}>
-                {order.notes?.includes('[CANCELLED')
-                  ? order.notes.split('[CANCELLED')[1].replace(']', '')
-                  : 'This order was cancelled.'}
+              <Text style={styles.headerTitle} numberOfLines={1}>
+                {rest?.name || 'Restaurant'}
+              </Text>
+              <Text style={styles.headerSub}>Order #{order.order_number} • 🕒 {formatOrderDateTime(order.created_at)}</Text>
+            </View>
+            <View style={[styles.statusBadge, { backgroundColor: `${progress.badgeColor}18` }]}>
+              <Text style={[styles.statusBadgeText, { color: progress.badgeColor }]}>
+                {progress.label}
               </Text>
             </View>
           </View>
-        )}
 
-        {/* Ordered Items Breakdown */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.cardTitle}>Ordered Items</Text>
-          {(order.items || []).map((item, idx) => (
-            <View key={item.id || idx} style={styles.itemRow}>
-              <Text style={styles.itemQty}>{item.quantity}x</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemName}>{item.product_name || 'Item'}</Text>
-                <Text style={styles.itemUnitPrice}>@ ₹{formatPrice(item.unit_price)} each</Text>
-                {item.item_notes ? (
-                  <Text style={styles.itemNote}>Note: {item.item_notes}</Text>
-                ) : null}
+          {/* Main Content Layout (2-Column on Desktop, Stacked on Mobile) */}
+          <View style={[styles.contentLayout, isDesktop && styles.contentLayoutDesktop]}>
+            {/* Left Column: Progress + Items + Actions */}
+            <View style={[styles.mainColumn, isDesktop && styles.mainColumnDesktop]}>
+              {/* 3-Stage Progress Tracker (Only for non-cancelled) */}
+              {order.status !== 'cancelled' ? (
+                <View style={styles.trackerCard}>
+                  <Text style={styles.cardTitle}>Live Delivery Progress</Text>
+                  <View style={styles.trackRow}>
+                    {/* Step 1 */}
+                    <View style={styles.trackStep}>
+                      <View style={[styles.stepDot, isStage1Active && styles.stepDotActive]}>
+                        <Text style={{ fontSize: 11, color: '#FFFFFF', fontWeight: '800' }}>✓</Text>
+                      </View>
+                      <Text style={[styles.stepLabel, isStage1Active && styles.stepLabelActive]}>
+                        Ordered
+                      </Text>
+                    </View>
+
+                    <View style={[styles.trackLine, isStage2Active && styles.trackLineActive]} />
+
+                    {/* Step 2 */}
+                    <View style={styles.trackStep}>
+                      <View style={[styles.stepDot, isStage2Active && styles.stepDotActive]}>
+                        <Text style={{ fontSize: 11, color: isStage2Active ? '#FFFFFF' : '#64748B', fontWeight: '700' }}>
+                          {isStage2Active ? '✓' : '2'}
+                        </Text>
+                      </View>
+                      <Text style={[styles.stepLabel, isStage2Active && styles.stepLabelActive]}>
+                        Out for Delivery
+                      </Text>
+                    </View>
+
+                    <View style={[styles.trackLine, isStage3Active && styles.trackLineActive]} />
+
+                    {/* Step 3 */}
+                    <View style={styles.trackStep}>
+                      <View style={[styles.stepDot, isStage3Active && styles.stepDotActive]}>
+                        <Text style={{ fontSize: 11, color: isStage3Active ? '#FFFFFF' : '#64748B', fontWeight: '700' }}>
+                          {isStage3Active ? '✓' : '3'}
+                        </Text>
+                      </View>
+                      <Text style={[styles.stepLabel, isStage3Active && styles.stepLabelActive]}>
+                        Delivered
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.progressDesc}>{progress.description}</Text>
+                </View>
+              ) : (
+                <View style={styles.cancelledBanner}>
+                  <Text style={{ fontSize: 24 }}>❌</Text>
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={styles.cancelledTitle}>Order Cancelled</Text>
+                    <Text style={styles.cancelledSub}>
+                      {order.notes?.includes('[CANCELLED')
+                        ? order.notes.split('[CANCELLED')[1].replace(']', '')
+                        : 'This order was cancelled.'}
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {/* Ordered Items Breakdown */}
+              <View style={styles.sectionCard}>
+                <Text style={styles.cardTitle}>Ordered Items</Text>
+                {(order.items || []).map((item, idx) => (
+                  <View key={item.id || idx} style={styles.itemRow}>
+                    <Text style={styles.itemQty}>{item.quantity}x</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.itemName}>{item.product_name || 'Item'}</Text>
+                      <Text style={styles.itemUnitPrice}>@ ₹{formatPrice(item.unit_price)} each</Text>
+                      {item.item_notes ? (
+                        <Text style={styles.itemNote}>Note: {item.item_notes}</Text>
+                      ) : null}
+                    </View>
+                    <Text style={styles.itemPrice}>
+                      ₹{formatPrice(item.total || item.unit_price * item.quantity)}
+                    </Text>
+                  </View>
+                ))}
+
+                {/* Bill Summary */}
+                <View style={styles.billBreakdown}>
+                  <View style={styles.billRow}>
+                    <Text style={styles.billLabel}>Item Subtotal</Text>
+                    <Text style={styles.billVal}>₹{formatPrice(order.subtotal)}</Text>
+                  </View>
+
+                  {Boolean((order.coupon_discount && order.coupon_discount > 0) || (order.discount_amount && order.discount_amount > 0)) && (
+                    <View style={styles.billRow}>
+                      <Text style={[styles.billLabel, { color: '#059669', fontWeight: '600' }]}>
+                        Coupon Discount {order.coupon_code ? `(${order.coupon_code})` : ''}
+                      </Text>
+                      <Text style={[styles.billVal, { color: '#059669', fontWeight: '700' }]}>
+                        −₹{formatPrice(order.coupon_discount || order.discount_amount || 0)}
+                      </Text>
+                    </View>
+                  )}
+
+                  {Boolean((order.coupon_discount && order.coupon_discount > 0) || (order.discount_amount && order.discount_amount > 0)) && (
+                    <View style={styles.billRow}>
+                      <Text style={styles.billLabel}>Taxable Amount</Text>
+                      <Text style={styles.billVal}>
+                        ₹{formatPrice(Math.max(0, (order.subtotal || 0) - (order.coupon_discount || order.discount_amount || 0)))}
+                      </Text>
+                    </View>
+                  )}
+
+                  <View style={styles.billRow}>
+                    <Text style={styles.billLabel}>CGST 2.5%</Text>
+                    <Text style={styles.billVal}>
+                      ₹{formatPrice(order.cgst_amount || 0)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.billRow}>
+                    <Text style={styles.billLabel}>SGST 2.5%</Text>
+                    <Text style={styles.billVal}>
+                      ₹{formatPrice(order.sgst_amount || 0)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.billRow}>
+                    <Text style={styles.billLabel}>Delivery Fee</Text>
+                    <Text style={order.delivery_charge ? styles.billVal : styles.billValFree}>
+                      {order.delivery_charge ? `₹${formatPrice(order.delivery_charge)}` : 'FREE'}
+                    </Text>
+                  </View>
+
+                  <View style={[styles.billRow, styles.grandTotalRow]}>
+                    <Text style={styles.grandTotalLabel}>Grand Total</Text>
+                    <Text style={styles.grandTotalVal}>
+                      ₹{formatPrice(order.payable_amount || order.grand_total)}
+                    </Text>
+                  </View>
+                </View>
               </View>
-              <Text style={styles.itemPrice}>
-                ₹{formatPrice(item.total || item.unit_price * item.quantity)}
-              </Text>
-            </View>
-          ))}
 
-          {/* Bill Summary */}
-          <View style={styles.billBreakdown}>
-            <View style={styles.billRow}>
-              <Text style={styles.billLabel}>Item Subtotal</Text>
-              <Text style={styles.billVal}>₹{formatPrice(order.subtotal)}</Text>
-            </View>
+              {/* Actions */}
+              {isCancellable && (
+                <TouchableOpacity
+                  style={styles.cancelBtn}
+                  onPress={() => setCancelModalVisible(true)}
+                >
+                  <Text style={styles.cancelBtnText}>❌ Cancel Order</Text>
+                </TouchableOpacity>
+              )}
 
-            {Boolean((order.coupon_discount && order.coupon_discount > 0) || (order.discount_amount && order.discount_amount > 0)) && (
-              <View style={styles.billRow}>
-                <Text style={[styles.billLabel, { color: '#059669' }]}>
-                  Coupon Discount {order.coupon_code ? `(${order.coupon_code})` : ''}
-                </Text>
-                <Text style={[styles.billVal, { color: '#059669' }]}>
-                  −₹{formatPrice(order.coupon_discount || order.discount_amount || 0)}
-                </Text>
-              </View>
-            )}
-
-            {Boolean((order.coupon_discount && order.coupon_discount > 0) || (order.discount_amount && order.discount_amount > 0)) && (
-              <View style={styles.billRow}>
-                <Text style={styles.billLabel}>Taxable Amount</Text>
-                <Text style={styles.billVal}>
-                  ₹{formatPrice(Math.max(0, (order.subtotal || 0) - (order.coupon_discount || order.discount_amount || 0)))}
-                </Text>
-              </View>
-            )}
-
-            <View style={styles.billRow}>
-              <Text style={styles.billLabel}>CGST 2.5%</Text>
-              <Text style={styles.billVal}>
-                ₹{formatPrice(order.cgst_amount || 0)}
-              </Text>
+              {isCompleted && (
+                <TouchableOpacity
+                  style={styles.reorderBtn}
+                  onPress={handleReorder}
+                  disabled={reordering}
+                >
+                  {reordering ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.reorderBtnText}>🔄 Reorder This Meal</Text>
+                  )}
+                </TouchableOpacity>
+              )}
             </View>
 
-            <View style={styles.billRow}>
-              <Text style={styles.billLabel}>SGST 2.5%</Text>
-              <Text style={styles.billVal}>
-                ₹{formatPrice(order.sgst_amount || 0)}
-              </Text>
-            </View>
+            {/* Right Column: Delivery Details + Timeline */}
+            <View style={[styles.sideColumn, isDesktop && styles.sideColumnDesktop]}>
+              {/* Delivery Address Snapshot */}
+              <View style={styles.sectionCard}>
+                <Text style={styles.cardTitle}>Delivery Details</Text>
+                
+                <View style={styles.infoBlock}>
+                  <Text style={styles.infoLabel}>Order Placed</Text>
+                  <Text style={styles.infoVal}>🕒 {formatOrderDateTime(order.created_at)}</Text>
+                </View>
 
-            <View style={styles.billRow}>
-              <Text style={styles.billLabel}>Delivery Fee</Text>
-              <Text style={order.delivery_charge ? styles.billVal : styles.billValFree}>
-                {order.delivery_charge ? `₹${formatPrice(order.delivery_charge)}` : 'FREE'}
-              </Text>
-            </View>
-
-            <View style={[styles.billRow, styles.grandTotalRow]}>
-              <Text style={styles.grandTotalLabel}>Grand Total</Text>
-              <Text style={styles.grandTotalVal}>
-                ₹{formatPrice(order.payable_amount || order.grand_total)}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Delivery Address Snapshot */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.cardTitle}>Delivery Details</Text>
-          <Text style={styles.infoLabel}>Order Placed</Text>
-          <Text style={styles.infoVal}>🕒 {formatOrderDateTime(order.created_at)}</Text>
-
-          <Text style={[styles.infoLabel, { marginTop: 8 }]}>Recipient</Text>
-          <Text style={styles.infoVal}>
-            {order.customer_name} ({order.customer_phone})
-          </Text>
-
-          <Text style={[styles.infoLabel, { marginTop: 8 }]}>Address Snapshot</Text>
-          <Text style={styles.infoVal}>
-            {order.delivery_address || 'No address snapshot saved'}
-          </Text>
-
-          <Text style={[styles.infoLabel, { marginTop: 8 }]}>Payment</Text>
-          <Text style={styles.infoVal}>
-            {order.payment_method?.toUpperCase() || 'CASH ON DELIVERY'} (
-            {order.payment_status === 'paid' ? 'PAID ✅' : 'UNPAID'})
-          </Text>
-        </View>
-
-        {/* Status Timeline */}
-        {events.length > 0 && (
-          <View style={styles.sectionCard}>
-            <Text style={styles.cardTitle}>Status History</Text>
-            {events.map((ev, idx) => (
-              <View key={ev.id || idx} style={styles.timelineRow}>
-                <View style={styles.timelineDot} />
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={styles.timelineTitle}>
-                    {ev.new_status.toUpperCase()}
+                <View style={styles.infoBlock}>
+                  <Text style={styles.infoLabel}>Recipient</Text>
+                  <Text style={styles.infoVal}>
+                    {order.customer_name} ({order.customer_phone})
                   </Text>
-                  {ev.note ? <Text style={styles.timelineNote}>{ev.note}</Text> : null}
-                  <Text style={styles.timelineTime}>
-                    {new Date(ev.created_at).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
+                </View>
+
+                <View style={styles.infoBlock}>
+                  <Text style={styles.infoLabel}>Address Snapshot</Text>
+                  <Text style={styles.infoVal}>
+                    {order.delivery_address || 'No address snapshot saved'}
+                  </Text>
+                </View>
+
+                <View style={styles.infoBlock}>
+                  <Text style={styles.infoLabel}>Payment</Text>
+                  <Text style={styles.infoVal}>
+                    {order.payment_method?.toUpperCase() || 'CASH ON DELIVERY'} (
+                    {order.payment_status === 'paid' ? 'PAID ✅' : 'UNPAID'})
                   </Text>
                 </View>
               </View>
-            ))}
+
+              {/* Status Timeline */}
+              {events.length > 0 && (
+                <View style={styles.sectionCard}>
+                  <Text style={styles.cardTitle}>Status History</Text>
+                  {events.map((ev, idx) => (
+                    <View key={ev.id || idx} style={styles.timelineRow}>
+                      <View style={styles.timelineDot} />
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <Text style={styles.timelineTitle}>
+                          {ev.new_status.toUpperCase()}
+                        </Text>
+                        {ev.note ? <Text style={styles.timelineNote}>{ev.note}</Text> : null}
+                        <Text style={styles.timelineTime}>
+                          {new Date(ev.created_at).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
           </View>
-        )}
-
-        {/* Actions */}
-        {isCancellable && (
-          <TouchableOpacity
-            style={styles.cancelBtn}
-            onPress={() => setCancelModalVisible(true)}
-          >
-            <Text style={styles.cancelBtnText}>❌ Cancel Order</Text>
-          </TouchableOpacity>
-        )}
-
-        {isCompleted && (
-          <TouchableOpacity
-            style={styles.reorderBtn}
-            onPress={handleReorder}
-            disabled={reordering}
-          >
-            {reordering ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <Text style={styles.reorderBtnText}>🔄 Reorder This Meal</Text>
-            )}
-          </TouchableOpacity>
-        )}
+        </View>
       </ScrollView>
 
       {/* Cancellation Modal */}
@@ -512,6 +535,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8FAFC',
   },
+  scrollArea: {
+    flex: 1,
+  },
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 70,
+  },
+  pageInner: {
+    width: '100%',
+    maxWidth: 960,
+    alignSelf: 'center',
+    gap: 16,
+  },
   center: {
     flex: 1,
     justifyContent: 'center',
@@ -551,11 +587,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
   },
   headerBack: {
-    padding: 4,
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
   },
   headerTitle: {
     fontSize: 16,
@@ -565,31 +609,51 @@ const styles = StyleSheet.create({
   headerSub: {
     fontSize: 11,
     color: '#64748B',
-    marginTop: 1,
+    marginTop: 2,
   },
   statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
   },
   statusBadgeText: {
     fontSize: 11,
     fontWeight: '800',
   },
-  scrollArea: {
-    flex: 1,
+  contentLayout: {
+    flexDirection: 'column',
+    gap: 16,
   },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 70,
-    gap: 14,
+  contentLayoutDesktop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 20,
+  },
+  mainColumn: {
+    width: '100%',
+    gap: 16,
+  },
+  mainColumnDesktop: {
+    flex: 1.25,
+  },
+  sideColumn: {
+    width: '100%',
+    gap: 16,
+  },
+  sideColumnDesktop: {
+    flex: 0.95,
   },
   trackerCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 14,
+    padding: 18,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
   },
   cardTitle: {
     fontSize: 14,
@@ -601,26 +665,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: 14,
   },
   trackStep: {
     alignItems: 'center',
     width: 80,
   },
   stepDot: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#CBD5E1',
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#E2E8F0',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   stepDotActive: {
     backgroundColor: colors.primary,
   },
   stepLabel: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '600',
     color: '#94A3B8',
     textAlign: 'center',
@@ -634,18 +698,21 @@ const styles = StyleSheet.create({
     height: 2,
     backgroundColor: '#E2E8F0',
     marginHorizontal: 4,
-    marginTop: -16,
+    marginTop: -18,
   },
   trackLineActive: {
     backgroundColor: colors.primary,
   },
   progressDesc: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#475569',
     textAlign: 'center',
     backgroundColor: '#F8FAFC',
-    padding: 8,
-    borderRadius: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
   },
   cancelledBanner: {
     flexDirection: 'row',
@@ -653,8 +720,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FEF2F2',
     borderWidth: 1,
     borderColor: '#FECACA',
-    borderRadius: 12,
-    padding: 14,
+    borderRadius: 14,
+    padding: 16,
   },
   cancelledTitle: {
     fontSize: 14,
@@ -668,15 +735,20 @@ const styles = StyleSheet.create({
   },
   sectionCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 14,
+    padding: 18,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
   },
   itemRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
   },
@@ -684,13 +756,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: colors.primary,
-    width: 24,
+    width: 28,
     marginTop: 1,
   },
   itemName: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#334155',
+    color: '#1E293B',
   },
   itemUnitPrice: {
     fontSize: 11,
@@ -709,8 +781,8 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   billBreakdown: {
-    paddingTop: 12,
-    gap: 6,
+    paddingTop: 14,
+    gap: 8,
   },
   billRow: {
     flexDirection: 'row',
@@ -734,8 +806,8 @@ const styles = StyleSheet.create({
   grandTotalRow: {
     borderTopWidth: 1,
     borderTopColor: '#E2E8F0',
-    paddingTop: 8,
-    marginTop: 4,
+    paddingTop: 10,
+    marginTop: 6,
   },
   grandTotalLabel: {
     fontSize: 14,
@@ -747,11 +819,15 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: colors.primary,
   },
+  infoBlock: {
+    marginBottom: 10,
+  },
   infoLabel: {
     fontSize: 11,
     fontWeight: '700',
     color: '#64748B',
     textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   infoVal: {
     fontSize: 13,
@@ -762,7 +838,7 @@ const styles = StyleSheet.create({
   timelineRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   timelineDot: {
     width: 10,
@@ -790,26 +866,29 @@ const styles = StyleSheet.create({
     backgroundColor: '#FEF2F2',
     borderWidth: 1,
     borderColor: '#FECACA',
-    borderRadius: 10,
+    borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
-    marginTop: 4,
   },
   cancelBtnText: {
     color: '#DC2626',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
   reorderBtn: {
     backgroundColor: '#16A34A',
-    borderRadius: 10,
+    borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
-    marginTop: 4,
+    shadowColor: '#16A34A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
   },
   reorderBtnText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
   modalOverlay: {
@@ -824,7 +903,12 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     width: '100%',
     maxWidth: 440,
-    padding: 20,
+    padding: 22,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 5,
   },
   modalTitle: {
     fontSize: 16,

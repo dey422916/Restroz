@@ -9,7 +9,7 @@ import { subscriptionService } from './subscriptionService';
 import { couponService } from './couponService';
 import { getOrderSubtotal, calculateOrderTotals } from '../../utils/gst';
 import { isValidPhoneNumber, validatePhoneNumberOrThrow } from '../../utils/phone';
-import { DEFAULT_RESTAURANT_ID } from './restaurantService';
+import { restaurantService } from './restaurantService';
 import { attachDiscountToNotes, extractDiscountFromNotes, attachGstinToNotes, extractGstinFromNotes } from '../../utils/orderNotes';
 
 export const resolveOrderSource = (ord: Partial<Order>): OrderSource => {
@@ -101,13 +101,14 @@ export const orderService = {
 
   async generateNextOrderNumber(
     prefix: string = 'INV-',
-    restaurantId: string = DEFAULT_RESTAURANT_ID,
+    restaurantId?: string,
     requireDbAtomic: boolean = true
   ): Promise<string> {
-    if (isSupabaseConfigured) {
+    const targetRestId = restaurantId || (await restaurantService.getDefaultRestaurant())?.id || '';
+    if (isSupabaseConfigured && targetRestId) {
       try {
         const { data, error } = await supabase.rpc('get_next_order_number', {
-          p_restaurant_id: restaurantId,
+          p_restaurant_id: targetRestId,
         });
         if (!error && data) {
           return data as string;
@@ -746,7 +747,7 @@ export const orderService = {
       throw new Error('Please select a dining table for Dine-In orders.');
     }
 
-    let targetRestaurantId = orderData.restaurant_id || DEFAULT_RESTAURANT_ID;
+    let targetRestaurantId = orderData.restaurant_id || (await restaurantService.getDefaultRestaurant())?.id || '';
     const settings = await settingsService.getSettings(targetRestaurantId);
 
     // RESTRICTION: Block order creation if the restaurant does not have an active SaaS subscription
@@ -956,36 +957,47 @@ export const orderService = {
         }
 
         if (!orderError && createdDbOrder) {
-          // Insert order items with product_id foreign-key validation
+          // Insert order items atomically
           if (items && items.length > 0) {
-            let validProductIds = new Set<string>();
-            try {
-              const { data: dbProducts } = await supabase.from('products').select('id');
-              if (dbProducts) {
-                validProductIds = new Set(dbProducts.map((p) => p.id));
-              }
-            } catch (err) {
-              console.warn('Product lookup for foreign key check failed:', err);
-            }
+            const formattedItems = items.map((i) => {
+              const rawItem = i as any;
+              const unitPrice = Number(i.unit_price) || 0;
+              const quantity = Number(i.quantity) || 1;
+              const taxRate = Number(i.tax_rate) || 5;
+              const itemTax = Number(i.tax_amount) || ((unitPrice * quantity * taxRate) / 100);
+              const itemSubtotal = Number(i.subtotal) || (unitPrice * quantity);
+              const itemTotal = Number(i.total) || Number(rawItem.total_price) || (itemSubtotal + itemTax);
+              const cgst = Number(rawItem.cgst_amount) || (itemTax / 2);
+              const sgst = Number(rawItem.sgst_amount) || (itemTax / 2);
 
-            const formattedItems = items.map((i) => ({
-              id: i.id?.startsWith('item-') ? i.id : 'item-' + Date.now() + Math.random().toString(36).substr(2, 4),
-              order_id: createdDbOrder.id,
-              product_id: i.product_id && validProductIds.has(i.product_id) ? i.product_id : null,
-              product_name: i.product_name,
-              unit_price: Number(i.unit_price) || 0,
-              quantity: Number(i.quantity) || 1,
-              tax_rate: Number(i.tax_rate) || 5,
-              tax_amount: Number(i.tax_amount) || 0,
-              subtotal: Number(i.subtotal) || 0,
-              total: Number(i.total) || 0,
-              item_notes: i.item_notes || null,
-              image_url: i.image_url || null,
-              created_at: new Date().toISOString(),
-            }));
+              return {
+                id: i.id?.startsWith('item-') ? i.id : 'item-' + Date.now() + Math.random().toString(36).substr(2, 4),
+                order_id: createdDbOrder.id,
+                product_id: i.product_id,
+                product_name: i.product_name,
+                unit_price: unitPrice,
+                quantity: quantity,
+                tax_rate: taxRate,
+                tax_amount: itemTax,
+                cgst_amount: cgst,
+                sgst_amount: sgst,
+                igst_amount: Number(rawItem.igst_amount) || 0,
+                discount_amount: Number(rawItem.discount_amount) || 0,
+                subtotal: itemSubtotal,
+                total: itemTotal,
+                total_price: itemTotal,
+                notes: rawItem.notes || i.item_notes || null,
+                item_notes: i.item_notes || rawItem.notes || null,
+                hsn_code: rawItem.hsn_code || null,
+                image_url: i.image_url || null,
+                created_at: new Date().toISOString(),
+              };
+            });
+
             const { error: itemInsertErr } = await supabase.from('order_items').insert(formattedItems);
             if (itemInsertErr) {
-              console.warn('Order items insert warning:', itemInsertErr);
+              console.error('Order items insert failure in createOrder:', itemInsertErr);
+              throw new Error(`Failed to save order items: ${itemInsertErr.message || itemInsertErr.details || 'Database insert error'}`);
             }
           }
 
@@ -1386,23 +1398,52 @@ export const orderService = {
     if (isSupabaseConfigured) {
       try {
         // Delete old items and insert updated items
-        await supabase.from('order_items').delete().eq('order_id', orderId);
-        const formattedItems = normalizedItems.map((i) => ({
-          id: i.id?.startsWith('item-') ? i.id : 'item-' + Date.now() + Math.random().toString(36).substr(2, 4),
-          order_id: orderId,
-          product_id: i.product_id || null,
-          product_name: i.product_name,
-          unit_price: i.unit_price,
-          quantity: i.quantity,
-          tax_rate: i.tax_rate,
-          tax_amount: i.tax_amount,
-          subtotal: i.subtotal,
-          total: i.total,
-          item_notes: i.item_notes || null,
-          image_url: i.image_url || null,
-          created_at: new Date().toISOString(),
-        }));
-        await supabase.from('order_items').insert(formattedItems);
+        const { error: delErr } = await supabase.from('order_items').delete().eq('order_id', orderId);
+        if (delErr) {
+          console.error('Failed to clear old order items during editActiveOrder:', delErr);
+          throw new Error(`Failed to clear existing order items: ${delErr.message}`);
+        }
+
+        const formattedItems = normalizedItems.map((i: any, idx: number) => {
+          const rawItem = i as any;
+          const unitPrice = Number(i.unit_price) || 0;
+          const quantity = Number(i.quantity) || 1;
+          const itemSubtotal = Number(i.subtotal) || (unitPrice * quantity);
+          const taxRate = Number(i.tax_rate) || 5;
+          const itemTax = Number(i.tax_amount) || Number(((itemSubtotal * taxRate) / 100).toFixed(2));
+          const cgst = Number(rawItem.cgst_amount) || Number((itemTax / 2).toFixed(2));
+          const sgst = Number(rawItem.sgst_amount) || Number((itemTax / 2).toFixed(2));
+          const itemTotal = Number(i.total) || Number((itemSubtotal + itemTax).toFixed(2));
+
+          return {
+            id: i.id?.startsWith('item-') ? i.id : `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
+            order_id: orderId,
+            product_id: i.product_id || i.id || `prod-fallback-${idx}`,
+            product_name: i.product_name || rawItem.name || 'Unnamed Item',
+            unit_price: unitPrice,
+            quantity: quantity,
+            tax_rate: taxRate,
+            tax_amount: itemTax,
+            cgst_amount: cgst,
+            sgst_amount: sgst,
+            igst_amount: Number(rawItem.igst_amount) || 0,
+            discount_amount: Number(rawItem.discount_amount) || 0,
+            subtotal: itemSubtotal,
+            total: itemTotal,
+            total_price: itemTotal,
+            notes: rawItem.notes || i.item_notes || null,
+            item_notes: i.item_notes || rawItem.notes || null,
+            hsn_code: rawItem.hsn_code || null,
+            image_url: i.image_url || null,
+            created_at: new Date().toISOString(),
+          };
+        });
+
+        const { error: insertErr } = await supabase.from('order_items').insert(formattedItems);
+        if (insertErr) {
+          console.error('Failed to insert updated order items in editActiveOrder:', insertErr);
+          throw new Error(`Failed to save updated order items: ${insertErr.message || insertErr.details || 'Database insert error'}`);
+        }
 
         const { data: updatedOrder, error } = await supabase
           .from('orders')
@@ -1411,34 +1452,36 @@ export const orderService = {
           .select('*, items:order_items(*), payments:payments(*), kots:kots(*, items:kot_items(*))')
           .single();
 
-        if (!error && updatedOrder) {
-          clearOrdersCache(existingOrder.restaurant_id);
-          await auditService.log('UPDATE_ORDER', {
-            order_number: updatedOrder.order_number,
-            added_items_count: addedItems.length,
-            removed_items_count: reducedOrRemovedItems.length,
-            new_payable_amount: updatedOrder.payable_amount,
-            reason: reason || 'Active order edited from POS',
-          });
-          const localOrders = mockStorage.getOrders(existingOrder.restaurant_id);
-          const orderIndex = localOrders.findIndex((o) => o.id === orderId);
-          if (orderIndex !== -1) {
-            localOrders[orderIndex] = { ...localOrders[orderIndex], ...updatedOrder, items: normalizedItems };
-          } else {
-            localOrders.unshift({ ...updatedOrder, items: normalizedItems });
-          }
-          mockStorage.saveOrders(localOrders, existingOrder.restaurant_id);
-          await this.getOrders(existingOrder.restaurant_id, true);
-          const finalResult = {
-            ...updatedOrder,
-            latest_kot: generatedKot,
-          };
-          return finalResult as Order;
-        } else if (error) {
-          console.warn('Supabase update order error in editActiveOrder:', error);
+        if (error || !updatedOrder) {
+          console.error('Supabase update order error in editActiveOrder:', error);
+          throw new Error(`Failed to update order: ${error?.message || 'Database update error'}`);
         }
-      } catch (e) {
-        console.warn('Supabase editActiveOrder failed, falling back:', e);
+
+        clearOrdersCache(existingOrder.restaurant_id);
+        await auditService.log('UPDATE_ORDER', {
+          order_number: updatedOrder.order_number,
+          added_items_count: addedItems.length,
+          removed_items_count: reducedOrRemovedItems.length,
+          new_payable_amount: updatedOrder.payable_amount,
+          reason: reason || 'Active order edited from POS',
+        });
+        const localOrders = mockStorage.getOrders(existingOrder.restaurant_id);
+        const orderIndex = localOrders.findIndex((o) => o.id === orderId);
+        if (orderIndex !== -1) {
+          localOrders[orderIndex] = { ...localOrders[orderIndex], ...updatedOrder, items: normalizedItems };
+        } else {
+          localOrders.unshift({ ...updatedOrder, items: normalizedItems });
+        }
+        mockStorage.saveOrders(localOrders, existingOrder.restaurant_id);
+        await this.getOrders(existingOrder.restaurant_id, true);
+        const finalResult = {
+          ...updatedOrder,
+          latest_kot: generatedKot,
+        };
+        return finalResult as Order;
+      } catch (e: any) {
+        console.error('Supabase editActiveOrder failed:', e);
+        throw e;
       }
     }
 
@@ -1720,6 +1763,8 @@ export const orderService = {
         if (updated) {
           clearOrdersCache(updated.restaurant_id);
           await auditService.log('CLOSE_ORDER', {
+            restaurant_id: updated.restaurant_id,
+            order_id: orderId,
             order_number: updated.order_number,
             payment_method: paymentMethod,
             payment_received: paymentReceived,

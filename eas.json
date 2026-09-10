@@ -7,13 +7,27 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "node": "22.16.0"
+      "node": "22.16.0",
+      "env": {
+        "APP_ENV": "development",
+        "EXPO_PUBLIC_APP_ENV": "development",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://ymonclyfwtdyjagrnvpo.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_XA2rhUq_SMpuL3CFxxU3ZQ_3V14WziJ",
+        "EXPO_PUBLIC_APP_URL": "http://localhost:8081"
+      }
     },
     "preview": {
       "distribution": "internal",
       "node": "22.16.0",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "APP_ENV": "development",
+        "EXPO_PUBLIC_APP_ENV": "development",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://<your-restroz-dev-project-ref>.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "<your-restroz-dev-anon-key>",
+        "EXPO_PUBLIC_APP_URL": "http://localhost:8081"
       }
     },
     "production": {
@@ -21,6 +35,13 @@
       "node": "22.16.0",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "APP_ENV": "production",
+        "EXPO_PUBLIC_APP_ENV": "production",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://szpjsibrwxegaopcaukb.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_Jh0O9Why0grSgCb3WjjpYQ_Uwj7RclD",
+        "EXPO_PUBLIC_APP_URL": "https://restroz.shop"
       }
     }
   },

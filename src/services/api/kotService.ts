@@ -3,7 +3,7 @@ import { mockStorage } from '../mockStorage';
 import { settingsService } from './settingsService';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import { auditService } from './auditService';
-import { DEFAULT_RESTAURANT_ID } from './restaurantService';
+import { restaurantService } from './restaurantService';
 import { clearOrdersCache } from './orderService';
 
 // High-performance in-memory cache for KOTs per tenant (10s TTL)
@@ -136,7 +136,7 @@ export const kotService = {
   },
 
   async generateKot(order: Order, kitchenNotes?: string, itemsToInclude?: OrderItem[]): Promise<KOT> {
-    const targetRestId = order.restaurant_id || DEFAULT_RESTAURANT_ID;
+    const targetRestId = order.restaurant_id || (await restaurantService.getDefaultRestaurant())?.id || '';
     const settings = await settingsService.getSettings(targetRestId);
     const existingKots = await this.getKots(targetRestId);
     
@@ -201,6 +201,9 @@ export const kotService = {
             await supabase.from('kot_items').insert(formatted);
           }
           await auditService.log(isSupplementary ? 'CREATE_SUPPLEMENTARY_KOT' : 'CREATE_KOT', {
+            restaurant_id: targetRestId,
+            kot_id: data.id,
+            order_id: order.id,
             kot_number: kotNumber,
             order_number: order.order_number,
             items_count: items.length,
@@ -260,7 +263,7 @@ export const kotService = {
     const reasonText = item.reason || 'Customer request / Item unavailable';
     const noteText = `⚠️ CANCELLED ITEM: ${cancelledQty}x ${item.product_name} (${item.old_quantity} -> ${item.new_quantity}). Reason: ${reasonText}`;
 
-    const targetRestId = order.restaurant_id || DEFAULT_RESTAURANT_ID;
+    const targetRestId = order.restaurant_id || (await restaurantService.getDefaultRestaurant())?.id || '';
     const existingKots = await this.getKots(targetRestId);
     const baseKotNum = await this.generateNextUniqueKotNumber(targetRestId);
     const kotNumber = `${baseKotNum}-CNL`;

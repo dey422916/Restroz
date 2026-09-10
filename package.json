@@ -7,7 +7,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "export:web": "expo export --platform web && node scripts/post-export-web.js",
+    "export:web": "node scripts/build-production-web.js",
     "deploy:worker": "npx wrangler deploy",
     "lint": "tsc --noEmit"
   },

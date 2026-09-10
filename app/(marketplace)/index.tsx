@@ -37,6 +37,7 @@ const DEFAULT_BANNER = 'https://images.unsplash.com/photo-1517248135467-4c7edcad
 export default function MarketplaceHomeScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
+  const isDesktop = width >= 768;
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -198,54 +199,39 @@ export default function MarketplaceHomeScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Top Navigation & Address Header */}
-      <View style={styles.topHeader}>
-        <View style={styles.headerInner}>
-          <Image
-            source={require('../../assets/images/restroz_logo.png')}
-            style={styles.headerLogo}
-            resizeMode="contain"
-          />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.deliveringToLabel}>RESTROZ MARKETPLACE</Text>
-            <TouchableOpacity
-              style={styles.locationSelector}
-              onPress={() => {
-                if (user) {
-                  setAddressModalVisible(true);
-                } else {
-                  router.push('/(auth)/login');
-                }
-              }}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.locationCity} numberOfLines={1}>
-                {selectedAddress
-                  ? `Delivering to: ${selectedAddress.label} — ${selectedAddress.city}, ${selectedAddress.postal_code} ▼`
-                  : 'Delivering to: Select Address ▼'}
-              </Text>
-            </TouchableOpacity>
+      {/* Mobile-Only Header with Single RestroZ Brand (Desktop uses Layout Navbar) */}
+      {!isDesktop && (
+        <View style={styles.mobileHeader}>
+          <View style={styles.mobileHeaderInner}>
+            <Image
+              source={require('../../assets/images/restroz_logo.png')}
+              style={styles.mobileLogo}
+              resizeMode="contain"
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.mobileBrandName}>RestroZ</Text>
+              <Text style={styles.mobileBrandTagline}>Every flavor, one place</Text>
+            </View>
+            {user ? (
+              <TouchableOpacity
+                style={styles.ordersShortcut}
+                onPress={() => router.push('/(marketplace)/orders')}
+                activeOpacity={0.7}
+              >
+                <Text style={{ fontSize: 18 }}>📋</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.loginBtnHeader}
+                onPress={() => router.push('/(auth)/login')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.loginBtnHeaderText}>Sign In</Text>
+              </TouchableOpacity>
+            )}
           </View>
-
-          {user ? (
-            <TouchableOpacity
-              style={styles.ordersShortcut}
-              onPress={() => router.push('/(marketplace)/orders')}
-              activeOpacity={0.7}
-            >
-              <Text style={{ fontSize: 20 }}>📋</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={styles.loginBtnHeader}
-              onPress={() => router.push('/(auth)/login')}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.loginBtnHeaderText}>Sign In</Text>
-            </TouchableOpacity>
-          )}
         </View>
-      </View>
+      )}
 
       <ScrollView
         style={styles.scrollArea}
@@ -257,34 +243,68 @@ export default function MarketplaceHomeScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.mainContainer}>
-          {/* Search Bar */}
+          {/* Delivery Location Section */}
+          <View style={styles.locationSection}>
+            <TouchableOpacity
+              style={styles.locationCard}
+              onPress={() => {
+                if (user) {
+                  setAddressModalVisible(true);
+                } else {
+                  router.push('/(auth)/login');
+                }
+              }}
+              activeOpacity={0.8}
+            >
+              <View style={styles.locationIconWrap}>
+                <Text style={{ fontSize: 14 }}>📍</Text>
+              </View>
+              <View style={{ flex: 1, marginRight: 8 }}>
+                <Text style={styles.deliveringToLabel}>DELIVERING TO</Text>
+                <Text style={styles.locationCity} numberOfLines={1}>
+                  {selectedAddress
+                    ? `${selectedAddress.label} — ${selectedAddress.city}, ${selectedAddress.postal_code}`
+                    : 'Select Delivery Address'}
+                </Text>
+              </View>
+              <View style={styles.dropdownPill}>
+                <Text style={styles.dropdownArrow}>Change ▼</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+
+          {/* Large Modern Search Bar */}
           <View style={styles.searchBar}>
-            <Text style={{ fontSize: 16 }}>🔍</Text>
+            <Text style={styles.searchIcon}>🔍</Text>
             <TextInput
               style={styles.searchInput}
-              placeholder="Search restaurants (e.g. Kalputra, Kullad), cuisines..."
+              placeholder="Search restaurants, cuisines, dishes..."
               value={searchQuery}
               onChangeText={setSearchQuery}
               placeholderTextColor="#94A3B8"
             />
             {searchQuery ? (
-              <TouchableOpacity onPress={() => setSearchQuery('')}>
-                <Text style={{ fontSize: 14, color: '#94A3B8' }}>✕</Text>
+              <TouchableOpacity style={styles.searchClearBtn} onPress={() => setSearchQuery('')}>
+                <Text style={styles.searchClearText}>✕</Text>
               </TouchableOpacity>
             ) : null}
           </View>
 
           {/* Hero Promo Banner */}
           <View style={styles.promoBanner}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.promoBadge}>RESTROZ FOOD MARKET</Text>
+            <View style={styles.promoContent}>
+              <View style={styles.promoBadgeWrap}>
+                <Text style={styles.promoBadge}>✨ RESTROZ FOOD MARKET</Text>
+              </View>
               <Text style={styles.promoTitle}>Discover Top Kitchens & Fast Delivery</Text>
-              <Text style={styles.promoSub}>Direct restaurant ordering • Pure authentic taste</Text>
+              <Text style={styles.promoSub}>Direct restaurant ordering • Pure authentic taste • Hot & fresh</Text>
             </View>
-            <Text style={{ fontSize: 44 }}>🍲</Text>
+            <View style={styles.promoIconWrap}>
+              <Text style={{ fontSize: 42 }}>🍲</Text>
+            </View>
           </View>
 
-          {/* Cuisine Filter Chips */}
+          {/* Category Filter Chips */}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -296,6 +316,7 @@ export default function MarketplaceHomeScreen() {
                 key={c}
                 style={[styles.cuisineChip, selectedCuisine === c && styles.cuisineChipActive]}
                 onPress={() => setSelectedCuisine(c)}
+                activeOpacity={0.8}
               >
                 <Text
                   style={[
@@ -312,12 +333,13 @@ export default function MarketplaceHomeScreen() {
           {/* Section Header */}
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>
-              {selectedAddress ? 'Nearby Restaurants' : 'Available Restaurants'} ({filteredRestaurants.length})
+              {selectedAddress ? 'Nearby Restaurants' : 'Available Restaurants'}
+              <Text style={styles.sectionCount}> ({filteredRestaurants.length})</Text>
             </Text>
             <Text style={styles.sectionSubtitle}>
               {selectedAddress
-                ? `Sorted for delivery to ${selectedAddress.city}`
-                : 'Clean, isolated kitchens serving your area'}
+                ? `Sorted for delivery to ${selectedAddress.city} • Verified cloud kitchens & restaurants`
+                : 'Clean, verified kitchens serving your area'}
             </Text>
           </View>
 
@@ -329,7 +351,7 @@ export default function MarketplaceHomeScreen() {
             </View>
           ) : filteredRestaurants.length === 0 ? (
             <View style={styles.emptyWrap}>
-              <Text style={{ fontSize: 40 }}>🍽️</Text>
+              <Text style={{ fontSize: 42 }}>🍽️</Text>
               <Text style={styles.emptyTitle}>No Restaurants Found</Text>
               <Text style={styles.emptySub}>
                 Try adjusting your search query or selecting a different cuisine filter.
@@ -358,10 +380,10 @@ export default function MarketplaceHomeScreen() {
                       !isOpen && styles.restaurantCardDisabled,
                     ]}
                     onPress={() => router.push(`/(marketplace)/restaurant/${r.id}` as any)}
-                    activeOpacity={isOpen ? 0.85 : 0.95}
+                    activeOpacity={isOpen ? 0.88 : 0.95}
                   >
                     {/* Image / Banner */}
-                    <View style={[styles.cardCover, { height: numColumns === 1 ? 175 : 155 }]}>
+                    <View style={[styles.cardCover, { height: numColumns === 1 ? 180 : 165 }]}>
                       <OptimizedImage
                         source={bannerUrl}
                         type="banner"
@@ -371,8 +393,8 @@ export default function MarketplaceHomeScreen() {
                       {!isOpen && (
                         <View style={styles.closedOverlay}>
                           <View style={styles.closedBadgeBox}>
-                            <Text style={styles.closedText}>🔴 CLOSED / OFFLINE</Text>
-                            <Text style={styles.closedSubText}>Not accepting online orders</Text>
+                            <Text style={styles.closedText}>🔴 CLOSED</Text>
+                            <Text style={styles.closedSubText}>Not accepting orders</Text>
                           </View>
                         </View>
                       )}
@@ -385,7 +407,7 @@ export default function MarketplaceHomeScreen() {
                           </View>
                         ) : null}
                         <View style={styles.deliveryTimeBadge}>
-                          <Text style={styles.deliveryTimeText}>⏱️ {deliveryTime} MINS</Text>
+                          <Text style={styles.deliveryTimeText}>⚡ {deliveryTime} MINS</Text>
                         </View>
                         {distanceKm != null && (
                           <View style={styles.distanceBadge}>
@@ -398,19 +420,17 @@ export default function MarketplaceHomeScreen() {
                     {/* Card Content */}
                     <View style={styles.cardBody}>
                       <View style={styles.cardMainRow}>
-                        <View style={{ flex: 1, marginRight: 6 }}>
-                          <Text style={styles.cardName} numberOfLines={1}>
-                            {r.name}
-                          </Text>
-                          <Text style={styles.cardCuisines} numberOfLines={1}>
-                            {cuisines}
-                          </Text>
-                        </View>
-
+                        <Text style={styles.cardName} numberOfLines={1}>
+                          {r.name}
+                        </Text>
                         <View style={styles.ratingBadge}>
                           <Text style={styles.ratingText}>★ 4.6</Text>
                         </View>
                       </View>
+
+                      <Text style={styles.cardCuisines} numberOfLines={1}>
+                        {cuisines}
+                      </Text>
 
                       {/* Outside Radius Warning */}
                       {isOutside && (
@@ -424,7 +444,9 @@ export default function MarketplaceHomeScreen() {
                           📍 {r.address ? `${r.address}, ${r.city}` : (r.city || 'Local Delivery')}
                         </Text>
                         {minOrder > 0 && (
-                          <Text style={styles.minOrderText}>Min ₹{minOrder}</Text>
+                          <View style={styles.minOrderBadge}>
+                            <Text style={styles.minOrderText}>Min ₹{minOrder}</Text>
+                          </View>
                         )}
                       </View>
                     </View>
@@ -442,20 +464,20 @@ export default function MarketplaceHomeScreen() {
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Choose Delivery Location</Text>
-              <TouchableOpacity onPress={() => setAddressModalVisible(false)}>
-                <Text style={{ fontSize: 18, color: '#64748B' }}>✕</Text>
+              <TouchableOpacity onPress={() => setAddressModalVisible(false)} style={styles.modalCloseBtn}>
+                <Text style={{ fontSize: 16, color: '#64748B', fontWeight: '700' }}>✕</Text>
               </TouchableOpacity>
             </View>
 
             <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
               {savedAddresses.length === 0 ? (
-                <View style={{ padding: 16, alignItems: 'center' }}>
+                <View style={{ padding: 24, alignItems: 'center' }}>
                   <Text style={{ fontSize: 13, color: '#64748B', marginBottom: 12 }}>
                     You have no saved addresses yet.
                   </Text>
                 </View>
               ) : (
-                savedAddresses.slice(0, 3).map((addr) => {
+                savedAddresses.slice(0, 4).map((addr) => {
                   const isSelected = selectedAddress?.id === addr.id;
                   return (
                     <TouchableOpacity
@@ -516,45 +538,36 @@ export default function MarketplaceHomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: customerColors.background,
+    backgroundColor: '#FAF9F6',
   },
-  topHeader: {
+  mobileHeader: {
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: '#EEEEEE',
+    borderBottomColor: '#EDEBE6',
     width: '100%',
   },
-  headerInner: {
+  mobileHeaderInner: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 10,
-    maxWidth: 1440,
-    width: '100%',
-    alignSelf: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 10,
   },
-  headerLogo: {
-    width: 42,
-    height: 42,
-    marginRight: 10,
+  mobileLogo: {
+    width: 36,
+    height: 36,
   },
-  deliveringToLabel: {
-    fontSize: 10,
-    fontWeight: '800',
+  mobileBrandName: {
+    fontSize: 18,
+    fontWeight: '900',
     color: customerColors.primary,
-    letterSpacing: 0.8,
+    letterSpacing: -0.4,
   },
-  locationSelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  locationCity: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: customerColors.text,
+  mobileBrandTagline: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 1,
   },
   ordersShortcut: {
     padding: 8,
@@ -569,7 +582,7 @@ const styles = StyleSheet.create({
   },
   loginBtnHeaderText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
   },
   scrollArea: {
@@ -579,113 +592,220 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
   },
   mainContainer: {
-    maxWidth: 1440,
+    maxWidth: 1240,
     width: '100%',
     alignSelf: 'center',
+  },
+  locationSection: {
+    marginBottom: 14,
+  },
+  locationCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#EDEBE6',
+    shadowColor: '#1E293B',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  locationIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFF4EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  deliveringToLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: customerColors.primary,
+    letterSpacing: 0.6,
+  },
+  locationCity: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginTop: 1,
+  },
+  dropdownPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  dropdownArrow: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
   },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    height: 52,
     borderWidth: 1,
-    borderColor: '#E8E8E8',
+    borderColor: '#E2E8F0',
     marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.04,
-    shadowRadius: 3,
-    elevation: 1,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  searchIcon: {
+    fontSize: 16,
+    marginRight: 8,
   },
   searchInput: {
     flex: 1,
-    marginLeft: 8,
     fontSize: 14,
-    color: customerColors.text,
+    fontWeight: '500',
+    color: '#0F172A',
+  },
+  searchClearBtn: {
+    padding: 6,
+  },
+  searchClearText: {
+    fontSize: 14,
+    color: '#94A3B8',
   },
   promoBanner: {
-    backgroundColor: '#1E293B',
-    borderRadius: 14,
-    padding: 18,
+    backgroundColor: '#1E232F',
+    borderRadius: 16,
+    padding: 22,
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    justifyContent: 'space-between',
+    marginBottom: 18,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  promoContent: {
+    flex: 1,
+    marginRight: 16,
+  },
+  promoBadgeWrap: {
+    backgroundColor: 'rgba(252, 128, 25, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginBottom: 6,
   },
   promoBadge: {
-    color: customerColors.primaryLight,
+    color: '#FF9E40',
     fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.6,
-    marginBottom: 4,
+    letterSpacing: 0.8,
   },
   promoTitle: {
     color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '800',
-    marginBottom: 2,
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: -0.3,
+    marginBottom: 4,
   },
   promoSub: {
     color: '#94A3B8',
     fontSize: 12,
+    lineHeight: 18,
+  },
+  promoIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   cuisineRow: {
-    marginBottom: 16,
+    marginBottom: 18,
   },
   cuisineRowContent: {
     gap: 8,
+    paddingRight: 8,
   },
   cuisineChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 22,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E8E8E8',
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.02,
+    shadowRadius: 2,
+    elevation: 1,
   },
   cuisineChipActive: {
     backgroundColor: customerColors.primary,
     borderColor: customerColors.primary,
+    shadowColor: customerColors.primary,
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 2,
   },
   cuisineChipText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
-    color: customerColors.textSecondary,
+    color: '#334155',
   },
   cuisineChipTextActive: {
     color: '#FFFFFF',
+    fontWeight: '800',
   },
   sectionHeader: {
-    marginBottom: 14,
+    marginBottom: 16,
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '800',
-    color: customerColors.text,
+    color: '#0F172A',
+    letterSpacing: -0.3,
+  },
+  sectionCount: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#64748B',
   },
   sectionSubtitle: {
     fontSize: 12,
-    color: customerColors.textSecondary,
+    color: '#64748B',
     marginTop: 2,
   },
   restaurantGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 16,
+    gap: 18,
     justifyContent: 'flex-start',
     width: '100%',
   },
   restaurantCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    borderRadius: 16,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#E8E8E8',
-    shadowColor: '#000',
+    borderColor: '#EDEBE6',
+    shadowColor: '#0F172A',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 4,
+    shadowRadius: 8,
     elevation: 2,
   },
   restaurantCardDisabled: {
@@ -717,7 +837,7 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   closedBadgeBox: {
-    backgroundColor: 'rgba(239, 68, 68, 0.9)',
+    backgroundColor: 'rgba(220, 38, 38, 0.92)',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
@@ -736,7 +856,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   openStatusBadge: {
-    backgroundColor: 'rgba(5, 150, 105, 0.9)',
+    backgroundColor: 'rgba(5, 150, 105, 0.92)',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
@@ -748,8 +868,8 @@ const styles = StyleSheet.create({
   },
   badgeContainer: {
     position: 'absolute',
-    bottom: 8,
-    left: 8,
+    bottom: 10,
+    left: 10,
     flexDirection: 'row',
     gap: 6,
   },
@@ -765,7 +885,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   distanceBadge: {
-    backgroundColor: customerColors.primaryDark,
+    backgroundColor: customerColors.primary,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
@@ -776,26 +896,28 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   cardBody: {
-    padding: 12,
+    padding: 14,
   },
   cardMainRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 6,
+    alignItems: 'center',
+    marginBottom: 4,
   },
   cardName: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '800',
-    color: customerColors.text,
-    marginBottom: 2,
+    color: '#0F172A',
+    flex: 1,
+    marginRight: 8,
   },
   cardCuisines: {
     fontSize: 12,
-    color: customerColors.textSecondary,
+    color: '#64748B',
+    marginBottom: 8,
   },
   ratingBadge: {
-    backgroundColor: customerColors.success,
+    backgroundColor: '#11883B',
     paddingHorizontal: 7,
     paddingVertical: 3,
     borderRadius: 6,
@@ -824,20 +946,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 8,
+    paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#F8F9FA',
+    borderTopColor: '#F1F5F9',
   },
   cardMetaText: {
     fontSize: 11,
-    color: customerColors.textSecondary,
+    color: '#64748B',
     flex: 1,
     marginRight: 6,
   },
+  minOrderBadge: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
   minOrderText: {
-    fontSize: 11,
-    color: customerColors.text,
-    fontWeight: '600',
+    fontSize: 10,
+    color: '#475569',
+    fontWeight: '700',
   },
   center: {
     padding: 32,
@@ -846,23 +976,24 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 10,
     fontSize: 13,
-    color: customerColors.textSecondary,
+    color: '#64748B',
   },
   emptyWrap: {
-    padding: 32,
+    padding: 40,
     alignItems: 'center',
   },
   emptyTitle: {
     fontSize: 16,
-    fontWeight: '700',
-    color: customerColors.text,
+    fontWeight: '800',
+    color: '#0F172A',
     marginTop: 8,
   },
   emptySub: {
     fontSize: 12,
-    color: customerColors.textSecondary,
+    color: '#64748B',
     textAlign: 'center',
     marginTop: 4,
+    maxWidth: 320,
   },
   modalOverlay: {
     flex: 1,
@@ -877,6 +1008,11 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 480,
     padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 5,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -887,7 +1023,10 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: customerColors.text,
+    color: '#0F172A',
+  },
+  modalCloseBtn: {
+    padding: 4,
   },
   addrOption: {
     flexDirection: 'row',
@@ -895,14 +1034,14 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E8E8E8',
+    borderColor: '#E2E8F0',
     marginBottom: 10,
     backgroundColor: '#FFFFFF',
     gap: 12,
   },
   addrOptionSelected: {
     borderColor: customerColors.primary,
-    backgroundColor: customerColors.primaryBg,
+    backgroundColor: '#FFF4EB',
   },
   addrRadio: {
     width: 18,
@@ -925,10 +1064,10 @@ const styles = StyleSheet.create({
   addrLabel: {
     fontSize: 14,
     fontWeight: '700',
-    color: customerColors.text,
+    color: '#0F172A',
   },
   defaultBadge: {
-    backgroundColor: customerColors.primaryBg,
+    backgroundColor: '#FFF4EB',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
@@ -940,7 +1079,7 @@ const styles = StyleSheet.create({
   },
   addrText: {
     fontSize: 12,
-    color: customerColors.textSecondary,
+    color: '#64748B',
     marginTop: 2,
   },
   modalActionButtons: {
@@ -949,7 +1088,7 @@ const styles = StyleSheet.create({
     marginTop: 14,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#EEEEEE',
+    borderTopColor: '#F1F5F9',
   },
   addNewAddrBtn: {
     flex: 1,
@@ -971,7 +1110,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   manageAddrText: {
-    color: customerColors.textSecondary,
+    color: '#475569',
     fontSize: 12,
     fontWeight: '700',
   },

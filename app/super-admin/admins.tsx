@@ -32,7 +32,7 @@ export default function RestaurantAdminsScreen() {
   const [formFullName, setFormFullName] = useState('');
   const [formEmail, setFormEmail] = useState('');
   const [formPhone, setFormPhone] = useState('');
-  const [formPassword, setFormPassword] = useState('Ratnadeep1@');
+  const [formPassword, setFormPassword] = useState('');
 
   // Edit Admin Modal State
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -95,7 +95,7 @@ export default function RestaurantAdminsScreen() {
         full_name: cleanName,
         email: cleanEmail,
         phone: formPhone.trim() || undefined,
-        password: formPassword || 'Ratnadeep1@',
+        password: formPassword.trim() || undefined,
       });
 
       Alert.alert('Success', `Admin account created immediately without OTP/email verification. Login is active.`);
@@ -472,7 +472,7 @@ export default function RestaurantAdminsScreen() {
               <Text style={styles.label}>Initial Password</Text>
               <TextInput
                 style={styles.input}
-                placeholder="Default: Ratnadeep1@"
+                placeholder="Enter initial password (min 6 chars)"
                 value={formPassword}
                 onChangeText={setFormPassword}
                 secureTextEntry

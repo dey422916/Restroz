@@ -653,7 +653,7 @@ export default function StaffManagementScreen() {
               <Text style={styles.inputLabel}>Initial Password (Optional)</Text>
               <TextInput
                 style={styles.input}
-                placeholder={newMemberRole === 'ADMIN' ? 'Default: Ratnadeep1@' : 'Default: Staff12345!'}
+                placeholder="Enter password (or auto-generate)"
                 placeholderTextColor="#64748b"
                 secureTextEntry
                 value={password}

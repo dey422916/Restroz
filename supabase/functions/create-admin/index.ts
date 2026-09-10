@@ -186,7 +186,9 @@ serve(async (req) => {
         restaurant_id: restaurantId || null,
         user_id: caller.id,
         action: targetRole === "ADMIN" ? "CREATE_ADMIN" : "CREATE_STAFF",
-        details: {
+        entity_type: "STAFF",
+        entity_id: targetUserId,
+        new_values: {
           created_user_id: targetUserId,
           created_user_email: email,
           assigned_role: targetRole,

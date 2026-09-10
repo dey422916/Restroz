@@ -1232,6 +1232,13 @@ export default function OrdersScreen() {
             const tableDisplayName = linkedTable
               ? (linkedTable.section ? `${linkedTable.table_number} (${linkedTable.section})` : linkedTable.table_number)
               : order.table_number || '';
+              
+            const formatTableLabel = (rawName?: string): string => {
+              if (!rawName) return '';
+              const trimmed = rawName.trim();
+              if (/^table\b/i.test(trimmed)) return trimmed;
+              return `Table ${trimmed}`;
+            };
 
             // Unified Single Type badge label & style
             let typeBadgeLabel = '🍽️ DINE IN';
@@ -1239,7 +1246,7 @@ export default function OrdersScreen() {
             let typeBadgeTextStyle: any = { color: '#334155' };
 
             if (isCustomerQr) {
-              typeBadgeLabel = `📱 QR • Table ${tableDisplayName || order.table_number || 'Table'}`;
+              typeBadgeLabel = `📱 QR • ${formatTableLabel(tableDisplayName || order.table_number || '1')}`;
               typeBadgeStyle = styles.qrSource;
               typeBadgeTextStyle = { color: '#6d28d9' };
             } else if (isCustomerApp || order.order_type === 'delivery') {
@@ -1251,7 +1258,7 @@ export default function OrdersScreen() {
               typeBadgeStyle = styles.takeawaySource;
               typeBadgeTextStyle = { color: '#b45309' };
             } else {
-              typeBadgeLabel = `🍽️ DINE IN • Table ${tableDisplayName || order.table_number || 'Table'}`;
+              typeBadgeLabel = `🍽️ DINE IN • ${formatTableLabel(tableDisplayName || order.table_number || '1')}`;
               typeBadgeStyle = styles.posSource;
               typeBadgeTextStyle = { color: '#334155' };
             }
@@ -1276,7 +1283,9 @@ export default function OrdersScreen() {
                     </View>
                     {isNew && (
                       <View style={styles.newOrderBadge}>
-                        <Text style={styles.newOrderBadgeText}>🔥 NEW</Text>
+                        <Text style={styles.newOrderBadgeText}>
+                          {isCustomerApp ? '🔔 ONLINE' : '🔔 QR'}
+                        </Text>
                       </View>
                     )}
                   </View>
@@ -1286,7 +1295,7 @@ export default function OrdersScreen() {
                       <TouchableOpacity
                         style={styles.markSeenBtn}
                         onPress={() => markAsSeen(order.id)}
-                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        testID={`mark-seen-${order.id}`}
                       >
                         <Text style={styles.markSeenBtnText}>✓ Mark Seen</Text>
                       </TouchableOpacity>
@@ -1344,11 +1353,11 @@ export default function OrdersScreen() {
                 {/* Dining table or QR scanned table or Takeaway or Delivery address */}
                 {isCustomerQr && tableDisplayName ? (
                   <Text style={styles.tableText}>
-                    📱 Scanned Table QR: <Text style={{ fontWeight: '800', color: '#7c3aed' }}>Table {tableDisplayName}</Text>
+                    📱 Scanned Table QR: <Text style={{ fontWeight: '800', color: '#7c3aed' }}>{formatTableLabel(tableDisplayName)}</Text>
                   </Text>
                 ) : order.order_type === 'dine_in' && tableDisplayName ? (
                   <Text style={styles.tableText}>
-                    🪑 Dining Table: <Text style={{ fontWeight: '800', color: '#0f172a' }}>Table {tableDisplayName}</Text>
+                    🪑 Dining Table: <Text style={{ fontWeight: '800', color: '#0f172a' }}>{formatTableLabel(tableDisplayName)}</Text>
                   </Text>
                 ) : order.order_type === 'takeaway' ? (
                   <Text style={styles.tableText}>
@@ -1455,10 +1464,11 @@ export default function OrdersScreen() {
                             {/* BUTTON 1: KOT Action */}
                             {isKotDisabled ? (
                               <TouchableOpacity
-                                style={[styles.gridActionBtn, styles.actionDisabledBg]}
-                                disabled={true}
+                                testID={`order-reprint-kot-btn-${order.id}`}
+                                style={[styles.gridActionBtn, styles.actionKotBg, { backgroundColor: '#f1f5f9', borderColor: '#cbd5e1' }]}
+                                onPress={() => handlePrintOrGenerateKot(order)}
                               >
-                                <Text style={styles.actionBtnTextMuted}>✓ KOT Generated</Text>
+                                <Text style={[styles.actionBtnTextKot, { color: '#334155' }]}>🖨️ Reprint KOT</Text>
                               </TouchableOpacity>
                             ) : (
                               <TouchableOpacity

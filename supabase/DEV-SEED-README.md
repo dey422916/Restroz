@@ -1,6 +1,6 @@
 # RestroZ DEV Testing Dataset — Panch Phoron Restaurant
 
-**Environment**: `DEVELOPMENT` (`restroz-dev` project ONLY)  
+**Environment**: `DEVELOPMENT` (`restroz-dev` project ONLY)
 **Safety Status**: Zero production data / Zero production secrets / Rerun-safe & idempotent
 
 ---

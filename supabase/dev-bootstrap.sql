@@ -652,13 +652,13 @@ BEGIN
     ON CONFLICT (restaurant_id) DO UPDATE
     SET invoice_next_number = public.restaurant_settings.invoice_next_number + 1,
         updated_at = NOW()
-    RETURNING 
+    RETURNING
         COALESCE(public.restaurant_settings.invoice_sequence_prefix, 'INV'),
         public.restaurant_settings.invoice_next_number - 1
     INTO v_prefix, v_seq;
 
     IF v_seq IS NULL THEN
-        SELECT 
+        SELECT
             COALESCE(invoice_sequence_prefix, 'INV'),
             COALESCE(invoice_next_number, 1)
         INTO v_prefix, v_seq
@@ -692,14 +692,14 @@ RETURNS TABLE (
     restaurant_slug TEXT,
     is_open BOOLEAN,
     table_status TEXT
-) 
+)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_catalog, pg_temp
 AS $$
 BEGIN
     RETURN QUERY
-    SELECT 
+    SELECT
         t.id AS table_id,
         t.table_number,
         r.id AS restaurant_id,
@@ -711,7 +711,7 @@ BEGIN
     JOIN public.restaurants r ON r.id = t.restaurant_id
     LEFT JOIN public.restaurant_settings rs ON rs.restaurant_id = r.id
     WHERE (
-        t.id = p_identifier 
+        t.id = p_identifier
         OR t.qr_code_url = p_identifier
         OR t.table_number = p_identifier
     )
@@ -767,9 +767,9 @@ $$;
 
 -- Auto-provision profile trigger function
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER 
-LANGUAGE plpgsql 
-SECURITY DEFINER 
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path = public, pg_catalog, pg_temp
 AS $$
 DECLARE
@@ -838,7 +838,7 @@ CREATE TRIGGER trg_prevent_profile_role_escalation
 
 -- Order tenant and table validation trigger
 CREATE OR REPLACE FUNCTION public.validate_order_tenant_and_table()
-RETURNS TRIGGER 
+RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_catalog, pg_temp
@@ -878,7 +878,7 @@ CREATE TRIGGER trg_validate_order_tenant_and_table
 
 -- Stock restoration on cancellation trigger
 CREATE OR REPLACE FUNCTION public.handle_order_cancellation_stock_restoration()
-RETURNS TRIGGER 
+RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_catalog, pg_temp
@@ -887,9 +887,9 @@ DECLARE
     v_item RECORD;
 BEGIN
     IF NEW.status = 'cancelled' AND OLD.status != 'cancelled' AND OLD.stock_deducted = TRUE THEN
-        FOR v_item IN 
-            SELECT product_id, quantity 
-            FROM public.order_items 
+        FOR v_item IN
+            SELECT product_id, quantity
+            FROM public.order_items
             WHERE order_id = NEW.id
         LOOP
             UPDATE public.products
@@ -899,7 +899,7 @@ BEGIN
             WHERE id = v_item.product_id
               AND is_inventory_tracked = TRUE;
         END LOOP;
-        
+
         NEW.stock_deducted := FALSE;
     END IF;
     RETURN NEW;
@@ -1163,7 +1163,7 @@ BEGIN
     END IF;
 
     -- Fetch Restaurant Default Tax Rate if configured
-    SELECT COALESCE(default_tax_rate, tax_rate, 5.0) INTO v_tax_rate 
+    SELECT COALESCE(default_tax_rate, tax_rate, 5.0) INTO v_tax_rate
     FROM public.restaurant_settings WHERE restaurant_id = p_restaurant_id LIMIT 1;
     IF v_tax_rate IS NULL THEN v_tax_rate := 5.00; END IF;
 
@@ -1175,9 +1175,9 @@ BEGIN
         END IF;
 
         -- Lock product row FOR UPDATE to prevent race conditions
-        SELECT * INTO v_prod 
-        FROM public.products 
-        WHERE id = v_item.product_id 
+        SELECT * INTO v_prod
+        FROM public.products
+        WHERE id = v_item.product_id
         FOR UPDATE;
 
         IF v_prod.id IS NULL THEN
@@ -1194,13 +1194,13 @@ BEGIN
 
         -- Check stock if stock tracking is enabled (stock_quantity > 0)
         IF v_prod.stock_quantity IS NOT NULL AND v_prod.stock_quantity < v_item.quantity THEN
-            RAISE EXCEPTION 'Insufficient stock for product %. Available: %, Requested: %', 
+            RAISE EXCEPTION 'Insufficient stock for product %. Available: %, Requested: %',
                 v_prod.name, v_prod.stock_quantity, v_item.quantity;
         END IF;
 
         -- Deduct stock atomically
         IF v_prod.stock_quantity IS NOT NULL THEN
-            UPDATE public.products 
+            UPDATE public.products
             SET stock_quantity = stock_quantity - v_item.quantity,
                 updated_at = NOW()
             WHERE id = v_item.product_id;
@@ -1213,13 +1213,13 @@ BEGIN
 
     -- Minimum order value validation
     IF v_prof_record.minimum_order_value IS NOT NULL AND v_subtotal < v_prof_record.minimum_order_value THEN
-        RAISE EXCEPTION 'Order subtotal (₹%) is below the minimum order value of ₹%.', 
+        RAISE EXCEPTION 'Order subtotal (₹%) is below the minimum order value of ₹%.',
             v_subtotal, v_prof_record.minimum_order_value;
     END IF;
 
     -- 5. Validate Coupon Server-Side and atomically increment usage if provided
     IF p_coupon_code IS NOT NULL AND trim(p_coupon_code) != '' THEN
-        SELECT * INTO v_coupon_record 
+        SELECT * INTO v_coupon_record
         FROM public.coupons
         WHERE UPPER(code) = UPPER(trim(p_coupon_code))
         AND restaurant_id = p_restaurant_id
@@ -1269,7 +1269,7 @@ BEGIN
     v_round_off := v_payable - v_grand_total;
 
     -- 7. Sequential Order Number
-    SELECT invoice_sequence_prefix, invoice_next_number 
+    SELECT invoice_sequence_prefix, invoice_next_number
     INTO v_invoice_prefix, v_assigned_seq
     FROM public.restaurant_settings
     WHERE restaurant_id = p_restaurant_id
@@ -1443,8 +1443,8 @@ BEGIN
     );
 
     -- Return full JSON payload of created order
-    SELECT row_to_json(o)::JSONB INTO v_res 
-    FROM public.orders o 
+    SELECT row_to_json(o)::JSONB INTO v_res
+    FROM public.orders o
     WHERE o.id = v_order_id;
 
     RETURN v_res;
@@ -1483,7 +1483,7 @@ BEGIN
         RAISE EXCEPTION 'Order cannot be cancelled as kitchen preparation has already begun (status: %).', v_order.status;
     END IF;
 
-    UPDATE public.orders 
+    UPDATE public.orders
     SET status = 'cancelled',
         notes = COALESCE(notes || ' | ', '') || 'Cancelled by customer: ' || p_reason,
         updated_at = NOW()
@@ -2183,7 +2183,7 @@ BEGIN
     v_caller_role := public.get_user_role();
     IF v_caller_role IS DISTINCT FROM 'SUPER_ADMIN' AND NOT public.is_super_admin() THEN
         IF NOT EXISTS (
-            SELECT 1 
+            SELECT 1
             FROM public.restaurant_members admin_rm
             JOIN public.restaurant_members target_rm ON admin_rm.restaurant_id = target_rm.restaurant_id
             WHERE admin_rm.user_id = auth.uid()
@@ -2344,239 +2344,239 @@ ALTER TABLE public.subscription_payments ENABLE ROW LEVEL SECURITY;
 
 -- 1. Restaurants Policies
 DROP POLICY IF EXISTS "Public can view active restaurants" ON public.restaurants;
-CREATE POLICY "Public can view active restaurants" ON public.restaurants 
+CREATE POLICY "Public can view active restaurants" ON public.restaurants
     FOR SELECT USING (status = 'ACTIVE' OR public.is_super_admin() OR id IN (SELECT public.get_user_restaurant_ids()));
 
 DROP POLICY IF EXISTS "Admins can update their restaurant" ON public.restaurants;
-CREATE POLICY "Admins can update their restaurant" ON public.restaurants 
+CREATE POLICY "Admins can update their restaurant" ON public.restaurants
     FOR UPDATE USING (public.is_restaurant_member(id, 'ADMIN') OR public.is_super_admin());
 
 DROP POLICY IF EXISTS "Super Admins can insert restaurants" ON public.restaurants;
-CREATE POLICY "Super Admins can insert restaurants" ON public.restaurants 
+CREATE POLICY "Super Admins can insert restaurants" ON public.restaurants
     FOR INSERT WITH CHECK (public.is_super_admin());
 
 DROP POLICY IF EXISTS "Super Admins can delete restaurants" ON public.restaurants;
-CREATE POLICY "Super Admins can delete restaurants" ON public.restaurants 
+CREATE POLICY "Super Admins can delete restaurants" ON public.restaurants
     FOR DELETE USING (public.is_super_admin());
 
 -- 2. Profiles Policies
 DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
-CREATE POLICY "Users can view own profile" ON public.profiles 
+CREATE POLICY "Users can view own profile" ON public.profiles
     FOR SELECT USING (auth.uid() = id OR public.is_super_admin() OR EXISTS (SELECT 1 FROM public.restaurant_members rm1 JOIN public.restaurant_members rm2 ON rm1.restaurant_id = rm2.restaurant_id WHERE rm1.user_id = auth.uid() AND rm2.user_id = profiles.id AND rm1.is_active = TRUE));
 
 DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
-CREATE POLICY "Users can update own profile" ON public.profiles 
+CREATE POLICY "Users can update own profile" ON public.profiles
     FOR UPDATE USING (auth.uid() = id OR public.is_super_admin()) WITH CHECK (auth.uid() = id OR public.is_super_admin());
 
 DROP POLICY IF EXISTS "Super admin can manage profiles" ON public.profiles;
-CREATE POLICY "Super admin can manage profiles" ON public.profiles 
+CREATE POLICY "Super admin can manage profiles" ON public.profiles
     FOR ALL USING (public.is_super_admin());
 
 -- 3. Restaurant Members Policies
 DROP POLICY IF EXISTS "Tenant members read own memberships" ON public.restaurant_members;
-CREATE POLICY "Tenant members read own memberships" ON public.restaurant_members 
+CREATE POLICY "Tenant members read own memberships" ON public.restaurant_members
     FOR SELECT USING (user_id = auth.uid() OR public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'ADMIN'));
 
 DROP POLICY IF EXISTS "Tenant admin manage members" ON public.restaurant_members;
-CREATE POLICY "Tenant admin manage members" ON public.restaurant_members 
+CREATE POLICY "Tenant admin manage members" ON public.restaurant_members
     FOR INSERT WITH CHECK (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'ADMIN'));
 
 DROP POLICY IF EXISTS "Tenant admin update members" ON public.restaurant_members;
-CREATE POLICY "Tenant admin update members" ON public.restaurant_members 
+CREATE POLICY "Tenant admin update members" ON public.restaurant_members
     FOR UPDATE USING (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'ADMIN'));
 
 DROP POLICY IF EXISTS "Tenant admin delete members" ON public.restaurant_members;
-CREATE POLICY "Tenant admin delete members" ON public.restaurant_members 
+CREATE POLICY "Tenant admin delete members" ON public.restaurant_members
     FOR DELETE USING (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'ADMIN'));
 
 -- 4. Restaurant Member Permissions Policies
 DROP POLICY IF EXISTS "Super Admin can manage all member permissions" ON public.restaurant_member_permissions;
-CREATE POLICY "Super Admin can manage all member permissions" ON public.restaurant_member_permissions 
+CREATE POLICY "Super Admin can manage all member permissions" ON public.restaurant_member_permissions
     FOR ALL USING (public.is_super_admin()) WITH CHECK (public.is_super_admin());
 
 DROP POLICY IF EXISTS "Restaurant Admin can manage member permissions in own restaurant" ON public.restaurant_member_permissions;
-CREATE POLICY "Restaurant Admin can manage member permissions in own restaurant" ON public.restaurant_member_permissions 
+CREATE POLICY "Restaurant Admin can manage member permissions in own restaurant" ON public.restaurant_member_permissions
     FOR ALL USING (EXISTS (SELECT 1 FROM public.restaurant_members rm WHERE rm.id = restaurant_member_permissions.restaurant_member_id AND (public.is_restaurant_member(rm.restaurant_id, 'ADMIN') OR public.is_super_admin()))) WITH CHECK (EXISTS (SELECT 1 FROM public.restaurant_members rm WHERE rm.id = restaurant_member_permissions.restaurant_member_id AND (public.is_restaurant_member(rm.restaurant_id, 'ADMIN') OR public.is_super_admin())));
 
 DROP POLICY IF EXISTS "Staff can view own permissions" ON public.restaurant_member_permissions;
-CREATE POLICY "Staff can view own permissions" ON public.restaurant_member_permissions 
+CREATE POLICY "Staff can view own permissions" ON public.restaurant_member_permissions
     FOR SELECT USING (EXISTS (SELECT 1 FROM public.restaurant_members rm WHERE rm.id = restaurant_member_permissions.restaurant_member_id AND rm.user_id = auth.uid()));
 
 -- 5. Restaurant Settings Policies
 DROP POLICY IF EXISTS "Tenant settings select" ON public.restaurant_settings;
-CREATE POLICY "Tenant settings select" ON public.restaurant_settings 
+CREATE POLICY "Tenant settings select" ON public.restaurant_settings
     FOR SELECT USING (public.is_super_admin() OR restaurant_id IN (SELECT public.get_user_restaurant_ids()));
 
 DROP POLICY IF EXISTS "Tenant admin manage settings" ON public.restaurant_settings;
-CREATE POLICY "Tenant admin manage settings" ON public.restaurant_settings 
+CREATE POLICY "Tenant admin manage settings" ON public.restaurant_settings
     FOR ALL USING (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'ADMIN')) WITH CHECK (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'ADMIN'));
 
 -- 6. Restaurant Public Profiles Policies
 DROP POLICY IF EXISTS "Public read restaurant public profiles" ON public.restaurant_public_profiles;
-CREATE POLICY "Public read restaurant public profiles" ON public.restaurant_public_profiles 
+CREATE POLICY "Public read restaurant public profiles" ON public.restaurant_public_profiles
     FOR SELECT USING (TRUE);
 
 DROP POLICY IF EXISTS "Tenant admins can manage public profiles" ON public.restaurant_public_profiles;
-CREATE POLICY "Tenant admins can manage public profiles" ON public.restaurant_public_profiles 
+CREATE POLICY "Tenant admins can manage public profiles" ON public.restaurant_public_profiles
     FOR ALL USING (public.is_restaurant_member(restaurant_id, 'ADMIN') OR public.is_super_admin()) WITH CHECK (public.is_restaurant_member(restaurant_id, 'ADMIN') OR public.is_super_admin());
 
 -- 7. Categories Policies
 DROP POLICY IF EXISTS "Public can view active categories" ON public.categories;
-CREATE POLICY "Public can view active categories" ON public.categories 
+CREATE POLICY "Public can view active categories" ON public.categories
     FOR SELECT USING (is_active = TRUE OR public.is_restaurant_member(restaurant_id, 'STAFF') OR public.is_super_admin());
 
 DROP POLICY IF EXISTS "Staff can manage categories" ON public.categories;
-CREATE POLICY "Staff can manage categories" ON public.categories 
+CREATE POLICY "Staff can manage categories" ON public.categories
     FOR ALL USING (public.is_restaurant_member(restaurant_id, 'STAFF') OR public.is_super_admin()) WITH CHECK (public.is_restaurant_member(restaurant_id, 'STAFF') OR public.is_super_admin());
 
 -- 8. Products Policies
 DROP POLICY IF EXISTS "Public can view active products" ON public.products;
-CREATE POLICY "Public can view active products" ON public.products 
+CREATE POLICY "Public can view active products" ON public.products
     FOR SELECT USING (is_active = TRUE OR public.is_restaurant_member(restaurant_id, 'STAFF') OR public.is_super_admin());
 
 DROP POLICY IF EXISTS "Staff can manage products" ON public.products;
-CREATE POLICY "Staff can manage products" ON public.products 
+CREATE POLICY "Staff can manage products" ON public.products
     FOR ALL USING (public.is_restaurant_member(restaurant_id, 'STAFF') OR public.is_super_admin()) WITH CHECK (public.is_restaurant_member(restaurant_id, 'STAFF') OR public.is_super_admin());
 
 -- 9. Tables Policies
 DROP POLICY IF EXISTS "Public can view dining tables" ON public.tables;
-CREATE POLICY "Public can view dining tables" ON public.tables 
+CREATE POLICY "Public can view dining tables" ON public.tables
     FOR SELECT USING (TRUE);
 
 DROP POLICY IF EXISTS "Staff can manage dining tables" ON public.tables;
-CREATE POLICY "Staff can manage dining tables" ON public.tables 
+CREATE POLICY "Staff can manage dining tables" ON public.tables
     FOR ALL USING (public.is_restaurant_member(restaurant_id, 'STAFF') OR public.is_super_admin()) WITH CHECK (public.is_restaurant_member(restaurant_id, 'STAFF') OR public.is_super_admin());
 
 -- 10. Day Registers Policies
 DROP POLICY IF EXISTS "Tenant staff read day registers" ON public.day_registers;
-CREATE POLICY "Tenant staff read day registers" ON public.day_registers 
+CREATE POLICY "Tenant staff read day registers" ON public.day_registers
     FOR SELECT USING (public.is_super_admin() OR restaurant_id IN (SELECT public.get_user_restaurant_ids()));
 
 DROP POLICY IF EXISTS "Tenant staff manage day registers" ON public.day_registers;
-CREATE POLICY "Tenant staff manage day registers" ON public.day_registers 
+CREATE POLICY "Tenant staff manage day registers" ON public.day_registers
     FOR ALL USING (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'STAFF')) WITH CHECK (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'STAFF'));
 
 -- 11. Orders Policies
 -- Hardened: Removed dangerous 'auth.uid() IS NULL' bypass. Guest orders use create_guest_qr_order RPC.
 DROP POLICY IF EXISTS "Tenant staff and customers can view orders" ON public.orders;
-CREATE POLICY "Tenant staff and customers can view orders" ON public.orders 
+CREATE POLICY "Tenant staff and customers can view orders" ON public.orders
     FOR SELECT USING (public.is_restaurant_member(restaurant_id, 'STAFF') OR customer_id = auth.uid() OR public.is_super_admin());
 
 DROP POLICY IF EXISTS "Customers and staff can insert orders" ON public.orders;
-CREATE POLICY "Customers and staff can insert orders" ON public.orders 
+CREATE POLICY "Customers and staff can insert orders" ON public.orders
     FOR INSERT WITH CHECK (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'STAFF') OR (auth.uid() IS NOT NULL AND customer_id = auth.uid()));
 
 DROP POLICY IF EXISTS "Staff and customers can update orders" ON public.orders;
-CREATE POLICY "Staff and customers can update orders" ON public.orders 
+CREATE POLICY "Staff and customers can update orders" ON public.orders
     FOR UPDATE USING (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'STAFF') OR (auth.uid() IS NOT NULL AND customer_id = auth.uid()));
 
 DROP POLICY IF EXISTS "Super admin and tenant admin can delete orders" ON public.orders;
-CREATE POLICY "Super admin and tenant admin can delete orders" ON public.orders 
+CREATE POLICY "Super admin and tenant admin can delete orders" ON public.orders
     FOR DELETE USING (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'ADMIN'));
 
 -- 12. Order Items Policies
 DROP POLICY IF EXISTS "Order items select policy" ON public.order_items;
-CREATE POLICY "Order items select policy" ON public.order_items 
+CREATE POLICY "Order items select policy" ON public.order_items
     FOR SELECT USING (EXISTS (SELECT 1 FROM public.orders o WHERE o.id = order_items.order_id AND (public.is_restaurant_member(o.restaurant_id, 'STAFF') OR o.customer_id = auth.uid() OR public.is_super_admin())));
 
 DROP POLICY IF EXISTS "Order items manage policy" ON public.order_items;
-CREATE POLICY "Order items manage policy" ON public.order_items 
+CREATE POLICY "Order items manage policy" ON public.order_items
     FOR ALL USING (EXISTS (SELECT 1 FROM public.orders o WHERE o.id = order_items.order_id AND (public.is_restaurant_member(o.restaurant_id, 'STAFF') OR o.customer_id = auth.uid() OR public.is_super_admin()))) WITH CHECK (EXISTS (SELECT 1 FROM public.orders o WHERE o.id = order_items.order_id AND (public.is_restaurant_member(o.restaurant_id, 'STAFF') OR o.customer_id = auth.uid() OR public.is_super_admin())));
 
 -- 13. Order Status Events Policies
 DROP POLICY IF EXISTS "Order status events select policy" ON public.order_status_events;
-CREATE POLICY "Order status events select policy" ON public.order_status_events 
+CREATE POLICY "Order status events select policy" ON public.order_status_events
     FOR SELECT USING (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'STAFF') OR EXISTS (SELECT 1 FROM public.orders o WHERE o.id = order_status_events.order_id AND o.customer_id = auth.uid()));
 
 DROP POLICY IF EXISTS "Order status events insert policy" ON public.order_status_events;
-CREATE POLICY "Order status events insert policy" ON public.order_status_events 
+CREATE POLICY "Order status events insert policy" ON public.order_status_events
     FOR INSERT WITH CHECK (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'STAFF') OR (auth.uid() IS NOT NULL AND EXISTS (SELECT 1 FROM public.orders o WHERE o.id = order_status_events.order_id AND o.customer_id = auth.uid())));
 
 -- 14. Customer Notifications Policies
 DROP POLICY IF EXISTS "Customer notifications user policy" ON public.customer_notifications;
-CREATE POLICY "Customer notifications user policy" ON public.customer_notifications 
+CREATE POLICY "Customer notifications user policy" ON public.customer_notifications
     FOR ALL USING (user_id = auth.uid() OR public.is_super_admin()) WITH CHECK (user_id = auth.uid() OR public.is_super_admin());
 
 -- 15. Customer Addresses Policies
 DROP POLICY IF EXISTS "Users can manage own addresses" ON public.customer_addresses;
-CREATE POLICY "Users can manage own addresses" ON public.customer_addresses 
+CREATE POLICY "Users can manage own addresses" ON public.customer_addresses
     FOR ALL USING (user_id = auth.uid() OR public.is_super_admin()) WITH CHECK (user_id = auth.uid() OR public.is_super_admin());
 
 -- 16. Favorite Restaurants Policies
 DROP POLICY IF EXISTS "Customer manage favorites" ON public.favorite_restaurants;
-CREATE POLICY "Customer manage favorites" ON public.favorite_restaurants 
+CREATE POLICY "Customer manage favorites" ON public.favorite_restaurants
     FOR ALL USING (user_id = auth.uid() OR public.is_super_admin()) WITH CHECK (user_id = auth.uid() OR public.is_super_admin());
 
 -- 17. Payments Policies
 DROP POLICY IF EXISTS "Payments select policy" ON public.payments;
-CREATE POLICY "Payments select policy" ON public.payments 
+CREATE POLICY "Payments select policy" ON public.payments
     FOR SELECT USING (EXISTS (SELECT 1 FROM public.orders o WHERE o.id = payments.order_id AND (public.is_super_admin() OR o.restaurant_id IN (SELECT public.get_user_restaurant_ids()) OR (auth.uid() IS NOT NULL AND o.customer_id = auth.uid()))));
 
 DROP POLICY IF EXISTS "Payments manage policy" ON public.payments;
-CREATE POLICY "Payments manage policy" ON public.payments 
+CREATE POLICY "Payments manage policy" ON public.payments
     FOR ALL USING (EXISTS (SELECT 1 FROM public.orders o WHERE o.id = payments.order_id AND (public.is_super_admin() OR public.is_restaurant_member(o.restaurant_id, 'STAFF')))) WITH CHECK (EXISTS (SELECT 1 FROM public.orders o WHERE o.id = payments.order_id AND (public.is_super_admin() OR public.is_restaurant_member(o.restaurant_id, 'STAFF'))));
 
 -- 18. KOTs Policies
 DROP POLICY IF EXISTS "Staff can read KOTs" ON public.kots;
-CREATE POLICY "Staff can read KOTs" ON public.kots 
+CREATE POLICY "Staff can read KOTs" ON public.kots
     FOR SELECT USING (public.is_super_admin() OR restaurant_id IN (SELECT public.get_user_restaurant_ids()));
 
 DROP POLICY IF EXISTS "Staff can manage KOTs" ON public.kots;
-CREATE POLICY "Staff can manage KOTs" ON public.kots 
+CREATE POLICY "Staff can manage KOTs" ON public.kots
     FOR ALL USING (public.is_restaurant_member(restaurant_id, 'STAFF') OR public.is_super_admin()) WITH CHECK (public.is_restaurant_member(restaurant_id, 'STAFF') OR public.is_super_admin());
 
 -- 19. KOT Items Policies
 DROP POLICY IF EXISTS "Staff can read KOT items" ON public.kot_items;
-CREATE POLICY "Staff can read KOT items" ON public.kot_items 
+CREATE POLICY "Staff can read KOT items" ON public.kot_items
     FOR SELECT USING (EXISTS (SELECT 1 FROM public.kots k WHERE k.id = kot_items.kot_id AND (public.is_super_admin() OR k.restaurant_id IN (SELECT public.get_user_restaurant_ids()))));
 
 DROP POLICY IF EXISTS "Staff can manage KOT items" ON public.kot_items;
-CREATE POLICY "Staff can manage KOT items" ON public.kot_items 
+CREATE POLICY "Staff can manage KOT items" ON public.kot_items
     FOR ALL USING (EXISTS (SELECT 1 FROM public.kots k WHERE k.id = kot_items.kot_id AND (public.is_restaurant_member(k.restaurant_id, 'STAFF') OR public.is_super_admin()))) WITH CHECK (EXISTS (SELECT 1 FROM public.kots k WHERE k.id = kot_items.kot_id AND (public.is_restaurant_member(k.restaurant_id, 'STAFF') OR public.is_super_admin())));
 
 -- 20. Coupons Policies
 DROP POLICY IF EXISTS "Tenant members read coupons" ON public.coupons;
-CREATE POLICY "Tenant members read coupons" ON public.coupons 
+CREATE POLICY "Tenant members read coupons" ON public.coupons
     FOR SELECT USING (public.is_super_admin() OR restaurant_id IN (SELECT public.get_user_restaurant_ids()));
 
 DROP POLICY IF EXISTS "Tenant admin manage coupons" ON public.coupons;
-CREATE POLICY "Tenant admin manage coupons" ON public.coupons 
+CREATE POLICY "Tenant admin manage coupons" ON public.coupons
     FOR ALL USING (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'ADMIN')) WITH CHECK (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'ADMIN'));
 
 -- 21. Audit Logs Policies
 DROP POLICY IF EXISTS "Tenant admin read audit logs" ON public.audit_logs;
-CREATE POLICY "Tenant admin read audit logs" ON public.audit_logs 
+CREATE POLICY "Tenant admin read audit logs" ON public.audit_logs
     FOR SELECT USING (public.is_super_admin() OR (restaurant_id IS NOT NULL AND public.is_restaurant_member(restaurant_id, 'ADMIN')));
 
 DROP POLICY IF EXISTS "Tenant insert audit logs" ON public.audit_logs;
-CREATE POLICY "Tenant insert audit logs" ON public.audit_logs 
+CREATE POLICY "Tenant insert audit logs" ON public.audit_logs
     FOR INSERT WITH CHECK (public.is_super_admin() OR (auth.jwt() ->> 'role' = 'service_role' OR auth.role() = 'service_role') OR (restaurant_id IS NOT NULL AND public.is_restaurant_member(restaurant_id, 'STAFF')));
 
 -- 22. Subscription Plans Policies
 DROP POLICY IF EXISTS "Subscription plans select all" ON public.subscription_plans;
-CREATE POLICY "Subscription plans select all" ON public.subscription_plans 
+CREATE POLICY "Subscription plans select all" ON public.subscription_plans
     FOR SELECT USING (is_active = TRUE OR public.is_super_admin() OR auth.role() = 'service_role');
 
 DROP POLICY IF EXISTS "Subscription plans superadmin modify" ON public.subscription_plans;
-CREATE POLICY "Subscription plans superadmin modify" ON public.subscription_plans 
+CREATE POLICY "Subscription plans superadmin modify" ON public.subscription_plans
     FOR ALL USING (public.is_super_admin() OR auth.role() = 'service_role') WITH CHECK (public.is_super_admin() OR auth.role() = 'service_role');
 
 -- 23. Restaurant Subscriptions Policies
 DROP POLICY IF EXISTS "Restaurant subscriptions select" ON public.restaurant_subscriptions;
-CREATE POLICY "Restaurant subscriptions select" ON public.restaurant_subscriptions 
+CREATE POLICY "Restaurant subscriptions select" ON public.restaurant_subscriptions
     FOR SELECT USING (public.is_super_admin() OR auth.role() = 'service_role' OR public.is_restaurant_member(restaurant_id, 'STAFF'));
 
 DROP POLICY IF EXISTS "Restaurant subscriptions superadmin all" ON public.restaurant_subscriptions;
-CREATE POLICY "Restaurant subscriptions superadmin all" ON public.restaurant_subscriptions 
+CREATE POLICY "Restaurant subscriptions superadmin all" ON public.restaurant_subscriptions
     FOR ALL USING (public.is_super_admin() OR auth.role() = 'service_role') WITH CHECK (public.is_super_admin() OR auth.role() = 'service_role');
 
 -- 24. Subscription Payments Policies
 DROP POLICY IF EXISTS "Subscription payments select" ON public.subscription_payments;
-CREATE POLICY "Subscription payments select" ON public.subscription_payments 
+CREATE POLICY "Subscription payments select" ON public.subscription_payments
     FOR SELECT USING (public.is_super_admin() OR auth.role() = 'service_role' OR public.is_restaurant_member(restaurant_id, 'ADMIN'));
 
 DROP POLICY IF EXISTS "Subscription payments superadmin all" ON public.subscription_payments;
-CREATE POLICY "Subscription payments superadmin all" ON public.subscription_payments 
+CREATE POLICY "Subscription payments superadmin all" ON public.subscription_payments
     FOR ALL USING (public.is_super_admin() OR auth.role() = 'service_role') WITH CHECK (public.is_super_admin() OR auth.role() = 'service_role');
 
 -- ----------------------------------------------------------------------------
@@ -2594,23 +2594,23 @@ ON CONFLICT (code) DO NOTHING;
 -- 34. STORAGE BUCKETS INITIALIZATION
 -- ----------------------------------------------------------------------------
 
-INSERT INTO storage.buckets (id, name, public) 
-VALUES 
+INSERT INTO storage.buckets (id, name, public)
+VALUES
     ('product-images', 'product-images', TRUE),
     ('restaurant-assets', 'restaurant-assets', TRUE)
 ON CONFLICT (id) DO UPDATE SET public = TRUE;
 
 -- Storage RLS Policies
 DROP POLICY IF EXISTS "Public Access to product-images" ON storage.objects;
-CREATE POLICY "Public Access to product-images" ON storage.objects 
+CREATE POLICY "Public Access to product-images" ON storage.objects
     FOR SELECT USING (bucket_id IN ('product-images', 'restaurant-assets'));
 
 DROP POLICY IF EXISTS "Authenticated users can upload assets" ON storage.objects;
-CREATE POLICY "Authenticated users can upload assets" ON storage.objects 
+CREATE POLICY "Authenticated users can upload assets" ON storage.objects
     FOR INSERT WITH CHECK (bucket_id IN ('product-images', 'restaurant-assets') AND auth.role() = 'authenticated');
 
 DROP POLICY IF EXISTS "Authenticated users can update assets" ON storage.objects;
-CREATE POLICY "Authenticated users can update assets" ON storage.objects 
+CREATE POLICY "Authenticated users can update assets" ON storage.objects
     FOR UPDATE USING (bucket_id IN ('product-images', 'restaurant-assets') AND auth.role() = 'authenticated');
 
 -- ----------------------------------------------------------------------------
@@ -2628,7 +2628,7 @@ BEGIN
     FOR tbl IN SELECT unnest(ARRAY['orders', 'tables', 'restaurant_settings', 'profiles', 'order_status_events', 'kots'])
     LOOP
         IF NOT EXISTS (
-            SELECT 1 FROM pg_publication_tables 
+            SELECT 1 FROM pg_publication_tables
             WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = tbl
         ) THEN
             EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', tbl);

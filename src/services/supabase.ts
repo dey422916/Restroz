@@ -47,4 +47,3 @@ if (Platform.OS !== 'web') {
     }
   });
 }
-

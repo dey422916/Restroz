@@ -72,7 +72,7 @@ BEGIN
     DELETE FROM public.restaurant_settings WHERE restaurant_id = v_rest_id;
 
     -- 12. Remove Restaurant Member Permissions & Members
-    DELETE FROM public.restaurant_member_permissions 
+    DELETE FROM public.restaurant_member_permissions
     WHERE restaurant_member_id IN (SELECT id FROM public.restaurant_members WHERE restaurant_id = v_rest_id);
     DELETE FROM public.restaurant_members WHERE restaurant_id = v_rest_id;
 

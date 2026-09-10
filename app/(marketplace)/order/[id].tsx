@@ -416,7 +416,7 @@ export default function CustomerOrderDetailsScreen() {
               {/* Delivery Address Snapshot */}
               <View style={styles.sectionCard}>
                 <Text style={styles.cardTitle}>Delivery Details</Text>
-                
+
                 <View style={styles.infoBlock}>
                   <Text style={styles.infoLabel}>Order Placed</Text>
                   <Text style={styles.infoVal}>🕒 {formatOrderDateTime(order.created_at)}</Text>

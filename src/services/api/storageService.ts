@@ -273,7 +273,7 @@ export const storageService = {
       // 2. Direct HTTP upload with session authentication fallback
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
-      
+
       if (token) {
         const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`, {
           method: 'POST',

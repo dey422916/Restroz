@@ -1232,7 +1232,7 @@ export default function OrdersScreen() {
             const tableDisplayName = linkedTable
               ? (linkedTable.section ? `${linkedTable.table_number} (${linkedTable.section})` : linkedTable.table_number)
               : order.table_number || '';
-              
+
             const formatTableLabel = (rawName?: string): string => {
               if (!rawName) return '';
               const trimmed = rawName.trim();

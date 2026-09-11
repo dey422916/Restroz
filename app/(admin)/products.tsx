@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   TextInput,
-  SafeAreaView,
   Image,
   Modal,
   Alert,
@@ -18,7 +17,6 @@ import {
   RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { productService } from '../../src/services/api/productService';
 import { categoryService } from '../../src/services/api/categoryService';
 import { storageService } from '../../src/services/api/storageService';
@@ -30,7 +28,6 @@ import { downloadSampleProductsCsv } from '../../src/utils/sampleCsv';
 
 export default function ProductsScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const { activeRestaurantId } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -69,7 +66,8 @@ export default function ProductsScreen() {
   const [formIsActive, setFormIsActive] = useState<boolean>(true);
   const [formIsAvailable, setFormIsAvailable] = useState<boolean>(true);
 
-  const { height: windowHeight } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isMobile = windowWidth < 640;
 
   const loadData = async (isRefresh: boolean = false) => {
     try {
@@ -284,28 +282,40 @@ export default function ProductsScreen() {
   };
 
   const handleDeleteProduct = (p: Product) => {
+    const message = `Are you sure you want to remove "${p.name}" (${p.sku}) from the catalog?\n\nNote: If this dish was ordered in historical invoices, it will be safely deactivated to preserve past audit reports.`;
+
+    const doDelete = async () => {
+      try {
+        const targetRestId = activeRestaurantId;
+        const res = await productService.deleteProduct(p.id, targetRestId);
+        if (res.deactivated) {
+          Alert.alert('Deactivated', `"${p.name}" is referenced in past orders and was safely deactivated.`);
+        } else {
+          Alert.alert('Deleted', `"${p.name}" was permanently removed.`);
+        }
+        await loadData(true);
+      } catch (err: any) {
+        Alert.alert('Delete Failed', err.message);
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window !== 'undefined' ? window.confirm(message) : true;
+      if (confirmed) {
+        doDelete();
+      }
+      return;
+    }
+
     Alert.alert(
       'Delete Product',
-      `Are you sure you want to remove "${p.name}" (${p.sku}) from the catalog?\n\nNote: If this dish was ordered in historical invoices, it will be safely deactivated to preserve past audit reports.`,
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete / Deactivate',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              const targetRestId = activeRestaurantId;
-              const res = await productService.deleteProduct(p.id, targetRestId);
-              if (res.deactivated) {
-                Alert.alert('Deactivated', `"${p.name}" is referenced in past orders and was safely deactivated.`);
-              } else {
-                Alert.alert('Deleted', `"${p.name}" was permanently removed.`);
-              }
-              await loadData(true);
-            } catch (err: any) {
-              Alert.alert('Delete Failed', err.message);
-            }
-          },
+          onPress: doDelete,
         },
       ]
     );
@@ -361,7 +371,7 @@ export default function ProductsScreen() {
   });
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       {/* Top Header */}
       <View style={styles.header}>
         <View style={styles.headerTitleBox}>
@@ -505,17 +515,30 @@ export default function ProductsScreen() {
                 prod.name.toLowerCase().includes('beer') ||
                 prod.name.toLowerCase().includes('lassi');
 
+              const isWideGrid = Platform.OS === 'web' && windowWidth >= 768;
+              const responsiveCardStyle = Platform.OS === 'web'
+                ? windowWidth >= 1280
+                  ? styles.cardWeb5Col
+                  : windowWidth >= 1024
+                  ? styles.cardWeb4Col
+                  : windowWidth >= 768
+                  ? styles.cardWeb3Col
+                  : windowWidth >= 520
+                  ? styles.cardWeb2Col
+                  : styles.cardWeb1Col
+                : undefined;
+
               return (
                 <View
                   key={prod.id}
                   style={[
                     styles.card,
-                    Platform.OS === 'web' && styles.cardWeb,
+                    responsiveCardStyle,
                     (!prod.is_active || isOutOfStock) && styles.cardDimmed,
                   ]}
                 >
                   {/* Image & Indicators */}
-                  <View style={[styles.imgContainer, Platform.OS === 'web' && styles.imgContainerWeb]}>
+                  <View style={[styles.imgContainer, isWideGrid && styles.imgContainerWeb]}>
                     <Image
                       source={{
                         uri:
@@ -611,8 +634,8 @@ export default function ProductsScreen() {
                     </View>
 
                     {/* Action Buttons Row */}
-                    <View style={[styles.actionsRow, Platform.OS === 'web' && styles.actionsRowWeb]}>
-                      {Platform.OS === 'web' ? (
+                    <View style={[styles.actionsRow, isWideGrid && styles.actionsRowWeb]}>
+                      {isWideGrid ? (
                         <>
                           <View style={styles.actionBtnSubRow}>
                             <TouchableOpacity
@@ -650,7 +673,7 @@ export default function ProductsScreen() {
                           </View>
                         </>
                       ) : (
-                        <>
+                        <View style={styles.actionBtnMobileRow}>
                           <TouchableOpacity
                             style={styles.editBtn}
                             onPress={() => openEditModal(prod)}
@@ -670,7 +693,7 @@ export default function ProductsScreen() {
                             style={styles.toggleBtn}
                             onPress={() => handleToggleActive(prod)}
                           >
-                            <Text style={styles.toggleBtnText}>
+                            <Text style={styles.toggleBtnText} numberOfLines={1}>
                               {prod.is_active ? 'Deactivate' : 'Activate'}
                             </Text>
                           </TouchableOpacity>
@@ -681,7 +704,7 @@ export default function ProductsScreen() {
                           >
                             <Text style={styles.deleteBtnText}>🗑️</Text>
                           </TouchableOpacity>
-                        </>
+                        </View>
                       )}
                     </View>
                   </View>
@@ -700,8 +723,8 @@ export default function ProductsScreen() {
           style={[
             styles.modalOverlay,
             {
-              paddingTop: Platform.OS === 'web' ? 16 : insets.top + 8,
-              paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 8,
+              paddingTop: 16,
+              paddingBottom: 16,
             },
           ]}
         >
@@ -1050,7 +1073,7 @@ export default function ProductsScreen() {
           </View>
         </Modal>
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -1220,11 +1243,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 6,
   },
-  cardWeb: {
+  cardWeb5Col: {
     flexDirection: 'column',
-    width: 'calc(16.666% - 8.4px)' as any,
-    maxWidth: 'calc(16.666% - 8.4px)' as any,
-    minWidth: 155,
+    width: 'calc(20% - 10px)' as any,
+    flexBasis: 'calc(20% - 10px)' as any,
     flexGrow: 0,
     flexShrink: 0,
     justifyContent: 'space-between',
@@ -1232,22 +1254,66 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     gap: 8,
   },
+  cardWeb4Col: {
+    flexDirection: 'column',
+    width: 'calc(25% - 9px)' as any,
+    flexBasis: 'calc(25% - 9px)' as any,
+    flexGrow: 0,
+    flexShrink: 0,
+    justifyContent: 'space-between',
+    padding: 10,
+    borderRadius: 14,
+    gap: 8,
+  },
+  cardWeb3Col: {
+    flexDirection: 'column',
+    width: 'calc(33.333% - 8px)' as any,
+    flexBasis: 'calc(33.333% - 8px)' as any,
+    flexGrow: 0,
+    flexShrink: 0,
+    justifyContent: 'space-between',
+    padding: 10,
+    borderRadius: 14,
+    gap: 8,
+  },
+  cardWeb2Col: {
+    flexDirection: 'row',
+    width: 'calc(50% - 6px)' as any,
+    flexBasis: 'calc(50% - 6px)' as any,
+    flexGrow: 0,
+    flexShrink: 0,
+    padding: 12,
+    borderRadius: 14,
+    gap: 12,
+  },
+  cardWeb1Col: {
+    flexDirection: 'row',
+    width: '100%',
+    flexBasis: '100%',
+    flexGrow: 1,
+    flexShrink: 0,
+    padding: 12,
+    borderRadius: 14,
+    gap: 12,
+  },
   cardDimmed: {
     opacity: 0.7,
     backgroundColor: '#f8fafc',
   },
   imgContainer: {
-    width: 85,
-    height: 85,
+    width: 90,
+    height: 90,
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: '#f1f5f9',
     position: 'relative',
+    flexShrink: 0,
   },
   imgContainerWeb: {
     width: '100%',
     height: 110,
     borderRadius: 10,
+    flexShrink: 0,
   },
   img: {
     width: '100%',
@@ -1359,6 +1425,7 @@ const styles = StyleSheet.create({
   actionsRow: {
     flexDirection: 'row',
     gap: 6,
+    marginTop: 4,
   },
   actionsRowWeb: {
     flexDirection: 'column',
@@ -1370,14 +1437,23 @@ const styles = StyleSheet.create({
     gap: 5,
     width: '100%',
   },
+  actionBtnMobileRow: {
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'center',
+    width: '100%',
+  },
   editBtn: {
     flex: 1,
     backgroundColor: '#eff6ff',
-    paddingVertical: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#bfdbfe',
+    minHeight: 32,
   },
   editBtnText: {
     fontSize: 10,
@@ -1387,11 +1463,14 @@ const styles = StyleSheet.create({
   stockAdjBtn: {
     flex: 1,
     backgroundColor: '#f1f5f9',
-    paddingVertical: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#cbd5e1',
+    minHeight: 32,
   },
   stockAdjBtnText: {
     fontSize: 10,
@@ -1399,13 +1478,16 @@ const styles = StyleSheet.create({
     color: '#334155',
   },
   toggleBtn: {
-    flex: 1,
+    flex: 1.2,
     backgroundColor: '#f8fafc',
-    paddingVertical: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#e2e8f0',
+    minHeight: 32,
   },
   toggleBtnText: {
     fontSize: 10,
@@ -1415,12 +1497,13 @@ const styles = StyleSheet.create({
   deleteBtn: {
     backgroundColor: '#fff1f2',
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#fecdd3',
+    minHeight: 32,
   },
   deleteBtnText: {
     fontSize: 11,

@@ -35,16 +35,16 @@ export const dayRegisterService = {
           const mapped = data.map((r: any) => ({
             id: r.id,
             restaurant_id: r.restaurant_id || targetRestId,
-            register_date: r.register_date,
+            register_date: r.register_date || (r.opened_at ? getLocalRestaurantDate(new Date(r.opened_at)) : getLocalRestaurantDate()),
             status: (r.status || 'open').toLowerCase() as 'open' | 'closed',
-            opening_cash_float: Number(r.opening_cash_float) || 0,
+            opening_cash_float: Number(r.opening_cash ?? r.opening_cash_float) || 0,
             cash_sales: Number(r.cash_sales) || 0,
             upi_sales: Number(r.upi_sales) || 0,
             card_sales: Number(r.card_sales) || 0,
             total_sales: Number(r.total_sales) || 0,
             expected_cash: Number(r.expected_cash) || 0,
-            actual_cash_counted: r.actual_cash_counted ? Number(r.actual_cash_counted) : undefined,
-            cash_difference: r.cash_difference ? Number(r.cash_difference) : undefined,
+            actual_cash_counted: r.actual_cash != null ? Number(r.actual_cash) : (r.actual_cash_counted != null ? Number(r.actual_cash_counted) : undefined),
+            cash_difference: r.difference != null ? Number(r.difference) : (r.cash_difference != null ? Number(r.cash_difference) : undefined),
             notes: r.notes || undefined,
             opened_at: r.opened_at,
             opened_by: r.opened_by,
@@ -254,21 +254,25 @@ export const dayRegisterService = {
 
     if (isSupabaseConfigured) {
       try {
-        await supabase.from('day_registers').insert([{
+        const { error: insertErr } = await supabase.from('day_registers').insert([{
           id: newRegister.id,
           restaurant_id: targetRestId,
-          register_date: newRegister.register_date,
           status: 'open',
-          opening_cash_float: newRegister.opening_cash_float,
+          opening_cash: newRegister.opening_cash_float,
           cash_sales: 0,
           upi_sales: 0,
           card_sales: 0,
+          other_sales: 0,
           total_sales: 0,
+          total_orders: 0,
           expected_cash: newRegister.opening_cash_float,
           notes: newRegister.notes || null,
           opened_at: newRegister.opened_at,
           opened_by: newRegister.opened_by,
         }]);
+        if (insertErr) {
+          console.warn('Supabase insert day_register error:', insertErr);
+        }
       } catch (sbErr) {
         console.warn('Supabase insert day_register exception:', sbErr);
       }
@@ -291,14 +295,19 @@ export const dayRegisterService = {
 
   /**
    * Get all active / unsettled orders for a restaurant.
-   * An order is considered unsettled if its status is neither 'completed' nor 'cancelled',
-   * or if its payment_status is not 'paid'.
+   * An order is considered settled if:
+   * 1. It is cancelled (`status === 'cancelled'`), OR
+   * 2. It is completed or delivered AND marked as paid (`(status === 'completed' || status === 'delivered') && payment_status === 'paid'`)
    */
   async getUnsettledOrders(restaurantId?: string): Promise<Order[]> {
     const allOrders = await orderService.getOrders(restaurantId);
-    return allOrders.filter(
-      (ord) => ord.status !== 'cancelled' && (ord.status !== 'completed' || ord.payment_status !== 'paid')
-    );
+    return allOrders.filter((ord) => {
+      if (ord.status === 'cancelled') return false;
+      if ((ord.status === 'completed' || ord.status === 'delivered') && ord.payment_status === 'paid') {
+        return false;
+      }
+      return true;
+    });
   },
 
   /**
@@ -368,19 +377,23 @@ export const dayRegisterService = {
 
     if (isSupabaseConfigured) {
       try {
-        await supabase.from('day_registers').update({
+        const { error: updateErr } = await supabase.from('day_registers').update({
           status: 'closed',
           cash_sales: closedRegister.cash_sales,
           upi_sales: closedRegister.upi_sales,
           card_sales: closedRegister.card_sales,
+          other_sales: (closedRegister as any).other_sales || 0,
           total_sales: closedRegister.total_sales,
           expected_cash: closedRegister.expected_cash,
-          actual_cash_counted: closedRegister.actual_cash_counted,
-          cash_difference: closedRegister.cash_difference,
+          actual_cash: closedRegister.actual_cash_counted,
+          difference: closedRegister.cash_difference,
           closed_at: closedRegister.closed_at,
           closed_by: closedRegister.closed_by,
           notes: closedRegister.notes || null,
         }).eq('id', closedRegister.id);
+        if (updateErr) {
+          console.warn('Supabase update day_register close error:', updateErr);
+        }
       } catch (sbCloseErr) {
         console.warn('Supabase update day_register close exception:', sbCloseErr);
       }

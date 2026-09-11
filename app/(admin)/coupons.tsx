@@ -4,16 +4,15 @@ import {
   Text,
   ScrollView,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   TextInput,
   Modal,
   Alert,
   ActivityIndicator,
   Switch,
+  Platform,
   useWindowDimensions,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { couponService } from '../../src/services/api/couponService';
 import { useAuth } from '../../src/context/AuthContext';
@@ -21,7 +20,6 @@ import { Coupon, DiscountType } from '../../src/types';
 import { formatCurrency } from '../../src/utils/currency';
 
 export default function CouponsScreen() {
-  const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
   const { user, role, isAdmin: authIsAdmin, isSuperAdmin, activeRestaurantId } = useAuth();
@@ -170,24 +168,37 @@ export default function CouponsScreen() {
 
   const handleDelete = (cpn: Coupon) => {
     const isArchiving = (cpn.used_count || 0) > 0;
+    const title = isArchiving ? 'Archive Coupon' : 'Delete Coupon';
+    const message = isArchiving
+      ? `Coupon "${cpn.code}" has been used ${cpn.used_count} time(s). It will be deactivated and archived to preserve order history.`
+      : `Are you sure you want to permanently delete coupon "${cpn.code}"?`;
+
+    const doDelete = async () => {
+      try {
+        await couponService.deleteCoupon(cpn.id, activeRestaurantId || undefined);
+        loadCoupons();
+      } catch (e: any) {
+        Alert.alert('Error', e.message || 'Failed to remove coupon.');
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window !== 'undefined' ? window.confirm(message) : true;
+      if (confirmed) {
+        doDelete();
+      }
+      return;
+    }
+
     Alert.alert(
-      isArchiving ? 'Archive Coupon' : 'Delete Coupon',
-      isArchiving
-        ? `Coupon "${cpn.code}" has been used ${cpn.used_count} time(s). It will be deactivated and archived to preserve order history.`
-        : `Are you sure you want to permanently delete coupon "${cpn.code}"?`,
+      title,
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: isArchiving ? 'Archive' : 'Delete',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              await couponService.deleteCoupon(cpn.id, activeRestaurantId || undefined);
-              loadCoupons();
-            } catch (e: any) {
-              Alert.alert('Error', e.message || 'Failed to remove coupon.');
-            }
-          },
+          onPress: doDelete,
         },
       ]
     );
@@ -195,7 +206,7 @@ export default function CouponsScreen() {
 
   if (!isAdmin) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
         <View style={styles.restrictedBox}>
           <Text style={{ fontSize: 44 }}>🔒</Text>
           <Text style={styles.restrictedTitle}>Admin Access Required</Text>
@@ -203,12 +214,12 @@ export default function CouponsScreen() {
             Only Restaurant Admins and Super Admins can manage coupon discounts.
           </Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       {/* Header */}
       <View style={[styles.header, isMobile && styles.headerMobile]}>
         <View style={styles.headerTitleWrap}>
@@ -504,7 +515,7 @@ export default function CouponsScreen() {
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 

@@ -216,11 +216,17 @@ export const productService = {
       try {
         const { error } = await supabase.from('products').delete().eq('id', id);
         if (!error) {
+          mockStorage.deleteProduct(id);
           await this.getProducts(restaurantId, true);
           return { deleted: true, deactivated: false };
         }
-        // If error (e.g. referenced in order_items), fallback to deactivation
-        await supabase.from('products').update({ is_active: false, is_available: false }).eq('id', id);
+        // If error (e.g. referenced in order_items before FK update), fallback to deactivation
+        const { error: updateErr } = await supabase.from('products').update({ is_active: false, is_available: false }).eq('id', id);
+        if (updateErr) {
+          console.error('Supabase deactivate fallback error:', updateErr);
+          throw updateErr;
+        }
+        mockStorage.updateProduct(id, { is_active: false, is_available: false } as any);
         await this.getProducts(restaurantId, true);
         return { deleted: false, deactivated: true };
       } catch (e: any) {

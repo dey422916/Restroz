@@ -328,7 +328,7 @@ export default function CustomerOrdersScreen() {
                         Payment: {order.payment_method ? order.payment_method.toUpperCase() : 'COD'} (
                         {order.payment_status ? order.payment_status.toUpperCase() : 'UNPAID'})
                       </Text>
-                      {order.delivery_address && (
+                      {Boolean(order.delivery_address) && (
                         <Text style={styles.addressLine} numberOfLines={1}>
                           📍 {order.delivery_address}
                         </Text>
@@ -350,7 +350,7 @@ export default function CustomerOrdersScreen() {
                       <Text style={styles.detailBtnText}>View Details & Receipt ›</Text>
                     </TouchableOpacity>
 
-                    {!((order.kots && order.kots.length > 0) || order.status === 'kot_generated') && !['cancelled', 'delivered', 'completed'].includes(order.status) && (
+                    {!((order.kots && order.kots.length > 0) || ['kot_generated', 'preparing', 'ready', 'out_for_delivery', 'served', 'completed', 'delivered'].includes(order.status)) && !['cancelled', 'delivered', 'completed'].includes(order.status) && (
                       <TouchableOpacity
                         style={styles.cancelCardBtn}
                         onPress={() => router.push(`/order/${order.id}` as any)}

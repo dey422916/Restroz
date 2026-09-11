@@ -3,6 +3,7 @@ import { mockStorage } from '../mockStorage';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import { getTableQrUrl } from '../../utils/qr';
 import { subscriptionGuardService } from './subscriptionGuardService';
+import { naturalTableCompare } from '../../utils/sortUtils';
 
 export const tableService = {
   async resolveTable(identifier: string): Promise<DiningTable | null> {
@@ -107,6 +108,9 @@ export const tableService = {
             };
           });
 
+          // Sort tables in natural ascending order (e.g. Table 1, Table 2, ... Table 10)
+          list.sort(naturalTableCompare);
+
           mockStorage.saveTables(list);
           return list;
         }
@@ -114,7 +118,8 @@ export const tableService = {
         console.warn('Supabase getTables failed, using local cache:', e);
       }
     }
-    return mockStorage.getTables();
+    const local = mockStorage.getTables();
+    return [...local].sort(naturalTableCompare);
   },
 
   async saveTable(table: Partial<DiningTable>, restaurantId?: string): Promise<DiningTable> {
@@ -213,6 +218,7 @@ export const tableService = {
         }
         const { error } = await query;
         if (error) throw error;
+        mockStorage.deleteTable(id);
         await this.getTables(restaurantId);
         return;
       } catch (e: any) {

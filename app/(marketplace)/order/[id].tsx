@@ -209,7 +209,7 @@ export default function CustomerOrderDetailsScreen() {
 
   const rest = (order as any).restaurant;
   const progress = marketplaceService.mapOrderToCustomerStage(order.status);
-  const hasKot = Boolean((order as any).kots && (order as any).kots.length > 0) || order.status === 'kot_generated';
+  const hasKot = Boolean((order as any).kots && (order as any).kots.length > 0) || ['kot_generated', 'preparing', 'ready', 'out_for_delivery', 'served', 'completed', 'delivered'].includes(order.status);
   const isCancellable = !hasKot && !['cancelled', 'delivered', 'completed'].includes(order.status);
   const isCompleted = ['completed', 'delivered'].includes(order.status);
 

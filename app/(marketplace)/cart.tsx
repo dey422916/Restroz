@@ -343,15 +343,19 @@ export default function CustomerCartScreen() {
                   </View>
                 )}
 
-                <View style={styles.billRow}>
-                  <Text style={styles.billLabel}>CGST (2.5%)</Text>
-                  <Text style={styles.billVal}>₹{formatPrice(cart.cgst)}</Text>
-                </View>
+                {cart.isGstEnabled && (cart.cgst > 0 || cart.sgst > 0) ? (
+                  <>
+                    <View style={styles.billRow}>
+                      <Text style={styles.billLabel}>CGST ({((cart.taxRate || 5) / 2).toFixed(1)}%)</Text>
+                      <Text style={styles.billVal}>₹{formatPrice(cart.cgst)}</Text>
+                    </View>
 
-                <View style={styles.billRow}>
-                  <Text style={styles.billLabel}>SGST (2.5%)</Text>
-                  <Text style={styles.billVal}>₹{formatPrice(cart.sgst)}</Text>
-                </View>
+                    <View style={styles.billRow}>
+                      <Text style={styles.billLabel}>SGST ({((cart.taxRate || 5) / 2).toFixed(1)}%)</Text>
+                      <Text style={styles.billVal}>₹{formatPrice(cart.sgst)}</Text>
+                    </View>
+                  </>
+                ) : null}
 
                 <View style={styles.billRow}>
                   <Text style={styles.billLabel}>Delivery Fee</Text>

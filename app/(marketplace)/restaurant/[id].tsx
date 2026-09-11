@@ -9,6 +9,7 @@ import {
   Modal,
   Image,
   TextInput,
+  Alert,
   useWindowDimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -317,7 +318,26 @@ export default function RestaurantMenuScreen() {
                 const badgeStyle = badgePalettes[idx % badgePalettes.length];
 
                 return (
-                  <View key={cpn.id} style={styles.couponCard}>
+                  <TouchableOpacity
+                    key={cpn.id}
+                    style={styles.couponCard}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      if (cart.restaurantId === id && cart.items.length > 0) {
+                        const val = cpn.discount_type === 'percentage'
+                          ? (cart.subtotal * (cpn.discount_value || 0)) / 100
+                          : (cpn.discount_value || 0);
+                        const finalDisc = cpn.max_discount ? Math.min(val, cpn.max_discount) : val;
+                        applyCoupon(cpn.code, Math.round(finalDisc * 100) / 100, cpn);
+                        Alert.alert('Coupon Applied 🎉', `Coupon "${cpn.code}" applied to your current cart.`);
+                      } else {
+                        Alert.alert(
+                          `Promo: ${cpn.code}`,
+                          `${cpn.description || discountTag}\n${cpn.min_order_value > 0 ? `Minimum order: ₹${cpn.min_order_value}` : ''}\nUse code "${cpn.code}" at checkout!`
+                        );
+                      }
+                    }}
+                  >
                     <View style={[styles.couponDiscountBadge, { backgroundColor: badgeStyle.bg }]}>
                       <Text style={[styles.couponDiscountText, { color: badgeStyle.text }]}>
                         {discountTag}
@@ -331,9 +351,9 @@ export default function RestaurantMenuScreen() {
                     </Text>
 
                     <View style={styles.couponCardFooter}>
-                      <Text style={[styles.viewOfferText, { color: badgeStyle.text }]}>View Offer</Text>
+                      <Text style={[styles.viewOfferText, { color: badgeStyle.text }]}>Tap to Apply</Text>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 );
               })}
             </ScrollView>

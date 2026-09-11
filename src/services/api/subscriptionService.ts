@@ -35,16 +35,20 @@ export const subscriptionService = {
           p_restaurant_id: restaurantId,
         });
 
-        if (!rpcErr && rpcRes && typeof rpcRes === 'object' && rpcRes.is_allowed !== undefined) {
-          return {
-            isAllowed: Boolean(rpcRes.is_allowed),
-            status: rpcRes.status || (rpcRes.is_allowed ? 'active' : 'none'),
-            restaurantStatus: rpcRes.restaurant_status || (rpcRes.is_allowed ? 'ACTIVE' : 'INACTIVE'),
-            planName: rpcRes.plan_name || 'Standard Plan',
-            daysRemaining: typeof rpcRes.days_remaining === 'number' ? rpcRes.days_remaining : 30,
-            endDate: rpcRes.end_date || null,
-            message: rpcRes.message,
-          };
+        if (!rpcErr && rpcRes && typeof rpcRes === 'object') {
+          const hasSub = (rpcRes as any).is_allowed ?? (rpcRes as any).is_active ?? (rpcRes as any).has_subscription;
+          if (hasSub !== undefined) {
+            const isAllowed = Boolean(hasSub);
+            return {
+              isAllowed,
+              status: (rpcRes as any).status || (isAllowed ? 'active' : 'none'),
+              restaurantStatus: (rpcRes as any).restaurant_status || (isAllowed ? 'ACTIVE' : 'INACTIVE'),
+              planName: (rpcRes as any).plan_name || 'Standard Plan',
+              daysRemaining: typeof (rpcRes as any).days_left === 'number' ? (rpcRes as any).days_left : (typeof (rpcRes as any).days_remaining === 'number' ? (rpcRes as any).days_remaining : 30),
+              endDate: (rpcRes as any).end_date || null,
+              message: (rpcRes as any).message,
+            };
+          }
         }
       } catch (rpcErr) {
         // Fallback to table queries below

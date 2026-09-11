@@ -6,14 +6,6 @@ import { useCustomerCart } from '../../src/context/CustomerCartContext';
 import { useAuth } from '../../src/context/AuthContext';
 import { customerColors } from '../../src/utils/colors';
 
-const TABS = [
-  { name: 'Explore', icon: '🏠', route: '/(marketplace)', path: '/' },
-  { name: 'Cart', icon: '🛍️', route: '/(marketplace)/cart', path: '/cart' },
-  { name: 'My Orders', icon: '📋', route: '/(marketplace)/orders', path: '/orders' },
-  { name: 'Addresses', icon: '📍', route: '/(marketplace)/addresses', path: '/addresses' },
-  { name: 'Profile', icon: '👤', route: '/(marketplace)/profile', path: '/profile' },
-];
-
 export default function MarketplaceLayout() {
   const router = useRouter();
   const pathname = usePathname();
@@ -43,8 +35,17 @@ export default function MarketplaceLayout() {
       </View>
     );
   }
+  const tabs = [
+    { name: 'Explore', icon: '🏠', route: '/(marketplace)', path: '/' },
+    { name: 'Cart', icon: '🛍️', route: '/(marketplace)/cart', path: '/cart' },
+    { name: 'My Orders', icon: '📋', route: '/(marketplace)/orders', path: '/orders' },
+    { name: 'Addresses', icon: '📍', route: '/(marketplace)/addresses', path: '/addresses' },
+    user
+      ? { name: 'Profile', icon: '👤', route: '/(marketplace)/profile', path: '/profile' }
+      : { name: 'Login', icon: '👤', route: '/(auth)/login', path: '/login' },
+  ];
 
-  const isTabActive = (tab: typeof TABS[0]) => {
+  const isTabActive = (tab: { name: string; icon: string; route: string; path: string }) => {
     if (tab.name === 'Explore') {
       return (
         pathname === '/(marketplace)' ||
@@ -56,6 +57,14 @@ export default function MarketplaceLayout() {
         pathname === ''
       );
     }
+    if (tab.name === 'Login') {
+      return (
+        pathname === '/(auth)/login' ||
+        pathname === '/login' ||
+        pathname.startsWith('/(auth)/login') ||
+        pathname.includes('login')
+      );
+    }
     return (
       pathname === tab.route ||
       pathname === tab.path ||
@@ -65,7 +74,7 @@ export default function MarketplaceLayout() {
     );
   };
 
-  const handleTabPress = (tab: typeof TABS[0]) => {
+  const handleTabPress = (tab: { name: string; icon: string; route: string; path: string }) => {
     try {
       router.push(tab.route as any);
     } catch {
@@ -127,7 +136,7 @@ export default function MarketplaceLayout() {
               </TouchableOpacity>
 
               <View style={styles.desktopNavLinks}>
-                {TABS.map((tab) => {
+                {tabs.map((tab) => {
                   const active = isTabActive(tab);
                   const isCart = tab.name === 'Cart';
                   const isProfile = tab.name === 'Profile';
@@ -169,7 +178,7 @@ export default function MarketplaceLayout() {
         {!isDesktop && (
           <View style={[styles.bottomNavWrapper, { paddingBottom: bottomInset }]}>
             <View style={styles.bottomNavInner}>
-              {TABS.map((tab) => {
+              {tabs.map((tab) => {
                 const active = isTabActive(tab);
                 const isCart = tab.name === 'Cart';
                 const isProfile = tab.name === 'Profile';

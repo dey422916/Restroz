@@ -13,6 +13,33 @@ import { ToastContainer } from '../src/components/common/ToastContainer';
 import { Linking, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 
+if (Platform.OS === 'web' && typeof window !== 'undefined') {
+  const isExtensionNoise = (msg: any) => {
+    if (!msg) return false;
+    const str = String(msg?.message || msg || '');
+    return (
+      str.includes('message channel closed') ||
+      str.includes('listener indicated an asynchronous response') ||
+      str.includes('chrome-extension://') ||
+      str.includes('moz-extension://')
+    );
+  };
+
+  window.addEventListener('unhandledrejection', (event: any) => {
+    if (isExtensionNoise(event?.reason)) {
+      event.preventDefault?.();
+      event.stopImmediatePropagation?.();
+    }
+  });
+
+  window.addEventListener('error', (event: any) => {
+    if (isExtensionNoise(event?.error) || isExtensionNoise(event?.message)) {
+      event.preventDefault?.();
+      event.stopImmediatePropagation?.();
+    }
+  });
+}
+
 function DeepLinkHandler() {
   const router = useRouter();
 

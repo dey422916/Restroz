@@ -25,7 +25,11 @@
       "favicon": "./assets/icon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-image",
+      "expo-sharing",
+      "expo-font",
+      "expo-status-bar"
     ],
     "extra": {
       "router": {},

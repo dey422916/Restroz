@@ -5,7 +5,7 @@ import { supabase, isSupabaseConfigured } from '../supabase';
 import { restaurantService } from './restaurantService';
 import { parseBannerUrls } from '../../utils/mediaUtils';
 import { storageService } from './storageService';
-import { marketplaceService } from './marketplaceService';
+import { clearMarketplaceRestaurantCache } from './sharedRestaurantUtils';
 
 const STORAGE_KEY_PRINTER_PREFIX = '@restaurant_printer_settings_';
 const STORAGE_KEY_GST_PREFIX = '@restaurant_gst_settings_';
@@ -133,12 +133,24 @@ export const settingsService = {
 
     if (isSupabaseConfigured) {
       try {
-        // 1. Query tenant-specific settings record
-        let { data, error } = await supabase
-          .from('restaurant_settings')
-          .select('*')
-          .eq('restaurant_id', targetRestId)
-          .maybeSingle();
+        const { data: sessionData } = await supabase.auth.getSession();
+        const isAuthenticated = Boolean(sessionData?.session?.user);
+
+        // 1. Query tenant-specific settings record (Staff/Admin) or Public Info (Anon/Guest)
+        let data: any = null;
+        let error: any = null;
+
+        if (isAuthenticated) {
+          const res = await supabase
+            .from('restaurant_settings')
+            .select('*')
+            .eq('restaurant_id', targetRestId)
+            .maybeSingle();
+          data = res.data;
+          error = res.error;
+        } else {
+          data = await this.getPublicRestaurantInfo(targetRestId);
+        }
 
         // 2. Query restaurant record to get latest banner_url and logo_url
         let bannerUrl = '';
@@ -425,7 +437,7 @@ export const settingsService = {
       };
       mockStorage.saveSettings(persisted);
       try {
-        marketplaceService.clearRestaurantCache();
+        clearMarketplaceRestaurantCache();
       } catch (e) {
         // ignore
       }
@@ -434,7 +446,7 @@ export const settingsService = {
 
     mockStorage.saveSettings(updated);
     try {
-      marketplaceService.clearRestaurantCache();
+      clearMarketplaceRestaurantCache();
     } catch (e) {
       // ignore
     }

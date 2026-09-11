@@ -84,17 +84,8 @@ export interface PaginatedOrdersResult {
   totalLoaded: number;
 }
 
-// High-performance in-memory cache for operational orders per tenant (10s TTL)
-const inMemoryOrdersCache: Record<string, { timestamp: number; data: Order[] }> = {};
-const ORDERS_CACHE_TTL = 10 * 1000;
-
-export function clearOrdersCache(restaurantId?: string) {
-  if (restaurantId) {
-    delete inMemoryOrdersCache[restaurantId];
-  } else {
-    Object.keys(inMemoryOrdersCache).forEach((k) => delete inMemoryOrdersCache[k]);
-  }
-}
+import { inMemoryOrdersCache, ORDERS_CACHE_TTL, clearOrdersCache } from './ordersCache';
+export { clearOrdersCache };
 
 export const orderService = {
   clearOrdersCache,
@@ -910,15 +901,9 @@ export const orderService = {
                 customer_gstin: newOrder.customer_gstin,
                 invoice_number: newOrder.invoice_number,
               };
-              try {
-                await tableService.updateTableStatus(resolvedTableId, 'occupied');
-              } catch (tErr) {
-                console.warn('Table status update warning:', tErr);
-              }
               const localOrders = mockStorage.getOrders(targetRestaurantId);
               mockStorage.saveOrders([parsedOrder, ...localOrders.filter((o) => o.id !== parsedOrder.id)], targetRestaurantId);
               clearOrdersCache(targetRestaurantId);
-              await this.getOrders(targetRestaurantId, true);
               return parsedOrder;
             }
           } catch (rpcEx) {
@@ -959,16 +944,17 @@ export const orderService = {
         if (!orderError && createdDbOrder) {
           // Insert order items atomically
           if (items && items.length > 0) {
+            const hasOrderTax = (Number(newOrder.cgst_amount || 0) > 0) || (Number(newOrder.sgst_amount || 0) > 0) || (Number(newOrder.igst_amount || 0) > 0);
             const formattedItems = items.map((i) => {
               const rawItem = i as any;
               const unitPrice = Number(i.unit_price) || 0;
               const quantity = Number(i.quantity) || 1;
-              const taxRate = Number(i.tax_rate) || 5;
-              const itemTax = Number(i.tax_amount) || ((unitPrice * quantity * taxRate) / 100);
+              const taxRate = hasOrderTax ? (Number(i.tax_rate) || 5) : 0;
+              const itemTax = hasOrderTax ? (Number(i.tax_amount) || ((unitPrice * quantity * taxRate) / 100)) : 0;
               const itemSubtotal = Number(i.subtotal) || (unitPrice * quantity);
               const itemTotal = Number(i.total) || Number(rawItem.total_price) || (itemSubtotal + itemTax);
-              const cgst = Number(rawItem.cgst_amount) || (itemTax / 2);
-              const sgst = Number(rawItem.sgst_amount) || (itemTax / 2);
+              const cgst = hasOrderTax ? (Number(rawItem.cgst_amount) || (itemTax / 2)) : 0;
+              const sgst = hasOrderTax ? (Number(rawItem.sgst_amount) || (itemTax / 2)) : 0;
 
               return {
                 id: i.id?.startsWith('item-') ? i.id : 'item-' + Date.now() + Math.random().toString(36).substr(2, 4),

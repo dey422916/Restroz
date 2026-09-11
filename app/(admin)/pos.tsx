@@ -8,7 +8,6 @@ import {
   FlatList,
   Image,
   StyleSheet,
-  SafeAreaView,
   Dimensions,
   KeyboardAvoidingView,
   Platform,
@@ -19,7 +18,6 @@ import {
   RefreshControl,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { productService } from '../../src/services/api/productService';
 import { categoryService } from '../../src/services/api/categoryService';
 import { tableService } from '../../src/services/api/tableService';
@@ -33,15 +31,16 @@ import { formatCurrency, numberToWords } from '../../src/utils/currency';
 import { getOrderSubtotal } from '../../src/utils/gst';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { printService } from '../../src/services/printService';
+import { dayRegisterService } from '../../src/services/api/dayRegisterService';
 import { TableSelectorModal } from '../../src/components/pos/TableSelectorModal';
 import { SplitBillModal } from '../../src/components/pos/SplitBillModal';
 import { HoldOrdersModal } from '../../src/components/pos/HoldOrdersModal';
 import { PaymentModal } from '../../src/components/pos/PaymentModal';
 import { isValidPhoneNumber } from '../../src/utils/phone';
+import { naturalTableCompare } from '../../src/utils/sortUtils';
 
 export default function PosScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const { settings, isOnlineOrdersEnabled, toggleOnlineOrders } = useSettings();
   const { user, role, isSuperAdmin, activeRestaurantId, activeRestaurant, hasPermission } = useAuth();
   const { showToast } = useNotification();
@@ -55,28 +54,27 @@ export default function PosScreen() {
     customerInfo,
     setCustomerInfo,
     addToCart,
-    updateQuantity,
     removeItem,
-    totals,
+    updateQuantity,
     clearCart,
-    holdCurrentOrder,
-    heldOrders,
-    resumeHeldOrder,
-    holdOrder,
-    resumeOrder,
-    activeOrders,
-    refreshOrders,
-    confirmOrder,
-    updateActiveOrder,
-    updateOrderPricesOnly,
-    loadOrderIntoCart,
-    processPayment,
     discountType,
     discountValue,
     setDiscount,
     appliedCoupon,
     applyCouponCode,
     removeCoupon,
+    totals,
+    heldOrders,
+    holdOrder,
+    resumeHeldOrder,
+    holdCurrentOrder,
+    confirmOrder,
+    updateActiveOrder,
+    updateOrderPricesOnly,
+    processPayment,
+    loadOrderIntoCart,
+    activeOrders,
+    refreshOrders,
   } = usePos();
 
   // POS Workflow Step:
@@ -105,6 +103,9 @@ export default function PosScreen() {
   const [showHoldModal, setShowHoldModal] = useState<boolean>(false);
   const [showSplitModal, setShowSplitModal] = useState<boolean>(false);
   const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false);
+  const [showRegisterClosedModal, setShowRegisterClosedModal] = useState<boolean>(false);
+  const [openingFloatInput, setOpeningFloatInput] = useState<string>('0');
+  const [isOpeningRegisterFromPos, setIsOpeningRegisterFromPos] = useState<boolean>(false);
 
   // Table "View Current Order" modal
   const [viewTableModalData, setViewTableModalData] = useState<{ table: DiningTable; order: Order | null } | null>(null);
@@ -210,24 +211,26 @@ export default function PosScreen() {
 
   // Filtered dining tables
   const filteredTables = useMemo(() => {
-    return tables.filter((t) => {
-      if (!t.is_active) return false;
-      if (tableSectionFilter !== 'All') {
-        if (tableSectionFilter === 'VIP Section' || tableSectionFilter === 'VIP') {
-          if (t.section !== 'VIP' && t.section !== 'VIP Section') return false;
-        } else if (t.section !== tableSectionFilter) {
-          return false;
+    return tables
+      .filter((t) => {
+        if (!t.is_active) return false;
+        if (tableSectionFilter !== 'All') {
+          if (tableSectionFilter === 'VIP Section' || tableSectionFilter === 'VIP') {
+            if (t.section !== 'VIP' && t.section !== 'VIP Section') return false;
+          } else if (t.section !== tableSectionFilter) {
+            return false;
+          }
         }
-      }
-      if (tableSearchQuery.trim()) {
-        const q = tableSearchQuery.toLowerCase().trim();
-        return (
-          t.table_number.toLowerCase().includes(q) ||
-          t.section.toLowerCase().includes(q)
-        );
-      }
-      return true;
-    });
+        if (tableSearchQuery.trim()) {
+          const q = tableSearchQuery.toLowerCase().trim();
+          return (
+            t.table_number.toLowerCase().includes(q) ||
+            t.section.toLowerCase().includes(q)
+          );
+        }
+        return true;
+      })
+      .sort(naturalTableCompare);
   }, [tables, tableSectionFilter, tableSearchQuery]);
 
   // Available / Occupied table stats
@@ -262,7 +265,46 @@ export default function PosScreen() {
   // ----------------------------------------------------
   // ORDER TYPE & TABLE ACTIONS
   // ----------------------------------------------------
-  const handleSelectOrderType = (type: 'dine_in' | 'takeaway' | 'delivery') => {
+  const handleOpenRegisterFromPos = async () => {
+    const targetRestId = activeRestaurantId || settings.restaurant_id;
+    if (!targetRestId) {
+      if (Platform.OS === 'web') window.alert('No restaurant selected.');
+      else Alert.alert('Error', 'No restaurant selected.');
+      return;
+    }
+    const floatVal = parseFloat(openingFloatInput) || 0;
+    if (isNaN(floatVal) || floatVal < 0) {
+      if (Platform.OS === 'web') window.alert('Please enter a valid opening cash float.');
+      else Alert.alert('Invalid Float', 'Please enter a valid opening cash float.');
+      return;
+    }
+
+    try {
+      setIsOpeningRegisterFromPos(true);
+      await dayRegisterService.openRegister({
+        opening_cash_float: floatVal,
+        opened_by: user?.full_name || 'Staff',
+        restaurant_id: targetRestId,
+      });
+      setShowRegisterClosedModal(false);
+      showToast('success', 'Register Opened', `Register opened with ₹${floatVal.toFixed(2)} opening float.`);
+    } catch (err: any) {
+      if (Platform.OS === 'web') window.alert(err.message || 'Failed to open register.');
+      else Alert.alert('Open Register Error', err.message || 'Failed to open register.');
+    } finally {
+      setIsOpeningRegisterFromPos(false);
+    }
+  };
+
+  const handleSelectOrderType = async (type: 'dine_in' | 'takeaway' | 'delivery') => {
+    const targetRestId = activeRestaurantId || settings.restaurant_id;
+    if (targetRestId) {
+      const isOpen = await dayRegisterService.isRegisterOpen(targetRestId);
+      if (!isOpen) {
+        setShowRegisterClosedModal(true);
+        return;
+      }
+    }
     setOrderType(type);
     if (type === 'dine_in') {
       setSelectedTable(null);
@@ -305,20 +347,27 @@ export default function PosScreen() {
 
   const handleChangeOrderTypePrompt = () => {
     if (cartItems.length > 0) {
-      Alert.alert(
-        '🔄 Change Order Type',
-        'Your current cart items will be preserved, but table selection will be reset. Proceed?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Change Order Type',
-            onPress: () => {
-              setSelectedTable(null);
-              setPosStep('choose_type');
+      if (Platform.OS === 'web') {
+        if (window.confirm('Your current cart items will be preserved, but table selection will be reset. Change order type?')) {
+          setSelectedTable(null);
+          setPosStep('choose_type');
+        }
+      } else {
+        Alert.alert(
+          '🔄 Change Order Type',
+          'Your current cart items will be preserved, but table selection will be reset. Proceed?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Change Order Type',
+              onPress: () => {
+                setSelectedTable(null);
+                setPosStep('choose_type');
+              },
             },
-          },
-        ]
-      );
+          ]
+        );
+      }
     } else {
       setSelectedTable(null);
       setPosStep('choose_type');
@@ -332,16 +381,29 @@ export default function PosScreen() {
   // ----------------------------------------------------
   // CART / PRODUCT ACTIONS
   // ----------------------------------------------------
-  const handleProductCardPress = (item: Product) => {
+  const handleProductCardPress = async (item: Product) => {
+    const targetRestId = activeRestaurantId || settings.restaurant_id;
+    if (targetRestId) {
+      const isOpen = await dayRegisterService.isRegisterOpen(targetRestId);
+      if (!isOpen) {
+        setShowRegisterClosedModal(true);
+        return;
+      }
+    }
+
     if (orderType === 'dine_in' && !selectedTable) {
-      Alert.alert(
-        '🪑 Table Selection Required',
-        'Please select a dining floor table first before adding items to a Dine-In order.',
-        [
-          { text: 'Select Floor Table', onPress: () => setPosStep('select_table') },
-          { text: 'Cancel', style: 'cancel' },
-        ]
-      );
+      if (Platform.OS === 'web') {
+        setPosStep('select_table');
+      } else {
+        Alert.alert(
+          '🪑 Table Selection Required',
+          'Please select a dining floor table first before adding items to a Dine-In order.',
+          [
+            { text: 'Select Floor Table', onPress: () => setPosStep('select_table') },
+            { text: 'Cancel', style: 'cancel' },
+          ]
+        );
+      }
       return;
     }
 
@@ -397,10 +459,14 @@ export default function PosScreen() {
       tableService.getTables().then(setTables);
     } catch (e: any) {
       // Distinguish expected register closed validation from unexpected errors
-      if (e instanceof RegisterClosedError || e?.code === 'REGISTER_CLOSED') {
-        Alert.alert('Register Closed', e.message);
+      if (e instanceof RegisterClosedError || e?.code === 'REGISTER_CLOSED' || e?.message?.includes('CLOSED')) {
+        setShowRegisterClosedModal(true);
+        if (Platform.OS !== 'web') {
+          Alert.alert('Register Closed', e.message);
+        }
       } else {
-        Alert.alert('Required Information', e.message || 'Unable to place order.');
+        if (Platform.OS === 'web') window.alert(e.message || 'Unable to place order.');
+        else Alert.alert('Required Information', e.message || 'Unable to place order.');
       }
     } finally {
       setIsSendingKot(false);
@@ -423,13 +489,19 @@ export default function PosScreen() {
       setMobileTab('menu');
       router.push('/(admin)/orders' as any);
     } catch (e: any) {
-      Alert.alert('Hold Failed', e.message);
+      if (e instanceof RegisterClosedError || e?.code === 'REGISTER_CLOSED' || e?.message?.includes('CLOSED')) {
+        setShowRegisterClosedModal(true);
+      } else {
+        if (Platform.OS === 'web') window.alert(e.message || 'Hold failed.');
+        else Alert.alert('Hold Failed', e.message);
+      }
     }
   };
 
   const handlePrintBillAction = async () => {
     if (!createdOrder) {
-      Alert.alert('Order Required', 'Please generate KOT before printing the bill.');
+      if (Platform.OS === 'web') window.alert('Please generate KOT before printing the bill.');
+      else Alert.alert('Order Required', 'Please generate KOT before printing the bill.');
       return;
     }
     await printService.printBillThermal(createdOrder, settings);
@@ -448,7 +520,8 @@ export default function PosScreen() {
         }
         await loadInitialData(true);
       } catch (e: any) {
-        Alert.alert('Update Failed', e.message);
+        if (Platform.OS === 'web') window.alert(e.message || 'Update failed.');
+        else Alert.alert('Update Failed', e.message);
       } finally {
         setIsSendingKot(false);
       }
@@ -460,10 +533,9 @@ export default function PosScreen() {
 
   const handleCloseBillAction = async () => {
     if (!isKotDispatched) {
-      Alert.alert(
-        'KOT Required First',
-        'Please click "KOT Print" before closing the order and settling payment.'
-      );
+      const msg = 'Please click "KOT Print" before closing the order and settling payment.';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('KOT Required First', msg);
       return;
     }
 
@@ -477,7 +549,12 @@ export default function PosScreen() {
         setShowPaymentModal(true);
       }
     } catch (e: any) {
-      Alert.alert('Validation Error', e.message);
+      if (e instanceof RegisterClosedError || e?.code === 'REGISTER_CLOSED' || e?.message?.includes('CLOSED')) {
+        setShowRegisterClosedModal(true);
+      } else {
+        if (Platform.OS === 'web') window.alert(e.message || 'Validation error');
+        else Alert.alert('Validation Error', e.message);
+      }
     }
   };
 
@@ -521,136 +598,246 @@ export default function PosScreen() {
   // ============================================================
   // STEP 1: ORDER TYPE FIRST CHOOSER SCREEN
   // ============================================================
-  const renderOrderTypeChooser = () => (
-    <ScrollView
-      style={styles.stepContainer}
-      contentContainerStyle={[styles.chooserContent, { paddingBottom: insets.bottom + 32 }]}
-      showsVerticalScrollIndicator={true}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
-    >
-      {/* Branding & POS Header */}
-      <View style={styles.chooserHeader}>
-        {activeRestaurant?.logo_url || settings.logo_url ? (
-          <Image
-            source={{ uri: activeRestaurant?.logo_url || settings.logo_url }}
-            style={styles.chooserLogo}
-            resizeMode="contain"
-          />
-        ) : (
-          <View style={styles.chooserLogoFallback}>
-            <Text style={styles.chooserLogoFallbackText}>
-              {(activeRestaurant?.name || settings.name || 'R').charAt(0).toUpperCase()}
+  // ============================================================
+  // STEP 1: ORDER TYPE FIRST CHOOSER SCREEN
+  // ============================================================
+  const renderOrderTypeChooser = () => {
+    const isDesktop = windowWidth >= 768;
+
+    if (isDesktop) {
+      return (
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.chooserDesktopScrollContent}
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+        >
+          <View style={styles.chooserCardBoxDesktop}>
+            <View style={styles.chooserHeaderCompactDesktop}>
+              <Text style={styles.chooserTitleDesktop}>
+                Select Order Type to Begin
+              </Text>
+              <Text style={styles.chooserInstructionDesktop}>
+                Choose whether this order is for Table Dine-In, Counter Takeaway, or Doorstep Delivery.
+              </Text>
+            </View>
+
+            <View style={styles.orderTypeCardsGridDesktop}>
+              {/* 1. DINE IN CARD */}
+              <TouchableOpacity
+                testID="pos-type-dine-in"
+                style={[styles.typeCard, styles.typeCardDineIn, styles.typeCardDesktop]}
+                onPress={() => handleSelectOrderType('dine_in')}
+                activeOpacity={0.88}
+              >
+                <View>
+                  <View style={styles.typeCardIconCircle}>
+                    <Text style={styles.typeCardIcon}>🍽️</Text>
+                  </View>
+                  <Text style={styles.typeCardTitle}>DINE IN</Text>
+                  <Text style={styles.typeCardDesc}>Serve dining guests at restaurant floor tables</Text>
+                  <View style={styles.typeCardBadgeRow}>
+                    <View style={styles.typeCardBadgeGreen}>
+                      <Text style={styles.typeCardBadgeGreenText}>
+                        🟢 {tableStats.available} Available
+                      </Text>
+                    </View>
+                    {tableStats.occupied > 0 && (
+                      <View style={styles.typeCardBadgeRed}>
+                        <Text style={styles.typeCardBadgeRedText}>
+                          🔴 {tableStats.occupied} Occupied
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+                <View style={styles.typeCardActionBtn}>
+                  <Text style={styles.typeCardActionBtnText}>Select Table →</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* 2. TAKEAWAY CARD */}
+              <TouchableOpacity
+                testID="pos-type-takeaway"
+                style={[styles.typeCard, styles.typeCardTakeaway, styles.typeCardDesktop]}
+                onPress={() => handleSelectOrderType('takeaway')}
+                activeOpacity={0.88}
+              >
+                <View>
+                  <View style={[styles.typeCardIconCircle, { backgroundColor: '#fef3c7' }]}>
+                    <Text style={styles.typeCardIcon}>🥡</Text>
+                  </View>
+                  <Text style={styles.typeCardTitle}>TAKEAWAY</Text>
+                  <Text style={styles.typeCardDesc}>Fast counter pickup and takeaway parcel orders</Text>
+                  <View style={styles.typeCardBadgeRow}>
+                    <View style={styles.typeCardBadgeAmber}>
+                      <Text style={styles.typeCardBadgeAmberText}>⚡ Instant Menu & Cart</Text>
+                    </View>
+                  </View>
+                </View>
+                <View style={[styles.typeCardActionBtn, { backgroundColor: '#d97706' }]}>
+                  <Text style={styles.typeCardActionBtnText}>Open Menu →</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* 3. DELIVERY CARD */}
+              <TouchableOpacity
+                testID="pos-type-delivery"
+                style={[styles.typeCard, styles.typeCardDelivery, styles.typeCardDesktop]}
+                onPress={() => handleSelectOrderType('delivery')}
+                activeOpacity={0.88}
+              >
+                <View>
+                  <View style={[styles.typeCardIconCircle, { backgroundColor: '#e0e7ff' }]}>
+                    <Text style={styles.typeCardIcon}>🛵</Text>
+                  </View>
+                  <Text style={styles.typeCardTitle}>DELIVERY</Text>
+                  <Text style={styles.typeCardDesc}>Doorstep delivery with customer address details</Text>
+                  <View style={styles.typeCardBadgeRow}>
+                    <View style={styles.typeCardBadgeIndigo}>
+                      <Text style={styles.typeCardBadgeIndigoText}>📍 Doorstep Delivery</Text>
+                    </View>
+                  </View>
+                </View>
+                <View style={[styles.typeCardActionBtn, { backgroundColor: '#4f46e5' }]}>
+                  <Text style={styles.typeCardActionBtnText}>Start Delivery →</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Held Orders Quick Resume Bar on Desktop */}
+          {heldOrders.length > 0 && (
+            <View style={styles.heldOrdersBarDesktop}>
+              <View>
+                <Text style={styles.heldBarTitle}>⏸️ {heldOrders.length} Order(s) on Hold</Text>
+                <Text style={styles.heldBarSub}>Resume a held order to continue billing</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.heldBarBtn}
+                onPress={() => setShowHoldModal(true)}
+              >
+                <Text style={styles.heldBarBtnText}>View Held ({heldOrders.length})</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </ScrollView>
+      );
+    }
+
+    // Mobile screen layout: covers full height, no scrolling
+    return (
+      <View style={[styles.chooserMobileContainer, { paddingBottom: 10 }]}>
+        <View style={styles.chooserCardBoxMobile}>
+          <View style={styles.chooserHeaderCompactMobile}>
+            <Text style={styles.chooserTitleMobile}>
+              Select Order Type to Begin
+            </Text>
+            <Text style={styles.chooserInstructionMobile}>
+              Choose whether this order is for Table Dine-In, Counter Takeaway, or Doorstep Delivery.
             </Text>
           </View>
-        )}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
-          <Text style={styles.chooserBrandName}>{activeRestaurant?.name || settings.name || 'Restaurant POS'}</Text>
-        </View>
-        <Text style={styles.chooserSubTitle}>POS Billing & Terminal System</Text>
-      </View>
 
-      {/* Main Choice Card */}
-      <View style={styles.chooserCardBox}>
-        <Text style={styles.chooserTitle}>Select Order Type to Begin</Text>
-        <Text style={styles.chooserInstruction}>
-          Choose whether this order is for Table Dine-In, Counter Takeaway, or Doorstep Delivery.
-        </Text>
-
-        <View style={styles.orderTypeCardsGrid}>
-          {/* 1. DINE IN CARD */}
-          <TouchableOpacity
-            testID="pos-type-dine-in"
-            style={[styles.typeCard, styles.typeCardDineIn]}
-            onPress={() => handleSelectOrderType('dine_in')}
-            activeOpacity={0.88}
-          >
-            <View style={styles.typeCardIconCircle}>
-              <Text style={styles.typeCardIcon}>🍽️</Text>
-            </View>
-            <Text style={styles.typeCardTitle}>DINE IN</Text>
-            <Text style={styles.typeCardDesc}>Serve dining guests at restaurant floor tables</Text>
-            <View style={styles.typeCardBadgeRow}>
-              <View style={styles.typeCardBadgeGreen}>
-                <Text style={styles.typeCardBadgeGreenText}>
-                  🟢 {tableStats.available} Available
-                </Text>
+          <View style={styles.orderTypeCardsGridMobile}>
+            {/* 1. DINE IN CARD */}
+            <TouchableOpacity
+              testID="pos-type-dine-in"
+              style={[styles.typeCard, styles.typeCardDineIn, styles.typeCardMobile]}
+              onPress={() => handleSelectOrderType('dine_in')}
+              activeOpacity={0.88}
+            >
+              <View style={styles.typeCardMobileTop}>
+                <View style={styles.typeCardMobileLeft}>
+                  <View style={styles.typeCardIconCircleMobile}>
+                    <Text style={{ fontSize: 24 }}>🍽️</Text>
+                  </View>
+                  <View style={styles.typeCardMobileInfo}>
+                    <Text style={styles.typeCardTitleMobile}>DINE IN</Text>
+                    <Text style={styles.typeCardDescMobile}>Table dining service</Text>
+                  </View>
+                </View>
+                <View style={styles.typeCardBadgeGreen}>
+                  <Text style={styles.typeCardBadgeGreenText}>
+                    🟢 {tableStats.available} Free
+                  </Text>
+                </View>
               </View>
-              <View style={styles.typeCardBadgeRed}>
-                <Text style={styles.typeCardBadgeRedText}>
-                  🔴 {tableStats.occupied} Occupied
-                </Text>
+              <View style={styles.typeCardActionBtnMobile}>
+                <Text style={styles.typeCardActionBtnTextMobile}>Select Table →</Text>
               </View>
-            </View>
-            <View style={styles.typeCardActionBtn}>
-              <Text style={styles.typeCardActionBtnText}>Select Dining Table →</Text>
-            </View>
-          </TouchableOpacity>
+            </TouchableOpacity>
 
-          {/* 2. TAKEAWAY CARD */}
-          <TouchableOpacity
-            testID="pos-type-takeaway"
-            style={[styles.typeCard, styles.typeCardTakeaway]}
-            onPress={() => handleSelectOrderType('takeaway')}
-            activeOpacity={0.88}
-          >
-            <View style={[styles.typeCardIconCircle, { backgroundColor: '#fef3c7' }]}>
-              <Text style={styles.typeCardIcon}>🥡</Text>
-            </View>
-            <Text style={styles.typeCardTitle}>TAKEAWAY</Text>
-            <Text style={styles.typeCardDesc}>Fast counter pickup and takeaway parcel orders</Text>
-            <View style={styles.typeCardBadgeRow}>
-              <View style={styles.typeCardBadgeAmber}>
-                <Text style={styles.typeCardBadgeAmberText}>⚡ Instant Menu & Cart</Text>
+            {/* 2. TAKEAWAY CARD */}
+            <TouchableOpacity
+              testID="pos-type-takeaway"
+              style={[styles.typeCard, styles.typeCardTakeaway, styles.typeCardMobile]}
+              onPress={() => handleSelectOrderType('takeaway')}
+              activeOpacity={0.88}
+            >
+              <View style={styles.typeCardMobileTop}>
+                <View style={styles.typeCardMobileLeft}>
+                  <View style={[styles.typeCardIconCircleMobile, { backgroundColor: '#fef3c7' }]}>
+                    <Text style={{ fontSize: 24 }}>🥡</Text>
+                  </View>
+                  <View style={styles.typeCardMobileInfo}>
+                    <Text style={styles.typeCardTitleMobile}>TAKEAWAY</Text>
+                    <Text style={styles.typeCardDescMobile}>Counter pickup & parcel</Text>
+                  </View>
+                </View>
+                <View style={styles.typeCardBadgeAmber}>
+                  <Text style={styles.typeCardBadgeAmberText}>⚡ Instant Cart</Text>
+                </View>
               </View>
-            </View>
-            <View style={[styles.typeCardActionBtn, { backgroundColor: '#d97706' }]}>
-              <Text style={styles.typeCardActionBtnText}>Open Menu & Add Items →</Text>
-            </View>
-          </TouchableOpacity>
-
-          {/* 3. DELIVERY CARD */}
-          <TouchableOpacity
-            testID="pos-type-delivery"
-            style={[styles.typeCard, styles.typeCardDelivery]}
-            onPress={() => handleSelectOrderType('delivery')}
-            activeOpacity={0.88}
-          >
-            <View style={[styles.typeCardIconCircle, { backgroundColor: '#e0e7ff' }]}>
-              <Text style={styles.typeCardIcon}>🛵</Text>
-            </View>
-            <Text style={styles.typeCardTitle}>DELIVERY</Text>
-            <Text style={styles.typeCardDesc}>Doorstep delivery with address and customer details</Text>
-            <View style={styles.typeCardBadgeRow}>
-              <View style={styles.typeCardBadgeIndigo}>
-                <Text style={styles.typeCardBadgeIndigoText}>📍 Address Tracking</Text>
+              <View style={[styles.typeCardActionBtnMobile, { backgroundColor: '#d97706' }]}>
+                <Text style={styles.typeCardActionBtnTextMobile}>Open Menu →</Text>
               </View>
-            </View>
-            <View style={[styles.typeCardActionBtn, { backgroundColor: '#4f46e5' }]}>
-              <Text style={styles.typeCardActionBtnText}>Open Delivery Menu →</Text>
-            </View>
-          </TouchableOpacity>
-        </View>
-      </View>
+            </TouchableOpacity>
 
-      {/* Held Orders Quick Resume Bar */}
-      {heldOrders.length > 0 && (
-        <View style={styles.heldOrdersBar}>
-          <View>
-            <Text style={styles.heldBarTitle}>⏸️ {heldOrders.length} Order(s) Currently on Hold</Text>
-            <Text style={styles.heldBarSub}>Resume a held order to continue billing</Text>
+            {/* 3. DELIVERY CARD */}
+            <TouchableOpacity
+              testID="pos-type-delivery"
+              style={[styles.typeCard, styles.typeCardDelivery, styles.typeCardMobile]}
+              onPress={() => handleSelectOrderType('delivery')}
+              activeOpacity={0.88}
+            >
+              <View style={styles.typeCardMobileTop}>
+                <View style={styles.typeCardMobileLeft}>
+                  <View style={[styles.typeCardIconCircleMobile, { backgroundColor: '#e0e7ff' }]}>
+                    <Text style={{ fontSize: 24 }}>🛵</Text>
+                  </View>
+                  <View style={styles.typeCardMobileInfo}>
+                    <Text style={styles.typeCardTitleMobile}>DELIVERY</Text>
+                    <Text style={styles.typeCardDescMobile}>Home delivery orders</Text>
+                  </View>
+                </View>
+                <View style={styles.typeCardBadgeIndigo}>
+                  <Text style={styles.typeCardBadgeIndigoText}>📍 Doorstep</Text>
+                </View>
+              </View>
+              <View style={[styles.typeCardActionBtnMobile, { backgroundColor: '#4f46e5' }]}>
+                <Text style={styles.typeCardActionBtnTextMobile}>Start Delivery →</Text>
+              </View>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity
-            style={styles.heldBarBtn}
-            onPress={() => setShowHoldModal(true)}
-          >
-            <Text style={styles.heldBarBtnText}>View Held Orders ({heldOrders.length})</Text>
-          </TouchableOpacity>
+
+          {/* Held Orders Quick Resume Bar on Mobile */}
+          {heldOrders.length > 0 && (
+            <View style={styles.heldOrdersBarMobile}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.heldBarTitleMobile}>⏸️ {heldOrders.length} Order(s) on Hold</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.heldBarBtnMobile}
+                onPress={() => setShowHoldModal(true)}
+              >
+                <Text style={styles.heldBarBtnTextMobile}>Resume ({heldOrders.length})</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
-      )}
-    </ScrollView>
-  );
+      </View>
+    );
+  };
 
   // ============================================================
   // STEP 2: DINE-IN TABLE SELECTION FLOOR SCREEN
@@ -744,7 +931,7 @@ export default function PosScreen() {
         </View>
       ) : (
         <ScrollView
-          contentContainerStyle={[styles.tablesGridContent, { paddingBottom: insets.bottom + 40 }]}
+          contentContainerStyle={[styles.tablesGridContent, { paddingBottom: 40 }]}
           showsVerticalScrollIndicator={true}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
@@ -1565,7 +1752,7 @@ export default function PosScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       {/* Route through Step 1, 2, or 3 */}
       {posStep === 'choose_type' && renderOrderTypeChooser()}
       {posStep === 'select_table' && renderTableSelectionScreen()}
@@ -1678,7 +1865,9 @@ export default function PosScreen() {
                             ) : null}
                           </View>
                           <Text style={styles.modalItemQty}>{itm.quantity}x</Text>
-                          <Text style={styles.modalItemTotal}>{formatCurrency(itm.total)}</Text>
+                          <Text style={styles.modalItemTotal}>
+                            {formatCurrency(Number(itm.total) || Number((itm as any).total_price) || Number(itm.subtotal) || ((Number(itm.unit_price) || 0) * (Number(itm.quantity) || 1)))}
+                          </Text>
                         </View>
                       ))}
                     </View>
@@ -1799,6 +1988,131 @@ export default function PosScreen() {
         </Modal>
       )}
 
+      {/* Register Closed Warning & Quick Open Modal */}
+      <Modal visible={showRegisterClosedModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.viewOrderModalContent, { maxWidth: 440 }]}>
+            <View style={{ alignItems: 'center', marginBottom: 12 }}>
+              <View
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 28,
+                  backgroundColor: '#fee2e2',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 10,
+                }}
+              >
+                <Text style={{ fontSize: 26 }}>🔒</Text>
+              </View>
+              <Text style={{ fontSize: 18, fontWeight: '900', color: '#0f172a', textAlign: 'center' }}>
+                Daily Register is Closed
+              </Text>
+              <Text style={{ fontSize: 12, color: '#64748b', textAlign: 'center', marginTop: 4, lineHeight: 18 }}>
+                The cash drawer register is currently closed. You must open today's register shift before taking Dine-In, Takeaway, or Online Delivery orders.
+              </Text>
+            </View>
+
+            <View
+              style={{
+                backgroundColor: '#f8fafc',
+                borderWidth: 1,
+                borderColor: '#e2e8f0',
+                borderRadius: 10,
+                padding: 12,
+                marginBottom: 14,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontWeight: '800',
+                  color: '#334155',
+                  textTransform: 'uppercase',
+                  marginBottom: 6,
+                }}
+              >
+                Opening Cash Float (₹)
+              </Text>
+              <TextInput
+                style={{
+                  backgroundColor: '#ffffff',
+                  borderWidth: 1.5,
+                  borderColor: '#2563eb',
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  fontSize: 15,
+                  fontWeight: '800',
+                  color: '#0f172a',
+                }}
+                value={openingFloatInput}
+                onChangeText={setOpeningFloatInput}
+                keyboardType="numeric"
+                placeholder="e.g. 1000"
+                placeholderTextColor="#94a3b8"
+              />
+              <Text style={{ fontSize: 10, color: '#64748b', marginTop: 4 }}>
+                Enter starting physical cash amount in the cash drawer.
+              </Text>
+            </View>
+
+            <View style={{ gap: 8 }}>
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#16a34a',
+                  paddingVertical: 12,
+                  borderRadius: 10,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexDirection: 'row',
+                  gap: 6,
+                }}
+                onPress={handleOpenRegisterFromPos}
+                disabled={isOpeningRegisterFromPos}
+              >
+                {isOpeningRegisterFromPos ? (
+                  <ActivityIndicator color="#ffffff" size="small" />
+                ) : (
+                  <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '900' }}>
+                    💵 Open Register & Continue
+                  </Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#f1f5f9',
+                  borderWidth: 1,
+                  borderColor: '#cbd5e1',
+                  paddingVertical: 10,
+                  borderRadius: 10,
+                  alignItems: 'center',
+                }}
+                onPress={() => {
+                  setShowRegisterClosedModal(false);
+                  router.push('/(admin)/dashboard' as any);
+                }}
+              >
+                <Text style={{ color: '#334155', fontSize: 12, fontWeight: '800' }}>
+                  📊 Go to Analytics & Day Register
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{ paddingVertical: 8, alignItems: 'center' }}
+                onPress={() => setShowRegisterClosedModal(false)}
+              >
+                <Text style={{ color: '#64748b', fontSize: 12, fontWeight: '700' }}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Payment / Close Bill Settlement Modal */}
       {createdOrder && (
         <PaymentModal
@@ -1814,7 +2128,7 @@ export default function PosScreen() {
           }}
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -1830,114 +2144,208 @@ const styles = StyleSheet.create({
   // ============================================================
   // STEP 1: ORDER TYPE CHOOSER STYLES
   // ============================================================
-  chooserContent: {
-    padding: 16,
-    maxWidth: 960,
+  // Desktop styles
+  chooserDesktopScrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+  },
+  chooserCardBoxDesktop: {
     width: '100%',
-    alignSelf: 'center',
-  },
-  chooserHeader: {
-    alignItems: 'center',
-    marginVertical: 12,
-  },
-  chooserLogo: {
-    width: 64,
-    height: 64,
-    borderRadius: 14,
-    marginBottom: 8,
-  },
-  chooserLogoFallback: {
-    width: 56,
-    height: 56,
-    borderRadius: 14,
-    backgroundColor: '#2563eb',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  chooserLogoFallbackText: {
-    color: '#ffffff',
-    fontSize: 26,
-    fontWeight: '900',
-  },
-  chooserBrandName: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: '#0f172a',
-  },
-  posOnlineToggleBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 16,
-    borderWidth: 1,
-  },
-  posOnlineToggleBtnGreen: {
-    backgroundColor: '#ecfdf5',
-    borderColor: '#a7f3d0',
-  },
-  posOnlineToggleBtnRed: {
-    backgroundColor: '#fef2f2',
-    borderColor: '#fecaca',
-  },
-  posOnlineToggleBtnText: {
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  posOnlineToggleBtnTextGreen: {
-    color: '#059669',
-  },
-  posOnlineToggleBtnTextRed: {
-    color: '#dc2626',
-  },
-  chooserSubTitle: {
-    fontSize: 12,
-    color: '#64748b',
-    marginTop: 2,
-    fontWeight: '600',
-  },
-  chooserCardBox: {
+    maxWidth: 1140,
     backgroundColor: '#ffffff',
-    borderRadius: 20,
-    padding: 20,
+    borderRadius: 22,
+    paddingHorizontal: 28,
+    paddingVertical: 24,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     elevation: 4,
     shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.08,
-    shadowRadius: 10,
+    shadowRadius: 16,
+    marginVertical: 'auto' as any,
   },
-  chooserTitle: {
-    fontSize: 18,
+  chooserHeaderCompactDesktop: {
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  chooserTitleDesktop: {
+    fontSize: 22,
     fontWeight: '900',
     color: '#0f172a',
     textAlign: 'center',
   },
-  chooserInstruction: {
-    fontSize: 12,
+  chooserInstructionDesktop: {
+    fontSize: 13,
     color: '#64748b',
     textAlign: 'center',
     marginTop: 4,
-    marginBottom: 16,
   },
-  orderTypeCardsGrid: {
-    gap: 14,
+  orderTypeCardsGridDesktop: {
+    flexDirection: 'row',
+    gap: 18,
+    alignItems: 'stretch',
   },
-  typeCard: {
+  typeCardDesktop: {
+    flex: 1,
+    minHeight: 250,
+    maxHeight: 360,
+    borderRadius: 18,
+    padding: 20,
+    justifyContent: 'space-between',
+  },
+  heldOrdersBarDesktop: {
+    width: '100%',
+    maxWidth: 1140,
     backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 2,
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+
+  // Mobile styles (covers full screen height, evenly distributed, 0 scroll)
+  chooserMobileContainer: {
+    flex: 1,
+    padding: 10,
+  },
+  chooserCardBoxMobile: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
     elevation: 3,
     shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    justifyContent: 'space-between',
+  },
+  chooserHeaderCompactMobile: {
+    marginBottom: 6,
+    alignItems: 'center',
+  },
+  chooserTitleMobile: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: '#0f172a',
+    textAlign: 'center',
+  },
+  chooserInstructionMobile: {
+    fontSize: 11,
+    color: '#64748b',
+    textAlign: 'center',
+    marginTop: 2,
+  },
+  orderTypeCardsGridMobile: {
+    flex: 1,
+    justifyContent: 'space-between',
+    gap: 10,
+    marginVertical: 4,
+  },
+  typeCardMobile: {
+    flex: 1,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    justifyContent: 'space-between',
+  },
+  typeCardMobileTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  typeCardMobileLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  typeCardIconCircleMobile: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#dcfce7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  typeCardMobileInfo: {
+    flex: 1,
+  },
+  typeCardTitleMobile: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#0f172a',
+  },
+  typeCardDescMobile: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  typeCardActionBtnMobile: {
+    backgroundColor: '#16a34a',
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  typeCardActionBtnTextMobile: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  heldOrdersBarMobile: {
+    backgroundColor: '#fffbeb',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  heldBarTitleMobile: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#92400e',
+  },
+  heldBarBtnMobile: {
+    backgroundColor: '#f59e0b',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  heldBarBtnTextMobile: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+
+  // Shared type card styles
+  typeCard: {
+    backgroundColor: '#ffffff',
+    borderWidth: 2,
+    elevation: 2,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
     shadowRadius: 6,
   },
   typeCardDineIn: {
-    borderColor: '#93c5fd',
+    borderColor: '#86efac',
     backgroundColor: '#f0fdf4',
   },
   typeCardTakeaway: {
@@ -1949,32 +2357,32 @@ const styles = StyleSheet.create({
     backgroundColor: '#eef2ff',
   },
   typeCardIconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
+    width: 58,
+    height: 58,
+    borderRadius: 16,
     backgroundColor: '#dcfce7',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 10,
+    marginBottom: 14,
   },
   typeCardIcon: {
-    fontSize: 24,
+    fontSize: 28,
   },
   typeCardTitle: {
-    fontSize: 16,
+    fontSize: 19,
     fontWeight: '900',
     color: '#0f172a',
   },
   typeCardDesc: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#475569',
-    marginTop: 3,
-    lineHeight: 16,
+    marginTop: 4,
+    lineHeight: 18,
   },
   typeCardBadgeRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 10,
+    gap: 6,
+    marginTop: 12,
   },
   typeCardBadgeGreen: {
     backgroundColor: '#dcfce7',
@@ -2022,14 +2430,15 @@ const styles = StyleSheet.create({
   },
   typeCardActionBtn: {
     backgroundColor: '#16a34a',
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 12,
+    borderRadius: 12,
     alignItems: 'center',
-    marginTop: 12,
+    justifyContent: 'center',
+    marginTop: 18,
   },
   typeCardActionBtnText: {
     color: '#ffffff',
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '900',
   },
   heldOrdersBar: {

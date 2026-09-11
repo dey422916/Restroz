@@ -262,7 +262,7 @@ export default function CustomerOrdersScreen() {
                 </Text>
 
                 {/* Delivery Address */}
-                {ord.delivery_address && (
+                {Boolean(ord.delivery_address) && (
                   <Text style={styles.addressText} numberOfLines={2}>
                     📍 Deliver To: {ord.delivery_address} {ord.delivery_landmark ? `(Near: ${ord.delivery_landmark})` : ''}
                   </Text>
@@ -335,7 +335,7 @@ export default function CustomerOrdersScreen() {
                     <Text style={styles.detailMetaRow}>
                       🕒 Placed: {formatOrderDateTime(selectedOrderDetail.created_at)}
                     </Text>
-                    {selectedOrderDetail.delivery_address && (
+                    {Boolean(selectedOrderDetail.delivery_address) && (
                       <Text style={styles.detailMetaRow}>
                         Deliver To: {selectedOrderDetail.delivery_address}
                         {selectedOrderDetail.delivery_landmark ? ` (Landmark: ${selectedOrderDetail.delivery_landmark})` : ''}

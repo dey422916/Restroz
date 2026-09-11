@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   Image,
-  SafeAreaView,
   Alert,
   Modal,
   ActivityIndicator,
@@ -15,6 +14,7 @@ import {
   Platform,
   RefreshControl,
 } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { productService } from '../../../src/services/api/productService';
 import { categoryService } from '../../../src/services/api/categoryService';
@@ -31,7 +31,6 @@ import { formatOrderDateTime } from '../../../src/utils/dateUtils';
 import { findMatchingTable } from '../../../src/utils/qr';
 import { cleanCustomerOrderNotes } from '../../../src/utils/orderNotes';
 import { RealtimeOrderStatus } from '../../../src/components/customer/RealtimeOrderStatus';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../../src/context/AuthContext';
 import { useSettings } from '../../../src/context/SettingsContext';
 import { supabase, isSupabaseConfigured } from '../../../src/services/supabase';
@@ -82,6 +81,7 @@ export default function CustomerDigitalMenuScreen() {
   const [loadingOrders, setLoadingOrders] = useState<boolean>(false);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [submittingOrder, setSubmittingOrder] = useState<boolean>(false);
+  const isSubmittingOrderRef = React.useRef<boolean>(false);
   const [restSettingsData, setRestSettingsData] = useState<any>(null);
 
   // Modals
@@ -367,7 +367,13 @@ export default function CustomerDigitalMenuScreen() {
   };
 
   const handlePlaceOrder = async () => {
+    if (isSubmittingOrderRef.current || submittingOrder) return;
+    isSubmittingOrderRef.current = true;
+    setSubmittingOrder(true);
+
     if (cartItems.length === 0) {
+      isSubmittingOrderRef.current = false;
+      setSubmittingOrder(false);
       Alert.alert('Empty Cart', 'Please add items before placing order.');
       return;
     }
@@ -375,6 +381,8 @@ export default function CustomerDigitalMenuScreen() {
     const isTableQrOrder = Boolean(tableId && tableId !== 'general');
 
     if (!isTableQrOrder && !user) {
+      isSubmittingOrderRef.current = false;
+      setSubmittingOrder(false);
       Alert.alert(
         'Authentication Required',
         'Please login or sign up to place and track your delivery orders.',
@@ -402,11 +410,12 @@ export default function CustomerDigitalMenuScreen() {
     }
 
     if (!isTableQrOrder && !deliveryAddress.trim()) {
+      isSubmittingOrderRef.current = false;
+      setSubmittingOrder(false);
       Alert.alert('Delivery Address Required', 'Please enter or select a delivery address to place your online delivery order.');
       return;
     }
 
-    setSubmittingOrder(true);
     try {
       // Save new address to profile if requested for online delivery
       if (!isTableQrOrder && selectedAddressId === 'new' && saveToProfileChecked && user?.id && deliveryAddress.trim()) {
@@ -494,14 +503,21 @@ export default function CustomerDigitalMenuScreen() {
         Alert.alert('Order Failed', err.message || 'Failed to submit order. Please try again.');
       }
     } finally {
+      isSubmittingOrderRef.current = false;
       setSubmittingOrder(false);
     }
   };
 
   const isGstEnabled = restSettingsData
-    ? (restSettingsData.is_gst_enabled ?? (restSettingsData.gst_registered ?? Boolean(restSettingsData.gstin?.trim())))
-    : true;
-  const taxRate = restSettingsData?.default_tax_rate !== undefined ? restSettingsData.default_tax_rate : 5.0;
+    ? (restSettingsData.is_gst_enabled !== undefined && restSettingsData.is_gst_enabled !== null
+        ? Boolean(restSettingsData.is_gst_enabled)
+        : (restSettingsData.gst_registered !== undefined
+            ? Boolean(restSettingsData.gst_registered)
+            : Boolean(restSettingsData.gstin?.trim()) && Number(restSettingsData.default_tax_rate ?? restSettingsData.tax_rate ?? 0) > 0))
+    : false;
+  const taxRate = isGstEnabled
+    ? Number(restSettingsData?.default_tax_rate !== undefined ? restSettingsData.default_tax_rate : (restSettingsData?.tax_rate !== undefined ? restSettingsData.tax_rate : 5.0))
+    : 0;
 
   const totals = calculateOrderTotals({
     items: cartItems,
@@ -1417,7 +1433,7 @@ export default function CustomerDigitalMenuScreen() {
                       </Text>
 
                       {/* Delivery Address */}
-                      {ord.delivery_address && (
+                      {Boolean(ord.delivery_address) && (
                         <Text style={{ fontSize: 10, color: '#64748b', marginBottom: 4 }} numberOfLines={2}>
                           📍 Deliver To: {ord.delivery_address} {ord.delivery_landmark ? `(Near: ${ord.delivery_landmark})` : ''}
                         </Text>
@@ -1464,7 +1480,7 @@ export default function CustomerDigitalMenuScreen() {
                   <Text style={styles.detailMetaRow}>
                     Payment: <Text style={{ fontWeight: 'bold' }}>{selectedOrderDetail.payment_status.toUpperCase()} (COD)</Text>
                   </Text>
-                  {selectedOrderDetail.delivery_address && (
+                  {Boolean(selectedOrderDetail.delivery_address) && (
                     <Text style={styles.detailMetaRow}>
                       Deliver To: {selectedOrderDetail.delivery_address} {selectedOrderDetail.delivery_landmark ? `(Near: ${selectedOrderDetail.delivery_landmark})` : ''}
                     </Text>
@@ -1486,7 +1502,7 @@ export default function CustomerDigitalMenuScreen() {
                         {itm.quantity}x
                       </Text>
                       <Text style={{ fontSize: 11, fontWeight: '700', color: '#0f172a', width: 70, textAlign: 'right' }}>
-                        {formatCurrency(itm.total)}
+                        {formatCurrency(Number(itm.total) || Number((itm as any).total_price) || Number(itm.subtotal) || ((Number(itm.unit_price) || 0) * (Number(itm.quantity) || 1)))}
                       </Text>
                     </View>
                   ))}

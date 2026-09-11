@@ -131,8 +131,12 @@ export default function DeliveryCheckoutScreen() {
 
   const handlePlaceOrder = async () => {
     if (isSubmittingRef.current || placingOrder || hasSucceededRef.current) return;
+    isSubmittingRef.current = true;
+    setPlacingOrder(true);
 
     if (!user) {
+      isSubmittingRef.current = false;
+      setPlacingOrder(false);
       Alert.alert('Login Required', 'Please log in to place a delivery order.', [
         { text: 'Log In', onPress: () => router.push('/(auth)/login') },
         { text: 'Cancel', style: 'cancel' },
@@ -141,24 +145,32 @@ export default function DeliveryCheckoutScreen() {
     }
 
     if (!cart.restaurantId || cart.items.length === 0) {
+      isSubmittingRef.current = false;
+      setPlacingOrder(false);
       Alert.alert('Empty Cart', 'Your cart is empty.');
       return;
     }
 
     const selectedAddr = addresses.find((a) => a.id === selectedAddressId);
     if (!selectedAddr) {
+      isSubmittingRef.current = false;
+      setPlacingOrder(false);
       Alert.alert('Address Required', 'Please select or add a delivery address.');
       return;
     }
 
     const targetPhone = customerPhone.trim() || selectedAddr.phone;
     if (!targetPhone || !isValidPhoneNumber(targetPhone)) {
+      isSubmittingRef.current = false;
+      setPlacingOrder(false);
       Alert.alert('Invalid Phone Number', 'Please provide a valid 10-digit mobile number for order delivery updates.');
       return;
     }
 
     // Verify minimum order value requirement
     if (minOrderValue > 0 && cart.subtotal < minOrderValue) {
+      isSubmittingRef.current = false;
+      setPlacingOrder(false);
       const diff = minOrderValue - cart.subtotal;
       Alert.alert(
         'Minimum Order Value Required',
@@ -168,17 +180,21 @@ export default function DeliveryCheckoutScreen() {
     }
 
     // Verify restaurant is currently online before placing order
-    const isRestOnline = await marketplaceService.getRestaurantOnlineStatus(cart.restaurantId);
-    if (!isRestOnline) {
-      Alert.alert(
-        'Restaurant Offline',
-        'Restaurant is currently closed for online orders. Please try again later.'
-      );
-      return;
+    try {
+      const isRestOnline = await marketplaceService.getRestaurantOnlineStatus(cart.restaurantId);
+      if (!isRestOnline) {
+        isSubmittingRef.current = false;
+        setPlacingOrder(false);
+        Alert.alert(
+          'Restaurant Offline',
+          'Restaurant is currently closed for online orders. Please try again later.'
+        );
+        return;
+      }
+    } catch (onlineErr) {
+      console.warn('Online status check error:', onlineErr);
     }
 
-    isSubmittingRef.current = true;
-    setPlacingOrder(true);
     try {
       const idempotencyKey = `idem-${user.id}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
       const orderPayload = {
@@ -458,15 +474,19 @@ export default function DeliveryCheckoutScreen() {
                   </View>
                 )}
 
-                <View style={styles.summaryItemRow}>
-                  <Text style={styles.summaryLabel}>CGST (2.5%)</Text>
-                  <Text style={styles.summaryValue}>₹{formatPrice(cart.cgst)}</Text>
-                </View>
+                {cart.isGstEnabled && (cart.cgst > 0 || cart.sgst > 0) ? (
+                  <>
+                    <View style={styles.summaryItemRow}>
+                      <Text style={styles.summaryLabel}>CGST ({((cart.taxRate || 5) / 2).toFixed(1)}%)</Text>
+                      <Text style={styles.summaryValue}>₹{formatPrice(cart.cgst)}</Text>
+                    </View>
 
-                <View style={styles.summaryItemRow}>
-                  <Text style={styles.summaryLabel}>SGST (2.5%)</Text>
-                  <Text style={styles.summaryValue}>₹{formatPrice(cart.sgst)}</Text>
-                </View>
+                    <View style={styles.summaryItemRow}>
+                      <Text style={styles.summaryLabel}>SGST ({((cart.taxRate || 5) / 2).toFixed(1)}%)</Text>
+                      <Text style={styles.summaryValue}>₹{formatPrice(cart.sgst)}</Text>
+                    </View>
+                  </>
+                ) : null}
 
                 <View style={styles.summaryItemRow}>
                   <Text style={styles.summaryLabel}>Delivery Fee</Text>
@@ -490,10 +510,10 @@ export default function DeliveryCheckoutScreen() {
                     style={[
                       styles.desktopPlaceOrderBtn,
                       isBelowMinOrder && styles.placeOrderBtnWarning,
-                      placingOrder && styles.placeOrderBtnDisabled,
+                      (placingOrder || hasSucceededRef.current) && styles.placeOrderBtnDisabled,
                     ]}
                     onPress={handlePlaceOrder}
-                    disabled={placingOrder}
+                    disabled={placingOrder || hasSucceededRef.current}
                     activeOpacity={0.85}
                   >
                     {placingOrder ? (
@@ -523,10 +543,10 @@ export default function DeliveryCheckoutScreen() {
             style={[
               styles.placeOrderBtn,
               isBelowMinOrder && styles.placeOrderBtnWarning,
-              placingOrder && styles.placeOrderBtnDisabled,
+              (placingOrder || hasSucceededRef.current) && styles.placeOrderBtnDisabled,
             ]}
             onPress={handlePlaceOrder}
-            disabled={placingOrder}
+            disabled={placingOrder || hasSucceededRef.current}
             activeOpacity={0.85}
           >
             {placingOrder ? (

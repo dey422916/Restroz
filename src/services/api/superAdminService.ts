@@ -672,28 +672,46 @@ export const superAdminService = {
       throw new Error('Password must be at least 8 characters long.');
     }
 
-    const { data: edgeData, error: edgeErr } = await supabase.functions.invoke('admin-reset-password', {
-      body: {
-        targetUserId: user_id,
-        newPassword: newPassword,
-        restaurantId: restaurantId || undefined,
-      },
-    });
+    // 1. Try Direct PostgreSQL RPC
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('admin_reset_user_password', {
+        p_user_id: user_id,
+        p_new_password: newPassword,
+      });
 
-    if (edgeErr) {
-      let detailMsg = edgeErr.message || 'Failed to update password.';
-      if (edgeData?.error) {
-        detailMsg = edgeData.error;
+      if (!rpcErr && (rpcData?.success || rpcData?.user_id)) {
+        return;
       }
-      throw new Error(detailMsg);
+      if (rpcErr) {
+        if (rpcErr.message.includes('Forbidden') || rpcErr.message.includes('Password must be') || rpcErr.message.includes('Target user not found')) {
+          throw new Error(rpcErr.message);
+        }
+      }
+    } catch (rpcEx: any) {
+      if (rpcEx.message?.includes('Forbidden') || rpcEx.message?.includes('Password must be') || rpcEx.message?.includes('Target user not found')) {
+        throw rpcEx;
+      }
+      console.warn('admin_reset_user_password RPC fallback:', rpcEx?.message);
     }
 
-    if (edgeData?.error) {
-      throw new Error(edgeData.error);
-    }
+    // 2. Fallback to Edge Function
+    try {
+      const { data: edgeData, error: edgeErr } = await supabase.functions.invoke('admin-reset-password', {
+        body: {
+          targetUserId: user_id,
+          newPassword: newPassword,
+          restaurantId: restaurantId || undefined,
+        },
+      });
 
-    if (!edgeData?.success) {
-      throw new Error('Password update request could not be completed by Edge Function.');
+      if (!edgeErr && edgeData?.success) {
+        return;
+      }
+      if (edgeErr || edgeData?.error) {
+        throw new Error(edgeData?.error || edgeErr?.message || 'Password update failed.');
+      }
+    } catch (edgeEx: any) {
+      throw new Error(edgeEx.message || 'Failed to update password.');
     }
   },
 

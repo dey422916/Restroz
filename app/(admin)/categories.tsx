@@ -4,7 +4,6 @@ import {
   Text,
   ScrollView,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   TextInput,
   Modal,
@@ -14,15 +13,16 @@ import {
   Platform,
   Dimensions,
   RefreshControl,
+  useWindowDimensions,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { categoryService } from '../../src/services/api/categoryService';
 import { productService } from '../../src/services/api/productService';
 import { useAuth } from '../../src/context/AuthContext';
 import { Category, Product } from '../../src/types';
 
 export default function CategoriesScreen() {
-  const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
+  const isMobile = windowWidth < 600;
   const { activeRestaurantId } = useAuth();
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -141,23 +141,35 @@ export default function CategoriesScreen() {
       return;
     }
 
+    const message = `Are you sure you want to permanently delete "${c.name}"?`;
+
+    const doDelete = async () => {
+      try {
+        await categoryService.deleteCategory(c.id, activeRestaurantId);
+        Alert.alert('Deleted', `"${c.name}" has been deleted.`);
+        await loadData();
+      } catch (err: any) {
+        Alert.alert('Delete Failed', err.message);
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window !== 'undefined' ? window.confirm(message) : true;
+      if (confirmed) {
+        doDelete();
+      }
+      return;
+    }
+
     Alert.alert(
       'Delete Category',
-      `Are you sure you want to permanently delete "${c.name}"?`,
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete Permanently',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              await categoryService.deleteCategory(c.id);
-              Alert.alert('Deleted', `"${c.name}" has been deleted.`);
-              await loadData();
-            } catch (err: any) {
-              Alert.alert('Delete Failed', err.message);
-            }
-          },
+          onPress: doDelete,
         },
       ]
     );
@@ -181,7 +193,7 @@ export default function CategoriesScreen() {
   });
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
@@ -231,12 +243,25 @@ export default function CategoriesScreen() {
             filteredCategories.map((cat) => {
               const count = products.filter((p) => p.category_id === cat.id).length;
 
+              const responsiveCardStyle =
+                Platform.OS === 'web'
+                  ? windowWidth >= 1280
+                    ? styles.cardWeb5Col
+                    : windowWidth >= 1024
+                    ? styles.cardWeb4Col
+                    : windowWidth >= 768
+                    ? styles.cardWeb3Col
+                    : windowWidth >= 520
+                    ? styles.cardWeb2Col
+                    : styles.cardWeb1Col
+                  : undefined;
+
               return (
                 <View
                   key={cat.id}
                   style={[
                     styles.card,
-                    Platform.OS === 'web' && styles.cardWeb,
+                    responsiveCardStyle,
                     !cat.is_active && styles.cardInactive,
                   ]}
                 >
@@ -314,8 +339,8 @@ export default function CategoriesScreen() {
           style={[
             styles.modalOverlay,
             {
-              paddingTop: Platform.OS === 'web' ? 16 : insets.top + 8,
-              paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 8,
+              paddingTop: 16,
+              paddingBottom: 16,
             },
           ]}
         >
@@ -413,7 +438,7 @@ export default function CategoriesScreen() {
           </KeyboardAvoidingView>
         </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -480,7 +505,7 @@ const styles = StyleSheet.create({
   },
   list: {
     padding: 14,
-    gap: 10,
+    gap: 12,
     flexDirection: Platform.OS === 'web' ? 'row' : 'column',
     flexWrap: Platform.OS === 'web' ? 'wrap' : 'nowrap',
     alignItems: 'stretch',
@@ -496,15 +521,37 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 6,
+    justifyContent: 'space-between',
   },
-  cardWeb: {
-    width: 'calc(16.666% - 8.4px)' as any,
-    maxWidth: 'calc(16.666% - 8.4px)' as any,
-    minWidth: 155,
+  cardWeb5Col: {
+    width: 'calc(20% - 10px)' as any,
+    flexBasis: 'calc(20% - 10px)' as any,
     flexGrow: 0,
     flexShrink: 0,
-    justifyContent: 'space-between',
-    padding: 12,
+  },
+  cardWeb4Col: {
+    width: 'calc(25% - 9px)' as any,
+    flexBasis: 'calc(25% - 9px)' as any,
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  cardWeb3Col: {
+    width: 'calc(33.333% - 8px)' as any,
+    flexBasis: 'calc(33.333% - 8px)' as any,
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  cardWeb2Col: {
+    width: 'calc(50% - 6px)' as any,
+    flexBasis: 'calc(50% - 6px)' as any,
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  cardWeb1Col: {
+    width: '100%',
+    flexBasis: '100%',
+    flexGrow: 1,
+    flexShrink: 0,
   },
   cardInactive: {
     opacity: 0.65,
@@ -572,17 +619,21 @@ const styles = StyleSheet.create({
   },
   actionsRow: {
     flexDirection: 'row',
-    gap: 6,
-    marginTop: 6,
+    gap: 8,
+    marginTop: 10,
+    alignItems: 'center',
   },
   editActionBtn: {
     flex: 1,
     backgroundColor: '#eff6ff',
-    paddingVertical: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#bfdbfe',
+    minHeight: 34,
   },
   editActionBtnText: {
     fontSize: 11,
@@ -590,13 +641,16 @@ const styles = StyleSheet.create({
     color: '#1d4ed8',
   },
   toggleActionBtn: {
-    flex: 1,
+    flex: 1.2,
     backgroundColor: '#f8fafc',
-    paddingVertical: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#cbd5e1',
+    minHeight: 34,
   },
   toggleActionBtnText: {
     fontSize: 11,
@@ -606,14 +660,16 @@ const styles = StyleSheet.create({
   deleteActionBtn: {
     backgroundColor: '#fff1f2',
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#fecdd3',
+    minHeight: 34,
   },
   deleteActionBtnText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '800',
     color: '#e11d48',
   },

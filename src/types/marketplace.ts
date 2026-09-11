@@ -70,6 +70,8 @@ export interface CustomerCart {
   deliveryFee: number;
   couponCode?: string;
   payableAmount: number;
+  isGstEnabled?: boolean;
+  taxRate?: number;
 }
 
 export interface DeliveryOrderPayload {

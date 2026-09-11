@@ -10,6 +10,7 @@ import {
   UserProfile,
   AuditLog,
 } from '../types';
+import { naturalTableCompare } from '../utils/sortUtils';
 
 const SETTINGS_KEY = 'ratnadeep_settings';
 const CATEGORIES_KEY = 'ratnadeep_categories';
@@ -251,15 +252,45 @@ export const SEED_TABLES: DiningTable[] = [
 
 export const SEED_COUPONS: Coupon[] = [
   {
-    id: 'coup-1',
+    id: 'cpn-panch-001',
+    restaurant_id: '4f875626-05ae-47dd-88d7-c1234f13f7e1',
     code: 'WELCOME10',
-    description: '10% discount on orders above ₹300',
+    description: '10% instant discount on orders above ₹200',
     discount_type: 'percentage',
     discount_value: 10,
-    min_order_value: 300,
+    min_order_value: 200,
+    max_discount: 100,
+    per_user_limit: 1,
+    usage_limit: 1000,
+    used_count: 12,
+    is_active: true,
+  },
+  {
+    id: 'cpn-panch-002',
+    restaurant_id: '4f875626-05ae-47dd-88d7-c1234f13f7e1',
+    code: 'SAVE50',
+    description: 'Flat ₹50 discount on orders above ₹299',
+    discount_type: 'fixed',
+    discount_value: 50,
+    min_order_value: 299,
+    max_discount: 50,
+    per_user_limit: 1,
+    usage_limit: 500,
+    used_count: 5,
+    is_active: true,
+  },
+  {
+    id: 'cpn-panch-003',
+    restaurant_id: '4f875626-05ae-47dd-88d7-c1234f13f7e1',
+    code: 'DEV20',
+    description: '20% special discount on orders above ₹400',
+    discount_type: 'percentage',
+    discount_value: 20,
+    min_order_value: 400,
     max_discount: 150,
     per_user_limit: 1,
-    used_count: 14,
+    usage_limit: 200,
+    used_count: 2,
     is_active: true,
   },
   {
@@ -307,10 +338,14 @@ export const mockStorage = {
     AsyncStorage.setItem(PRODUCTS_KEY, JSON.stringify(prods)).catch(() => {});
   },
 
-  getTables: (): DiningTable[] => inMemoryData[TABLES_KEY],
+  getTables: (): DiningTable[] => {
+    const list = inMemoryData[TABLES_KEY] || [];
+    return [...list].sort(naturalTableCompare);
+  },
   saveTables: (tbls: DiningTable[]) => {
-    inMemoryData[TABLES_KEY] = tbls;
-    AsyncStorage.setItem(TABLES_KEY, JSON.stringify(tbls)).catch(() => {});
+    const sorted = [...tbls].sort(naturalTableCompare);
+    inMemoryData[TABLES_KEY] = sorted;
+    AsyncStorage.setItem(TABLES_KEY, JSON.stringify(sorted)).catch(() => {});
   },
 
   getCoupons: (): Coupon[] => inMemoryData[COUPONS_KEY],

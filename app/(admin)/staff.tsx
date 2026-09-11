@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   ScrollView,
   Switch,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
@@ -116,6 +117,33 @@ const PRESET_OPTIONS: { id: StaffPermissionPreset; label: string; icon: string }
   { id: 'MANAGER', label: 'Manager', icon: '💼' },
   { id: 'KITCHEN', label: 'Kitchen', icon: '🧑‍🍳' },
 ];
+
+const getStaffDisplayRole = (item: StaffMemberWithDetails): { label: string; bg: string; color: string } => {
+  if (item.role === 'ADMIN') {
+    return { label: 'ADMIN', bg: '#fef08a', color: '#854d0e' };
+  }
+
+  const perms = item.permissions;
+  if (perms) {
+    if (perms.can_manage_products && perms.can_manage_settings && perms.can_manage_staff) {
+      return { label: 'ADMIN', bg: '#fef08a', color: '#854d0e' };
+    }
+    if (perms.can_use_pos && perms.can_view_orders && perms.can_edit_orders && perms.can_manage_tables && !perms.can_manage_register) {
+      return { label: 'WAITER', bg: '#e0f2fe', color: '#0369a1' };
+    }
+    if (perms.can_use_pos && perms.can_manage_register && !perms.can_manage_tables) {
+      return { label: 'CASHIER', bg: '#ecfdf5', color: '#047857' };
+    }
+    if (perms.can_use_pos && perms.can_manage_products && perms.can_manage_tables && perms.can_view_reports) {
+      return { label: 'MANAGER', bg: '#f3e8ff', color: '#7e22ce' };
+    }
+    if (!perms.can_use_pos && perms.can_view_orders) {
+      return { label: 'KITCHEN', bg: '#ffedd5', color: '#c2410c' };
+    }
+  }
+
+  return { label: 'STAFF', bg: '#e2e8f0', color: '#475569' };
+};
 
 export default function StaffManagementScreen() {
   const router = useRouter();
@@ -278,22 +306,39 @@ export default function StaffManagementScreen() {
 
   const handleSaveStaffPassword = async () => {
     if (!targetStaffForPwd?.user_id) {
-      Alert.alert('Error', 'Invalid user target selected.');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert('Error: Invalid user target selected.');
+      } else {
+        Alert.alert('Error', 'Invalid user target selected.');
+      }
       return;
     }
     if (!staffNewPassword || staffNewPassword.length < 8) {
-      Alert.alert('Validation Error', 'Password must be at least 8 characters long.');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert('Validation Error: Password must be at least 8 characters long.');
+      } else {
+        Alert.alert('Validation Error', 'Password must be at least 8 characters long.');
+      }
       return;
     }
 
+    const memberName = targetStaffForPwd.full_name || 'Staff member';
     setSavingStaffPwd(true);
     try {
       await staffService.resetStaffPassword(targetStaffForPwd.user_id, staffNewPassword, activeRestaurantId);
-      Alert.alert('Success', 'Password updated successfully.');
       setStaffPwdModalVisible(false);
       setStaffNewPassword('');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`✅ Success: Password for ${memberName} has been updated successfully!`);
+      } else {
+        Alert.alert('Success', `Password for ${memberName} has been updated successfully.`);
+      }
     } catch (err: any) {
-      Alert.alert('Password Update Failed', err.message || 'Failed to update staff password.');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`❌ Password Update Failed: ${err.message || 'Failed to update staff password.'}`);
+      } else {
+        Alert.alert('Password Update Failed', err.message || 'Failed to update staff password.');
+      }
     } finally {
       setSavingStaffPwd(false);
     }
@@ -302,45 +347,69 @@ export default function StaffManagementScreen() {
   const handleToggleActive = async (member: StaffMemberWithDetails) => {
     const newAction = member.is_active ? 'DEACTIVATE' : 'ACTIVATE';
     const actionLabel = member.is_active ? 'Deactivate' : 'Activate';
+    const message = `Are you sure you want to ${actionLabel.toLowerCase()} ${member.full_name}?`;
+
+    const doToggle = async () => {
+      try {
+        await staffService.setMembershipStatus(member.id, newAction);
+        loadData();
+      } catch (e: any) {
+        Alert.alert('Error', e.message || `Failed to ${actionLabel.toLowerCase()} staff.`);
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window !== 'undefined' ? window.confirm(message) : true;
+      if (confirmed) {
+        doToggle();
+      }
+      return;
+    }
 
     Alert.alert(
       `${actionLabel} Staff Member`,
-      `Are you sure you want to ${actionLabel.toLowerCase()} ${member.full_name}?`,
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: actionLabel,
           style: member.is_active ? 'destructive' : 'default',
-          onPress: async () => {
-            try {
-              await staffService.setMembershipStatus(member.id, newAction);
-              loadData();
-            } catch (e: any) {
-              Alert.alert('Error', e.message || `Failed to ${actionLabel.toLowerCase()} staff.`);
-            }
-          },
+          onPress: doToggle,
         },
       ]
     );
   };
 
   const handleRemoveMember = (member: StaffMemberWithDetails) => {
+    const message = `Remove ${member.full_name} from ${activeRestaurant?.name || 'this restaurant'}? Their global account will remain intact.`;
+
+    const doRemove = async () => {
+      try {
+        await staffService.setMembershipStatus(member.id, 'REMOVE');
+        Alert.alert('Success', `Staff member ${member.full_name} removed.`);
+        loadData();
+      } catch (e: any) {
+        Alert.alert('Error', e.message || 'Failed to remove staff membership.');
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window !== 'undefined' ? window.confirm(message) : true;
+      if (confirmed) {
+        doRemove();
+      }
+      return;
+    }
+
     Alert.alert(
       'Remove Staff Membership',
-      `Remove ${member.full_name} from ${activeRestaurant?.name || 'this restaurant'}? Their global account will remain intact.`,
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Remove',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              await staffService.setMembershipStatus(member.id, 'REMOVE');
-              loadData();
-            } catch (e: any) {
-              Alert.alert('Error', e.message || 'Failed to remove staff membership.');
-            }
-          },
+          onPress: doRemove,
         },
       ]
     );
@@ -433,21 +502,26 @@ export default function StaffManagementScreen() {
                 <View style={styles.cardMainInfo}>
                   <View style={styles.nameRow}>
                     <Text style={styles.staffName}>{item.full_name}</Text>
-                    <View
-                      style={[
-                        styles.roleBadge,
-                        item.role === 'ADMIN' ? styles.roleAdmin : styles.roleStaff,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.roleBadgeText,
-                          item.role === 'ADMIN' ? styles.roleAdminText : styles.roleStaffText,
-                        ]}
-                      >
-                        {item.role}
-                      </Text>
-                    </View>
+                    {(() => {
+                      const displayRole = getStaffDisplayRole(item);
+                      return (
+                        <View
+                          style={[
+                            styles.roleBadge,
+                            { backgroundColor: displayRole.bg },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.roleBadgeText,
+                              { color: displayRole.color },
+                            ]}
+                          >
+                            {displayRole.label}
+                          </Text>
+                        </View>
+                      );
+                    })()}
                     {!item.is_active && (
                       <View style={styles.inactiveBadge}>
                         <Text style={styles.inactiveBadgeText}>DEACTIVATED</Text>
@@ -873,6 +947,9 @@ export default function StaffManagementScreen() {
                 value={staffNewPassword}
                 onChangeText={setStaffNewPassword}
                 autoCapitalize="none"
+                secureTextEntry
+                autoComplete="new-password"
+                textContentType="newPassword"
               />
               <Text style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
                 Password must contain at least 8 characters.

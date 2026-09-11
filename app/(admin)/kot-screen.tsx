@@ -5,11 +5,9 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   TextInput,
   ActivityIndicator,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { kotService } from '../../src/services/api/kotService';
 import { printService } from '../../src/services/printService';
 import { KOT, RestaurantSettings } from '../../src/types';
@@ -18,7 +16,6 @@ import { useAuth } from '../../src/context/AuthContext';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
 
 export default function KotScreen() {
-  const insets = useSafeAreaInsets();
   const { settings } = useSettings();
   const { activeRestaurantId } = useAuth();
   const [kots, setKots] = useState<KOT[]>([]);
@@ -74,7 +71,7 @@ export default function KotScreen() {
   });
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       {/* Top Header */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
@@ -178,7 +175,7 @@ export default function KotScreen() {
                     <Text style={styles.timeText}>🕒 {timeString}</Text>
                   </View>
 
-                  {kot.customer_name && (
+                  {Boolean(kot.customer_name) && (
                     <Text style={styles.custText}>Guest: {kot.customer_name}</Text>
                   )}
 
@@ -211,7 +208,7 @@ export default function KotScreen() {
                             >
                               {item.product_name}
                             </Text>
-                            {item.notes && (
+                            {Boolean(item.notes) && (
                               <Text style={styles.itemNote}>Note: {item.notes}</Text>
                             )}
                           </View>
@@ -221,7 +218,7 @@ export default function KotScreen() {
                   </View>
 
                   {/* Kitchen Notes */}
-                  {kot.kitchen_notes && (
+                  {Boolean(kot.kitchen_notes) && (
                     <View style={styles.kitchenNotesBox}>
                       <Text style={styles.kitchenNotesText}>🔔 {kot.kitchen_notes}</Text>
                     </View>
@@ -231,7 +228,13 @@ export default function KotScreen() {
                   <View style={styles.actions}>
                     <TouchableOpacity
                       style={styles.actionBtnPrint}
-                      onPress={() => printService.reprintKot(kot.id, settings)}
+                      onPress={async () => {
+                        try {
+                          await printService.reprintKot(kot.id, settings);
+                        } catch (err: any) {
+                          console.warn('KOT Print warning:', err);
+                        }
+                      }}
                     >
                       <Text style={styles.actionBtnPrintText}>🖨️ Print</Text>
                     </TouchableOpacity>
@@ -293,7 +296,7 @@ export default function KotScreen() {
           )}
         </ScrollView>
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 

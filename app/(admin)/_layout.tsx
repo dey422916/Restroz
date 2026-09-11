@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, Platform, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, Platform, Alert, useWindowDimensions } from 'react-native';
 import { Stack, useRouter, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../src/context/AuthContext';
@@ -11,6 +11,8 @@ import { useNewOrderTracker } from '../../src/hooks/useNewOrderTracker';
 
 export default function AdminLayout() {
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
+  const isMobile = windowWidth < 640;
   const pathname = usePathname();
   const router = useRouter();
   const { user, role, isSuperAdmin, isAdmin, activeRestaurantId, activeRestaurant, hasPermission, loading, logout } = useAuth();
@@ -22,7 +24,7 @@ export default function AdminLayout() {
   const [subAccess, setSubAccess] = useState<SubscriptionAccessStatus | null>(null);
 
   const isWeb = Platform.OS === 'web';
-  const topPadding = isWeb ? 8 : insets.top;
+  const topPadding = isWeb ? (isMobile ? 4 : 8) : insets.top;
   const bottomPadding = isWeb ? 0 : insets.bottom;
 
   const verifySubscription = async () => {
@@ -356,7 +358,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderBottomWidth: 1,
     borderColor: '#e2e8f0',
-    gap: 5,
+    gap: 6,
   },
   headerTopRow: {
     flexDirection: 'row',
@@ -369,6 +371,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     flex: 1,
+    minWidth: 0,
   },
   headerLogo: {
     width: 38,

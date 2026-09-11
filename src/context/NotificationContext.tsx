@@ -20,14 +20,29 @@ const NotificationContext = createContext<NotificationContextType | undefined>(u
 
 export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const lastToastRef = React.useRef<{ key: string; time: number }>({ key: '', time: 0 });
 
   const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
   const showToast = useCallback((type: ToastType, title: string, message?: string) => {
-    const id = 'toast-' + Date.now() + Math.random().toString(36).substr(2, 4);
-    setToasts((prev) => [...prev, { id, type, title, message }]);
+    const key = `${type}:${title}:${message || ''}`;
+    const now = Date.now();
+    // Debounce duplicate toasts within 2000ms
+    if (lastToastRef.current.key === key && now - lastToastRef.current.time < 2000) {
+      return;
+    }
+    lastToastRef.current = { key, time: now };
+
+    const id = 'toast-' + now + Math.random().toString(36).substr(2, 4);
+    setToasts((prev) => {
+      // Prevent showing identical toast if already visible in active toasts
+      if (prev.some((t) => t.type === type && t.title === title && t.message === message)) {
+        return prev;
+      }
+      return [...prev.slice(-3), { id, type, title, message }];
+    });
 
     setTimeout(() => {
       removeToast(id);

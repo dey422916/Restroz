@@ -32,7 +32,34 @@ import {
 } from '../../../src/types';
 import { colors } from '../../../src/utils/colors';
 
-export default function RestaurantDetailsScreen() {
+const getStaffDisplayRole = (m: any): { label: string; bg: string; color: string } => {
+  if (m.role === 'ADMIN') {
+    return { label: 'ADMIN', bg: '#fef08a', color: '#854d0e' };
+  }
+
+  const perms = m.permissions;
+  if (perms) {
+    if (perms.can_manage_products && perms.can_manage_settings && perms.can_manage_staff) {
+      return { label: 'ADMIN', bg: '#fef08a', color: '#854d0e' };
+    }
+    if (perms.can_use_pos && perms.can_view_orders && perms.can_edit_orders && perms.can_manage_tables && !perms.can_manage_register) {
+      return { label: 'WAITER', bg: '#e0f2fe', color: '#0369a1' };
+    }
+    if (perms.can_use_pos && perms.can_manage_register && !perms.can_manage_tables) {
+      return { label: 'CASHIER', bg: '#ecfdf5', color: '#047857' };
+    }
+    if (perms.can_use_pos && perms.can_manage_products && perms.can_manage_tables && perms.can_view_reports) {
+      return { label: 'MANAGER', bg: '#f3e8ff', color: '#7e22ce' };
+    }
+    if (!perms.can_use_pos && perms.can_view_orders) {
+      return { label: 'KITCHEN', bg: '#ffedd5', color: '#c2410c' };
+    }
+  }
+
+  return { label: 'STAFF', bg: '#e2e8f0', color: '#475569' };
+};
+
+export default function SuperAdminRestaurantDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -468,22 +495,39 @@ export default function RestaurantDetailsScreen() {
 
   const handleSaveMemberPassword = async () => {
     if (!targetMemberForPwd?.user_id) {
-      Alert.alert('Error', 'Invalid user target selected.');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert('Error: Invalid user target selected.');
+      } else {
+        Alert.alert('Error', 'Invalid user target selected.');
+      }
       return;
     }
     if (!memberNewPassword || memberNewPassword.length < 8) {
-      Alert.alert('Validation Error', 'Password must be at least 8 characters long.');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert('Validation Error: Password must be at least 8 characters long.');
+      } else {
+        Alert.alert('Validation Error', 'Password must be at least 8 characters long.');
+      }
       return;
     }
 
+    const memberName = (targetMemberForPwd as any).profile?.full_name || (targetMemberForPwd as any).profile?.email || 'User';
     setSavingMemberPwd(true);
     try {
       await superAdminService.changeAdminPassword(targetMemberForPwd.user_id, memberNewPassword, restaurant?.id);
-      Alert.alert('Success', 'Password updated successfully.');
       setMemberPwdModalVisible(false);
       setMemberNewPassword('');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`✅ Success: Password for ${memberName} has been updated successfully!`);
+      } else {
+        Alert.alert('Success', `Password for ${memberName} has been updated successfully.`);
+      }
     } catch (err: any) {
-      Alert.alert('Password Update Failed', err.message || 'Failed to update user password.');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`❌ Password Update Failed: ${err.message || 'Failed to update user password.'}`);
+      } else {
+        Alert.alert('Password Update Failed', err.message || 'Failed to update user password.');
+      }
     } finally {
       setSavingMemberPwd(false);
     }
@@ -778,11 +822,16 @@ export default function RestaurantDetailsScreen() {
                         <Text style={styles.memberName} numberOfLines={1}>
                           {(m as any).profile?.full_name || (m as any).profile?.email || `User ${m.user_id.slice(0, 8)}`}
                         </Text>
-                        <View style={[styles.roleBadge, m.role === 'ADMIN' ? styles.roleBadgeAdmin : styles.roleBadgeStaff]}>
-                          <Text style={[styles.roleBadgeText, m.role === 'ADMIN' ? styles.roleBadgeTextAdmin : styles.roleBadgeTextStaff]}>
-                            {m.role}
-                          </Text>
-                        </View>
+                        {(() => {
+                          const displayRole = getStaffDisplayRole(m);
+                          return (
+                            <View style={[styles.roleBadge, { backgroundColor: displayRole.bg }]}>
+                              <Text style={[styles.roleBadgeText, { color: displayRole.color }]}>
+                                {displayRole.label}
+                              </Text>
+                            </View>
+                          );
+                        })()}
                         {!m.is_active && (
                           <View style={styles.inactivePill}>
                             <Text style={styles.inactivePillText}>DEACTIVATED</Text>

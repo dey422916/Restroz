@@ -5,7 +5,6 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   TextInput,
   Modal,
   Alert,
@@ -16,7 +15,6 @@ import {
   useWindowDimensions,
   RefreshControl,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { tableService } from '../../src/services/api/tableService';
 import { subscriptionGuardService } from '../../src/services/api/subscriptionGuardService';
@@ -24,10 +22,10 @@ import { useAuth } from '../../src/context/AuthContext';
 import { useSettings } from '../../src/context/SettingsContext';
 import { DiningTable, TableSection } from '../../src/types';
 import { TableQRModal } from '../../src/components/admin/TableQRModal';
+import { naturalTableCompare } from '../../src/utils/sortUtils';
 
 export default function TablesScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   const { activeRestaurantId, activeRestaurant } = useAuth();
   const { settings } = useSettings();
@@ -57,6 +55,7 @@ export default function TablesScreen() {
   const [bulkCapacity, setBulkCapacity] = useState<string>('4');
   const [savingBulk, setSavingBulk] = useState<boolean>(false);
   const [exportingAll, setExportingAll] = useState<boolean>(false);
+  const [deletingTableId, setDeletingTableId] = useState<string | null>(null);
 
   const windowHeight = Dimensions.get('window').height;
 
@@ -246,28 +245,44 @@ export default function TablesScreen() {
   };
 
   const handleDeleteTable = (t: DiningTable) => {
+    if (deletingTableId) return;
     if (t.status === 'occupied') {
       Alert.alert('Cannot Delete', `Table ${t.table_number} is currently OCCUPIED by active guests.`);
       return;
     }
 
+    const message = `Are you sure you want to permanently delete "${t.table_number}" (${t.section})? This action cannot be undone.`;
+
+    const doDelete = async () => {
+      setDeletingTableId(t.id);
+      try {
+        await tableService.deleteTable(t.id, activeRestaurantId);
+        Alert.alert('Deleted', `${t.table_number} has been deleted.`);
+        await loadTables();
+      } catch (err: any) {
+        Alert.alert('Delete Failed', err.message);
+      } finally {
+        setDeletingTableId(null);
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window !== 'undefined' ? window.confirm(message) : true;
+      if (confirmed) {
+        doDelete();
+      }
+      return;
+    }
+
     Alert.alert(
       'Delete Table',
-      `Are you sure you want to permanently delete "${t.table_number}" (${t.section})? This action cannot be undone.`,
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete Permanently',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              await tableService.deleteTable(t.id, activeRestaurantId);
-              Alert.alert('Deleted', `${t.table_number} has been deleted.`);
-              await loadTables();
-            } catch (err: any) {
-              Alert.alert('Delete Failed', err.message);
-            }
-          },
+          onPress: doDelete,
         },
       ]
     );
@@ -297,26 +312,28 @@ export default function TablesScreen() {
     }
   };
 
-  const filteredTables = tables.filter((t) => {
-    if (activeSection !== 'All') {
-      if (activeSection === 'VIP Section' || (activeSection as any) === 'VIP') {
-        if (t.section !== 'VIP' && t.section !== 'VIP Section') return false;
-      } else if (t.section !== activeSection) {
-        return false;
+  const filteredTables = tables
+    .filter((t) => {
+      if (activeSection !== 'All') {
+        if (activeSection === 'VIP Section' || (activeSection as any) === 'VIP') {
+          if (t.section !== 'VIP' && t.section !== 'VIP Section') return false;
+        } else if (t.section !== activeSection) {
+          return false;
+        }
       }
-    }
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      return (
-        t.table_number.toLowerCase().includes(q) ||
-        t.section.toLowerCase().includes(q)
-      );
-    }
-    return true;
-  });
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        return (
+          t.table_number.toLowerCase().includes(q) ||
+          t.section.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    })
+    .sort(naturalTableCompare);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       {/* Top Header & Actions */}
       <View style={styles.header}>
         <View style={styles.headerTitleBox}>
@@ -510,10 +527,13 @@ export default function TablesScreen() {
                       </TouchableOpacity>
 
                       <TouchableOpacity
-                        style={styles.deleteBtn}
+                        style={[styles.deleteBtn, deletingTableId === table.id && { opacity: 0.5 }]}
                         onPress={() => handleDeleteTable(table)}
+                        disabled={deletingTableId !== null}
                       >
-                        <Text style={styles.deleteBtnText}>🗑️ Delete</Text>
+                        <Text style={styles.deleteBtnText}>
+                          {deletingTableId === table.id ? 'Deleting...' : '🗑️ Delete'}
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -532,8 +552,8 @@ export default function TablesScreen() {
           style={[
             styles.modalOverlay,
             {
-              paddingTop: Platform.OS === 'web' ? 16 : insets.top + 8,
-              paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 8,
+              paddingTop: 16,
+              paddingBottom: 16,
             },
           ]}
         >
@@ -660,8 +680,8 @@ export default function TablesScreen() {
           style={[
             styles.modalOverlay,
             {
-              paddingTop: Platform.OS === 'web' ? 16 : insets.top + 8,
-              paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 8,
+              paddingTop: 16,
+              paddingBottom: 16,
             },
           ]}
         >
@@ -793,7 +813,7 @@ export default function TablesScreen() {
           restaurantLogo={activeRestaurant?.logo_url || settings?.logo_url}
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 

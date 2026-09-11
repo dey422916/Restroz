@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   TextInput,
-  SafeAreaView,
   Modal,
   Alert,
   ActivityIndicator,
@@ -18,7 +17,6 @@ import {
   RefreshControl,
 } from 'react-native';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { orderService, resolveOrderSource, clearOrdersCache } from '../../src/services/api/orderService';
 import { productService } from '../../src/services/api/productService';
 import { tableService } from '../../src/services/api/tableService';
@@ -39,7 +37,6 @@ import { useNotification } from '../../src/context/NotificationContext';
 import { useNewOrderTracker } from '../../src/hooks/useNewOrderTracker';
 
 export default function OrdersScreen() {
-  const insets = useSafeAreaInsets();
   const router = useRouter();
   const { openOrderId } = useLocalSearchParams<{ openOrderId?: string }>();
   const { user, activeRestaurantId, activeRestaurant } = useAuth();
@@ -67,6 +64,7 @@ export default function OrdersScreen() {
   const [editOrderModal, setEditOrderModal] = useState<Order | null>(null);
   const [cancelOrderModal, setCancelOrderModal] = useState<Order | null>(null);
   const [payOrderModal, setPayOrderModal] = useState<Order | null>(null);
+  const [viewReasonModal, setViewReasonModal] = useState<Order | null>(null);
 
   // Edit Order Form state
   const [editItems, setEditItems] = useState<OrderItem[]>([]);
@@ -558,7 +556,7 @@ export default function OrdersScreen() {
       });
 
       if ((updated as any).latest_kot) {
-        printService.printKotThermal(updated, settings, (updated as any).latest_kot);
+        printService.printKotThermal(updated, settings, (updated as any).latest_kot).catch((e) => console.warn('KOT Print warning:', e));
       }
 
       clearOrdersCache(updated.restaurant_id || activeRestaurantId);
@@ -658,79 +656,6 @@ export default function OrdersScreen() {
     }
   };
 
-  const handleDeleteOrder = async (order: Order) => {
-    if (Platform.OS === 'web') {
-      const confirmed = typeof window !== 'undefined' ? window.confirm(`Are you sure you want to permanently delete Order #${order.order_number} from the database? This cannot be undone.`) : true;
-      if (!confirmed) return;
-      try {
-        setLoading(true);
-        setOrders((prev) => prev.filter((o) => o.id !== order.id));
-        await orderService.deleteOrder(order.id);
-        await loadData();
-      } catch (err: any) {
-        Alert.alert('Error', err.message || 'Failed to delete order');
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
-    Alert.alert(
-      'Delete Order Permanently',
-      `Are you sure you want to completely delete Order #${order.order_number} from the database? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            setLoading(true);
-            setOrders((prev) => prev.filter((o) => o.id !== order.id));
-            await orderService.deleteOrder(order.id);
-            await loadData();
-            setLoading(false);
-          },
-        },
-      ]
-    );
-  };
-
-  const handleClearAllCancelled = async () => {
-    if (Platform.OS === 'web') {
-      const confirmed = typeof window !== 'undefined' ? window.confirm('Are you sure you want to permanently remove all cancelled bookings and orders from the database?') : true;
-      if (!confirmed) return;
-      try {
-        setLoading(true);
-        setOrders((prev) => prev.filter((o) => o.status !== 'cancelled'));
-        const count = await orderService.deleteCancelledOrders();
-        await loadData();
-      } catch (err: any) {
-        Alert.alert('Error', err.message || 'Failed to clear cancelled orders');
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
-    Alert.alert(
-      'Clear All Cancelled Orders',
-      'Are you sure you want to permanently remove all cancelled bookings and orders from the database?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear All Cancelled',
-          style: 'destructive',
-          onPress: async () => {
-            setLoading(true);
-            setOrders((prev) => prev.filter((o) => o.status !== 'cancelled'));
-            const count = await orderService.deleteCancelledOrders();
-            await loadData();
-            setLoading(false);
-          },
-        },
-      ]
-    );
-  };
 
   const handlePrintOrGenerateKot = async (order: Order) => {
     try {
@@ -1029,7 +954,7 @@ export default function OrdersScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       {/* Top Header */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
@@ -1054,7 +979,10 @@ export default function OrdersScreen() {
         <View style={styles.categoryTabRow}>
           <TouchableOpacity
             style={[styles.categoryTabBtn, categoryTab === 'pos' && styles.categoryTabBtnActive]}
-            onPress={() => setCategoryTab('pos')}
+            onPress={() => {
+              setCategoryTab('pos');
+              setTabFilter('active');
+            }}
           >
             <Text style={[styles.categoryTabText, categoryTab === 'pos' && styles.categoryTabTextActive]}>
               🍽️ Dine In & Takeaway
@@ -1064,7 +992,10 @@ export default function OrdersScreen() {
           <TouchableOpacity
             testID="orders-tab-online"
             style={[styles.categoryTabBtn, categoryTab === 'online' && styles.categoryTabBtnActive]}
-            onPress={() => setCategoryTab('online')}
+            onPress={() => {
+              setCategoryTab('online');
+              setTabFilter('active');
+            }}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 5 }}>
               <Text style={[styles.categoryTabText, categoryTab === 'online' && styles.categoryTabTextActive]}>
@@ -1083,7 +1014,10 @@ export default function OrdersScreen() {
           <TouchableOpacity
             testID="orders-tab-qr"
             style={[styles.categoryTabBtn, categoryTab === 'qr' && styles.categoryTabBtnActive]}
-            onPress={() => setCategoryTab('qr')}
+            onPress={() => {
+              setCategoryTab('qr');
+              setTabFilter('active');
+            }}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 5 }}>
               <Text style={[styles.categoryTabText, categoryTab === 'qr' && styles.categoryTabTextActive]}>
@@ -1193,29 +1127,6 @@ export default function OrdersScreen() {
             />
           }
         >
-          {tabFilter === 'cancelled' && filteredOrders.length > 0 && (
-            <View style={{ marginBottom: 12, flexDirection: 'row', justifyContent: 'flex-end', width: '100%' }}>
-              <TouchableOpacity
-                style={{
-                  backgroundColor: '#fef2f2',
-                  borderColor: '#fca5a5',
-                  borderWidth: 1,
-                  borderRadius: 8,
-                  paddingHorizontal: 14,
-                  paddingVertical: 8,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-                onPress={handleClearAllCancelled}
-              >
-                <Text style={{ color: '#dc2626', fontWeight: '700', fontSize: 13 }}>
-                  🗑️ Clear All Cancelled Orders from Database
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
           {filteredOrders.map((order) => {
             const isActive = order.status !== 'completed' && order.status !== 'cancelled';
             const isCompleted = order.status === 'completed';
@@ -1351,11 +1262,11 @@ export default function OrdersScreen() {
                 </View>
 
                 {/* Dining table or QR scanned table or Takeaway or Delivery address */}
-                {isCustomerQr && tableDisplayName ? (
+                {Boolean(isCustomerQr && tableDisplayName) ? (
                   <Text style={styles.tableText}>
                     📱 Scanned Table QR: <Text style={{ fontWeight: '800', color: '#7c3aed' }}>{formatTableLabel(tableDisplayName)}</Text>
                   </Text>
-                ) : order.order_type === 'dine_in' && tableDisplayName ? (
+                ) : Boolean(order.order_type === 'dine_in' && tableDisplayName) ? (
                   <Text style={styles.tableText}>
                     🪑 Dining Table: <Text style={{ fontWeight: '800', color: '#0f172a' }}>{formatTableLabel(tableDisplayName)}</Text>
                   </Text>
@@ -1365,7 +1276,7 @@ export default function OrdersScreen() {
                   </Text>
                 ) : null}
 
-                {order.delivery_address && (
+                {Boolean(order.delivery_address) && (
                   <Text style={styles.addressText} numberOfLines={2}>
                     📍 Delivery Address: <Text style={{ fontWeight: '800', color: '#0f172a' }}>{order.delivery_address}</Text> {order.delivery_landmark ? `(Near: ${order.delivery_landmark})` : ''}
                   </Text>
@@ -1378,7 +1289,9 @@ export default function OrdersScreen() {
                       <View key={i.id} style={styles.itemRow}>
                         <Text style={styles.itemQty}>{i.quantity}x</Text>
                         <Text style={styles.itemName} numberOfLines={1}>{i.product_name}</Text>
-                        <Text style={styles.itemPrice}>{formatCurrency(i.total)}</Text>
+                        <Text style={styles.itemPrice}>
+                          {formatCurrency(Number(i.total) || Number((i as any).total_price) || Number(i.subtotal) || ((Number(i.unit_price) || 0) * (Number(i.quantity) || 1)))}
+                        </Text>
                       </View>
                     ))}
                   </View>
@@ -1614,29 +1527,12 @@ export default function OrdersScreen() {
                     )}
 
                     {isCancelled && (
-                      <View style={{ flexDirection: 'row', gap: 8, width: '100%' }}>
-                        <TouchableOpacity
-                          style={[styles.actionBtnViewFull, { flex: 1 }]}
-                          onPress={() => {
-                            Alert.alert(
-                              `Order #${order.order_number} Cancelled`,
-                              `Details:\n${cleanCustomerOrderNotes(order.notes) || 'No cancellation reason specified.'}`
-                            );
-                          }}
-                        >
-                          <Text style={styles.actionBtnTextDark}>👁️ Reason</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={[
-                            styles.actionBtnCancel,
-                            { flex: 1, backgroundColor: '#fef2f2', borderColor: '#fca5a5' },
-                          ]}
-                          onPress={() => handleDeleteOrder(order)}
-                        >
-                          <Text style={[styles.actionBtnTextRed, { fontWeight: '800' }]}>🗑️ Delete</Text>
-                        </TouchableOpacity>
-                      </View>
+                      <TouchableOpacity
+                        style={[styles.actionBtnViewFull, { width: '100%' }]}
+                        onPress={() => setViewReasonModal(order)}
+                      >
+                        <Text style={styles.actionBtnTextDark}>👁️ Reason</Text>
+                      </TouchableOpacity>
                     )}
                   </View>
                 </View>
@@ -1699,8 +1595,8 @@ export default function OrdersScreen() {
           style={[
             styles.modalOverlay,
             {
-              paddingTop: Platform.OS === 'web' ? 16 : insets.top + 8,
-              paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 12,
+              paddingTop: 16,
+              paddingBottom: 16,
             },
           ]}
         >
@@ -1709,7 +1605,7 @@ export default function OrdersScreen() {
             style={{
               width: '100%',
               maxWidth: 580,
-              maxHeight: Platform.OS === 'web' ? windowHeight * 0.9 : Math.min(windowHeight * 0.86, windowHeight - insets.top - insets.bottom - 24),
+              maxHeight: windowHeight * 0.9,
               flexShrink: 1,
             }}
           >
@@ -1766,7 +1662,9 @@ export default function OrdersScreen() {
                       </TouchableOpacity>
                     </View>
 
-                    <Text style={styles.editItemTotal}>{formatCurrency(itm.total)}</Text>
+                    <Text style={styles.editItemTotal}>
+                      {formatCurrency(Number(itm.total) || Number((itm as any).total_price) || Number(itm.subtotal) || ((Number(itm.unit_price) || 0) * (Number(itm.quantity) || 1)))}
+                    </Text>
                   </View>
                 ))}
 
@@ -2113,6 +2011,53 @@ export default function OrdersScreen() {
       </Modal>
 
       {/* ============================================================ */}
+      {/* 2.5. VIEW CANCELLATION REASON MODAL                         */}
+      {/* ============================================================ */}
+      <Modal visible={Boolean(viewReasonModal)} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxWidth: 500, width: '100%', padding: 20 }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>
+                  Order #{viewReasonModal?.order_number} Cancelled
+                </Text>
+                <Text style={styles.modalSubTitle}>
+                  {viewReasonModal?.order_type ? viewReasonModal.order_type.toUpperCase() : ''}
+                  {viewReasonModal?.table_number ? ` • Table ${viewReasonModal.table_number}` : ''}
+                  {viewReasonModal?.customer_name ? ` • ${viewReasonModal.customer_name}` : ''}
+                  {viewReasonModal?.created_at ? ` • 🕒 ${formatOrderDateTime(viewReasonModal.created_at)}` : ''}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setViewReasonModal(null)}
+                style={styles.modalCloseBtn}
+              >
+                <Text style={styles.modalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fca5a5', borderRadius: 10, padding: 14, marginVertical: 14 }}>
+              <Text style={{ fontSize: 12, fontWeight: '800', color: '#991b1b', marginBottom: 6 }}>
+                📋 CANCELLATION REASON / AUDIT DETAILS:
+              </Text>
+              <Text style={{ fontSize: 14, color: '#7f1d1d', lineHeight: 22, fontWeight: '600' }}>
+                {cleanCustomerOrderNotes(viewReasonModal?.notes) || viewReasonModal?.notes || 'No cancellation reason specified.'}
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8 }}>
+              <TouchableOpacity
+                style={[styles.modalCloseSmallBtn, { paddingHorizontal: 24, paddingVertical: 10 }]}
+                onPress={() => setViewReasonModal(null)}
+              >
+                <Text style={[styles.modalCloseSmallText, { fontSize: 14, fontWeight: '700' }]}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ============================================================ */}
       {/* 3. CLOSE ORDER & PAYMENT SETTLEMENT MODAL                    */}
       {/* ============================================================ */}
       <Modal visible={Boolean(payOrderModal)} transparent animationType="slide">
@@ -2120,8 +2065,8 @@ export default function OrdersScreen() {
           style={[
             styles.modalOverlay,
             {
-              paddingTop: Platform.OS === 'web' ? 16 : insets.top + 8,
-              paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 12,
+              paddingTop: 16,
+              paddingBottom: 16,
             },
           ]}
         >
@@ -2130,7 +2075,7 @@ export default function OrdersScreen() {
             style={{
               width: '100%',
               maxWidth: 580,
-              maxHeight: Platform.OS === 'web' ? windowHeight * 0.9 : Math.min(windowHeight * 0.86, windowHeight - insets.top - insets.bottom - 24),
+              maxHeight: windowHeight * 0.9,
               flexShrink: 1,
             }}
           >
@@ -2359,7 +2304,7 @@ export default function OrdersScreen() {
                       maxLength={15}
                       autoCapitalize="characters"
                     />
-                    {!payGstinValidation.isValid && payGstinValidation.error && (
+                    {!payGstinValidation.isValid && Boolean(payGstinValidation.error) && (
                       <Text style={{ color: '#ef4444', fontSize: 10, marginTop: 3, fontWeight: '700' }}>
                         ⚠️ {payGstinValidation.error}
                       </Text>
@@ -2405,8 +2350,8 @@ export default function OrdersScreen() {
               style={[
                 styles.modalOverlay,
                 {
-                  paddingTop: Platform.OS === 'web' ? 16 : insets.top + 8,
-                  paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 12,
+                  paddingTop: 16,
+                  paddingBottom: 16,
                 },
               ]}
             >
@@ -2414,7 +2359,7 @@ export default function OrdersScreen() {
                 style={[
                   styles.modalContent,
                   {
-                    maxHeight: Platform.OS === 'web' ? windowHeight * 0.9 : Math.min(windowHeight * 0.86, windowHeight - insets.top - insets.bottom - 24),
+                    maxHeight: windowHeight * 0.9,
                     maxWidth: 580,
                     display: 'flex',
                   },
@@ -2498,7 +2443,9 @@ export default function OrdersScreen() {
                           {itm.quantity}x {itm.product_name}
                           {isTaxInvoice ? ` (${itm.hsn_code || '996331'})` : ''}
                         </Text>
-                        <Text style={{ fontWeight: 'bold' }}>{formatCurrency(itm.total)}</Text>
+                        <Text style={{ fontWeight: 'bold' }}>
+                          {formatCurrency(Number(itm.total) || Number((itm as any).total_price) || Number(itm.subtotal) || ((Number(itm.unit_price) || 0) * (Number(itm.quantity) || 1)))}
+                        </Text>
                       </View>
                     ))}
 
@@ -2605,7 +2552,7 @@ export default function OrdersScreen() {
           </Modal>
         );
       })()}
-    </SafeAreaView>
+    </View>
   );
 }
 

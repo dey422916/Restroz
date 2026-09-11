@@ -133,14 +133,20 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setPendingCustomerOrders(pending);
   }, [activeRestaurantId, user]);
 
+  const refreshOrdersRef = React.useRef(refreshOrders);
+  refreshOrdersRef.current = refreshOrders;
+  const showToastRef = React.useRef(showToast);
+  showToastRef.current = showToast;
+  const playOrderBellRef = React.useRef(playOrderBell);
+  playOrderBellRef.current = playOrderBell;
+
   useEffect(() => {
-    if (activeRestaurantId && user) {
-      refreshOrders();
-    }
+    if (!activeRestaurantId || !user) return;
+    refreshOrdersRef.current();
 
     // Setup Supabase Realtime Listener for Instant Order Notifications strictly scoped to activeRestaurantId for authenticated users
-    if (isSupabaseConfigured && activeRestaurantId && user) {
-      const channelName = `realtime_orders_${activeRestaurantId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    if (isSupabaseConfigured) {
+      const channelName = `realtime_orders_${activeRestaurantId}_pos`;
       const ordersChannel = supabase
         .channel(channelName)
         .on(
@@ -155,9 +161,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const rowRestId = (payload.new as any)?.restaurant_id || (payload.old as any)?.restaurant_id;
             if (rowRestId && rowRestId !== activeRestaurantId) return;
             console.log('Realtime Order Event Received for Tenant:', activeRestaurantId, payload);
-            showToast('info', 'Order Update', 'Live order status updated from cloud');
-            playOrderBell();
-            refreshOrders();
+            showToastRef.current('info', 'Order Update', 'Live order status updated from cloud');
+            playOrderBellRef.current();
+            refreshOrdersRef.current();
           }
         )
         .subscribe();
@@ -165,14 +171,14 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return () => {
         supabase.removeChannel(ordersChannel);
       };
-    } else if (!isSupabaseConfigured && activeRestaurantId && user) {
+    } else {
       // Fallback polling for offline/local mode
       const interval = setInterval(() => {
-        refreshOrders();
+        refreshOrdersRef.current();
       }, 5000);
       return () => clearInterval(interval);
     }
-  }, [activeRestaurantId, user, refreshOrders, showToast, playOrderBell]);
+  }, [activeRestaurantId, user?.id]);
 
   const setOrderType = (type: OrderType) => {
     setOrderTypeState(type);
@@ -478,12 +484,12 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ? newOrder.kots[0]
       : await kotService.generateKot(newOrder, orderNotes);
 
-    if (settings.auto_print_kot) {
-      const alreadyPrinted = await printedKotTracker.hasKotBeenAutoPrinted(initialKot);
-      if (!alreadyPrinted) {
-        await printService.printKotThermal(newOrder, settings, initialKot, false);
-        await printedKotTracker.markKotAsAutoPrinted(initialKot.id, initialKot.kitchen_notes);
-      }
+    // Automatically print and open KOT slip upon order placement
+    try {
+      await printService.printKotThermal(newOrder, settings, initialKot, false);
+      await printedKotTracker.markKotAsAutoPrinted(initialKot.id, initialKot.kitchen_notes);
+    } catch (printErr) {
+      console.warn('[PosContext] Auto-print initial KOT handled safely:', printErr);
     }
 
     showToast('success', 'Order & KOT Dispatched!', `Order #${newOrder.order_number} sent to Kitchen (KOT #${initialKot.kot_number}).`);
@@ -559,12 +565,11 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if ((updated as any).latest_kot) {
       const deltaKot = (updated as any).latest_kot;
-      if (settings.auto_print_kot) {
-        const alreadyPrinted = await printedKotTracker.hasKotBeenAutoPrinted(deltaKot);
-        if (!alreadyPrinted) {
-          await printService.printKotThermal(updated, settings, deltaKot, false);
-          await printedKotTracker.markKotAsAutoPrinted(deltaKot.id, deltaKot.kitchen_notes);
-        }
+      try {
+        await printService.printKotThermal(updated, settings, deltaKot, false);
+        await printedKotTracker.markKotAsAutoPrinted(deltaKot.id, deltaKot.kitchen_notes);
+      } catch (printErr) {
+        console.warn('[PosContext] Auto-print delta KOT handled safely:', printErr);
       }
       showToast('success', 'New Item KOT Saved', `Sent KOT #${deltaKot.kot_number} for new items.`);
     } else {

@@ -3,8 +3,7 @@ import { mockStorage } from '../mockStorage';
 import { settingsService } from './settingsService';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import { auditService } from './auditService';
-import { restaurantService } from './restaurantService';
-import { clearOrdersCache } from './orderService';
+import { clearOrdersCache } from './ordersCache';
 
 // High-performance in-memory cache for KOTs per tenant (10s TTL)
 const inMemoryKotsCache: Record<string, { timestamp: number; data: KOT[] }> = {};

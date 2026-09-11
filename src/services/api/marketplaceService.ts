@@ -18,35 +18,25 @@ import { calculateOrderTotals } from '../../utils/gst';
 import { parseBannerUrls } from '../../utils/mediaUtils';
 import { isValidPhoneNumber, validatePhoneNumberOrThrow } from '../../utils/phone';
 
-// Haversine Distance in Kilometers
-export function calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371; // Earth radius in km
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLon = (lon2 - lon1) * (Math.PI / 180);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return Math.round(R * c * 10) / 10;
-}
+import {
+  calculateDistance,
+  cachedMarketplaceRestaurants,
+  setCachedMarketplaceRestaurants,
+  RESTAURANT_CACHE_TTL,
+  cachedRestaurantMenus,
+  MENU_CACHE_TTL,
+  clearMarketplaceRestaurantCache,
+  clearRestaurantMenuCache,
+} from './sharedRestaurantUtils';
 
-// In-memory cache for ultra-fast instant marketplace restaurants & distance sorting
-let cachedMarketplaceRestaurants: {
-  timestamp: number;
-  data: any[];
-} | null = null;
-const RESTAURANT_CACHE_TTL = 30 * 1000; // 30 seconds
-
-// In-memory cache for restaurant menus
-const cachedRestaurantMenus: Record<string, { timestamp: number; data: { categories: Category[]; products: Product[] } }> = {};
-const MENU_CACHE_TTL = 30 * 1000; // 30 seconds
+export const calculateDistanceKm = calculateDistance;
 
 export const marketplaceService = {
   // Clear cached restaurants (e.g. on manual refresh)
   clearRestaurantCache() {
-    cachedMarketplaceRestaurants = null;
+    clearMarketplaceRestaurantCache();
   },
+  clearRestaurantMenuCache,
 
   // 1. Get All Active Marketplace Restaurants (Ultra-fast cached + instant coordinate sorting)
   async getMarketplaceRestaurants(options?: {
@@ -83,18 +73,35 @@ export const marketplaceService = {
         .order('name');
 
       if (restErr) {
-        console.warn('Error fetching marketplace restaurants:', restErr);
-        if (cachedMarketplaceRestaurants) {
+        console.warn('Error fetching marketplace restaurants with join, trying direct query:', restErr.message || restErr);
+        // Resilient fallback: direct query
+        const { data: flatRests, error: flatErr } = await supabase
+          .from('restaurants')
+          .select('id, name, slug, logo_url, banner_url, address, city, phone, status, latitude, longitude, created_at')
+          .eq('status', 'ACTIVE')
+          .order('name');
+
+        if (flatRests && flatRests.length > 0) {
+          const restIds = flatRests.map((r) => r.id);
+          const { data: profiles } = await supabase
+            .from('restaurant_public_profiles')
+            .select('*')
+            .in('restaurant_id', restIds);
+
+          const profileMap = new Map((profiles || []).map((p) => [p.restaurant_id, p]));
+          rawRests = flatRests.map((r) => ({
+            ...r,
+            public_profile: profileMap.get(r.id) || null,
+          }));
+        } else if (cachedMarketplaceRestaurants) {
           rawRests = cachedMarketplaceRestaurants.data;
         } else {
+          console.warn('Fallback direct query failed or returned empty:', flatErr);
           return [];
         }
       } else {
         rawRests = rests || [];
-        cachedMarketplaceRestaurants = {
-          timestamp: now,
-          data: rawRests,
-        };
+        setCachedMarketplaceRestaurants(rawRests, now);
       }
     }
 
@@ -659,6 +666,30 @@ export const marketplaceService = {
         throw new Error('Could not retrieve product information for order items.');
       }
 
+      // Fetch restaurant tax settings
+      const [restSettings, pubInfo] = await Promise.all([
+        settingsService.getSettings(payload.restaurant_id).catch(() => null),
+        settingsService.getPublicRestaurantInfo(payload.restaurant_id).catch(() => null),
+      ]);
+
+      const isGstEnabled = restSettings
+        ? (restSettings.is_gst_enabled !== undefined && restSettings.is_gst_enabled !== null
+            ? Boolean(restSettings.is_gst_enabled)
+            : (restSettings.gst_registered !== undefined
+                ? Boolean(restSettings.gst_registered)
+                : Boolean(restSettings.gstin?.trim()) && Number(restSettings.default_tax_rate ?? restSettings.tax_rate ?? 0) > 0))
+        : (pubInfo
+            ? (pubInfo.is_gst_enabled !== undefined && pubInfo.is_gst_enabled !== null
+                ? Boolean(pubInfo.is_gst_enabled)
+                : ((pubInfo as any).gst_registered !== undefined
+                    ? Boolean((pubInfo as any).gst_registered)
+                    : Boolean(pubInfo.gstin?.trim()) && Number(pubInfo.default_tax_rate ?? pubInfo.tax_rate ?? 0) > 0))
+            : false);
+
+      const resolvedTaxRate = isGstEnabled
+        ? Number(restSettings?.default_tax_rate !== undefined ? restSettings.default_tax_rate : (restSettings?.tax_rate !== undefined ? restSettings.tax_rate : (pubInfo?.default_tax_rate !== undefined ? pubInfo.default_tax_rate : (pubInfo?.tax_rate !== undefined ? pubInfo.tax_rate : 5.0))))
+        : 0;
+
       let subtotal = 0;
       const orderItemsToInsert: any[] = [];
       const orderId = 'ord-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
@@ -680,8 +711,8 @@ export const marketplaceService = {
 
         const unitPrice = prod.discounted_price || prod.price;
         const lineSub = Math.round((unitPrice * item.quantity) * 100) / 100;
-        const taxRate = Number(prod.tax_rate) || 5.0;
-        const taxAmount = Math.round(((lineSub * taxRate) / 100.0) * 100) / 100;
+        const itemTaxRate = isGstEnabled ? (Number(prod.tax_rate) || resolvedTaxRate || 5.0) : 0;
+        const taxAmount = isGstEnabled ? Math.round(((lineSub * itemTaxRate) / 100.0) * 100) / 100 : 0;
         const lineTotal = lineSub;
         subtotal += lineSub;
 
@@ -701,7 +732,7 @@ export const marketplaceService = {
           product_name: prod.name,
           unit_price: unitPrice,
           quantity: item.quantity,
-          tax_rate: taxRate,
+          tax_rate: itemTaxRate,
           tax_amount: taxAmount,
           item_notes: item.notes || null,
           subtotal: lineSub,
@@ -763,18 +794,12 @@ export const marketplaceService = {
         }
       }
 
-      const restSettings = await settingsService.getSettings(payload.restaurant_id).catch(() => null);
-      const isGstEnabled = restSettings
-        ? (restSettings.is_gst_enabled ?? (restSettings.gst_registered ?? Boolean(restSettings.gstin?.trim())))
-        : true;
-      const taxRate = restSettings?.default_tax_rate !== undefined ? restSettings.default_tax_rate : 5.0;
-
       const calc = calculateOrderTotals({
         items: orderItemsToInsert,
         couponDiscount: serverCouponDiscount,
         deliveryCharge: 0,
         isGstEnabled,
-        taxRate,
+        taxRate: resolvedTaxRate,
       });
 
       const cgst = calc.cgstAmount;
@@ -1168,10 +1193,10 @@ export const marketplaceService = {
       .select('id')
       .eq('order_id', orderId);
 
-    const hasKot = (kots && kots.length > 0) || order.status === 'kot_generated';
+    const hasKot = (kots && kots.length > 0) || ['kot_generated', 'preparing', 'ready', 'out_for_delivery', 'served', 'completed', 'delivered'].includes(order.status);
 
     if (hasKot) {
-      throw new Error('This order cannot be cancelled because the kitchen has already generated/printed the KOT.');
+      throw new Error('Order cannot be cancelled after KOT generation.');
     }
 
     // 3. Execute cancellation

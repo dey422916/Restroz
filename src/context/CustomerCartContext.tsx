@@ -1,5 +1,16 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { CustomerCart, CustomerCartItem, Product, Coupon } from '../types';
+import { settingsService } from '../services/api/settingsService';
+
+interface RestaurantTaxInfo {
+  is_gst_enabled?: boolean;
+  gst_registered?: boolean;
+  gstin?: string;
+  tax_rate?: number;
+  cgst_rate?: number;
+  sgst_rate?: number;
+  default_tax_rate?: number;
+}
 
 interface CartConflictModalState {
   isOpen: boolean;
@@ -41,6 +52,8 @@ const initialCart: CustomerCart = {
   deliveryFee: 0,
   couponCode: undefined,
   payableAmount: 0,
+  isGstEnabled: false,
+  taxRate: 0,
 };
 
 const CustomerCartContext = createContext<CustomerCartContextType | undefined>(undefined);
@@ -53,6 +66,38 @@ export const CustomerCartProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const [couponCode, setCouponCode] = useState<string | undefined>(undefined);
   const [couponDiscount, setCouponDiscount] = useState<number>(0);
   const [appliedCouponObj, setAppliedCouponObj] = useState<Coupon | null>(null);
+  const [taxInfo, setTaxInfo] = useState<RestaurantTaxInfo | null>(null);
+
+  useEffect(() => {
+    if (!restaurantId) {
+      setTaxInfo(null);
+      return;
+    }
+
+    let isMounted = true;
+    // Fetch public tax info for the restaurant
+    settingsService.getPublicRestaurantInfo(restaurantId)
+      .then((info) => {
+        if (isMounted && info) {
+          setTaxInfo({
+            is_gst_enabled: info.is_gst_enabled,
+            gst_registered: (info as any).gst_registered,
+            gstin: info.gstin,
+            tax_rate: info.tax_rate,
+            cgst_rate: info.cgst_rate,
+            sgst_rate: info.sgst_rate,
+            default_tax_rate: info.default_tax_rate,
+          });
+        }
+      })
+      .catch((err) => {
+        console.warn('Could not load restaurant tax info for cart:', err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [restaurantId]);
 
   const [conflictModal, setConflictModal] = useState<CartConflictModalState>({
     isOpen: false,
@@ -63,7 +108,19 @@ export const CustomerCartProvider: React.FC<{ children: React.ReactNode }> = ({ 
     pendingQuantity: 1,
   });
 
-  const { subtotal, discount, taxableAmount, cgst, sgst, taxTotal, deliveryFee, payableAmount, itemCount } = useMemo(() => {
+  const {
+    subtotal,
+    discount,
+    taxableAmount,
+    cgst,
+    sgst,
+    taxTotal,
+    deliveryFee,
+    payableAmount,
+    itemCount,
+    isGstEnabled,
+    taxRate,
+  } = useMemo(() => {
     let sub = 0;
     let count = 0;
 
@@ -90,9 +147,32 @@ export const CustomerCartProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
     const disc = Math.round(Math.min(calculatedDiscount, roundedSubtotal) * 100) / 100;
     const taxable = Math.max(0, Math.round((roundedSubtotal - disc) * 100) / 100);
-    const cgstAmt = Math.round((taxable * 0.025) * 100) / 100; // 2.5% CGST
-    const sgstAmt = Math.round((taxable * 0.025) * 100) / 100; // 2.5% SGST
-    const totalTax = Math.round((cgstAmt + sgstAmt) * 100) / 100; // 5.0% GST
+
+    // Check if GST is enabled for the restaurant
+    const gstEnabled = taxInfo
+      ? (taxInfo.is_gst_enabled !== undefined && taxInfo.is_gst_enabled !== null
+          ? Boolean(taxInfo.is_gst_enabled)
+          : (taxInfo.gst_registered !== undefined
+              ? Boolean(taxInfo.gst_registered)
+              : Boolean(taxInfo.gstin?.trim()) && Number(taxInfo.default_tax_rate ?? taxInfo.tax_rate ?? 0) > 0))
+      : false;
+
+    const rate = gstEnabled
+      ? Number(taxInfo?.default_tax_rate !== undefined ? taxInfo.default_tax_rate : (taxInfo?.tax_rate !== undefined ? taxInfo.tax_rate : 5.0))
+      : 0;
+
+    let cgstAmt = 0;
+    let sgstAmt = 0;
+    let totalTax = 0;
+
+    if (gstEnabled && rate > 0 && taxable > 0) {
+      const cgstRate = taxInfo?.cgst_rate !== undefined ? Number(taxInfo.cgst_rate) : (rate / 2);
+      const sgstRate = taxInfo?.sgst_rate !== undefined ? Number(taxInfo.sgst_rate) : (rate / 2);
+      cgstAmt = Math.round((taxable * (cgstRate / 100)) * 100) / 100;
+      sgstAmt = Math.round((taxable * (sgstRate / 100)) * 100) / 100;
+      totalTax = Math.round((cgstAmt + sgstAmt) * 100) / 100;
+    }
+
     const fee = 0; // Flat or waived delivery fee (FREE)
     const gross = Math.round((taxable + totalTax + fee) * 100) / 100;
     const payable = Math.max(0, gross);
@@ -107,8 +187,10 @@ export const CustomerCartProvider: React.FC<{ children: React.ReactNode }> = ({ 
       deliveryFee: fee,
       payableAmount: payable,
       itemCount: count,
+      isGstEnabled: gstEnabled,
+      taxRate: rate,
     };
-  }, [items, couponDiscount, appliedCouponObj]);
+  }, [items, couponDiscount, appliedCouponObj, taxInfo]);
 
   const cart: CustomerCart = {
     restaurantId,
@@ -124,6 +206,8 @@ export const CustomerCartProvider: React.FC<{ children: React.ReactNode }> = ({ 
     deliveryFee,
     couponCode,
     payableAmount,
+    isGstEnabled,
+    taxRate,
   };
 
   const executeAdd = (

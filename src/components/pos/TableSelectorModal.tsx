@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DiningTable, TableSection } from '../../types';
 import { tableService } from '../../services/api/tableService';
 import { useAuth } from '../../context/AuthContext';
+import { naturalTableCompare } from '../../utils/sortUtils';
 
 interface TableSelectorModalProps {
   isOpen: boolean;
@@ -63,7 +64,7 @@ export const TableSelectorModal: React.FC<TableSelectorModalProps> = ({
     'VIP Section',
   ];
 
-  const filtered =
+  const filtered = (
     activeSection === 'All'
       ? tables
       : tables.filter((t) => {
@@ -71,7 +72,8 @@ export const TableSelectorModal: React.FC<TableSelectorModalProps> = ({
             return t.section === 'VIP' || t.section === 'VIP Section';
           }
           return t.section === activeSection;
-        });
+        })
+  ).sort(naturalTableCompare);
   const windowHeight = Dimensions.get('window').height;
 
   return (

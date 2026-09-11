@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS public.restaurant_member_permissions (
 -- 5. RESTAURANT SETTINGS (restaurant_settings)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.restaurant_settings (
-    id TEXT PRIMARY KEY DEFAULT 'rest-' || uuid_generate_v4(),
+    id TEXT PRIMARY KEY DEFAULT 'rest-' || gen_random_uuid(),
     restaurant_id UUID NOT NULL UNIQUE REFERENCES public.restaurants(id) ON DELETE CASCADE,
     name TEXT NOT NULL DEFAULT 'RestroZ Restaurant',
     legal_name TEXT DEFAULT 'RestroZ Foods Pvt Ltd',
@@ -173,7 +173,7 @@ CREATE TABLE IF NOT EXISTS public.restaurant_public_profiles (
 -- 7. MENU CATEGORIES (categories)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.categories (
-    id TEXT PRIMARY KEY DEFAULT 'cat-' || uuid_generate_v4(),
+    id TEXT PRIMARY KEY DEFAULT 'cat-' || gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES public.restaurants(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     slug TEXT NOT NULL,
@@ -191,7 +191,7 @@ CREATE TABLE IF NOT EXISTS public.categories (
 -- 8. MENU PRODUCTS (products)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.products (
-    id TEXT PRIMARY KEY DEFAULT 'prod-' || uuid_generate_v4(),
+    id TEXT PRIMARY KEY DEFAULT 'prod-' || gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES public.restaurants(id) ON DELETE CASCADE,
     category_id TEXT NOT NULL REFERENCES public.categories(id) ON DELETE CASCADE,
     category_name TEXT,
@@ -223,7 +223,7 @@ CREATE TABLE IF NOT EXISTS public.products (
 -- 9. DINING TABLES (tables)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.tables (
-    id TEXT PRIMARY KEY DEFAULT 'tbl-' || uuid_generate_v4(),
+    id TEXT PRIMARY KEY DEFAULT 'tbl-' || gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES public.restaurants(id) ON DELETE CASCADE,
     table_number TEXT NOT NULL,
     capacity INTEGER NOT NULL DEFAULT 4,
@@ -244,7 +244,7 @@ CREATE TABLE IF NOT EXISTS public.tables (
 -- 10. DAY REGISTERS (day_registers)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.day_registers (
-    id TEXT PRIMARY KEY DEFAULT 'reg-' || uuid_generate_v4(),
+    id TEXT PRIMARY KEY DEFAULT 'reg-' || gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES public.restaurants(id) ON DELETE CASCADE,
     opened_by TEXT NOT NULL,
     closed_by TEXT,
@@ -276,7 +276,7 @@ CREATE TABLE IF NOT EXISTS public.day_registers (
 -- out_for_delivery, delivered, completed, cancelled
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.orders (
-    id TEXT PRIMARY KEY DEFAULT 'ord-' || uuid_generate_v4(),
+    id TEXT PRIMARY KEY DEFAULT 'ord-' || gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES public.restaurants(id) ON DELETE CASCADE,
     order_number TEXT NOT NULL,
     order_type TEXT CHECK (order_type IN ('dine_in', 'takeaway', 'delivery')) DEFAULT 'dine_in',
@@ -314,7 +314,7 @@ CREATE TABLE IF NOT EXISTS public.orders (
 -- 12. ORDER ITEMS TABLE (order_items)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.order_items (
-    id TEXT PRIMARY KEY DEFAULT 'item-' || uuid_generate_v4(),
+    id TEXT PRIMARY KEY DEFAULT 'item-' || gen_random_uuid(),
     order_id TEXT NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
     product_id TEXT REFERENCES public.products(id) ON DELETE SET NULL,
     product_name TEXT NOT NULL,
@@ -403,7 +403,7 @@ CREATE TABLE IF NOT EXISTS public.favorite_restaurants (
 -- 17. PAYMENTS TABLE (payments)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.payments (
-    id TEXT PRIMARY KEY DEFAULT 'pay-' || uuid_generate_v4(),
+    id TEXT PRIMARY KEY DEFAULT 'pay-' || gen_random_uuid(),
     order_id TEXT NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
     payment_method TEXT CHECK (payment_method IN ('cash', 'card', 'upi', 'other', 'wallet', 'cod', 'online')) DEFAULT 'cash',
     amount NUMERIC(10, 2) NOT NULL,
@@ -419,7 +419,7 @@ CREATE TABLE IF NOT EXISTS public.payments (
 -- 18. KITCHEN ORDER TICKETS (kots)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.kots (
-    id TEXT PRIMARY KEY DEFAULT 'kot-' || uuid_generate_v4(),
+    id TEXT PRIMARY KEY DEFAULT 'kot-' || gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES public.restaurants(id) ON DELETE CASCADE,
     kot_number TEXT NOT NULL,
     order_id TEXT NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
@@ -437,7 +437,7 @@ CREATE TABLE IF NOT EXISTS public.kots (
 -- 19. KOT ITEMS (kot_items)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.kot_items (
-    id TEXT PRIMARY KEY DEFAULT 'kitem-' || uuid_generate_v4(),
+    id TEXT PRIMARY KEY DEFAULT 'kitem-' || gen_random_uuid(),
     kot_id TEXT NOT NULL REFERENCES public.kots(id) ON DELETE CASCADE,
     product_id TEXT REFERENCES public.products(id),
     product_name TEXT NOT NULL,
@@ -451,7 +451,7 @@ CREATE TABLE IF NOT EXISTS public.kot_items (
 -- 20. PROMOTIONAL COUPONS (coupons)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.coupons (
-    id TEXT PRIMARY KEY DEFAULT 'cpn-' || uuid_generate_v4(),
+    id TEXT PRIMARY KEY DEFAULT 'cpn-' || gen_random_uuid(),
     restaurant_id UUID NOT NULL REFERENCES public.restaurants(id) ON DELETE CASCADE,
     code TEXT NOT NULL,
     description TEXT,
@@ -997,7 +997,7 @@ BEGIN
         RAISE EXCEPTION 'Invalid table or restaurant mismatch';
     END IF;
 
-    v_order_id := 'ord-' || uuid_generate_v4();
+    v_order_id := 'ord-' || gen_random_uuid();
     v_order_number := public.get_next_order_number(p_restaurant_id);
 
     FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
@@ -1068,13 +1068,14 @@ BEGIN
         v_item_subtotal := v_product.price * (v_item->>'quantity')::INTEGER;
         v_item_cgst := ROUND(v_item_subtotal * 0.025, 2);
         v_item_sgst := ROUND(v_item_subtotal * 0.025, 2);
+        v_item_tax := v_item_cgst + v_item_sgst;
 
         INSERT INTO public.order_items (
             order_id, product_id, product_name, unit_price, quantity,
-            tax_rate, tax_amount, cgst_amount, sgst_amount, total_price, notes
+            tax_rate, tax_amount, cgst_amount, sgst_amount, subtotal, total, total_price, notes
         ) VALUES (
             v_order_id, v_product.id, v_product.name, v_product.price, (v_item->>'quantity')::INTEGER,
-            5.0, (v_item_cgst + v_item_sgst), v_item_cgst, v_item_sgst, v_item_subtotal, v_item->>'notes'
+            5.0, v_item_tax, v_item_cgst, v_item_sgst, v_item_subtotal, (v_item_subtotal + v_item_tax), v_item_subtotal, v_item->>'notes'
         );
     END LOOP;
 

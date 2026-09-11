@@ -17,17 +17,19 @@ export const couponService = {
         }
 
         const { data, error } = await query;
-        if (!error && data) {
-          const list = (data as Coupon[]).map(c => ({
+        if (!error && data && data.length > 0) {
+          const list = (data as any[]).map(c => ({
             ...c,
             restaurant_id: c.restaurant_id || restaurantId || '',
             discount_type: c.discount_type || 'percentage',
             discount_value: Number(c.discount_value) || 0,
-            min_order_value: Number(c.min_order_value) || 0,
-            max_discount: c.max_discount ? Number(c.max_discount) : undefined,
-            usage_limit: c.usage_limit ? Number(c.usage_limit) : undefined,
+            min_order_value: Number(c.min_order_value ?? c.min_order_amount) || 0,
+            max_discount: c.max_discount != null ? Number(c.max_discount) : undefined,
+            usage_limit: c.usage_limit != null ? Number(c.usage_limit) : undefined,
             used_count: Number(c.used_count) || 0,
             is_active: c.is_active ?? true,
+            start_date: c.start_date || undefined,
+            expiry_date: c.expiry_date || c.end_date || undefined,
           }));
           mockStorage.saveCoupons(list);
           return list;
@@ -36,9 +38,10 @@ export const couponService = {
         console.warn('Supabase getCoupons failed, using local cache:', e);
       }
     }
-    const local = mockStorage.getCoupons();
+    const local = mockStorage.getCoupons() || [];
     if (restaurantId) {
-      return local.filter((c) => c.restaurant_id === restaurantId);
+      const filtered = local.filter((c) => !c.restaurant_id || c.restaurant_id === restaurantId);
+      if (filtered.length > 0) return filtered;
     }
     return local;
   },
@@ -48,14 +51,21 @@ export const couponService = {
     const now = new Date();
 
     return coupons.filter((c) => {
-      // Must belong to this restaurant
-      if (c.restaurant_id && c.restaurant_id !== restaurantId) return false;
+      // Must belong to this restaurant (or be platform-wide)
+      if (c.restaurant_id && restaurantId && c.restaurant_id !== restaurantId) return false;
       // Must be active
       if (!c.is_active) return false;
-      // Must have started
-      if (c.start_date && new Date(c.start_date) > now) return false;
-      // Must not be expired
-      if (c.expiry_date && new Date(c.expiry_date) < now) return false;
+      // Must have started (if start_date is set)
+      if (c.start_date) {
+        const startDate = new Date(c.start_date);
+        if (!isNaN(startDate.getTime()) && startDate > now) return false;
+      }
+      // Must not be expired (if expiry_date or end_date is set)
+      const expiry = c.expiry_date || (c as any).end_date;
+      if (expiry) {
+        const expiryDate = new Date(expiry);
+        if (!isNaN(expiryDate.getTime()) && expiryDate < now) return false;
+      }
       // Must not have reached total allotment limit
       if (c.usage_limit !== undefined && c.usage_limit !== null && (c.used_count || 0) >= c.usage_limit) {
         return false;
@@ -73,17 +83,57 @@ export const couponService = {
       return { isValid: false, message: 'Please enter a coupon code.', discountAmount: 0 };
     }
 
+    const cleanCode = code.trim().toUpperCase();
     const targetRestId = restaurantId || (await restaurantService.getDefaultRestaurant())?.id || '';
-    const coupons = await this.getCoupons(targetRestId);
-    const found = coupons.find(
-      (c) => c.code.toUpperCase() === code.trim().toUpperCase() && c.restaurant_id === targetRestId
+    let coupons = await this.getCoupons(targetRestId);
+
+    let found = coupons.find(
+      (c) => c.code.toUpperCase() === cleanCode && (!c.restaurant_id || !targetRestId || c.restaurant_id === targetRestId)
     );
+
+    // Fallback: check across all cached coupons
+    if (!found) {
+      const allCoupons = mockStorage.getCoupons() || [];
+      found = allCoupons.find(
+        (c) => c.code.toUpperCase() === cleanCode && (!c.restaurant_id || !targetRestId || c.restaurant_id === targetRestId)
+      );
+    }
+
+    // Fallback: direct Supabase query by code
+    if (!found && isSupabaseConfigured && targetRestId) {
+      try {
+        const { data, error } = await supabase
+          .from('coupons')
+          .select('*')
+          .eq('restaurant_id', targetRestId)
+          .ilike('code', cleanCode)
+          .maybeSingle();
+
+        if (!error && data) {
+          found = {
+            ...data,
+            restaurant_id: data.restaurant_id || targetRestId,
+            discount_type: data.discount_type || 'percentage',
+            discount_value: Number(data.discount_value) || 0,
+            min_order_value: Number(data.min_order_value ?? data.min_order_amount) || 0,
+            max_discount: data.max_discount != null ? Number(data.max_discount) : undefined,
+            usage_limit: data.usage_limit != null ? Number(data.usage_limit) : undefined,
+            used_count: Number(data.used_count) || 0,
+            is_active: data.is_active ?? true,
+            start_date: data.start_date || undefined,
+            expiry_date: data.expiry_date || data.end_date || undefined,
+          };
+        }
+      } catch (err) {
+        console.warn('Direct coupon lookup error:', err);
+      }
+    }
 
     if (!found) {
       // Check if code exists on platform for another restaurant
       const allCoupons = await this.getCoupons();
       const codeExistsElsewhere = allCoupons.some(
-        (c) => c.code.toUpperCase() === code.trim().toUpperCase()
+        (c) => c.code.toUpperCase() === cleanCode
       );
       if (codeExistsElsewhere) {
         return { isValid: false, message: 'Coupon not valid for this restaurant', discountAmount: 0 };
@@ -92,26 +142,34 @@ export const couponService = {
     }
 
     if (!found.is_active) {
-      return { isValid: false, message: 'Coupon inactive', discountAmount: 0 };
+      return { isValid: false, message: 'Coupon is inactive', discountAmount: 0 };
     }
 
     const now = new Date();
-    if (found.start_date && new Date(found.start_date) > now) {
-      return { isValid: false, message: 'Coupon not active yet', discountAmount: 0 };
+    if (found.start_date) {
+      const startDate = new Date(found.start_date);
+      if (!isNaN(startDate.getTime()) && startDate > now) {
+        return { isValid: false, message: 'Coupon not active yet', discountAmount: 0 };
+      }
     }
 
-    if (found.expiry_date && new Date(found.expiry_date) < now) {
-      return { isValid: false, message: 'Coupon expired', discountAmount: 0 };
+    const expiry = found.expiry_date || (found as any).end_date;
+    if (expiry) {
+      const expiryDate = new Date(expiry);
+      if (!isNaN(expiryDate.getTime()) && expiryDate < now) {
+        return { isValid: false, message: 'Coupon expired', discountAmount: 0 };
+      }
     }
 
     if (found.usage_limit !== undefined && found.usage_limit !== null && (found.used_count || 0) >= found.usage_limit) {
       return { isValid: false, message: 'Coupon usage limit reached', discountAmount: 0 };
     }
 
-    if (found.min_order_value && subtotal < found.min_order_value) {
+    const minRequired = Number(found.min_order_value ?? (found as any).min_order_amount) || 0;
+    if (minRequired > 0 && subtotal < minRequired) {
       return {
         isValid: false,
-        message: `Minimum order ₹${found.min_order_value} required`,
+        message: `Minimum order ₹${minRequired} required for this coupon`,
         discountAmount: 0,
       };
     }
@@ -167,6 +225,7 @@ export const couponService = {
             .single();
 
           if (!error && data) {
+            mockStorage.updateCoupon(coupon.id, payload);
             await this.getCoupons(targetRestId);
             return data as Coupon;
           }
@@ -180,6 +239,7 @@ export const couponService = {
             .single();
 
           if (!error && data) {
+            mockStorage.addCoupon(payload);
             await this.getCoupons(targetRestId);
             return data as Coupon;
           }
@@ -193,8 +253,8 @@ export const couponService = {
 
     if (coupon.id) {
       const updated = mockStorage.updateCoupon(coupon.id, payload as any);
-      if (!updated) throw new Error('Coupon not found in local cache.');
-      return updated;
+      if (!updated) mockStorage.addCoupon(payload as any);
+      return (updated || payload) as Coupon;
     } else {
       return mockStorage.addCoupon(payload as any);
     }
@@ -213,11 +273,13 @@ export const couponService = {
           let updateQuery = supabase.from('coupons').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', id);
           if (restaurantId) updateQuery = updateQuery.eq('restaurant_id', restaurantId);
           await updateQuery;
+          mockStorage.updateCoupon(id, { is_active: false } as any);
         } else {
           let deleteQuery = supabase.from('coupons').delete().eq('id', id);
           if (restaurantId) deleteQuery = deleteQuery.eq('restaurant_id', restaurantId);
           const { error } = await deleteQuery;
           if (error) throw error;
+          mockStorage.deleteCoupon(id);
         }
         await this.getCoupons(restaurantId);
         return;

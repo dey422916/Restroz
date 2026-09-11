@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, Alert, Platform } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Platform } from 'react-native';
 import { csvPickerService } from '../../src/services/csvPickerService';
 import { productService } from '../../src/services/api/productService';
 import { CsvProductRow, CsvValidationError } from '../../src/utils/validators';
@@ -9,7 +8,6 @@ import { downloadSampleProductsCsv } from '../../src/utils/sampleCsv';
 import { useAuth } from '../../src/context/AuthContext';
 
 export default function BulkImportScreen() {
-  const insets = useSafeAreaInsets();
   const { activeRestaurantId } = useAuth();
   const [validRows, setValidRows] = useState<CsvProductRow[]>([]);
   const [errors, setErrors] = useState<CsvValidationError[]>([]);
@@ -74,8 +72,8 @@ export default function BulkImportScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 32 }]}>
+    <View style={styles.container}>
+      <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: 32 }]}>
         <Text style={styles.title}>Bulk Product CSV Import</Text>
         <Text style={styles.subtitle}>
           Upload a structured CSV file to import multiple menu products, prices, stock quantities, and food categories at once.
@@ -191,7 +189,7 @@ export default function BulkImportScreen() {
           </View>
         ) : null}
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 

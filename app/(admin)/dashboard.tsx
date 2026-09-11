@@ -4,7 +4,6 @@ import {
   Text,
   ScrollView,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   TextInput,
   Modal,
@@ -14,7 +13,6 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { orderService } from '../../src/services/api/orderService';
 import { productService } from '../../src/services/api/productService';
 import { categoryService } from '../../src/services/api/categoryService';
@@ -22,6 +20,7 @@ import { settingsService } from '../../src/services/api/settingsService';
 import { dayRegisterService, getLocalRestaurantDate } from '../../src/services/api/dayRegisterService';
 import { analyticsService } from '../../src/services/api/analyticsService';
 import { reportExportService, ReportType } from '../../src/services/api/reportExportService';
+import { printService } from '../../src/services/printService';
 import { useAuth } from '../../src/context/AuthContext';
 import { formatCurrency } from '../../src/utils/currency';
 import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
@@ -29,7 +28,6 @@ import { Order, Product, Category, DayRegister, RestaurantSettings, ItemSalesSum
 
 export default function DashboardScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const { activeRestaurantId, activeRestaurant } = useAuth();
   const isMobile = width < 768;
@@ -291,53 +289,56 @@ export default function DashboardScreen() {
 
   // Open Close Register Dialog (Restricted until all orders are settled)
   const handleInitiateCloseRegister = async () => {
-    if (!activeRegister) return;
     try {
-      const unsettled = await dayRegisterService.getUnsettledOrders(activeRestaurantId);
-      setUnsettledOrdersForClose(unsettled);
-
-      if (unsettled.length > 0) {
-        const orderListPreview = unsettled
-          .slice(0, 5)
-          .map((o) => `#${o.order_number}`)
-          .join(', ');
-        const moreCount = unsettled.length > 5 ? ` and ${unsettled.length - 5} more` : '';
-        const msg = `Cannot close register until all orders are settled.\n\nThere are ${unsettled.length} active/unsettled order(s): ${orderListPreview}${moreCount}.\n\nPlease settle or cancel all orders before closing the register.`;
-
-        if (Platform.OS === 'web') {
-          const gotoOrders = typeof window !== 'undefined' ? window.confirm(`${msg}\n\nClick OK to go to Orders feed.`) : false;
-          if (gotoOrders) {
-            router.push('/(admin)/orders' as any);
-          }
-        } else {
-          Alert.alert('Unsettled Orders Pending', msg, [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'View Orders',
-              onPress: () => router.push('/(admin)/orders' as any),
-            },
-          ]);
+      let reg = activeRegister;
+      if (!reg || reg.status !== 'open') {
+        reg = await dayRegisterService.getCurrentRegister(activeRestaurantId);
+        if (reg && reg.status === 'open') {
+          setActiveRegister(reg);
         }
+      }
+
+      if (!reg || reg.status !== 'open') {
+        const msg = 'No open register shift found for this restaurant.';
+        if (Platform.OS === 'web') window.alert(msg);
+        else Alert.alert('Register Closed', msg);
         return;
       }
 
-      const recon = await dayRegisterService.calculateRegisterReconciliation(activeRegister, activeRestaurantId);
+      const [unsettled, recon] = await Promise.all([
+        dayRegisterService.getUnsettledOrders(activeRestaurantId),
+        dayRegisterService.calculateRegisterReconciliation(reg, activeRestaurantId),
+      ]);
+
+      setUnsettledOrdersForClose(unsettled);
       setLiveReconciliation(recon);
-      setCountedCashInput(recon.expected_cash.toString());
+      setCountedCashInput(recon.expected_cash ? recon.expected_cash.toString() : '0');
       setShowCloseModal(true);
     } catch (err: any) {
-      if (Platform.OS === 'web') window.alert(err.message);
-      else Alert.alert('Error', err.message);
+      console.warn('handleInitiateCloseRegister error:', err);
+      if (Platform.OS === 'web') window.alert(err?.message || 'Failed to initiate register closing.');
+      else Alert.alert('Error', err?.message || 'Failed to initiate register closing.');
     }
   };
 
   // Handle Close Register Submit
   const handleCloseRegisterSubmit = async () => {
-    if (!activeRegister) return;
+    let reg = activeRegister;
+    if (!reg || reg.status !== 'open') {
+      reg = await dayRegisterService.getCurrentRegister(activeRestaurantId);
+    }
+    if (!reg || reg.status !== 'open') {
+      const msg = 'No active open register found.';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Error', msg);
+      return;
+    }
+
     const counted = parseFloat(countedCashInput);
     if (isNaN(counted) || counted < 0) {
-      if (Platform.OS === 'web') window.alert('Please enter the counted cash drawer amount.');
-      else Alert.alert('Invalid Cash', 'Please enter the counted cash drawer amount.');
+      const msg = 'Please enter the physical counted cash drawer amount.';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Invalid Cash', msg);
       return;
     }
 
@@ -351,13 +352,14 @@ export default function DashboardScreen() {
           .map((o) => `#${o.order_number}`)
           .join(', ');
         const moreCount = unsettled.length > 5 ? ` and ${unsettled.length - 5} more` : '';
-        throw new Error(
-          `Cannot close register: There are ${unsettled.length} unsettled order(s) (${orderListPreview}${moreCount}). Please settle or cancel all orders before closing the register.`
-        );
+        const msg = `Cannot close register: There are ${unsettled.length} unsettled order(s) (${orderListPreview}${moreCount}). Please settle or cancel all orders before closing the register.`;
+        if (Platform.OS === 'web') window.alert(msg);
+        else Alert.alert('Unsettled Orders Pending', msg);
+        return;
       }
 
       const closed = await dayRegisterService.closeRegister({
-        register_id: activeRegister.id,
+        register_id: reg.id,
         actual_cash_counted: counted,
         closed_by: closeStaffName.trim() || 'Admin',
         closing_notes: closeNotes.trim() || undefined,
@@ -381,8 +383,8 @@ export default function DashboardScreen() {
       if (Platform.OS === 'web') window.alert(msg);
       else Alert.alert('Register Closed', msg);
     } catch (err: any) {
-      if (Platform.OS === 'web') window.alert(err.message);
-      else Alert.alert('Close Register Error', err.message);
+      if (Platform.OS === 'web') window.alert(err?.message || 'Failed to close register.');
+      else Alert.alert('Close Register Error', err?.message || 'Failed to close register.');
     } finally {
       setSubmittingClose(false);
     }
@@ -468,7 +470,7 @@ export default function DashboardScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       {/* Top Header */}
       <View style={styles.topHeader}>
         <View style={{ flex: 1, marginRight: 10 }}>
@@ -576,7 +578,7 @@ export default function DashboardScreen() {
       </View>
 
       {/* Content Container */}
-      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 32 }]}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: 32 }]}>
         {/* ========================================================================= */}
         {/* TAB 1: DAY-WISE SALES REPORT                                              */}
         {/* ========================================================================= */}
@@ -1102,6 +1104,13 @@ export default function DashboardScreen() {
                       Opened at {new Date(activeRegister.opened_at).toLocaleTimeString()} by {activeRegister.opened_by}
                     </Text>
                   </View>
+                  <TouchableOpacity
+                    style={styles.compactCloseBtn}
+                    onPress={handleInitiateCloseRegister}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.compactCloseBtnText}>🔒 Close Shift & Reconcile</Text>
+                  </TouchableOpacity>
                 </View>
 
                 <View style={styles.activeRegGrid}>
@@ -2089,11 +2098,18 @@ export default function DashboardScreen() {
             <View style={styles.modalActionRow}>
               <TouchableOpacity
                 style={[styles.submitBtn, { backgroundColor: '#2563eb' }]}
-                onPress={() => {
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.print();
-                  } else {
-                    Alert.alert('Z-Report Printed', 'Z-Report sent to primary receipt printer.');
+                onPress={async () => {
+                  if (viewingZReport) {
+                    try {
+                      await printService.printZReportA4(
+                        viewingZReport,
+                        settings || undefined,
+                        activeRestaurant?.name,
+                        activeRestaurant?.address
+                      );
+                    } catch (e: any) {
+                      Alert.alert('Print Error', e?.message || 'Failed to print Z-Report');
+                    }
                   }
                 }}
               >
@@ -2106,7 +2122,7 @@ export default function DashboardScreen() {
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 

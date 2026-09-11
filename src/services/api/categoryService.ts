@@ -135,12 +135,16 @@ export const categoryService = {
     }
   },
 
-  async deleteCategory(id: string): Promise<void> {
+  async deleteCategory(id: string, restaurantId?: string): Promise<void> {
+    clearCategoriesCache(restaurantId);
     if (isSupabaseConfigured) {
       try {
-        const { error } = await supabase.from('categories').delete().eq('id', id);
+        let query = supabase.from('categories').delete().eq('id', id);
+        if (restaurantId) query = query.eq('restaurant_id', restaurantId);
+        const { error } = await query;
         if (error) throw error;
-        await this.getCategories();
+        mockStorage.deleteCategory(id);
+        await this.getCategories(restaurantId, true);
         return;
       } catch (e: any) {
         console.error('Supabase deleteCategory error:', e);

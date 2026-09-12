@@ -160,6 +160,7 @@ export default function StaffManagementScreen() {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [newMemberRole, setNewMemberRole] = useState<'ADMIN' | 'STAFF'>('STAFF');
   const [selectedPreset, setSelectedPreset] = useState<StaffPermissionPreset>('CASHIER');
   const [submitting, setSubmitting] = useState(false);
@@ -174,6 +175,7 @@ export default function StaffManagementScreen() {
   const [staffPwdModalVisible, setStaffPwdModalVisible] = useState(false);
   const [targetStaffForPwd, setTargetStaffForPwd] = useState<StaffMemberWithDetails | null>(null);
   const [staffNewPassword, setStaffNewPassword] = useState('');
+  const [showStaffNewPassword, setShowStaffNewPassword] = useState(false);
   const [savingStaffPwd, setSavingStaffPwd] = useState(false);
 
   const loadData = async () => {
@@ -725,14 +727,25 @@ export default function StaffManagementScreen() {
               />
 
               <Text style={styles.inputLabel}>Initial Password (Optional)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter password (or auto-generate)"
-                placeholderTextColor="#64748b"
-                secureTextEntry
-                value={password}
-                onChangeText={setPassword}
-              />
+              <View style={styles.passwordInputContainer}>
+                <TextInput
+                  style={styles.passwordInput}
+                  placeholder="Enter password (or auto-generate)"
+                  placeholderTextColor="#64748b"
+                  secureTextEntry={!showPassword}
+                  value={password}
+                  onChangeText={setPassword}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity
+                  style={styles.eyeBtn}
+                  onPress={() => setShowPassword(!showPassword)}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Text style={styles.eyeIcon}>{showPassword ? '👁️' : '👁️‍🗨️'}</Text>
+                </TouchableOpacity>
+              </View>
 
               <Text style={styles.inputLabel}>Full Name (Optional)</Text>
               <TextInput
@@ -940,17 +953,27 @@ export default function StaffManagementScreen() {
               />
 
               <Text style={styles.inputLabel}>New Password *</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter new password (min 8 chars)"
-                placeholderTextColor="#64748b"
-                value={staffNewPassword}
-                onChangeText={setStaffNewPassword}
-                autoCapitalize="none"
-                secureTextEntry
-                autoComplete="new-password"
-                textContentType="newPassword"
-              />
+              <View style={styles.passwordInputContainer}>
+                <TextInput
+                  style={styles.passwordInput}
+                  placeholder="Enter new password (min 8 chars)"
+                  placeholderTextColor="#64748b"
+                  value={staffNewPassword}
+                  onChangeText={setStaffNewPassword}
+                  autoCapitalize="none"
+                  secureTextEntry={!showStaffNewPassword}
+                  autoComplete="new-password"
+                  textContentType="newPassword"
+                />
+                <TouchableOpacity
+                  style={styles.eyeBtn}
+                  onPress={() => setShowStaffNewPassword(!showStaffNewPassword)}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Text style={styles.eyeIcon}>{showStaffNewPassword ? '👁️' : '👁️‍🗨️'}</Text>
+                </TouchableOpacity>
+              </View>
               <Text style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
                 Password must contain at least 8 characters.
               </Text>
@@ -1259,6 +1282,33 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 14,
     color: '#0f172a',
+  },
+  passwordInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    position: 'relative',
+  },
+  passwordInput: {
+    flex: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    paddingRight: 40,
+    fontSize: 14,
+    color: '#0f172a',
+  },
+  eyeBtn: {
+    position: 'absolute',
+    right: 8,
+    padding: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  eyeIcon: {
+    fontSize: 16,
   },
   presetGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 },
   presetCard: {

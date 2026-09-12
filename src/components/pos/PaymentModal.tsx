@@ -289,12 +289,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                     </View>
 
                     <View style={styles.billRow}>
-                      <Text style={styles.billLabel}>CGST ({((taxRate || 5) / 2).toFixed(1)}%):</Text>
+                      <Text style={styles.billLabel}>CGST ({(((taxRate !== undefined && taxRate !== null ? taxRate : 5.0)) / 2).toFixed(1)}%):</Text>
                       <Text style={styles.billVal}>{formatCurrency(totals.cgstAmount)}</Text>
                     </View>
 
                     <View style={styles.billRow}>
-                      <Text style={styles.billLabel}>SGST ({((taxRate || 5) / 2).toFixed(1)}%):</Text>
+                      <Text style={styles.billLabel}>SGST ({(((taxRate !== undefined && taxRate !== null ? taxRate : 5.0)) / 2).toFixed(1)}%):</Text>
                       <Text style={styles.billVal}>{formatCurrency(totals.sgstAmount)}</Text>
                     </View>
                   </>

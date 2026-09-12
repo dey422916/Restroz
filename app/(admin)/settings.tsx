@@ -22,7 +22,11 @@ export default function SettingsScreen() {
   const [phone, setPhone] = useState(settings.phone || '');
   const [email, setEmail] = useState(settings.email || '');
   const [gstin, setGstin] = useState(settings.gstin || '');
-  const [taxRate, setTaxRate] = useState(settings.default_tax_rate?.toString() || '5.0');
+  const [taxRate, setTaxRate] = useState(
+    settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
+      ? settings.default_tax_rate.toString()
+      : '5.0'
+  );
   const [gstRegistered, setGstRegistered] = useState<boolean>(
     settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim())
   );
@@ -66,7 +70,11 @@ export default function SettingsScreen() {
       setPhone(settings.phone || '');
       setEmail(settings.email || '');
       setGstin(settings.gstin || '');
-      setTaxRate(settings.default_tax_rate?.toString() || '5.0');
+      setTaxRate(
+        settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
+          ? settings.default_tax_rate.toString()
+          : '5.0'
+      );
       setGstRegistered(
         settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim())
       );
@@ -350,7 +358,7 @@ export default function SettingsScreen() {
     }
 
     const numRate = parseFloat(taxRate);
-    const validatedRate = !isNaN(numRate) && numRate >= 0 ? numRate : 5.0;
+    const validatedRate = !isNaN(numRate) && numRate >= 0 ? numRate : 0.0;
 
     try {
       setIsSavingGst(true);
@@ -366,7 +374,11 @@ export default function SettingsScreen() {
 
       if (persisted) {
         setGstin(persisted.gstin || '');
-        setTaxRate(persisted.default_tax_rate !== undefined ? persisted.default_tax_rate.toString() : '5.0');
+        setTaxRate(
+          persisted.default_tax_rate !== undefined && persisted.default_tax_rate !== null
+            ? persisted.default_tax_rate.toString()
+            : '0.0'
+        );
         setGstRegistered(
           persisted.gst_registered !== undefined ? Boolean(persisted.gst_registered) : Boolean(persisted.gstin?.trim())
         );

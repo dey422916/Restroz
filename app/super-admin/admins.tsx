@@ -33,6 +33,7 @@ export default function RestaurantAdminsScreen() {
   const [formEmail, setFormEmail] = useState('');
   const [formPhone, setFormPhone] = useState('');
   const [formPassword, setFormPassword] = useState('');
+  const [showFormPassword, setShowFormPassword] = useState(false);
 
   // Edit Admin Modal State
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -47,6 +48,7 @@ export default function RestaurantAdminsScreen() {
   const [pwdModalVisible, setPwdModalVisible] = useState(false);
   const [pwdAdmin, setPwdAdmin] = useState<any | null>(null);
   const [newPassword, setNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [savingPwd, setSavingPwd] = useState(false);
 
   const loadData = async () => {
@@ -470,13 +472,25 @@ export default function RestaurantAdminsScreen() {
               />
 
               <Text style={styles.label}>Initial Password</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter initial password (min 6 chars)"
-                value={formPassword}
-                onChangeText={setFormPassword}
-                secureTextEntry
-              />
+              <View style={styles.passwordInputContainer}>
+                <TextInput
+                  style={styles.passwordInput}
+                  placeholder="Enter initial password (min 6 chars)"
+                  placeholderTextColor="#94A3B8"
+                  value={formPassword}
+                  onChangeText={setFormPassword}
+                  secureTextEntry={!showFormPassword}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity
+                  style={styles.eyeBtn}
+                  onPress={() => setShowFormPassword(!showFormPassword)}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Text style={styles.eyeIcon}>{showFormPassword ? '👁️' : '👁️‍🗨️'}</Text>
+                </TouchableOpacity>
+              </View>
             </ScrollView>
 
             <View style={styles.modalFooter}>
@@ -643,13 +657,25 @@ export default function RestaurantAdminsScreen() {
               />
 
               <Text style={styles.label}>New Password *</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter new strong password"
-                value={newPassword}
-                onChangeText={setNewPassword}
-                autoCapitalize="none"
-              />
+              <View style={styles.passwordInputContainer}>
+                <TextInput
+                  style={styles.passwordInput}
+                  placeholder="Enter new strong password"
+                  placeholderTextColor="#94A3B8"
+                  value={newPassword}
+                  onChangeText={setNewPassword}
+                  secureTextEntry={!showNewPassword}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity
+                  style={styles.eyeBtn}
+                  onPress={() => setShowNewPassword(!showNewPassword)}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Text style={styles.eyeIcon}>{showNewPassword ? '👁️' : '👁️‍🗨️'}</Text>
+                </TouchableOpacity>
+              </View>
               <Text style={{ fontSize: 11, color: '#64748B', marginTop: 4 }}>
                 Password must contain at least 8 characters.
               </Text>
@@ -967,6 +993,33 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#0F172A',
     backgroundColor: '#F8FAFC',
+  },
+  passwordInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    position: 'relative',
+  },
+  passwordInput: {
+    flex: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    paddingRight: 40,
+    fontSize: 14,
+    color: '#0F172A',
+  },
+  eyeBtn: {
+    position: 'absolute',
+    right: 8,
+    padding: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  eyeIcon: {
+    fontSize: 16,
   },
   restSelectScroll: {
     flexDirection: 'row',

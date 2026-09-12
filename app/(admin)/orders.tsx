@@ -763,7 +763,7 @@ export default function OrdersScreen() {
   const handleMarkDelivered = async (order: Order) => {
     Alert.alert(
       'Mark Order Delivered',
-      `Did you receive payment of ₹${order.payable_amount || order.grand_total} for Order #${order.order_number}?`,
+      `Did you receive payment of ₹${order.payable_amount !== undefined && order.payable_amount !== null ? order.payable_amount : (order.grand_total ?? 0)} for Order #${order.order_number}?`,
       [
         {
           text: 'Payment Received (Paid & Delivered)',
@@ -859,9 +859,9 @@ export default function OrdersScreen() {
 
     const hasManualDiscount = payDiscountType !== 'none' && validatedPayDiscount > 0;
 
-    // If no manual discount is added, and the order already has persisted payable_amount > 0,
+    // If no manual discount is added, and the order already has persisted payable_amount,
     // read directly from the persisted order fields to ensure 100% fidelity with server order!
-    if (!hasManualDiscount && (payOrderModal.payable_amount || 0) > 0) {
+    if (!hasManualDiscount && payOrderModal.payable_amount !== undefined && payOrderModal.payable_amount !== null) {
       const ordSub = payOrderModal.subtotal || paySubtotal;
       const cpnDisc = payOrderModal.coupon_discount || 0;
       const discAmt = payOrderModal.discount_amount || 0;
@@ -877,9 +877,9 @@ export default function OrdersScreen() {
         totalTax: (payOrderModal.cgst_amount || 0) + (payOrderModal.sgst_amount || 0) + (payOrderModal.igst_amount || 0),
         serviceCharge: payOrderModal.service_charge || 0,
         deliveryCharge: payOrderModal.delivery_charge || 0,
-        rawTotal: payOrderModal.grand_total || payOrderModal.payable_amount,
+        rawTotal: payOrderModal.grand_total ?? payOrderModal.payable_amount ?? 0,
         roundOff: payOrderModal.round_off || 0,
-        payableAmount: payOrderModal.payable_amount,
+        payableAmount: payOrderModal.payable_amount ?? 0,
       };
     }
 
@@ -1328,16 +1328,28 @@ export default function OrdersScreen() {
                     </View>
                   )}
 
+                  {/* Applied Discount Banner if any */}
+                  {Boolean(order.discount_amount && order.discount_amount > 0) && (
+                    <View style={{ backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#92400E' }}>
+                        🏷️ Discount ({order.discount_type === 'percentage' ? `${order.discount_value}%` : 'Flat ₹'}):
+                      </Text>
+                      <Text style={{ fontSize: 11, fontWeight: '900', color: '#B45309' }}>
+                        -{formatCurrency(order.discount_amount || 0)}
+                      </Text>
+                    </View>
+                  )}
+
                   {/* Bill Summary Row */}
                   <View style={styles.summaryRow}>
                     <View>
                       <Text style={styles.payableLabel}>Payable Total:</Text>
                       <Text style={styles.payableVal}>
                         {formatCurrency(
-                          order.payable_amount > 0
-                            ? order.payable_amount
-                            : (order.grand_total > 0
-                                ? order.grand_total
+                          order.payable_amount !== undefined && order.payable_amount !== null
+                            ? Number(order.payable_amount)
+                            : (order.grand_total !== undefined && order.grand_total !== null
+                                ? Number(order.grand_total)
                                 : (order.items && order.items.length > 0
                                     ? order.items.reduce((sum, item) => sum + (Number(item.total) || (Number(item.unit_price) * Number(item.quantity)) || 0), 0)
                                     : 0))

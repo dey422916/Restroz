@@ -48,6 +48,13 @@ export default function DeliveryCheckoutScreen() {
   const [newCity, setNewCity] = useState('Mumbai');
   const [newState, setNewState] = useState('Maharashtra');
   const [newPostal, setNewPostal] = useState('400001');
+  const [newAddrErrors, setNewAddrErrors] = useState<{
+    fullName?: string;
+    phone?: string;
+    line1?: string;
+    city?: string;
+    postal?: string;
+  }>({});
 
   useEffect(() => {
     if (user) {
@@ -58,6 +65,60 @@ export default function DeliveryCheckoutScreen() {
       loadAddresses();
     }
   }, [user]);
+
+  const openAddAddressModal = () => {
+    setNewLabel('Home');
+    setNewFullName(user?.full_name || '');
+    setNewPhone(user?.phone || '');
+    setNewLine1('');
+    setNewLandmark('');
+    setNewCity('Mumbai');
+    setNewState('Maharashtra');
+    setNewPostal('400001');
+    setNewAddrErrors({});
+    setAddModalVisible(true);
+  };
+
+  const validateNewAddress = () => {
+    const errors: {
+      fullName?: string;
+      phone?: string;
+      line1?: string;
+      city?: string;
+      postal?: string;
+    } = {};
+
+    if (!newFullName.trim()) {
+      errors.fullName = 'Full Name is required';
+    } else if (newFullName.trim().length < 2) {
+      errors.fullName = 'Please enter a valid full name';
+    }
+
+    if (!newPhone.trim()) {
+      errors.phone = 'Phone number is required';
+    } else if (!isValidPhoneNumber(newPhone.trim())) {
+      errors.phone = 'Please enter a valid 10-digit mobile number';
+    }
+
+    if (!newLine1.trim()) {
+      errors.line1 = 'Street address is required';
+    } else if (newLine1.trim().length < 3) {
+      errors.line1 = 'Please enter a detailed street address';
+    }
+
+    if (!newCity.trim()) {
+      errors.city = 'City is required';
+    }
+
+    if (!newPostal.trim()) {
+      errors.postal = 'PIN code is required';
+    } else if (!/^\d{6}$/.test(newPostal.trim())) {
+      errors.postal = 'Please enter a valid 6-digit PIN code';
+    }
+
+    setNewAddrErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
 
   useEffect(() => {
     if (cart.restaurantId) {
@@ -90,13 +151,7 @@ export default function DeliveryCheckoutScreen() {
   };
 
   const handleSaveNewAddress = async () => {
-    if (!newLine1.trim() || !newFullName.trim() || !newPhone.trim()) {
-      Alert.alert('Validation Error', 'Full Name, Phone, and Street Address are required.');
-      return;
-    }
-
-    if (!isValidPhoneNumber(newPhone)) {
-      Alert.alert('Invalid Phone Number', 'Please enter a valid 10-digit mobile number for this address.');
+    if (!validateNewAddress()) {
       return;
     }
 
@@ -289,7 +344,7 @@ export default function DeliveryCheckoutScreen() {
                 <View style={styles.sectionHeader}>
                   <Text style={styles.sectionTitle}>📍 Delivery Address</Text>
                   {user && (
-                    <TouchableOpacity onPress={() => setAddModalVisible(true)} activeOpacity={0.7}>
+                    <TouchableOpacity onPress={openAddAddressModal} activeOpacity={0.7}>
                       <Text style={styles.linkText}>+ Add New</Text>
                     </TouchableOpacity>
                   )}
@@ -302,7 +357,7 @@ export default function DeliveryCheckoutScreen() {
                     <Text style={styles.noAddressText}>No saved delivery addresses found.</Text>
                     <TouchableOpacity
                       style={styles.addAddrBtn}
-                      onPress={() => setAddModalVisible(true)}
+                      onPress={openAddAddressModal}
                       activeOpacity={0.8}
                     >
                       <Text style={styles.addAddrBtnText}>+ Add Delivery Address</Text>
@@ -340,163 +395,150 @@ export default function DeliveryCheckoutScreen() {
                 )}
               </View>
 
-              {/* Contact Info */}
+              {/* Contact Information */}
               <View style={styles.sectionCard}>
-                <Text style={styles.sectionTitle}>📞 Contact Details for Delivery</Text>
-                <View style={styles.inputRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.inputLabel}>Name *</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={customerName}
-                      onChangeText={setCustomerName}
-                      placeholder="Full Name"
-                    />
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.inputLabel}>Phone *</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={customerPhone}
-                      onChangeText={(v) => setCustomerPhone(v.replace(/[^\d+]/g, ''))}
-                      placeholder="10-digit mobile number"
-                      placeholderTextColor="#64748b"
-                      keyboardType="phone-pad"
-                      maxLength={13}
-                    />
-                    {Boolean(customerPhone && !isValidPhoneNumber(customerPhone)) && (
-                      <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: 3 }}>
-                        ⚠️ Invalid mobile number
-                      </Text>
-                    )}
-                  </View>
-                </View>
-
-                <Text style={[styles.inputLabel, { marginTop: 12 }]}>Delivery Instructions</Text>
+                <Text style={styles.sectionTitle}>📞 Contact Information</Text>
+                <Text style={styles.label}>Receiver Name *</Text>
                 <TextInput
                   style={styles.input}
-                  value={deliveryNotes}
-                  onChangeText={setDeliveryNotes}
-                  placeholder="e.g. Leave at door, call on arrival, extra spicy..."
+                  value={customerName}
+                  onChangeText={setCustomerName}
+                  placeholder="Your full name"
                 />
+
+                <Text style={styles.label}>Phone Number *</Text>
+                <TextInput
+                  style={styles.input}
+                  value={customerPhone}
+                  onChangeText={(v) => setCustomerPhone(v.replace(/[^\d+]/g, ''))}
+                  placeholder="10-digit mobile number"
+                  placeholderTextColor="#64748b"
+                  keyboardType="phone-pad"
+                  maxLength={13}
+                />
+                {Boolean(customerPhone && !isValidPhoneNumber(customerPhone)) && (
+                  <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: 3 }}>
+                    ⚠️ Invalid mobile number
+                  </Text>
+                )}
               </View>
 
-              {/* Payment Method Section */}
+              {/* Delivery Instructions (Optional) */}
               <View style={styles.sectionCard}>
-                <Text style={styles.sectionTitle}>💳 Payment Method</Text>
-
-                {/* Cash on Delivery (COD) Option */}
-                <TouchableOpacity
-                  style={[styles.payOption, paymentMethod === 'cod' && styles.payOptionSelected]}
-                  onPress={() => setPaymentMethod('cod')}
-                  activeOpacity={0.8}
-                >
-                  <View style={styles.radioCircle}>
-                    {paymentMethod === 'cod' && <View style={styles.radioInner} />}
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.payTitle}>💵 Cash on Delivery (COD)</Text>
-                    <Text style={styles.paySub}>Pay cash or UPI directly to delivery agent on arrival</Text>
-                  </View>
-                  <View style={styles.badgeActive}>
-                    <Text style={styles.badgeTextActive}>RECOMMENDED</Text>
-                  </View>
-                </TouchableOpacity>
-
-                {/* Online Payment (Phase 6 placeholder) */}
-                <TouchableOpacity
-                  style={[styles.payOption, paymentMethod === 'online' && styles.payOptionSelected]}
-                  onPress={() => setPaymentMethod('online')}
-                  activeOpacity={0.8}
-                >
-                  <View style={styles.radioCircle}>
-                    {paymentMethod === 'online' && <View style={styles.radioInner} />}
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.payTitle}>💳 Online Payment (UPI / Cards / NetBanking)</Text>
-                    <Text style={styles.paySub}>
-                      Online gateway integration (creates confirmed pending payment order)
-                    </Text>
-                  </View>
-                </TouchableOpacity>
+                <Text style={styles.sectionTitle}>📝 Delivery Instructions (Optional)</Text>
+                <TextInput
+                  style={[styles.input, { height: 60, textAlignVertical: 'top' }]}
+                  value={deliveryNotes}
+                  onChangeText={setDeliveryNotes}
+                  placeholder="e.g. Leave at door, call when arrived..."
+                  multiline
+                />
               </View>
             </View>
 
-            {/* Right Column: Order Summary & Place Order */}
+            {/* Right Column: Order Items, Summary & Payment Mode */}
             <View style={[styles.rightColumn, isDesktop && styles.rightColumnDesktop]}>
+              {/* Payment Mode */}
               <View style={styles.sectionCard}>
-                <Text style={styles.sectionTitle}>🧾 Order & Price Summary</Text>
-
-                {isBelowMinOrder && (
-                  <View style={styles.minOrderCard}>
-                    <View style={styles.minOrderCardHeader}>
-                      <Text style={{ fontSize: 15 }}>⚠️</Text>
-                      <Text style={styles.minOrderCardTitle}>
-                        Minimum Order: ₹{minOrderValue}
-                      </Text>
+                <Text style={styles.sectionTitle}>💳 Payment Mode</Text>
+                <View style={styles.paymentOptions}>
+                  <TouchableOpacity
+                    style={[
+                      styles.paymentCard,
+                      paymentMethod === 'online' && styles.paymentCardSelected,
+                    ]}
+                    onPress={() => setPaymentMethod('online')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.paymentIcon}>⚡</Text>
+                    <View>
+                      <Text style={styles.paymentTitle}>Pay Online</Text>
+                      <Text style={styles.paymentSub}>UPI, Cards, NetBanking</Text>
                     </View>
-                    <Text style={styles.minOrderCardSub}>
-                      Your order subtotal is ₹{formatPrice(cart.subtotal)}. Add items worth{' '}
-                      <Text style={styles.minOrderCardHighlight}>₹{formatPrice(remainingForMinOrder)}</Text>{' '}
-                      more to place this order.
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.paymentCard,
+                      paymentMethod === 'cod' && styles.paymentCardSelected,
+                    ]}
+                    onPress={() => setPaymentMethod('cod')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.paymentIcon}>💵</Text>
+                    <View>
+                      <Text style={styles.paymentTitle}>Cash on Delivery</Text>
+                      <Text style={styles.paymentSub}>Pay when order arrives</Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Order Items Review */}
+              <View style={styles.sectionCard}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>
+                    🍽️ Order Items ({cart.items.reduce((s, i) => s + i.quantity, 0)})
+                  </Text>
+                  <TouchableOpacity onPress={() => router.push('/(marketplace)/cart')}>
+                    <Text style={styles.linkText}>Edit Cart</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {cart.items.map((item, idx) => (
+                  <View key={item.product_id || `checkout-item-${idx}`} style={styles.itemRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.itemName}>
+                        {item.name} × {item.quantity}
+                      </Text>
+                      {item.notes ? (
+                        <Text style={styles.itemNote}>Note: {item.notes}</Text>
+                      ) : null}
+                    </View>
+                    <Text style={styles.itemPrice}>₹{formatPrice(item.price * item.quantity)}</Text>
+                  </View>
+                ))}
+              </View>
+
+              {/* Bill Details */}
+              <View style={styles.sectionCard}>
+                <Text style={styles.sectionTitle}>🧾 Bill Summary</Text>
+                <View style={styles.summaryItemRow}>
+                  <Text style={styles.summaryLabel}>Item Total</Text>
+                  <Text style={styles.summaryValue}>₹{formatPrice(cart.subtotal)}</Text>
+                </View>
+
+                {cart.discount > 0 && (
+                  <View style={styles.summaryItemRow}>
+                    <Text style={[styles.summaryLabel, { color: '#16A34A' }]}>Discount</Text>
+                    <Text style={[styles.summaryValue, { color: '#16A34A' }]}>
+                      -₹{formatPrice(cart.discount)}
                     </Text>
                   </View>
                 )}
 
                 <View style={styles.summaryItemRow}>
-                  <Text style={styles.summaryLabel}>Item Subtotal ({cart.items.length} items)</Text>
-                  <Text style={styles.summaryValue}>₹{formatPrice(cart.subtotal)}</Text>
+                  <Text style={styles.summaryLabel}>Delivery Fee</Text>
+                  <Text style={styles.summaryValue}>
+                    {cart.deliveryFee === 0 ? (
+                      <Text style={{ color: '#16A34A', fontWeight: '700' }}>FREE</Text>
+                    ) : (
+                      `₹${formatPrice(cart.deliveryFee)}`
+                    )}
+                  </Text>
                 </View>
 
-                {cart.couponCode && cart.discount > 0 ? (
-                  <View style={[styles.summaryItemRow, { backgroundColor: '#ECFDF5', padding: 8, borderRadius: 8, marginVertical: 4 }]}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.summaryLabel, { color: '#065F46', fontWeight: '700' }]}>
-                        🏷️ Coupon ({cart.couponCode})
-                      </Text>
-                      <Text style={{ fontSize: 11, color: '#059669' }}>Discount applied</Text>
-                    </View>
-                    <View style={{ alignItems: 'flex-end' }}>
-                      <Text style={[styles.summaryValue, { color: '#065F46', fontWeight: '800' }]}>
-                        -₹{formatPrice(cart.discount)}
-                      </Text>
-                      <TouchableOpacity onPress={removeCoupon}>
-                        <Text style={{ fontSize: 11, color: '#DC2626', fontWeight: '700', marginTop: 2 }}>✕ Remove</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                ) : null}
-
-                {cart.discount > 0 && (
+                {cart.tax > 0 && (
                   <View style={styles.summaryItemRow}>
-                    <Text style={styles.summaryLabel}>Taxable Amount</Text>
-                    <Text style={styles.summaryValue}>₹{formatPrice(cart.taxableAmount)}</Text>
+                    <Text style={styles.summaryLabel}>Taxes & Charges</Text>
+                    <Text style={styles.summaryValue}>₹{formatPrice(cart.tax)}</Text>
                   </View>
                 )}
 
-                {cart.isGstEnabled && (cart.cgst > 0 || cart.sgst > 0) ? (
-                  <>
-                    <View style={styles.summaryItemRow}>
-                      <Text style={styles.summaryLabel}>CGST ({((cart.taxRate || 5) / 2).toFixed(1)}%)</Text>
-                      <Text style={styles.summaryValue}>₹{formatPrice(cart.cgst)}</Text>
-                    </View>
-
-                    <View style={styles.summaryItemRow}>
-                      <Text style={styles.summaryLabel}>SGST ({((cart.taxRate || 5) / 2).toFixed(1)}%)</Text>
-                      <Text style={styles.summaryValue}>₹{formatPrice(cart.sgst)}</Text>
-                    </View>
-                  </>
-                ) : null}
+                <View style={[styles.divider, { marginVertical: 8 }]} />
 
                 <View style={styles.summaryItemRow}>
-                  <Text style={styles.summaryLabel}>Delivery Fee</Text>
-                  <Text style={[styles.summaryValue, { color: '#16A34A', fontWeight: '800' }]}>FREE</Text>
-                </View>
-
-                <View style={{ height: 1, backgroundColor: '#E2E8F0', marginVertical: 12 }} />
-
-                <View style={styles.summaryItemRow}>
-                  <Text style={[styles.summaryLabel, { fontSize: 16, fontWeight: '800', color: '#0F172A' }]}>
+                  <Text style={[styles.summaryLabel, { fontSize: 15, fontWeight: '800', color: '#0F172A' }]}>
                     Grand Total
                   </Text>
                   <Text style={[styles.summaryValue, { fontSize: 20, fontWeight: '900', color: customerColors.primary }]}>
@@ -592,37 +634,78 @@ export default function DeliveryCheckoutScreen() {
                 ))}
               </View>
 
-              <Text style={styles.label}>Full Name *</Text>
+              <View style={styles.labelHeaderRow}>
+                <Text style={styles.label}>
+                  Full Name <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                {newAddrErrors.fullName ? (
+                  <Text style={styles.requiredBadge}>Required</Text>
+                ) : null}
+              </View>
               <TextInput
-                style={styles.input}
+                style={[styles.input, Boolean(newAddrErrors.fullName) && styles.inputError]}
                 value={newFullName}
-                onChangeText={setNewFullName}
+                onChangeText={(v) => {
+                  setNewFullName(v);
+                  if (newAddrErrors.fullName) setNewAddrErrors((prev) => ({ ...prev, fullName: undefined }));
+                }}
                 placeholder="Receiver name"
+                placeholderTextColor="#94A3B8"
               />
+              {Boolean(newAddrErrors.fullName) && (
+                <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.fullName}</Text>
+              )}
 
-              <Text style={styles.label}>Phone Number *</Text>
+              <View style={styles.labelHeaderRow}>
+                <Text style={styles.label}>
+                  Phone Number <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                {newAddrErrors.phone ? (
+                  <Text style={styles.requiredBadge}>Required</Text>
+                ) : null}
+              </View>
               <TextInput
-                style={styles.input}
+                style={[styles.input, Boolean(newAddrErrors.phone) && styles.inputError]}
                 value={newPhone}
-                onChangeText={(v) => setNewPhone(v.replace(/[^\d+]/g, ''))}
+                onChangeText={(v) => {
+                  const cleaned = v.replace(/[^\d+]/g, '');
+                  setNewPhone(cleaned);
+                  if (newAddrErrors.phone) setNewAddrErrors((prev) => ({ ...prev, phone: undefined }));
+                }}
                 placeholder="10-digit mobile number"
-                placeholderTextColor="#64748b"
+                placeholderTextColor="#94A3B8"
                 keyboardType="phone-pad"
                 maxLength={13}
               />
-              {Boolean(newPhone && !isValidPhoneNumber(newPhone)) && (
-                <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: 3 }}>
-                  ⚠️ Invalid mobile number
+              {Boolean(newAddrErrors.phone) ? (
+                <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.phone}</Text>
+              ) : Boolean(newPhone && !isValidPhoneNumber(newPhone)) ? (
+                <Text style={styles.fieldErrorText}>
+                  ⚠️ Please enter a valid 10-digit mobile number
                 </Text>
-              )}
+              ) : null}
 
-              <Text style={styles.label}>Flat / House No. / Street Address *</Text>
+              <View style={styles.labelHeaderRow}>
+                <Text style={styles.label}>
+                  Flat / House / Street Address <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                {newAddrErrors.line1 ? (
+                  <Text style={styles.requiredBadge}>Required</Text>
+                ) : null}
+              </View>
               <TextInput
-                style={styles.input}
+                style={[styles.input, Boolean(newAddrErrors.line1) && styles.inputError]}
                 value={newLine1}
-                onChangeText={setNewLine1}
+                onChangeText={(v) => {
+                  setNewLine1(v);
+                  if (newAddrErrors.line1) setNewAddrErrors((prev) => ({ ...prev, line1: undefined }));
+                }}
                 placeholder="e.g. Flat 302, Palm Heights, Link Road"
+                placeholderTextColor="#94A3B8"
               />
+              {Boolean(newAddrErrors.line1) && (
+                <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.line1}</Text>
+              )}
 
               <Text style={styles.label}>Landmark (Optional)</Text>
               <TextInput
@@ -630,21 +713,54 @@ export default function DeliveryCheckoutScreen() {
                 value={newLandmark}
                 onChangeText={setNewLandmark}
                 placeholder="e.g. Near City Hospital"
+                placeholderTextColor="#94A3B8"
               />
 
               <View style={styles.inputRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>City *</Text>
-                  <TextInput style={styles.input} value={newCity} onChangeText={setNewCity} />
+                  <View style={styles.labelHeaderRow}>
+                    <Text style={styles.label}>
+                      City <Text style={styles.requiredStar}>*</Text>
+                    </Text>
+                    {newAddrErrors.city ? <Text style={styles.requiredBadge}>Required</Text> : null}
+                  </View>
+                  <TextInput
+                    style={[styles.input, Boolean(newAddrErrors.city) && styles.inputError]}
+                    value={newCity}
+                    onChangeText={(v) => {
+                      setNewCity(v);
+                      if (newAddrErrors.city) setNewAddrErrors((prev) => ({ ...prev, city: undefined }));
+                    }}
+                    placeholder="e.g. Mumbai"
+                    placeholderTextColor="#94A3B8"
+                  />
+                  {Boolean(newAddrErrors.city) && (
+                    <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.city}</Text>
+                  )}
                 </View>
                 <View style={{ flex: 1, marginLeft: 8 }}>
-                  <Text style={styles.label}>PIN Code *</Text>
+                  <View style={styles.labelHeaderRow}>
+                    <Text style={styles.label}>
+                      PIN Code <Text style={styles.requiredStar}>*</Text>
+                    </Text>
+                    {newAddrErrors.postal ? <Text style={styles.requiredBadge}>Required</Text> : null}
+                  </View>
                   <TextInput
-                    style={styles.input}
+                    style={[styles.input, Boolean(newAddrErrors.postal) && styles.inputError]}
                     value={newPostal}
-                    onChangeText={setNewPostal}
+                    onChangeText={(v) => {
+                      const cleaned = v.replace(/\D/g, '').slice(0, 6);
+                      setNewPostal(cleaned);
+                      if (newAddrErrors.postal) setNewAddrErrors((prev) => ({ ...prev, postal: undefined }));
+                    }}
                     keyboardType="numeric"
+                    maxLength={6}
+                    placeholder="6-digit PIN"
+                    placeholderTextColor="#94A3B8"
                   />
+                  {Boolean(newAddrErrors.postal) && (
+                    <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.postal}</Text>
+                  )}
                 </View>
               </View>
             </ScrollView>
@@ -1081,6 +1197,39 @@ const styles = StyleSheet.create({
   },
   labelChipTextActive: {
     color: '#FFFFFF',
+  },
+  labelHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+    marginTop: 8,
+  },
+  requiredStar: {
+    color: '#EF4444',
+    fontWeight: '700',
+  },
+  requiredBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#DC2626',
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  inputError: {
+    borderColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1.5,
+  },
+  fieldErrorText: {
+    fontSize: 11,
+    color: '#DC2626',
+    fontWeight: '600',
+    marginTop: 3,
   },
   modalFooter: {
     flexDirection: 'row',

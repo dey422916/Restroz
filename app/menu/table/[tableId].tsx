@@ -768,7 +768,20 @@ export default function CustomerDigitalMenuScreen() {
             const cardWidth = getResponsiveCardWidth();
 
             return (
-              <View key={prod.id} style={[styles.productCard, { width: cardWidth }]}>
+              <TouchableOpacity
+                key={prod.id}
+                style={[styles.productCard, { width: cardWidth }]}
+                onPress={() => {
+                  if (prod.is_available === false) return;
+                  if (qty > 0) {
+                    updateQuantity(prod.id, qty + 1);
+                  } else {
+                    addToCart(prod);
+                  }
+                }}
+                activeOpacity={0.92}
+                disabled={prod.is_available === false}
+              >
                 {/* Image Container with Badges */}
                 <View style={styles.imgContainer}>
                   {prod.image_url ? (
@@ -855,7 +868,7 @@ export default function CustomerDigitalMenuScreen() {
                     )}
                   </View>
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           })}
         </View>

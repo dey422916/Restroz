@@ -41,6 +41,13 @@ export default function CustomerAddressesScreen() {
   const [postalCode, setPostalCode] = useState('400001');
   const [isDefault, setIsDefault] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [formErrors, setFormErrors] = useState<{
+    fullName?: string;
+    phone?: string;
+    addressLine1?: string;
+    city?: string;
+    postalCode?: string;
+  }>({});
 
   const loadAddresses = async () => {
     try {
@@ -72,6 +79,7 @@ export default function CustomerAddressesScreen() {
     setState('Maharashtra');
     setPostalCode('400001');
     setIsDefault(addresses.length === 0);
+    setFormErrors({});
     setModalVisible(true);
   };
 
@@ -86,7 +94,49 @@ export default function CustomerAddressesScreen() {
     setState(addr.state);
     setPostalCode(addr.postal_code);
     setIsDefault(addr.is_default);
+    setFormErrors({});
     setModalVisible(true);
+  };
+
+  const validateForm = () => {
+    const errors: {
+      fullName?: string;
+      phone?: string;
+      addressLine1?: string;
+      city?: string;
+      postalCode?: string;
+    } = {};
+
+    if (!fullName.trim()) {
+      errors.fullName = 'Full Name is required';
+    } else if (fullName.trim().length < 2) {
+      errors.fullName = 'Please enter a valid full name';
+    }
+
+    if (!phone.trim()) {
+      errors.phone = 'Phone number is required';
+    } else if (!isValidPhoneNumber(phone.trim())) {
+      errors.phone = 'Please enter a valid 10-digit mobile number';
+    }
+
+    if (!addressLine1.trim()) {
+      errors.addressLine1 = 'Street address is required';
+    } else if (addressLine1.trim().length < 3) {
+      errors.addressLine1 = 'Please enter a detailed street address';
+    }
+
+    if (!city.trim()) {
+      errors.city = 'City is required';
+    }
+
+    if (!postalCode.trim()) {
+      errors.postalCode = 'PIN code is required';
+    } else if (!/^\d{6}$/.test(postalCode.trim())) {
+      errors.postalCode = 'Please enter a valid 6-digit PIN code';
+    }
+
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
   };
 
   const handleSetDefault = async (id: string) => {
@@ -107,13 +157,7 @@ export default function CustomerAddressesScreen() {
   };
 
   const handleSave = async () => {
-    if (!addressLine1.trim() || !fullName.trim() || !phone.trim()) {
-      Alert.alert('Validation Error', 'Full Name, Phone, and Street Address are required.');
-      return;
-    }
-
-    if (!isValidPhoneNumber(phone)) {
-      Alert.alert('Invalid Phone Number', 'Please enter a valid 10-digit mobile number for this address.');
+    if (!validateForm()) {
       return;
     }
 
@@ -352,59 +396,133 @@ export default function CustomerAddressesScreen() {
                 ))}
               </View>
 
-              <Text style={styles.labelTitle}>Full Name *</Text>
+              <View style={styles.labelHeaderRow}>
+                <Text style={styles.labelTitle}>
+                  Full Name <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                {formErrors.fullName ? (
+                  <Text style={styles.requiredBadge}>Required</Text>
+                ) : null}
+              </View>
               <TextInput
-                style={styles.input}
+                style={[styles.input, Boolean(formErrors.fullName) && styles.inputError]}
                 value={fullName}
-                onChangeText={setFullName}
+                onChangeText={(v) => {
+                  setFullName(v);
+                  if (formErrors.fullName) setFormErrors((prev) => ({ ...prev, fullName: undefined }));
+                }}
                 placeholder="Receiver name"
+                placeholderTextColor="#94A3B8"
               />
+              {Boolean(formErrors.fullName) && (
+                <Text style={styles.fieldErrorText}>⚠️ {formErrors.fullName}</Text>
+              )}
 
-              <Text style={styles.labelTitle}>Phone *</Text>
+              <View style={styles.labelHeaderRow}>
+                <Text style={styles.labelTitle}>
+                  Phone <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                {formErrors.phone ? (
+                  <Text style={styles.requiredBadge}>Required</Text>
+                ) : null}
+              </View>
               <TextInput
-                style={styles.input}
+                style={[styles.input, Boolean(formErrors.phone) && styles.inputError]}
                 value={phone}
-                onChangeText={(v) => setPhone(v.replace(/[^\d+]/g, ''))}
+                onChangeText={(v) => {
+                  const cleaned = v.replace(/[^\d+]/g, '');
+                  setPhone(cleaned);
+                  if (formErrors.phone) setFormErrors((prev) => ({ ...prev, phone: undefined }));
+                }}
                 placeholder="10-digit mobile number"
-                placeholderTextColor="#64748b"
+                placeholderTextColor="#94A3B8"
                 keyboardType="phone-pad"
                 maxLength={13}
               />
-              {Boolean(phone && !isValidPhoneNumber(phone)) && (
-                <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: 3 }}>
-                  ⚠️ Invalid mobile number
+              {Boolean(formErrors.phone) ? (
+                <Text style={styles.fieldErrorText}>⚠️ {formErrors.phone}</Text>
+              ) : Boolean(phone && !isValidPhoneNumber(phone)) ? (
+                <Text style={styles.fieldErrorText}>
+                  ⚠️ Please enter a valid 10-digit mobile number
                 </Text>
+              ) : null}
+
+              <View style={styles.labelHeaderRow}>
+                <Text style={styles.labelTitle}>
+                  Flat / House / Street Address <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                {formErrors.addressLine1 ? (
+                  <Text style={styles.requiredBadge}>Required</Text>
+                ) : null}
+              </View>
+              <TextInput
+                style={[styles.input, Boolean(formErrors.addressLine1) && styles.inputError]}
+                value={addressLine1}
+                onChangeText={(v) => {
+                  setAddressLine1(v);
+                  if (formErrors.addressLine1) setFormErrors((prev) => ({ ...prev, addressLine1: undefined }));
+                }}
+                placeholder="Detailed street address"
+                placeholderTextColor="#94A3B8"
+              />
+              {Boolean(formErrors.addressLine1) && (
+                <Text style={styles.fieldErrorText}>⚠️ {formErrors.addressLine1}</Text>
               )}
 
-              <Text style={styles.labelTitle}>Flat / House / Street Address *</Text>
-              <TextInput
-                style={styles.input}
-                value={addressLine1}
-                onChangeText={setAddressLine1}
-                placeholder="Detailed street address"
-              />
-
-              <Text style={styles.labelTitle}>Landmark</Text>
+              <Text style={styles.labelTitle}>Landmark (Optional)</Text>
               <TextInput
                 style={styles.input}
                 value={landmark}
                 onChangeText={setLandmark}
                 placeholder="e.g. Opposite Metro Station"
+                placeholderTextColor="#94A3B8"
               />
 
               <View style={styles.inputRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.labelTitle}>City *</Text>
-                  <TextInput style={styles.input} value={city} onChangeText={setCity} />
+                  <View style={styles.labelHeaderRow}>
+                    <Text style={styles.labelTitle}>
+                      City <Text style={styles.requiredStar}>*</Text>
+                    </Text>
+                    {formErrors.city ? <Text style={styles.requiredBadge}>Required</Text> : null}
+                  </View>
+                  <TextInput
+                    style={[styles.input, Boolean(formErrors.city) && styles.inputError]}
+                    value={city}
+                    onChangeText={(v) => {
+                      setCity(v);
+                      if (formErrors.city) setFormErrors((prev) => ({ ...prev, city: undefined }));
+                    }}
+                    placeholder="e.g. Mumbai"
+                    placeholderTextColor="#94A3B8"
+                  />
+                  {Boolean(formErrors.city) && (
+                    <Text style={styles.fieldErrorText}>⚠️ {formErrors.city}</Text>
+                  )}
                 </View>
                 <View style={{ flex: 1, marginLeft: 8 }}>
-                  <Text style={styles.labelTitle}>PIN Code *</Text>
+                  <View style={styles.labelHeaderRow}>
+                    <Text style={styles.labelTitle}>
+                      PIN Code <Text style={styles.requiredStar}>*</Text>
+                    </Text>
+                    {formErrors.postalCode ? <Text style={styles.requiredBadge}>Required</Text> : null}
+                  </View>
                   <TextInput
-                    style={styles.input}
+                    style={[styles.input, Boolean(formErrors.postalCode) && styles.inputError]}
                     value={postalCode}
-                    onChangeText={setPostalCode}
+                    onChangeText={(v) => {
+                      const cleaned = v.replace(/\D/g, '').slice(0, 6);
+                      setPostalCode(cleaned);
+                      if (formErrors.postalCode) setFormErrors((prev) => ({ ...prev, postalCode: undefined }));
+                    }}
                     keyboardType="numeric"
+                    maxLength={6}
+                    placeholder="6-digit PIN"
+                    placeholderTextColor="#94A3B8"
                   />
+                  {Boolean(formErrors.postalCode) && (
+                    <Text style={styles.fieldErrorText}>⚠️ {formErrors.postalCode}</Text>
+                  )}
                 </View>
               </View>
             </ScrollView>
@@ -752,6 +870,39 @@ const styles = StyleSheet.create({
   },
   inputRow: {
     flexDirection: 'row',
+  },
+  labelHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+    marginTop: 8,
+  },
+  requiredStar: {
+    color: '#EF4444',
+    fontWeight: '700',
+  },
+  requiredBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#DC2626',
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  inputError: {
+    borderColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1.5,
+  },
+  fieldErrorText: {
+    fontSize: 11,
+    color: '#DC2626',
+    fontWeight: '600',
+    marginTop: 3,
   },
   modalFooter: {
     flexDirection: 'row',

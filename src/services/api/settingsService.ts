@@ -236,7 +236,11 @@ export const settingsService = {
             gst_registered: resolvedGstRegistered,
             is_gst_enabled: resolvedIsGstEnabled,
             tax_invoice_enabled: resolvedTaxInvoiceEnabled,
-            default_tax_rate: Number(data.default_tax_rate ?? data.tax_rate ?? 5.0),
+            default_tax_rate: Number(
+              data.default_tax_rate !== undefined && data.default_tax_rate !== null
+                ? data.default_tax_rate
+                : (data.tax_rate !== undefined && data.tax_rate !== null ? data.tax_rate : 5.0)
+            ),
           };
           mockStorage.saveSettings(loaded);
           return loaded;
@@ -395,7 +399,13 @@ export const settingsService = {
       }
 
       if (settings.default_tax_rate !== undefined || settings.tax_rate !== undefined || updated.default_tax_rate !== undefined) {
-        const rate = Number(settings.default_tax_rate ?? settings.tax_rate ?? updated.default_tax_rate ?? 5.0);
+        const rawRate =
+          settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
+            ? settings.default_tax_rate
+            : (settings.tax_rate !== undefined && settings.tax_rate !== null
+                ? settings.tax_rate
+                : (updated.default_tax_rate !== undefined && updated.default_tax_rate !== null ? updated.default_tax_rate : 5.0));
+        const rate = Number(rawRate);
         sanitizedSettingsPayload.default_tax_rate = rate;
         sanitizedSettingsPayload.tax_rate = rate;
         sanitizedSettingsPayload.cgst_rate = Number((rate / 2).toFixed(2));
@@ -433,7 +443,13 @@ export const settingsService = {
         gst_registered: targetGstRegistered,
         is_gst_enabled: targetIsGstEnabled,
         tax_invoice_enabled: targetTaxInvoiceEnabled,
-        default_tax_rate: Number(data?.default_tax_rate ?? data?.tax_rate ?? updated.default_tax_rate ?? 5.0),
+        default_tax_rate: Number(
+          data?.default_tax_rate !== undefined && data?.default_tax_rate !== null
+            ? data.default_tax_rate
+            : (data?.tax_rate !== undefined && data?.tax_rate !== null
+                ? data.tax_rate
+                : (updated.default_tax_rate !== undefined && updated.default_tax_rate !== null ? updated.default_tax_rate : 5.0))
+        ),
       };
       mockStorage.saveSettings(persisted);
       try {

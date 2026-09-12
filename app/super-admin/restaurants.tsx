@@ -10,12 +10,17 @@ import {
   Modal,
   Alert,
   Image,
+  Platform,
+  Linking,
+  KeyboardAvoidingView,
   useWindowDimensions,
 } from 'react-native';
+import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
 import { superAdminService } from '../../src/services/api/superAdminService';
 import { storageService } from '../../src/services/api/storageService';
+import { locationSearchService, PlaceSuggestion } from '../../src/services/api/locationSearchService';
 import { Restaurant, RestaurantSubscription } from '../../src/types';
 import { colors } from '../../src/utils/colors';
 
@@ -36,6 +41,13 @@ export default function SuperAdminRestaurantsScreen() {
   const [saving, setSaving] = useState(false);
   const [uploadingBanner, setUploadingBanner] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [fetchingLocation, setFetchingLocation] = useState(false);
+  const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
+  const [mapSearchQuery, setMapSearchQuery] = useState('');
+  const [placeSuggestions, setPlaceSuggestions] = useState<PlaceSuggestion[]>([]);
+  const [searchingPlaces, setSearchingPlaces] = useState(false);
+  const [selectedPlaceInfo, setSelectedPlaceInfo] = useState<string | null>(null);
+  const searchTimeoutRef = React.useRef<any>(null);
   const [formName, setFormName] = useState('');
   const [formSlug, setFormSlug] = useState('');
   const [formLegalName, setFormLegalName] = useState('');
@@ -76,17 +88,45 @@ export default function SuperAdminRestaurantsScreen() {
     loadData();
   }, []);
 
+  const generateSlug = (text: string) => {
+    return text
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  };
+
   const handleNameChange = (val: string) => {
     setFormName(val);
-    if (!formSlug || formSlug === formName.toLowerCase().replace(/[^a-z0-9]/g, '-')) {
-      setFormSlug(val.toLowerCase().trim().replace(/[^a-z0-9]/g, '-'));
+    if (!slugManuallyEdited) {
+      setFormSlug(
+        val
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+/, '')
+      );
     }
   };
 
+  const handleSlugChange = (val: string) => {
+    setSlugManuallyEdited(true);
+    setFormSlug(val.toLowerCase().replace(/[^a-z0-9-]/g, ''));
+  };
+
   const handleCreateRestaurant = async () => {
-    if (!formName.trim() || !formSlug.trim()) {
-      Alert.alert('Validation Error', 'Restaurant Name and Slug are required.');
+    const trimmedName = formName.trim();
+    if (!trimmedName) {
+      Alert.alert('Validation Error', 'Restaurant Name is required.');
       return;
+    }
+
+    let trimmedSlug = (formSlug.trim() || generateSlug(trimmedName))
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+    if (!trimmedSlug) {
+      trimmedSlug = 'rest-' + Math.random().toString(36).substring(2, 7);
     }
 
     if (!formAddress.trim()) {
@@ -109,9 +149,9 @@ export default function SuperAdminRestaurantsScreen() {
     setSaving(true);
     try {
       const newRest = await superAdminService.createRestaurant({
-        name: formName.trim(),
-        slug: formSlug.trim().toLowerCase(),
-        legal_name: formLegalName.trim() || formName.trim(),
+        name: trimmedName,
+        slug: trimmedSlug,
+        legal_name: formLegalName.trim() || trimmedName,
         phone: formPhone.trim() || undefined,
         email: formEmail.trim() || undefined,
         address: formAddress.trim(),
@@ -136,9 +176,75 @@ export default function SuperAdminRestaurantsScreen() {
     }
   };
 
+  const handleMapSearchChange = (query: string) => {
+    setMapSearchQuery(query);
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    if (!query || query.trim().length < 2) {
+      setPlaceSuggestions([]);
+      setSearchingPlaces(false);
+      return;
+    }
+
+    // Direct synchronous extraction if user pasted a Google Maps <iframe> embed code or Maps link
+    const parsed = locationSearchService.parseGoogleMapsLocation(query);
+    if (parsed) {
+      setFormLat(parsed.latitude.toFixed(6));
+      setFormLng(parsed.longitude.toFixed(6));
+      if (!formName.trim() && parsed.name) {
+        handleNameChange(parsed.name);
+      }
+      setSelectedPlaceInfo(`Extracted from ${parsed.source}: ${parsed.name || 'Location Pin'} (${parsed.latitude.toFixed(6)}, ${parsed.longitude.toFixed(6)})`);
+      setSearchingPlaces(false);
+      setPlaceSuggestions([]);
+
+      // Auto reverse-geocode to populate address, city, state, postalCode
+      locationSearchService.reverseGeocode(parsed.latitude, parsed.longitude).then((rev) => {
+        if (rev) {
+          if (!formAddress.trim() && rev.street) setFormAddress(rev.street);
+          if (!formCity.trim() && rev.city) setFormCity(rev.city);
+          if (!formState.trim() && rev.state) setFormState(rev.state);
+          if (!formPostalCode.trim() && rev.postalCode) setFormPostalCode(rev.postalCode);
+        }
+      });
+      return;
+    }
+
+    setSearchingPlaces(true);
+    searchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const results = await locationSearchService.searchPlaces(query);
+        setPlaceSuggestions(results);
+      } catch (err) {
+        console.warn('Place search error:', err);
+      } finally {
+        setSearchingPlaces(false);
+      }
+    }, 350);
+  };
+
+  const handleSelectPlace = (place: PlaceSuggestion) => {
+    if (place.street) setFormAddress(place.street);
+    if (place.city) setFormCity(place.city);
+    if (place.state) setFormState(place.state);
+    if (place.postalCode) setFormPostalCode(place.postalCode);
+    if (place.latitude) setFormLat(place.latitude.toFixed(6));
+    if (place.longitude) setFormLng(place.longitude.toFixed(6));
+
+    if (!formName.trim() && place.name) {
+      handleNameChange(place.name);
+    }
+
+    setSelectedPlaceInfo(`${place.name} (${place.city ? place.city + ', ' : ''}${place.state})`);
+    setPlaceSuggestions([]);
+    setMapSearchQuery(place.name);
+  };
+
   const resetForm = () => {
     setFormName('');
     setFormSlug('');
+    setSlugManuallyEdited(false);
     setFormLegalName('');
     setFormPhone('');
     setFormEmail('');
@@ -150,6 +256,9 @@ export default function SuperAdminRestaurantsScreen() {
     setFormLogoUrl('');
     setFormLat('');
     setFormLng('');
+    setMapSearchQuery('');
+    setPlaceSuggestions([]);
+    setSelectedPlaceInfo(null);
   };
 
   const handlePickBanner = async () => {
@@ -177,6 +286,57 @@ export default function SuperAdminRestaurantsScreen() {
       Alert.alert('Upload Failed', err.message || 'Failed to upload logo image.');
     } finally {
       setUploadingLogo(false);
+    }
+  };
+
+  const handleFetchCurrentLocation = async () => {
+    try {
+      setFetchingLocation(true);
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Location Permission Required',
+          'Please allow location access to automatically fetch device GPS coordinates for this restaurant.'
+        );
+        return;
+      }
+
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      if (location?.coords) {
+        const lat = location.coords.latitude;
+        const lng = location.coords.longitude;
+        setFormLat(lat.toFixed(6));
+        setFormLng(lng.toFixed(6));
+
+        // Auto reverse-geocode to populate address/city/state/pin if empty
+        try {
+          const rev = await locationSearchService.reverseGeocode(lat, lng);
+          if (rev) {
+            if (!formAddress.trim() && rev.street) setFormAddress(rev.street);
+            if (!formCity.trim() && rev.city) setFormCity(rev.city);
+            if (!formState.trim() && rev.state) setFormState(rev.state);
+            if (!formPostalCode.trim() && rev.postalCode) setFormPostalCode(rev.postalCode);
+            setSelectedPlaceInfo(`Device GPS Location (${rev.city || 'Coordinates captured'})`);
+          }
+        } catch (revErr) {
+          console.warn('Reverse geocode warning:', revErr);
+        }
+
+        Alert.alert(
+          'Location Detected',
+          `GPS Coordinates captured:\nLatitude: ${lat.toFixed(6)}\nLongitude: ${lng.toFixed(6)}`
+        );
+      }
+    } catch (err: any) {
+      Alert.alert(
+        'Location Error',
+        err?.message || 'Unable to fetch current device location. Please make sure location services / GPS is turned on.'
+      );
+    } finally {
+      setFetchingLocation(false);
     }
   };
 
@@ -511,31 +671,52 @@ export default function SuperAdminRestaurantsScreen() {
       )}
 
       {/* Onboard Restaurant Modal */}
-      <Modal visible={modalVisible} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+      <Modal
+        visible={modalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
+          <View style={[styles.modalCard, { height: isMobile ? '94%' : '88%' }]}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Onboard New Restaurant Tenant</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <Text style={{ fontSize: 18, color: '#64748B' }}>✕</Text>
+              <View style={{ flex: 1, paddingRight: 10 }}>
+                <Text style={styles.modalTitle}>Onboard New Restaurant Tenant</Text>
+                <Text style={styles.modalSubtitle}>Fill in restaurant details, address & GPS location</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setModalVisible(false)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
+                <Text style={{ fontSize: 22, color: '#64748B', fontWeight: '700' }}>✕</Text>
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              style={styles.modalBody}
+              contentContainerStyle={styles.modalBodyContent}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled={true}
+              showsVerticalScrollIndicator={true}
+            >
               <Text style={styles.label}>Restaurant Name *</Text>
               <TextInput
                 style={styles.input}
                 placeholder="e.g. Royal Spice Kitchen"
                 value={formName}
                 onChangeText={handleNameChange}
+                autoFocus={true}
               />
 
               <Text style={styles.label}>Subdomain Slug *</Text>
               <TextInput
                 style={styles.input}
-                placeholder="e.g. royal-spice"
+                placeholder="e.g. royal-spice (auto-generated from name)"
                 value={formSlug}
-                onChangeText={setFormSlug}
+                onChangeText={handleSlugChange}
                 autoCapitalize="none"
               />
 
@@ -547,8 +728,8 @@ export default function SuperAdminRestaurantsScreen() {
                 onChangeText={setFormLegalName}
               />
 
-              <View style={styles.formRow}>
-                <View style={{ flex: 1, marginRight: 8 }}>
+              <View style={[styles.formRow, isMobile && { flexDirection: 'column' }]}>
+                <View style={[{ flex: 1 }, !isMobile && { marginRight: 8 }]}>
                   <Text style={styles.label}>Phone Number</Text>
                   <TextInput
                     style={styles.input}
@@ -558,7 +739,7 @@ export default function SuperAdminRestaurantsScreen() {
                     keyboardType="phone-pad"
                   />
                 </View>
-                <View style={{ flex: 1, marginLeft: 8 }}>
+                <View style={[{ flex: 1 }, !isMobile && { marginLeft: 8 }]}>
                   <Text style={styles.label}>Email Address</Text>
                   <TextInput
                     style={styles.input}
@@ -571,6 +752,98 @@ export default function SuperAdminRestaurantsScreen() {
                 </View>
               </View>
 
+              {/* Google Map & Places Search Section */}
+              <View style={styles.mapSearchContainer}>
+                <View style={styles.mapSearchHeader}>
+                  <Text style={styles.mapSearchTitle}>🗺️ Google Map Search / Paste &lt;iframe&gt;</Text>
+                  <Text style={styles.mapSearchSubtitle}>
+                    Search any Indian place, or paste Google Maps &lt;iframe&gt; embed code / share link to auto-detect coordinates
+                  </Text>
+                </View>
+
+                <View style={styles.mapSearchInputRow}>
+                  <Text style={{ fontSize: 16, marginRight: 6 }}>🔍</Text>
+                  <TextInput
+                    style={styles.mapSearchInput}
+                    placeholder="Search place, or paste Google Maps <iframe> / link..."
+                    value={mapSearchQuery}
+                    onChangeText={handleMapSearchChange}
+                    placeholderTextColor="#94A3B8"
+                  />
+                  {searchingPlaces && <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 6 }} />}
+                  {mapSearchQuery.length > 0 && (
+                    <TouchableOpacity
+                      onPress={() => {
+                        setMapSearchQuery('');
+                        setPlaceSuggestions([]);
+                      }}
+                      style={{ padding: 4, marginLeft: 4 }}
+                    >
+                      <Text style={{ fontSize: 13, color: '#94A3B8', fontWeight: '700' }}>✕</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Suggestions Dropdown */}
+                {placeSuggestions.length > 0 && (
+                  <View style={styles.suggestionsBox}>
+                    <Text style={styles.suggestionsHeader}>Select Listed Location:</Text>
+                    <ScrollView
+                      style={styles.suggestionsList}
+                      nestedScrollEnabled={true}
+                      showsVerticalScrollIndicator={true}
+                      keyboardShouldPersistTaps="handled"
+                    >
+                      {placeSuggestions.map((item) => (
+                        <TouchableOpacity
+                          key={item.placeId}
+                          style={styles.suggestionItem}
+                          onPress={() => handleSelectPlace(item)}
+                          activeOpacity={0.7}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                            <Text style={{ fontSize: 16, marginRight: 8, marginTop: 2 }}>📍</Text>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.suggestionName} numberOfLines={1}>
+                                {item.name}
+                              </Text>
+                              <Text style={styles.suggestionAddress} numberOfLines={2}>
+                                {item.displayName}
+                              </Text>
+                              <View style={{ flexDirection: 'row', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                                {item.city ? (
+                                  <View style={styles.suggestionTag}>
+                                    <Text style={styles.suggestionTagText}>🏙️ {item.city}</Text>
+                                  </View>
+                                ) : null}
+                                {item.postalCode ? (
+                                  <View style={styles.suggestionTag}>
+                                    <Text style={styles.suggestionTagText}>📮 PIN: {item.postalCode}</Text>
+                                  </View>
+                                ) : null}
+                                <View style={[styles.suggestionTag, { backgroundColor: '#EFF6FF' }]}>
+                                  <Text style={[styles.suggestionTagText, { color: '#1D4ED8' }]}>
+                                    🌐 {item.latitude.toFixed(4)}, {item.longitude.toFixed(4)}
+                                  </Text>
+                                </View>
+                              </View>
+                            </View>
+                          </View>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {selectedPlaceInfo ? (
+                  <View style={styles.selectedPlaceBadge}>
+                    <Text style={styles.selectedPlaceText}>
+                      ✓ Linked to Map: <Text style={{ fontWeight: '800' }}>{selectedPlaceInfo}</Text>
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+
               <Text style={styles.label}>Street Address *</Text>
               <TextInput
                 style={styles.input}
@@ -579,8 +852,8 @@ export default function SuperAdminRestaurantsScreen() {
                 onChangeText={setFormAddress}
               />
 
-              <View style={styles.formRow}>
-                <View style={{ flex: 1, marginRight: 6 }}>
+              <View style={[styles.formRow, isMobile && { flexDirection: 'column' }]}>
+                <View style={[{ flex: 1 }, !isMobile && { marginRight: 6 }]}>
                   <Text style={styles.label}>City *</Text>
                   <TextInput
                     style={styles.input}
@@ -589,7 +862,7 @@ export default function SuperAdminRestaurantsScreen() {
                     onChangeText={setFormCity}
                   />
                 </View>
-                <View style={{ flex: 1, marginHorizontal: 6 }}>
+                <View style={[{ flex: 1 }, !isMobile && { marginHorizontal: 6 }]}>
                   <Text style={styles.label}>State *</Text>
                   <TextInput
                     style={styles.input}
@@ -598,7 +871,7 @@ export default function SuperAdminRestaurantsScreen() {
                     onChangeText={setFormState}
                   />
                 </View>
-                <View style={{ flex: 1, marginLeft: 6 }}>
+                <View style={[{ flex: 1 }, !isMobile && { marginLeft: 6 }]}>
                   <Text style={styles.label}>Postal Code / PIN *</Text>
                   <TextInput
                     style={styles.input}
@@ -705,40 +978,87 @@ export default function SuperAdminRestaurantsScreen() {
                 )}
               </View>
 
-              <View style={styles.formRow}>
-                <View style={{ flex: 1, marginRight: 6 }}>
-                  <Text style={styles.label}>Latitude (optional)</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g. 23.2324"
-                    value={formLat}
-                    onChangeText={setFormLat}
-                    keyboardType="numeric"
-                  />
+              {/* Geolocation Section */}
+              <View style={styles.geoContainer}>
+                <View style={styles.geoHeader}>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={styles.geoTitle}>📍 Restaurant GPS Location</Text>
+                    <Text style={styles.geoSubtitle}>
+                      Used for customer distance calculation & local marketplace discovery
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.fetchLocBtn, fetchingLocation && styles.fetchLocBtnDisabled]}
+                    onPress={handleFetchCurrentLocation}
+                    disabled={fetchingLocation}
+                    activeOpacity={0.8}
+                  >
+                    {fetchingLocation ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Text style={{ fontSize: 13, marginRight: 4 }}>📡</Text>
+                        <Text style={styles.fetchLocBtnText}>Auto-Fetch GPS</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
                 </View>
-                <View style={{ flex: 1, marginLeft: 6 }}>
-                  <Text style={styles.label}>Longitude (optional)</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g. 87.8615"
-                    value={formLng}
-                    onChangeText={setFormLng}
-                    keyboardType="numeric"
-                  />
+
+                {formLat && formLng ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+                    <View style={styles.geoActiveTag}>
+                      <Text style={styles.geoActiveTagText}>
+                        ✓ Coordinates: {formLat}, {formLng}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#E0F2FE', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6 }}
+                      onPress={() => {
+                        const url = `https://www.google.com/maps/search/?api=1&query=${formLat},${formLng}`;
+                        Linking.openURL(url).catch(() => Alert.alert('Error', 'Unable to open Google Maps.'));
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#0369A1' }}>🗺️ View on Google Maps</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+
+                <View style={[styles.formRow, isMobile && { flexDirection: 'column' }]}>
+                  <View style={[{ flex: 1 }, !isMobile && { marginRight: 6 }]}>
+                    <Text style={styles.label}>Latitude (optional)</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="e.g. 23.232400"
+                      value={formLat}
+                      onChangeText={setFormLat}
+                      keyboardType="numeric"
+                    />
+                  </View>
+                  <View style={[{ flex: 1 }, !isMobile && { marginLeft: 6 }]}>
+                    <Text style={styles.label}>Longitude (optional)</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="e.g. 87.861500"
+                      value={formLng}
+                      onChangeText={setFormLng}
+                      keyboardType="numeric"
+                    />
+                  </View>
                 </View>
               </View>
             </ScrollView>
 
             <View style={styles.modalFooter}>
               <TouchableOpacity
-                style={styles.cancelBtn}
+                style={[styles.cancelBtn, isMobile && { flex: 1 }]}
                 onPress={() => setModalVisible(false)}
                 disabled={saving}
               >
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.saveBtn}
+                style={[styles.saveBtn, isMobile && { flex: 2 }]}
                 onPress={handleCreateRestaurant}
                 disabled={saving}
               >
@@ -750,7 +1070,7 @@ export default function SuperAdminRestaurantsScreen() {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -1073,34 +1393,54 @@ const styles = StyleSheet.create({
   // Modal Styles
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 16,
+    padding: 10,
   },
   modalCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     width: '100%',
-    maxWidth: 560,
-    maxHeight: '90%',
+    maxWidth: 580,
+    maxHeight: '94%',
+    flexDirection: 'column',
     overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 10,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
+    backgroundColor: '#FAFAFA',
+    flexShrink: 0,
   },
   modalTitle: {
     fontSize: 16,
     fontWeight: '700',
     color: '#0F172A',
   },
+  modalSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
   modalBody: {
-    padding: 16,
+    flex: 1,
+    width: '100%',
+  },
+  modalBodyContent: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 90,
   },
   label: {
     fontSize: 12,
@@ -1115,26 +1455,185 @@ const styles = StyleSheet.create({
     borderColor: '#CBD5E1',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingVertical: 10,
+    minHeight: 44,
     fontSize: 14,
     color: '#0F172A',
   },
   formRow: {
     flexDirection: 'row',
   },
+  mapSearchContainer: {
+    backgroundColor: '#F0F9FF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    padding: 12,
+    marginTop: 14,
+    marginBottom: 6,
+  },
+  mapSearchHeader: {
+    marginBottom: 8,
+  },
+  mapSearchTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0369A1',
+  },
+  mapSearchSubtitle: {
+    fontSize: 11,
+    color: '#0284C7',
+    marginTop: 2,
+  },
+  mapSearchInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#7DD3FC',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  mapSearchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0F172A',
+    paddingVertical: 2,
+  },
+  suggestionsBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    marginTop: 8,
+    overflow: 'hidden',
+  },
+  suggestionsList: {
+    maxHeight: 220,
+  },
+  suggestionsHeader: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  suggestionItem: {
+    padding: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  suggestionName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  suggestionAddress: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  suggestionTag: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  suggestionTagText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  selectedPlaceBadge: {
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: 8,
+  },
+  selectedPlaceText: {
+    fontSize: 11,
+    color: '#15803D',
+    fontWeight: '600',
+  },
+  geoContainer: {
+    marginTop: 14,
+    marginBottom: 6,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  geoHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  geoTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  geoSubtitle: {
+    fontSize: 11,
+    color: '#15803D',
+    marginTop: 2,
+  },
+  geoActiveTag: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+  },
+  geoActiveTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  fetchLocBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#059669',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  fetchLocBtnDisabled: {
+    opacity: 0.6,
+  },
+  fetchLocBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   modalFooter: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    padding: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderTopWidth: 1,
     borderTopColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
     gap: 12,
+    flexShrink: 0,
   },
   cancelBtn: {
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 11,
     borderRadius: 8,
     backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cancelBtnText: {
     color: '#475569',
@@ -1143,9 +1642,11 @@ const styles = StyleSheet.create({
   },
   saveBtn: {
     paddingHorizontal: 20,
-    paddingVertical: 10,
+    paddingVertical: 11,
     borderRadius: 8,
     backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   saveBtnText: {
     color: '#FFFFFF',

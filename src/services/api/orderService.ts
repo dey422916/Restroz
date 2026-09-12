@@ -1685,9 +1685,9 @@ export const orderService = {
     if (order.status === 'completed') throw new Error('Order is already completed and locked.');
     if (order.status === 'cancelled') throw new Error('Cannot close a cancelled order.');
 
-    const targetPayable = (payableAmount !== undefined && payableAmount > 0)
+    const targetPayable = (payableAmount !== undefined && payableAmount !== null)
       ? payableAmount
-      : (order.payable_amount > 0 ? order.payable_amount : (payableAmount ?? 0));
+      : (order.payable_amount !== undefined && order.payable_amount !== null ? order.payable_amount : (payableAmount ?? 0));
     const finalPaidAmount = paymentReceived ? (amountPaid ?? targetPayable) : 0;
     const finalPaymentStatus = paymentReceived ? 'paid' : 'unpaid';
     const finalOrderStatus: OrderStatus = 'completed';
@@ -1717,11 +1717,11 @@ export const orderService = {
     };
 
     if (discountAmount !== undefined) updatePayload.discount_amount = discountAmount;
-    if (cgstAmount !== undefined && cgstAmount > 0) updatePayload.cgst_amount = cgstAmount;
-    if (sgstAmount !== undefined && sgstAmount > 0) updatePayload.sgst_amount = sgstAmount;
-    if (grandTotal !== undefined && (grandTotal > 0 || (order.grand_total || 0) <= 0)) updatePayload.grand_total = grandTotal;
+    if (cgstAmount !== undefined) updatePayload.cgst_amount = cgstAmount;
+    if (sgstAmount !== undefined) updatePayload.sgst_amount = sgstAmount;
+    if (grandTotal !== undefined) updatePayload.grand_total = grandTotal;
     if (roundOff !== undefined) updatePayload.round_off = roundOff;
-    if (payableAmount !== undefined && (payableAmount > 0 || (order.payable_amount || 0) <= 0)) updatePayload.payable_amount = payableAmount;
+    if (payableAmount !== undefined) updatePayload.payable_amount = payableAmount;
 
     if (isSupabaseConfigured) {
       try {
@@ -2043,11 +2043,11 @@ export const orderService = {
     };
 
     if (params.discount_amount !== undefined) updatePayload.discount_amount = params.discount_amount;
-    if (params.cgst_amount !== undefined && params.cgst_amount > 0) updatePayload.cgst_amount = params.cgst_amount;
-    if (params.sgst_amount !== undefined && params.sgst_amount > 0) updatePayload.sgst_amount = params.sgst_amount;
-    if (params.grand_total !== undefined && (params.grand_total > 0 || (target.grand_total || 0) <= 0)) updatePayload.grand_total = params.grand_total;
+    if (params.cgst_amount !== undefined) updatePayload.cgst_amount = params.cgst_amount;
+    if (params.sgst_amount !== undefined) updatePayload.sgst_amount = params.sgst_amount;
+    if (params.grand_total !== undefined) updatePayload.grand_total = params.grand_total;
     if (params.round_off !== undefined) updatePayload.round_off = params.round_off;
-    if (params.payable_amount !== undefined && (params.payable_amount > 0 || (target.payable_amount || 0) <= 0)) updatePayload.payable_amount = params.payable_amount;
+    if (params.payable_amount !== undefined) updatePayload.payable_amount = params.payable_amount;
 
     if (isSupabaseConfigured) {
       try {

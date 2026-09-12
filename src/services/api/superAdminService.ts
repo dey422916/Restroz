@@ -162,6 +162,7 @@ export const superAdminService = {
         slug: cleanSlug,
         legal_name: payload.legal_name || payload.name.trim(),
         logo_url: payload.logo_url?.trim() || null,
+        banner_url: bannerUrl,
         phone: payload.phone?.trim() || null,
         email: payload.email?.trim() || null,
         address: payload.address.trim(),
@@ -170,6 +171,8 @@ export const superAdminService = {
         postal_code: payload.postal_code.trim(),
         country: payload.country?.trim() || 'India',
         timezone: payload.timezone || 'Asia/Kolkata',
+        latitude: payload.latitude !== undefined ? payload.latitude : null,
+        longitude: payload.longitude !== undefined ? payload.longitude : null,
         status: payload.status || 'ACTIVE',
       })
       .select()
@@ -834,34 +837,62 @@ export const superAdminService = {
       console.warn('getSubscriptionPlans error:', error);
       return [];
     }
-    return data || [];
+    return (data || []).map((p: any) => ({
+      ...p,
+      description: p.description || p.features?.description || '',
+    }));
   },
 
   async createSubscriptionPlan(plan: Omit<SubscriptionPlan, 'id' | 'created_at' | 'updated_at'>): Promise<SubscriptionPlan> {
     if (!isSupabaseConfigured) throw new Error('Supabase not configured.');
 
+    const { description, ...cleanPlan } = plan as any;
+    const finalFeatures = {
+      ...(cleanPlan.features || {}),
+      ...(description ? { description } : {}),
+    };
+
     const { data, error } = await supabase
       .from('subscription_plans')
-      .insert(plan)
+      .insert({ ...cleanPlan, features: finalFeatures })
       .select()
       .single();
 
     if (error || !data) throw error || new Error('Failed to create plan.');
-    return data;
+    return {
+      ...data,
+      description: (data as any).description || (data as any).features?.description || description || '',
+    };
   },
 
   async updateSubscriptionPlan(id: string, updates: Partial<SubscriptionPlan>): Promise<SubscriptionPlan> {
     if (!isSupabaseConfigured) throw new Error('Supabase not configured.');
 
+    const { description, ...cleanUpdates } = updates as any;
+    const updateObj: any = {
+      ...cleanUpdates,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (description !== undefined) {
+      updateObj.features = {
+        ...(cleanUpdates.features || {}),
+        description: description,
+      };
+    }
+
     const { data, error } = await supabase
       .from('subscription_plans')
-      .update({ ...updates, updated_at: new Date().toISOString() })
+      .update(updateObj)
       .eq('id', id)
       .select()
       .single();
 
     if (error || !data) throw error || new Error('Failed to update plan.');
-    return data;
+    return {
+      ...data,
+      description: (data as any).description || (data as any).features?.description || description || '',
+    };
   },
 
   // --------------------------------------------------------------------------
@@ -898,27 +929,7 @@ export const superAdminService = {
   }): Promise<RestaurantSubscription> {
     if (!isSupabaseConfigured) throw new Error('Supabase not configured.');
 
-    // 1. Try atomic RPC assign_restaurant_subscription
-    try {
-      const { data: rpcData, error: rpcError } = await supabase.rpc('assign_restaurant_subscription', {
-        p_restaurant_id: payload.restaurant_id,
-        p_plan_id: payload.plan_id,
-        p_status: 'active',
-        p_duration_days: payload.duration_days,
-        p_amount: payload.amount,
-        p_payment_method: payload.payment_method || 'upi',
-        p_payment_reference: payload.payment_reference || null,
-        p_notes: payload.notes || null,
-      });
-
-      if (!rpcError && rpcData) {
-        return rpcData as RestaurantSubscription;
-      }
-    } catch (rpcEx) {
-      console.warn('assign_restaurant_subscription RPC fallback:', rpcEx);
-    }
-
-    // Direct fallback
+    // Fetch plan details to calculate dates and price
     const { data: plan } = await supabase
       .from('subscription_plans')
       .select('*')
@@ -926,48 +937,61 @@ export const superAdminService = {
       .single();
 
     const amount = payload.amount !== undefined ? payload.amount : plan?.price || 0;
-    const endDate = new Date(Date.now() + payload.duration_days * 24 * 60 * 60 * 1000).toISOString();
+    const durationDays = payload.duration_days > 0 ? payload.duration_days : 30;
+    const endDate = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
 
-    // Cancel existing active subscriptions
-    await supabase
-      .from('restaurant_subscriptions')
-      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-      .eq('restaurant_id', payload.restaurant_id)
-      .eq('status', 'active');
+    const normalizePaymentMethod = (method?: string) => {
+      const m = (method || '').toLowerCase().trim();
+      if (['upi', 'netbanking', 'card', 'manual_bank_transfer', 'free_tier'].includes(m)) {
+        return m;
+      }
+      if (m === 'bank_transfer' || m === 'bank' || m === 'cash') return 'manual_bank_transfer';
+      return 'upi';
+    };
 
+    const validPaymentMethod = normalizePaymentMethod(payload.payment_method);
+
+    // Upsert subscription directly into restaurant_subscriptions (which holds tenant subscription state)
     const { data: newSub, error: subErr } = await supabase
       .from('restaurant_subscriptions')
-      .insert({
-        restaurant_id: payload.restaurant_id,
-        plan_id: payload.plan_id,
-        status: 'active',
-        start_date: new Date().toISOString(),
-        end_date: endDate,
-        amount,
-        currency: plan?.currency || 'INR',
-        notes: payload.notes,
-      })
-      .select('*, plan:plan_id(*)')
+      .upsert(
+        {
+          restaurant_id: payload.restaurant_id,
+          plan_id: payload.plan_id,
+          status: 'active',
+          start_date: new Date().toISOString(),
+          end_date: endDate,
+          notes: payload.notes || 'Plan assigned by Super Admin',
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'restaurant_id' }
+      )
+      .select('*, plan:subscription_plans(*), restaurant:restaurants(id, name, slug)')
       .single();
 
-    if (subErr || !newSub) throw subErr || new Error('Failed to assign subscription.');
+    if (subErr || !newSub) {
+      console.error('Failed to upsert restaurant_subscription:', subErr);
+      throw subErr || new Error('Failed to assign subscription.');
+    }
 
-    // Record payment
-    if (amount > 0) {
+    // Record payment in subscription_payments if amount > 0 or payment method specified
+    try {
       await supabase.from('subscription_payments').insert({
         restaurant_id: payload.restaurant_id,
         subscription_id: newSub.id,
+        plan_id: payload.plan_id,
         amount,
         currency: plan?.currency || 'INR',
-        payment_method: payload.payment_method || 'upi',
-        payment_reference: payload.payment_reference || null,
+        payment_method: validPaymentMethod,
         payment_status: 'paid',
         paid_at: new Date().toISOString(),
-        notes: payload.notes,
+        notes: payload.notes || `Subscription payment for plan: ${plan?.name || payload.plan_id}`,
       });
+    } catch (payErr) {
+      console.warn('Subscription payment record warning:', payErr);
     }
 
-    return newSub;
+    return newSub as RestaurantSubscription;
   },
 
   async updateSubscriptionStatus(subscriptionId: string, status: 'active' | 'suspended' | 'cancelled' | 'expired'): Promise<void> {
@@ -1015,24 +1039,53 @@ export const superAdminService = {
   }): Promise<SubscriptionPayment> {
     if (!isSupabaseConfigured) throw new Error('Supabase not configured.');
 
+    let planId = 'starter';
+    let subId = payload.subscription_id;
+
+    if (subId) {
+      const { data: sub } = await supabase
+        .from('restaurant_subscriptions')
+        .select('plan_id')
+        .eq('id', subId)
+        .maybeSingle();
+      if (sub?.plan_id) planId = sub.plan_id;
+    } else {
+      const { data: sub } = await supabase
+        .from('restaurant_subscriptions')
+        .select('id, plan_id')
+        .eq('restaurant_id', payload.restaurant_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (sub) {
+        subId = sub.id;
+        if (sub.plan_id) planId = sub.plan_id;
+      }
+    }
+
+    const methodLower = (payload.payment_method || '').toLowerCase().trim();
+    const validPaymentMethod = ['upi', 'netbanking', 'card', 'manual_bank_transfer', 'free_tier'].includes(methodLower)
+      ? methodLower
+      : 'upi';
+
     const { data, error } = await supabase
       .from('subscription_payments')
       .insert({
         restaurant_id: payload.restaurant_id,
-        subscription_id: payload.subscription_id || null,
+        subscription_id: subId || null,
+        plan_id: planId,
         amount: payload.amount,
         currency: payload.currency || 'INR',
-        payment_method: payload.payment_method,
-        payment_reference: payload.payment_reference || null,
+        payment_method: validPaymentMethod,
         payment_status: 'paid',
         paid_at: new Date().toISOString(),
         notes: payload.notes || null,
       })
-      .select()
+      .select('*, restaurant:restaurants(id, name, slug)')
       .single();
 
     if (error || !data) throw error || new Error('Failed to record payment.');
-    return data;
+    return data as SubscriptionPayment;
   },
 
   // --------------------------------------------------------------------------

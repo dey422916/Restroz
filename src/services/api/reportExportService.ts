@@ -1494,28 +1494,156 @@ export const reportExportService = {
           <meta charset="utf-8" />
           <title>${settings.name || 'Restaurant'} — ${title}</title>
           <style>
-            @page { size: A4 landscape; margin: 10mm; }
-            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 11px; color: #0f172a; padding: 0; margin: 0; line-height: 1.3; }
-            .header-bar { display: flex; justify-content: space-between; border-bottom: 2px solid #0f172a; padding-bottom: 8px; margin-bottom: 12px; }
-            .brand-name { font-size: 20px; font-weight: 900; color: #0f172a; }
-            .meta-text { font-size: 11px; color: #475569; }
-            .report-title-box { text-align: right; }
-            .report-title { font-size: 18px; font-weight: 900; color: #1e40af; margin: 0; }
-            .report-period { font-size: 12px; font-weight: 700; color: #0f172a; margin-top: 2px; }
-            .kpi-row { display: flex; gap: 12px; margin-bottom: 12px; }
-            .kpi-box { flex: 1; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; }
-            .kpi-label { font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; }
-            .kpi-val { font-size: 16px; font-weight: 900; color: #0f172a; margin-top: 2px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 6px; }
-            th { background: #f1f5f9; color: #0f172a; font-weight: 800; font-size: 10.5px; padding: 6px 8px; border: 1px solid #cbd5e1; text-align: left; }
-            td { padding: 5px 8px; border: 1px solid #e2e8f0; font-size: 10.5px; }
-            tr:nth-child(even) td { background-color: #fafafa; }
-            .total-row td { font-weight: 900; background-color: #f1f5f9; border-top: 2px solid #0f172a; border-bottom: 2px solid #0f172a; }
-            .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: 800; }
+            @page {
+              size: A4 portrait;
+              margin: 10mm 12mm;
+            }
+            @media print {
+              html, body {
+                width: 100%;
+                margin: 0;
+                padding: 0;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+              table {
+                page-break-inside: auto;
+              }
+              tr {
+                page-break-inside: avoid;
+                page-break-after: auto;
+              }
+              thead {
+                display: table-header-group;
+              }
+              tfoot {
+                display: table-footer-group;
+              }
+            }
+            * {
+              box-sizing: border-box;
+              margin: 0;
+              padding: 0;
+            }
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+              font-size: 10px;
+              color: #0f172a;
+              padding: 0;
+              margin: 0;
+              line-height: 1.35;
+              width: 100%;
+              background-color: #ffffff;
+            }
+            .header-bar {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              border-bottom: 2px solid #0f172a;
+              padding-bottom: 8px;
+              margin-bottom: 10px;
+            }
+            .brand-name {
+              font-size: 18px;
+              font-weight: 900;
+              color: #0f172a;
+            }
+            .meta-text {
+              font-size: 9.5px;
+              color: #475569;
+              margin-top: 2px;
+            }
+            .report-title-box {
+              text-align: right;
+            }
+            .report-title {
+              font-size: 16px;
+              font-weight: 900;
+              color: #1e40af;
+              margin: 0;
+            }
+            .report-period {
+              font-size: 11px;
+              font-weight: 700;
+              color: #0f172a;
+              margin-top: 2px;
+            }
+            .kpi-row {
+              display: flex;
+              gap: 8px;
+              margin-bottom: 10px;
+              flex-wrap: wrap;
+            }
+            .kpi-box {
+              flex: 1 1 auto;
+              background: #f8fafc;
+              border: 1px solid #cbd5e1;
+              border-radius: 6px;
+              padding: 6px 10px;
+              min-width: 100px;
+            }
+            .kpi-label {
+              font-size: 8.5px;
+              font-weight: 700;
+              color: #64748b;
+              text-transform: uppercase;
+              letter-spacing: 0.3px;
+            }
+            .kpi-val {
+              font-size: 14px;
+              font-weight: 900;
+              color: #0f172a;
+              margin-top: 2px;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 4px;
+              table-layout: auto;
+            }
+            th {
+              background: #f1f5f9;
+              color: #0f172a;
+              font-weight: 800;
+              font-size: 9px;
+              padding: 4.5px 5px;
+              border: 1px solid #cbd5e1;
+              text-align: left;
+              white-space: nowrap;
+            }
+            td {
+              padding: 4px 5px;
+              border: 1px solid #e2e8f0;
+              font-size: 9px;
+            }
+            tr:nth-child(even) td {
+              background-color: #fafafa;
+            }
+            .total-row td {
+              font-weight: 900;
+              background-color: #f1f5f9;
+              border-top: 2px solid #0f172a;
+              border-bottom: 2px solid #0f172a;
+              font-size: 9.5px;
+            }
+            .badge {
+              display: inline-block;
+              padding: 1px 4px;
+              border-radius: 3px;
+              font-size: 8px;
+              font-weight: 800;
+            }
             .badge-success { background: #dcfce7; color: #16a34a; }
             .badge-danger { background: #fee2e2; color: #dc2626; }
             .badge-info { background: #eff6ff; color: #2563eb; }
-            .footer { margin-top: 16px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px dashed #cbd5e1; padding-top: 6px; }
+            .footer {
+              margin-top: 14px;
+              text-align: center;
+              font-size: 8.5px;
+              color: #94a3b8;
+              border-top: 1px dashed #cbd5e1;
+              padding-top: 6px;
+            }
           </style>
         </head>
         <body>

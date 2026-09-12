@@ -458,8 +458,31 @@ export default function RestaurantMenuScreen() {
                 const isVeg = p.food_type === 'veg';
                 const isAvailable = p.is_available && (p.stock_quantity === null || p.stock_quantity > 0);
 
+                const handleCardPress = () => {
+                  if (!isOpen || !isAvailable) return;
+                  if (qty > 0) {
+                    updateQuantity(p.id, qty + 1);
+                  } else {
+                    addToCart(
+                      {
+                        id: restaurant.id,
+                        name: restaurant.name,
+                        logo_url: restaurant.logo_url,
+                      },
+                      p,
+                      1
+                    );
+                  }
+                };
+
                 return (
-                  <View key={p.id} style={[styles.imageCard, getCardWidthStyle()]}>
+                  <TouchableOpacity
+                    key={p.id}
+                    style={[styles.imageCard, getCardWidthStyle()]}
+                    onPress={handleCardPress}
+                    activeOpacity={0.92}
+                    disabled={!isOpen || !isAvailable}
+                  >
                     {/* Top Image Container */}
                     <View style={styles.cardImageWrap}>
                       {p.image_url ? (
@@ -591,7 +614,7 @@ export default function RestaurantMenuScreen() {
                         ) : null}
                       </View>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 );
               })}
             </View>

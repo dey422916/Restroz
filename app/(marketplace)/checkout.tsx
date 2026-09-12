@@ -434,111 +434,123 @@ export default function DeliveryCheckoutScreen() {
                   multiline
                 />
               </View>
+
+              {/* Payment Method Section */}
+              <View style={styles.sectionCard}>
+                <Text style={styles.sectionTitle}>💳 Payment Method</Text>
+
+                {/* Cash on Delivery (COD) Option */}
+                <TouchableOpacity
+                  style={[styles.payOption, paymentMethod === 'cod' && styles.payOptionSelected]}
+                  onPress={() => setPaymentMethod('cod')}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.radioCircle}>
+                    {paymentMethod === 'cod' && <View style={styles.radioInner} />}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.payTitle}>💵 Cash on Delivery (COD)</Text>
+                    <Text style={styles.paySub}>Pay cash or UPI directly to delivery agent on arrival</Text>
+                  </View>
+                  <View style={styles.badgeActive}>
+                    <Text style={styles.badgeTextActive}>RECOMMENDED</Text>
+                  </View>
+                </TouchableOpacity>
+
+                {/* Online Payment */}
+                <TouchableOpacity
+                  style={[styles.payOption, paymentMethod === 'online' && styles.payOptionSelected]}
+                  onPress={() => setPaymentMethod('online')}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.radioCircle}>
+                    {paymentMethod === 'online' && <View style={styles.radioInner} />}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.payTitle}>💳 Online Payment (UPI / Cards / NetBanking)</Text>
+                    <Text style={styles.paySub}>
+                      Online gateway integration (creates confirmed pending payment order)
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
             </View>
 
-            {/* Right Column: Order Items, Summary & Payment Mode */}
+            {/* Right Column: Order Summary & Place Order */}
             <View style={[styles.rightColumn, isDesktop && styles.rightColumnDesktop]}>
-              {/* Payment Mode */}
               <View style={styles.sectionCard}>
-                <Text style={styles.sectionTitle}>💳 Payment Mode</Text>
-                <View style={styles.paymentOptions}>
-                  <TouchableOpacity
-                    style={[
-                      styles.paymentCard,
-                      paymentMethod === 'online' && styles.paymentCardSelected,
-                    ]}
-                    onPress={() => setPaymentMethod('online')}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.paymentIcon}>⚡</Text>
-                    <View>
-                      <Text style={styles.paymentTitle}>Pay Online</Text>
-                      <Text style={styles.paymentSub}>UPI, Cards, NetBanking</Text>
-                    </View>
-                  </TouchableOpacity>
+                <Text style={styles.sectionTitle}>🧾 Order & Price Summary</Text>
 
-                  <TouchableOpacity
-                    style={[
-                      styles.paymentCard,
-                      paymentMethod === 'cod' && styles.paymentCardSelected,
-                    ]}
-                    onPress={() => setPaymentMethod('cod')}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.paymentIcon}>💵</Text>
-                    <View>
-                      <Text style={styles.paymentTitle}>Cash on Delivery</Text>
-                      <Text style={styles.paymentSub}>Pay when order arrives</Text>
-                    </View>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* Order Items Review */}
-              <View style={styles.sectionCard}>
-                <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionTitle}>
-                    🍽️ Order Items ({cart.items.reduce((s, i) => s + i.quantity, 0)})
-                  </Text>
-                  <TouchableOpacity onPress={() => router.push('/(marketplace)/cart')}>
-                    <Text style={styles.linkText}>Edit Cart</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {cart.items.map((item, idx) => (
-                  <View key={item.product_id || `checkout-item-${idx}`} style={styles.itemRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.itemName}>
-                        {item.name} × {item.quantity}
+                {isBelowMinOrder && (
+                  <View style={styles.minOrderCard}>
+                    <View style={styles.minOrderCardHeader}>
+                      <Text style={{ fontSize: 15 }}>⚠️</Text>
+                      <Text style={styles.minOrderCardTitle}>
+                        Minimum Order: ₹{minOrderValue}
                       </Text>
-                      {item.notes ? (
-                        <Text style={styles.itemNote}>Note: {item.notes}</Text>
-                      ) : null}
                     </View>
-                    <Text style={styles.itemPrice}>₹{formatPrice(item.price * item.quantity)}</Text>
-                  </View>
-                ))}
-              </View>
-
-              {/* Bill Details */}
-              <View style={styles.sectionCard}>
-                <Text style={styles.sectionTitle}>🧾 Bill Summary</Text>
-                <View style={styles.summaryItemRow}>
-                  <Text style={styles.summaryLabel}>Item Total</Text>
-                  <Text style={styles.summaryValue}>₹{formatPrice(cart.subtotal)}</Text>
-                </View>
-
-                {cart.discount > 0 && (
-                  <View style={styles.summaryItemRow}>
-                    <Text style={[styles.summaryLabel, { color: '#16A34A' }]}>Discount</Text>
-                    <Text style={[styles.summaryValue, { color: '#16A34A' }]}>
-                      -₹{formatPrice(cart.discount)}
+                    <Text style={styles.minOrderCardSub}>
+                      Your order subtotal is ₹{formatPrice(cart.subtotal)}. Add items worth{' '}
+                      <Text style={styles.minOrderCardHighlight}>₹{formatPrice(remainingForMinOrder)}</Text>{' '}
+                      more to place this order.
                     </Text>
                   </View>
                 )}
 
                 <View style={styles.summaryItemRow}>
-                  <Text style={styles.summaryLabel}>Delivery Fee</Text>
-                  <Text style={styles.summaryValue}>
-                    {cart.deliveryFee === 0 ? (
-                      <Text style={{ color: '#16A34A', fontWeight: '700' }}>FREE</Text>
-                    ) : (
-                      `₹${formatPrice(cart.deliveryFee)}`
-                    )}
-                  </Text>
+                  <Text style={styles.summaryLabel}>Item Subtotal ({cart.items.length} items)</Text>
+                  <Text style={styles.summaryValue}>₹{formatPrice(cart.subtotal)}</Text>
                 </View>
 
-                {cart.tax > 0 && (
+                {cart.couponCode && cart.discount > 0 ? (
+                  <View style={[styles.summaryItemRow, { backgroundColor: '#ECFDF5', padding: 8, borderRadius: 8, marginVertical: 4 }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.summaryLabel, { color: '#065F46', fontWeight: '700' }]}>
+                        🏷️ Coupon ({cart.couponCode})
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#059669' }}>Discount applied</Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={[styles.summaryValue, { color: '#065F46', fontWeight: '800' }]}>
+                        -₹{formatPrice(cart.discount)}
+                      </Text>
+                      <TouchableOpacity onPress={removeCoupon}>
+                        <Text style={{ fontSize: 11, color: '#DC2626', fontWeight: '700', marginTop: 2 }}>✕ Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : null}
+
+                {cart.discount > 0 && (
                   <View style={styles.summaryItemRow}>
-                    <Text style={styles.summaryLabel}>Taxes & Charges</Text>
-                    <Text style={styles.summaryValue}>₹{formatPrice(cart.tax)}</Text>
+                    <Text style={styles.summaryLabel}>Taxable Amount</Text>
+                    <Text style={styles.summaryValue}>₹{formatPrice(cart.taxableAmount)}</Text>
                   </View>
                 )}
 
-                <View style={[styles.divider, { marginVertical: 8 }]} />
+                {cart.isGstEnabled && (cart.cgst > 0 || cart.sgst > 0) ? (
+                  <>
+                    <View style={styles.summaryItemRow}>
+                      <Text style={styles.summaryLabel}>CGST ({((cart.taxRate || 5) / 2).toFixed(1)}%)</Text>
+                      <Text style={styles.summaryValue}>₹{formatPrice(cart.cgst)}</Text>
+                    </View>
+
+                    <View style={styles.summaryItemRow}>
+                      <Text style={styles.summaryLabel}>SGST ({((cart.taxRate || 5) / 2).toFixed(1)}%)</Text>
+                      <Text style={styles.summaryValue}>₹{formatPrice(cart.sgst)}</Text>
+                    </View>
+                  </>
+                ) : null}
 
                 <View style={styles.summaryItemRow}>
-                  <Text style={[styles.summaryLabel, { fontSize: 15, fontWeight: '800', color: '#0F172A' }]}>
+                  <Text style={styles.summaryLabel}>Delivery Fee</Text>
+                  <Text style={[styles.summaryValue, { color: '#16A34A', fontWeight: '800' }]}>FREE</Text>
+                </View>
+
+                <View style={{ height: 1, backgroundColor: '#E2E8F0', marginVertical: 12 }} />
+
+                <View style={styles.summaryItemRow}>
+                  <Text style={[styles.summaryLabel, { fontSize: 16, fontWeight: '800', color: '#0F172A' }]}>
                     Grand Total
                   </Text>
                   <Text style={[styles.summaryValue, { fontSize: 20, fontWeight: '900', color: customerColors.primary }]}>

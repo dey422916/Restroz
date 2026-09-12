@@ -1,12 +1,34 @@
 import { DiningTable } from '../types';
 
-export function getTableQrUrl(tableId: string): string {
-  if (typeof window !== 'undefined' && (window.location?.hostname === 'localhost' || window.location?.hostname === '127.0.0.1')) {
-    return `${window.location.origin}/menu/table/${encodeURIComponent(tableId)}`;
-  }
+export function getAppBaseUrl(): string {
   const envUrl = process.env.EXPO_PUBLIC_APP_URL ? process.env.EXPO_PUBLIC_APP_URL.replace(/\/$/, '') : '';
-  const origin = envUrl || (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'https://restroz.shop');
+  if (envUrl) {
+    return envUrl;
+  }
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
+  }
+  return 'https://restroz.shop';
+}
+
+export function getTableQrUrl(tableId: string): string {
+  const origin = getAppBaseUrl();
   return `${origin}/menu/table/${encodeURIComponent(tableId)}`;
+}
+
+export function getMarketplaceUrl(restaurantId?: string): string {
+  const origin = getAppBaseUrl();
+  return restaurantId ? `${origin}/restaurant/${encodeURIComponent(restaurantId)}` : `${origin}/explore`;
+}
+
+export function getOrderTrackingUrl(orderId: string): string {
+  const origin = getAppBaseUrl();
+  return `${origin}/order/${encodeURIComponent(orderId)}`;
+}
+
+export function getResetPasswordUrl(): string {
+  const origin = getAppBaseUrl();
+  return `${origin}/(auth)/reset-password`;
 }
 
 export function parseTableIdFromPath(pathname: string): string | null {

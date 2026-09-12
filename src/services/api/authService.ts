@@ -134,11 +134,15 @@ export const authService = {
     const forcedRole: UserRole = 'CUSTOMER';
     const trimmedEmail = email.trim();
 
+    const envUrl = process.env.EXPO_PUBLIC_APP_URL ? process.env.EXPO_PUBLIC_APP_URL.replace(/\/$/, '') : '';
+    const origin = envUrl || (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '');
+    const signupRedirect = origin ? `${origin}/login` : 'restroz://(auth)/login';
+
     const { data, error } = await supabase.auth.signUp({
       email: trimmedEmail,
       password,
       options: {
-        emailRedirectTo: 'restroz://(auth)/login',
+        emailRedirectTo: signupRedirect,
         data: {
           full_name: fullName.trim(),
           phone: phone?.trim() || '',
@@ -169,8 +173,12 @@ export const authService = {
 
   async resetPassword(email: string): Promise<void> {
     const trimmedEmail = email.trim();
+    const envUrl = process.env.EXPO_PUBLIC_APP_URL ? process.env.EXPO_PUBLIC_APP_URL.replace(/\/$/, '') : '';
+    const origin = envUrl || (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '');
+    const resetRedirect = origin ? `${origin}/(auth)/reset-password` : 'restroz://(auth)/reset-password';
+
     const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
-      redirectTo: 'restroz://(auth)/reset-password',
+      redirectTo: resetRedirect,
     });
     if (error) {
       throw new Error(error.message || 'Password reset request failed.');

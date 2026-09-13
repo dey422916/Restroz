@@ -908,15 +908,17 @@ export default function SettingsScreen() {
                 {/* Interactive Banner Drag & Focal Adjuster with Exact Customer Storefront Preview */}
                 {bannerUrls.length > 0 && (
                   <View style={styles.bannerAdjusterCard}>
+                    {/* Adjuster Header & Responsive View Toggles */}
                     <View style={styles.adjusterHeaderRow}>
-                      <View style={{ flex: 1, minWidth: 260 }}>
+                      <View style={styles.adjusterTitleCol}>
                         <Text style={styles.adjusterTitle}>
-                          🎯 Banner Focal Area Adjuster & Customer Preview
+                          🎯 Banner Focal Area & Customer Preview
                         </Text>
                         <Text style={styles.adjusterSubTitle}>
-                          Drag the banner up/down to align the focal area. The preview below reflects the exact customer storefront layout.
+                          Drag banner up/down or tap presets to align the focal area for customers.
                         </Text>
                       </View>
+
                       <View style={styles.adjusterActionsWrap}>
                         {/* Device Mode Switcher */}
                         <View style={styles.previewToggleGroup}>
@@ -933,7 +935,7 @@ export default function SettingsScreen() {
                                 previewDeviceMode === 'desktop' && styles.previewToggleBtnTextActive,
                               ]}
                             >
-                              🖥️ Desktop View
+                              🖥️ Desktop
                             </Text>
                           </TouchableOpacity>
                           <TouchableOpacity
@@ -949,7 +951,7 @@ export default function SettingsScreen() {
                                 previewDeviceMode === 'mobile' && styles.previewToggleBtnTextActive,
                               ]}
                             >
-                              📱 Mobile View
+                              📱 Mobile
                             </Text>
                           </TouchableOpacity>
                         </View>
@@ -968,7 +970,7 @@ export default function SettingsScreen() {
                               showOverlaysInPreview && styles.previewOptionBtnTextActive,
                             ]}
                           >
-                            {showOverlaysInPreview ? '👁️ Customer UI: ON' : '👁️ Customer UI: OFF'}
+                            {showOverlaysInPreview ? '👁️ UI: ON' : '👁️ UI: OFF'}
                           </Text>
                         </TouchableOpacity>
                       </View>
@@ -988,9 +990,12 @@ export default function SettingsScreen() {
                         <View style={styles.storefrontNavLinks}>
                           <Text style={styles.storefrontNavLink}>🏠 Explore</Text>
                           <Text style={styles.storefrontNavLink}>🛍️ Cart</Text>
-                          <Text style={styles.storefrontNavLink}>📋 My Orders</Text>
-                          <Text style={styles.storefrontNavLink}>📍 Addresses</Text>
-                          <Text style={styles.storefrontNavLink}>👤 Profile</Text>
+                          {previewDeviceMode === 'desktop' && isDesktop && (
+                            <>
+                              <Text style={styles.storefrontNavLink}>📋 Orders</Text>
+                              <Text style={styles.storefrontNavLink}>👤 Profile</Text>
+                            </>
+                          )}
                         </View>
                       </View>
 
@@ -1008,7 +1013,8 @@ export default function SettingsScreen() {
                         style={[
                           styles.bannerPreviewFrame,
                           {
-                            aspectRatio: previewDeviceMode === 'desktop' ? 16 / 4.6 : 16 / 9,
+                            aspectRatio: previewDeviceMode === 'desktop' ? (isDesktop ? 16 / 5 : 16 / 7) : 16 / 9,
+                            minHeight: previewDeviceMode === 'desktop' ? 140 : 185,
                             cursor: (Platform.OS === 'web' ? (isDraggingBanner ? 'grabbing' : 'grab') : undefined) as any,
                           },
                         ]}
@@ -1037,60 +1043,63 @@ export default function SettingsScreen() {
                         {/* Dark gradient overlay matching customer panel */}
                         <View style={styles.bannerDarkGradient} pointerEvents="none" />
 
+                        {/* Floating Drag Guide Badge */}
+                        <View style={styles.focalBadge} pointerEvents="none">
+                          <Text style={styles.focalBadgeText}>
+                            ↕️ Drag • Focal: {bannerPosY}%
+                          </Text>
+                        </View>
+
                         {/* Customer Panel Overlays (Matching Customer Storefront) */}
                         {showOverlaysInPreview && (
                           <View style={styles.customerOverlayMockup} pointerEvents="none">
+                            {/* Top row with status */}
                             <View style={styles.mockupStatusPill}>
                               <View style={styles.mockupStatusDot} />
                               <Text style={styles.mockupStatusText}>Open</Text>
                             </View>
 
-                            <View style={styles.mockupTitleRow}>
-                              {logoUrl ? (
-                                <Image source={{ uri: logoUrl }} style={styles.mockupLogo} resizeMode="contain" />
-                              ) : null}
-                              <Text style={styles.mockupTitle} numberOfLines={1}>
-                                {name || 'Crunchy Dosa'}
+                            {/* Bottom info section */}
+                            <View style={styles.mockupBottomInfo}>
+                              <View style={styles.mockupTitleRow}>
+                                {logoUrl ? (
+                                  <Image source={{ uri: logoUrl }} style={styles.mockupLogo} resizeMode="contain" />
+                                ) : null}
+                                <Text style={styles.mockupTitle} numberOfLines={1}>
+                                  {name || 'Crunchy Dosa'}
+                                </Text>
+                                <Text style={{ fontSize: 11 }}>🎖️</Text>
+                              </View>
+
+                              <Text style={styles.mockupCuisine} numberOfLines={1}>
+                                Multi-Cuisine • Indian • Fast Food
                               </Text>
-                              <Text style={{ fontSize: 13 }}>🎖️</Text>
-                            </View>
 
-                            <Text style={styles.mockupCuisine} numberOfLines={1}>
-                              Multi-Cuisine • Indian
-                            </Text>
+                              <View style={styles.mockupRatingPill}>
+                                <Text style={styles.mockupRatingStar}>★</Text>
+                                <Text style={styles.mockupRatingScore}>4.6</Text>
+                                <Text style={styles.mockupRatingReviews}>50+ reviews</Text>
+                              </View>
 
-                            <Text style={styles.mockupAddress} numberOfLines={1}>
-                              📍 {address || 'Doorstep Delivery Available'}
-                            </Text>
-
-                            <View style={styles.mockupRatingPill}>
-                              <Text style={styles.mockupRatingStar}>★</Text>
-                              <Text style={styles.mockupRatingScore}>4.6</Text>
-                              <Text style={styles.mockupRatingReviews}>50+ reviews</Text>
-                            </View>
-
-                            <View style={styles.mockupMetaRow}>
-                              <View style={styles.mockupCapsule}>
-                                <Text style={{ fontSize: 11 }}>⏱️</Text>
-                                <View>
+                              <View style={styles.mockupMetaRow}>
+                                <View style={styles.mockupCapsule}>
+                                  <Text style={{ fontSize: 9 }}>⏱️</Text>
                                   <Text style={styles.mockupCapsuleMain}>35 mins</Text>
-                                  <Text style={styles.mockupCapsuleSub}>Delivery Time</Text>
                                 </View>
-                              </View>
 
-                              <View style={styles.mockupCapsule}>
-                                <Text style={{ fontSize: 11 }}>₹</Text>
-                                <View>
-                                  <Text style={styles.mockupCapsuleMain}>₹{minimumOrderValue || '0'}</Text>
-                                  <Text style={styles.mockupCapsuleSub}>Min. Order</Text>
+                                <View style={styles.mockupCapsule}>
+                                  <Text style={{ fontSize: 9 }}>₹</Text>
+                                  <Text style={styles.mockupCapsuleMain}>₹{minimumOrderValue || '0'} Min</Text>
                                 </View>
-                              </View>
 
-                              <View style={styles.mockupCapsule}>
-                                <Text style={{ fontSize: 11 }}>🛵</Text>
-                                <View>
+                                <View style={styles.mockupCapsule}>
+                                  <Text style={{ fontSize: 9 }}>🛵</Text>
                                   <Text style={styles.mockupCapsuleMain}>
-                                    ₹{deliveryChargeBase || '20'} Delivery • Free above ₹{freeDeliveryAbove || '200'}
+                                    {Number(deliveryChargeBase || 0) === 0
+                                      ? 'Free Delivery'
+                                      : Number(freeDeliveryAbove || 0) > 0
+                                      ? `₹${deliveryChargeBase} • Free > ₹${freeDeliveryAbove}`
+                                      : `₹${deliveryChargeBase} Delivery`}
                                   </Text>
                                 </View>
                               </View>
@@ -1110,18 +1119,15 @@ export default function SettingsScreen() {
                           <View style={styles.mockupInactiveDot} />
                           <View style={styles.mockupInactiveDot} />
                         </View>
-
-                        {/* Floating Drag Guide Badge */}
-                        <View style={styles.focalBadge} pointerEvents="none">
-                          <Text style={styles.focalBadgeText}>
-                            ↕️ Drag to Reposition • Focal: {bannerPosY}%
-                          </Text>
-                        </View>
                       </View>
 
                       {/* Mockup Storefront Categories & Search Strip */}
                       <View style={styles.storefrontFilterRow}>
-                        <View style={styles.mockupCategoryChips}>
+                        <ScrollView
+                          horizontal
+                          showsHorizontalScrollIndicator={false}
+                          contentContainerStyle={styles.mockupCategoryScroll}
+                        >
                           <View style={[styles.mockupCatChip, styles.mockupCatChipActive]}>
                             <Text style={styles.mockupCatTextActive}>All Items</Text>
                           </View>
@@ -1132,17 +1138,17 @@ export default function SettingsScreen() {
                             <Text style={styles.mockupCatText}>Uttapam</Text>
                           </View>
                           <View style={styles.mockupCatChip}>
-                            <Text style={styles.mockupCatText}>Extra Add On</Text>
+                            <Text style={styles.mockupCatText}>Add Ons</Text>
                           </View>
                           <View style={styles.mockupCatChip}>
-                            <Text style={styles.mockupCatText}>Starters & Appetizers</Text>
+                            <Text style={styles.mockupCatText}>Starters</Text>
                           </View>
                           <View style={styles.mockupCatChip}>
                             <Text style={styles.mockupCatText}>Breakfast</Text>
                           </View>
-                        </View>
+                        </ScrollView>
                         <View style={styles.mockupSearchBox}>
-                          <Text style={{ fontSize: 10, color: '#94A3B8' }}>🔍 Search items...</Text>
+                          <Text style={{ fontSize: 9.5, color: '#94A3B8' }}>🔍 Search...</Text>
                         </View>
                       </View>
                     </View>
@@ -1150,14 +1156,18 @@ export default function SettingsScreen() {
                     {/* Quick Presets and Adjustment Steppers */}
                     <View style={styles.adjusterControlsRow}>
                       <View style={styles.presetsWrap}>
-                        <Text style={styles.controlSectionLabel}>Quick Presets:</Text>
-                        <View style={{ flexDirection: 'row', gap: 5, flexWrap: 'wrap' }}>
+                        <Text style={styles.controlSectionLabel}>Presets:</Text>
+                        <ScrollView
+                          horizontal
+                          showsHorizontalScrollIndicator={false}
+                          contentContainerStyle={{ gap: 5, paddingVertical: 2 }}
+                        >
                           {[
-                            { label: 'Top (10%)', val: 10 },
-                            { label: 'Upper (30%)', val: 30 },
-                            { label: 'Center (50%)', val: 50 },
-                            { label: 'Lower (70%)', val: 70 },
-                            { label: 'Bottom (90%)', val: 90 },
+                            { label: 'Top 10%', val: 10 },
+                            { label: 'Upper 30%', val: 30 },
+                            { label: 'Center 50%', val: 50 },
+                            { label: 'Lower 70%', val: 70 },
+                            { label: 'Bottom 90%', val: 90 },
                           ].map((p) => (
                             <TouchableOpacity
                               key={`preset-${p.val}`}
@@ -1177,26 +1187,28 @@ export default function SettingsScreen() {
                               </Text>
                             </TouchableOpacity>
                           ))}
-                        </View>
+                        </ScrollView>
                       </View>
 
                       <View style={styles.fineTuneRow}>
-                        <Text style={styles.controlSectionLabel}>Fine Tune:</Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <View style={styles.stepperGroup}>
+                          <Text style={styles.controlSectionLabel}>Fine Tune:</Text>
                           <TouchableOpacity
                             style={styles.stepBtn}
                             onPress={() => setBannerPosY((prev) => Math.max(0, prev - 5))}
                           >
-                            <Text style={styles.stepBtnText}>- 5%</Text>
+                            <Text style={styles.stepBtnText}>-5%</Text>
                           </TouchableOpacity>
 
-                          <Text style={styles.posValueDisplay}>{bannerPosY}%</Text>
+                          <View style={styles.posValueBadge}>
+                            <Text style={styles.posValueDisplay}>{bannerPosY}%</Text>
+                          </View>
 
                           <TouchableOpacity
                             style={styles.stepBtn}
                             onPress={() => setBannerPosY((prev) => Math.min(100, prev + 5))}
                           >
-                            <Text style={styles.stepBtnText}>+ 5%</Text>
+                            <Text style={styles.stepBtnText}>+5%</Text>
                           </TouchableOpacity>
                         </View>
 
@@ -1210,7 +1222,7 @@ export default function SettingsScreen() {
                               <ActivityIndicator size="small" color="#FFFFFF" />
                             ) : (
                               <Text style={styles.savePosBtnText}>
-                                💾 Save Banner Alignment ({bannerPosY}%)
+                                💾 Save Alignment ({bannerPosY}%)
                               </Text>
                             )}
                           </TouchableOpacity>
@@ -2281,25 +2293,34 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   bannerAdjusterCard: {
-    marginTop: 10,
-    marginBottom: 12,
+    marginTop: 12,
+    marginBottom: 14,
     backgroundColor: '#0B1329',
-    borderRadius: 10,
+    borderRadius: 12,
     padding: 12,
     borderWidth: 1,
     borderColor: '#1E293B',
     width: '100%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 3,
   },
   adjusterHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     flexWrap: 'wrap',
     gap: 8,
     marginBottom: 10,
   },
+  adjusterTitleCol: {
+    flex: 1,
+    minWidth: 200,
+  },
   adjusterTitle: {
-    fontSize: 13,
+    fontSize: 13.5,
     fontWeight: '900',
     color: '#F8FAFC',
     letterSpacing: 0.2,
@@ -2326,7 +2347,7 @@ const styles = StyleSheet.create({
   },
   previewToggleBtn: {
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 4.5,
     borderRadius: 4,
   },
   previewToggleBtnActive: {
@@ -2339,11 +2360,12 @@ const styles = StyleSheet.create({
   },
   previewToggleBtnTextActive: {
     color: '#FFFFFF',
+    fontWeight: '800',
   },
   previewOptionBtn: {
     backgroundColor: '#1E293B',
     paddingHorizontal: 8,
-    paddingVertical: 4.5,
+    paddingVertical: 5,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: '#334155',
@@ -2359,6 +2381,7 @@ const styles = StyleSheet.create({
   },
   previewOptionBtnTextActive: {
     color: '#93C5FD',
+    fontWeight: '800',
   },
   storefrontBrowserShell: {
     width: '100%',
@@ -2366,11 +2389,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
-    borderColor: '#334155',
+    borderColor: '#1E293B',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
     elevation: 4,
   },
   storefrontTopNav: {
@@ -2378,21 +2401,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
   },
   storefrontBrandWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
   },
   storefrontFlameLogo: {
-    fontSize: 16,
+    fontSize: 15,
   },
   storefrontBrandName: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '900',
     color: '#EA580C',
     letterSpacing: -0.2,
@@ -2405,11 +2428,11 @@ const styles = StyleSheet.create({
   storefrontNavLinks: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
   },
   storefrontNavLink: {
     fontSize: 9.5,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#334155',
   },
   storefrontSubHeader: {
@@ -2417,23 +2440,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
   },
   storefrontBackLink: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '800',
     color: '#EA580C',
   },
   storefrontCenterTitle: {
-    fontSize: 12.5,
+    fontSize: 11.5,
     fontWeight: '900',
     color: '#0F172A',
+    maxWidth: '55%',
   },
   storefrontCartIcon: {
-    fontSize: 13,
+    fontSize: 12,
   },
   bannerPreviewFrame: {
     width: '100%',
@@ -2447,7 +2471,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(15, 23, 42, 0.42)',
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
   },
   customerOverlayMockup: {
     position: 'absolute',
@@ -2455,8 +2479,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     justifyContent: 'space-between',
     zIndex: 5,
   },
@@ -2464,119 +2488,110 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(22, 101, 52, 0.85)',
-    paddingHorizontal: 7,
-    paddingVertical: 2.5,
-    borderRadius: 12,
-    gap: 4,
+    backgroundColor: 'rgba(22, 101, 52, 0.9)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    gap: 3.5,
     borderWidth: 1,
-    borderColor: 'rgba(74, 222, 128, 0.4)',
+    borderColor: 'rgba(74, 222, 128, 0.5)',
   },
   mockupStatusDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
+    width: 4.5,
+    height: 4.5,
+    borderRadius: 2.25,
     backgroundColor: '#4ADE80',
   },
   mockupStatusText: {
-    fontSize: 9.5,
+    fontSize: 8.5,
     fontWeight: '800',
     color: '#DCFCE7',
+  },
+  mockupBottomInfo: {
+    gap: 2,
   },
   mockupTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginTop: 2,
+    gap: 5,
   },
   mockupLogo: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
     borderColor: '#FFFFFF',
   },
   mockupTitle: {
-    fontSize: 16,
+    fontSize: 13.5,
     fontWeight: '900',
     color: '#FFFFFF',
     letterSpacing: -0.3,
+    maxWidth: '75%',
   },
   mockupCuisine: {
-    fontSize: 9.5,
+    fontSize: 8.5,
     color: '#E2E8F0',
     fontWeight: '600',
-    marginTop: 1,
-  },
-  mockupAddress: {
-    fontSize: 9,
-    color: '#CBD5E1',
-    marginTop: 1,
   },
   mockupRatingPill: {
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(22, 101, 52, 0.85)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    backgroundColor: 'rgba(22, 101, 52, 0.88)',
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
     borderRadius: 4,
     gap: 3,
-    marginTop: 3,
+    marginTop: 1,
   },
   mockupRatingStar: {
     color: '#4ADE80',
-    fontSize: 9.5,
+    fontSize: 8.5,
     fontWeight: '800',
   },
   mockupRatingScore: {
     color: '#FFFFFF',
-    fontSize: 9.5,
+    fontSize: 8.5,
     fontWeight: '800',
   },
   mockupRatingReviews: {
     color: '#E2E8F0',
-    fontSize: 8.5,
+    fontSize: 7.5,
     fontWeight: '500',
-    marginLeft: 2,
   },
   mockupMetaRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 5,
-    marginTop: 4,
+    gap: 4,
+    marginTop: 3,
   },
   mockupCapsule: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    backgroundColor: 'rgba(255, 255, 255, 0.16)',
-    paddingHorizontal: 8,
-    paddingVertical: 3.5,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.22)',
+    gap: 3.5,
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    paddingHorizontal: 6,
+    paddingVertical: 2.5,
+    borderRadius: 5,
+    borderWidth: 0.8,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
   },
   mockupCapsuleMain: {
     color: '#FFFFFF',
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '800',
-  },
-  mockupCapsuleSub: {
-    color: '#E2E8F0',
-    fontSize: 7.5,
-    fontWeight: '600',
   },
   mockupCarouselArrowLeft: {
     position: 'absolute',
     top: '50%',
-    marginTop: -12,
-    left: 6,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    marginTop: -10,
+    left: 4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -2586,12 +2601,12 @@ const styles = StyleSheet.create({
   mockupCarouselArrowRight: {
     position: 'absolute',
     top: '50%',
-    marginTop: -12,
-    right: 6,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    marginTop: -10,
+    right: 4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -2600,84 +2615,83 @@ const styles = StyleSheet.create({
   },
   mockupCarouselArrowText: {
     color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '300',
     marginTop: -2,
   },
   mockupDotsContainer: {
     position: 'absolute',
-    bottom: 6,
+    bottom: 5,
     left: 0,
     right: 0,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 4,
+    gap: 3.5,
     zIndex: 6,
   },
   mockupActiveDot: {
-    width: 12,
-    height: 4,
-    borderRadius: 2,
+    width: 10,
+    height: 3,
+    borderRadius: 1.5,
     backgroundColor: '#EA580C',
   },
   mockupInactiveDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
+    width: 3,
+    height: 3,
+    borderRadius: 1.5,
     backgroundColor: 'rgba(255, 255, 255, 0.6)',
   },
   focalBadge: {
     position: 'absolute',
-    bottom: 6,
+    top: 6,
     right: 6,
     backgroundColor: 'rgba(15, 23, 42, 0.88)',
     paddingHorizontal: 7,
     paddingVertical: 3,
     borderRadius: 5,
     borderWidth: 1,
-    borderColor: 'rgba(234, 88, 12, 0.6)',
+    borderColor: 'rgba(234, 88, 12, 0.7)',
     zIndex: 7,
   },
   focalBadgeText: {
     color: '#FDBA74',
-    fontSize: 9,
+    fontSize: 8.5,
     fontWeight: '800',
   },
   storefrontFilterRow: {
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 8,
-    flexWrap: 'wrap',
+    gap: 6,
   },
-  mockupCategoryChips: {
+  mockupCategoryScroll: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    flexWrap: 'wrap',
+    paddingRight: 6,
   },
   mockupCatChip: {
     backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 12,
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 10,
   },
   mockupCatChipActive: {
     backgroundColor: '#EA580C',
   },
   mockupCatText: {
-    fontSize: 8.5,
+    fontSize: 8,
     color: '#475569',
     fontWeight: '700',
   },
   mockupCatTextActive: {
-    fontSize: 8.5,
+    fontSize: 8,
     color: '#FFFFFF',
     fontWeight: '800',
   },
@@ -2685,16 +2699,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 12,
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 10,
   },
   adjusterControlsRow: {
     marginTop: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    flexWrap: 'wrap',
     gap: 8,
     paddingTop: 8,
     borderTopWidth: 1,
@@ -2707,13 +2717,13 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   controlSectionLabel: {
-    fontSize: 10.5,
+    fontSize: 10,
     fontWeight: '800',
     color: '#94A3B8',
   },
   presetChip: {
     backgroundColor: '#1E293B',
-    paddingHorizontal: 7,
+    paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 5,
     borderWidth: 1,
@@ -2724,7 +2734,7 @@ const styles = StyleSheet.create({
     borderColor: '#FB923C',
   },
   presetChipText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '700',
     color: '#94A3B8',
   },
@@ -2735,13 +2745,19 @@ const styles = StyleSheet.create({
   fineTuneRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 8,
     flexWrap: 'wrap',
   },
+  stepperGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   stepBtn: {
     backgroundColor: '#1E293B',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
     borderRadius: 5,
     borderWidth: 1,
     borderColor: '#334155',
@@ -2751,23 +2767,33 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     fontWeight: '800',
   },
+  posValueBadge: {
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#38BDF8',
+    minWidth: 42,
+    alignItems: 'center',
+  },
   posValueDisplay: {
     color: '#38BDF8',
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '900',
-    minWidth: 36,
-    textAlign: 'center',
   },
   savePosBtn: {
     backgroundColor: '#16A34A',
-    paddingHorizontal: 10,
-    paddingVertical: 5.5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 6,
     shadowColor: '#16A34A',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.3,
     shadowRadius: 3,
     elevation: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   savePosBtnText: {
     color: '#FFFFFF',

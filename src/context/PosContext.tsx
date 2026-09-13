@@ -290,7 +290,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const isGstEnabled = (settings.is_gst_enabled !== undefined && settings.is_gst_enabled !== null)
       ? Boolean(settings.is_gst_enabled)
-      : (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin));
+      : false;
 
     const currentTotals = calculateOrderTotals({
       items: cartItems,
@@ -326,7 +326,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const isGstEnabled = (settings.is_gst_enabled !== undefined && settings.is_gst_enabled !== null)
     ? Boolean(settings.is_gst_enabled)
-    : (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin));
+    : false;
 
   const totals = calculateOrderTotals({
     items: cartItems,
@@ -484,12 +484,14 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ? newOrder.kots[0]
       : await kotService.generateKot(newOrder, orderNotes);
 
-    // Automatically print and open KOT slip upon order placement
-    try {
-      await printService.printKotThermal(newOrder, settings, initialKot, false);
-      await printedKotTracker.markKotAsAutoPrinted(initialKot.id, initialKot.kitchen_notes);
-    } catch (printErr) {
-      console.warn('[PosContext] Auto-print initial KOT handled safely:', printErr);
+    // Print KOT slip upon order placement if Auto Print KOT is ON
+    if (settings.auto_print_kot) {
+      try {
+        await printService.printKotThermal(newOrder, settings, initialKot, false);
+        await printedKotTracker.markKotAsAutoPrinted(initialKot.id, initialKot.kitchen_notes);
+      } catch (printErr) {
+        console.warn('[PosContext] Auto-print initial KOT handled safely:', printErr);
+      }
     }
 
     showToast('success', 'Order & KOT Dispatched!', `Order #${newOrder.order_number} sent to Kitchen (KOT #${initialKot.kot_number}).`);
@@ -565,11 +567,13 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if ((updated as any).latest_kot) {
       const deltaKot = (updated as any).latest_kot;
-      try {
-        await printService.printKotThermal(updated, settings, deltaKot, false);
-        await printedKotTracker.markKotAsAutoPrinted(deltaKot.id, deltaKot.kitchen_notes);
-      } catch (printErr) {
-        console.warn('[PosContext] Auto-print delta KOT handled safely:', printErr);
+      if (settings.auto_print_kot) {
+        try {
+          await printService.printKotThermal(updated, settings, deltaKot, false);
+          await printedKotTracker.markKotAsAutoPrinted(deltaKot.id, deltaKot.kitchen_notes);
+        } catch (printErr) {
+          console.warn('[PosContext] Auto-print delta KOT handled safely:', printErr);
+        }
       }
       showToast('success', 'New Item KOT Saved', `Sent KOT #${deltaKot.kot_number} for new items.`);
     } else {

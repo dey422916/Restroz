@@ -24,6 +24,7 @@ import { couponService } from '../../../src/services/api/couponService';
 import { addressService } from '../../../src/services/api/addressService';
 import { settingsService } from '../../../src/services/api/settingsService';
 import { restaurantService } from '../../../src/services/api/restaurantService';
+import { storageService } from '../../../src/services/api/storageService';
 import { Product, Category, DiningTable, OrderItem, Order, Coupon, PaymentMethod, SavedAddress, RestaurantSettings } from '../../../src/types';
 import { formatCurrency } from '../../../src/utils/currency';
 import { calculateOrderTotals, getOrderSubtotal } from '../../../src/utils/gst';
@@ -60,6 +61,14 @@ export default function CustomerDigitalMenuScreen() {
   const [couponInput, setCouponInput] = useState<string>('');
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod | null>('cash');
+
+  // Table QR Online UPI Payment & Proof State
+  const [paymentProofUrl, setPaymentProofUrl] = useState<string | null>(null);
+  const [uploadingProof, setUploadingProof] = useState<boolean>(false);
+  const [proofError, setProofError] = useState<string | null>(null);
+  const [copiedUpi, setCopiedUpi] = useState<boolean>(false);
+  const [qrModalVisible, setQrModalVisible] = useState<boolean>(false);
+  const [sampleModalVisible, setSampleModalVisible] = useState<boolean>(false);
 
   // Saved Delivery Addresses
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
@@ -366,6 +375,58 @@ export default function CustomerDigitalMenuScreen() {
     setSavedAddresses(updated);
   };
 
+  const handleCopyUpiId = async (upiStr: string) => {
+    if (!upiStr) return;
+    try {
+      if (Platform.OS === 'web') {
+        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(upiStr);
+        } else if (typeof document !== 'undefined') {
+          const textArea = document.createElement('textarea');
+          textArea.value = upiStr;
+          textArea.style.position = 'fixed';
+          textArea.style.opacity = '0';
+          document.body.appendChild(textArea);
+          textArea.focus();
+          textArea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textArea);
+        }
+      }
+      setCopiedUpi(true);
+      setTimeout(() => setCopiedUpi(false), 2500);
+    } catch (e) {
+      console.warn('Clipboard copy error:', e);
+      setCopiedUpi(true);
+      setTimeout(() => setCopiedUpi(false), 2500);
+    }
+  };
+
+  const handleUploadPaymentProof = async () => {
+    try {
+      setUploadingProof(true);
+      setProofError(null);
+      const targetRestId = table?.restaurant_id || restSettingsData?.restaurant_id;
+      const res = await storageService.pickAndUploadPaymentProof({
+        restaurantId: targetRestId || undefined,
+        customerId: user?.id,
+      });
+      if (res && res.url) {
+        setPaymentProofUrl(res.url);
+        setProofError(null);
+      }
+    } catch (e: any) {
+      setProofError(e.message || 'Failed to upload payment screenshot.');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`Upload Failed: ${e.message || 'Could not upload payment screenshot.'}`);
+      } else {
+        Alert.alert('Upload Failed', e.message || 'Could not upload payment screenshot.');
+      }
+    } finally {
+      setUploadingProof(false);
+    }
+  };
+
   const handlePlaceOrder = async () => {
     if (isSubmittingOrderRef.current || submittingOrder) return;
     isSubmittingOrderRef.current = true;
@@ -416,6 +477,19 @@ export default function CustomerDigitalMenuScreen() {
       return;
     }
 
+    // Server/Client-side enforcement for Online Payment Proof Upload
+    if (selectedPaymentMethod === 'online' && (!paymentProofUrl || !paymentProofUrl.trim())) {
+      isSubmittingOrderRef.current = false;
+      setSubmittingOrder(false);
+      const proofMsg = 'Please upload your payment screenshot proof before placing the order.';
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(proofMsg);
+      } else {
+        Alert.alert('Payment Proof Required', proofMsg);
+      }
+      return;
+    }
+
     try {
       // Save new address to profile if requested for online delivery
       if (!isTableQrOrder && selectedAddressId === 'new' && saveToProfileChecked && user?.id && deliveryAddress.trim()) {
@@ -448,7 +522,7 @@ export default function CustomerDigitalMenuScreen() {
         (isTableQrOrder ? (tableId.startsWith('tbl-') ? tableId.replace('tbl-', 'Table ') : `Table ${tableId}`) : undefined);
       const currentTableId = activeTable?.id || table?.id || (isTableQrOrder ? tableId : undefined);
 
-      const orderPayload: Partial<Order> & { payment_method?: PaymentMethod } = {
+      const orderPayload: Partial<Order> & { payment_method?: PaymentMethod; payment_proof_url?: string } = {
         restaurant_id: targetRestaurantId,
         order_source: isTableQrOrder ? 'CUSTOMER_QR' : 'CUSTOMER_APP',
         order_type: isTableQrOrder ? 'dine_in' : 'delivery',
@@ -469,7 +543,8 @@ export default function CustomerDigitalMenuScreen() {
         grand_total: totals.rawTotal,
         round_off: totals.roundOff,
         payable_amount: totals.payableAmount,
-        payment_method: 'cash',
+        payment_method: (selectedPaymentMethod as any) || 'cash',
+        payment_proof_url: selectedPaymentMethod === 'online' ? (paymentProofUrl || undefined) : undefined,
         payment_status: 'unpaid',
         status: 'confirmed',
       };
@@ -478,6 +553,8 @@ export default function CustomerDigitalMenuScreen() {
 
       setCartItems([]);
       setAppliedCoupon(null);
+      setPaymentProofUrl(null);
+      setProofError(null);
       setDeliveryNotes('');
       setShowCart(false);
 
@@ -511,9 +588,7 @@ export default function CustomerDigitalMenuScreen() {
   const isGstEnabled = restSettingsData
     ? (restSettingsData.is_gst_enabled !== undefined && restSettingsData.is_gst_enabled !== null
         ? Boolean(restSettingsData.is_gst_enabled)
-        : (restSettingsData.gst_registered !== undefined
-            ? Boolean(restSettingsData.gst_registered)
-            : Boolean(restSettingsData.gstin?.trim()) && Number(restSettingsData.default_tax_rate ?? restSettingsData.tax_rate ?? 0) > 0))
+        : false)
     : false;
   const taxRate = isGstEnabled
     ? Number(restSettingsData?.default_tax_rate !== undefined ? restSettingsData.default_tax_rate : (restSettingsData?.tax_rate !== undefined ? restSettingsData.tax_rate : 5.0))
@@ -1145,13 +1220,201 @@ export default function CustomerDigitalMenuScreen() {
               <View style={styles.paymentSection}>
                 <Text style={styles.paymentSectionTitle}>PAYMENT METHOD</Text>
                 {tableId && tableId !== 'general' ? (
-                  <View style={[styles.paymentOptionCard, styles.paymentOptionCardSelected]}>
-                    <View style={styles.radioDot}><View style={styles.radioDotInner} /></View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.paymentOptionTitle}>💵 Pay at Counter / Table</Text>
-                      <Text style={styles.paymentOptionDesc}>Pay cash or UPI after dining when you finish your meal.</Text>
-                    </View>
-                  </View>
+                  <>
+                    {/* Cash / Pay at Counter - Table QR */}
+                    {restSettingsData?.enable_cod !== false ? (
+                      <TouchableOpacity
+                        style={[
+                          styles.paymentOptionCard,
+                          selectedPaymentMethod === 'cash' && styles.paymentOptionCardSelected,
+                        ]}
+                        onPress={() => setSelectedPaymentMethod('cash')}
+                        activeOpacity={0.8}
+                      >
+                        <View style={styles.radioDot}>
+                          {selectedPaymentMethod === 'cash' && <View style={styles.radioDotInner} />}
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.paymentOptionTitle}>💵 Cash / Pay at Counter</Text>
+                          <Text style={styles.paymentOptionDesc}>
+                            Pay cash or at the counter after your meal when you finish dining.
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={styles.codDisabledNotice}>
+                        <Text style={styles.codDisabledText}>
+                          ℹ️ Cash / Pay at Counter is currently unavailable for this restaurant.
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* Pay via UPI / QR Code */}
+                    <TouchableOpacity
+                      style={[
+                        styles.paymentOptionCard,
+                        selectedPaymentMethod === 'online' && styles.paymentOptionCardSelected,
+                      ]}
+                      onPress={() => setSelectedPaymentMethod('online')}
+                      activeOpacity={0.8}
+                    >
+                      <View style={styles.radioDot}>
+                        {selectedPaymentMethod === 'online' && <View style={styles.radioDotInner} />}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.paymentOptionTitle}>📱 Pay via UPI / QR Code</Text>
+                        <Text style={styles.paymentOptionDesc}>
+                          Scan restaurant QR, pay via UPI, and attach screenshot proof
+                        </Text>
+                      </View>
+                      <View style={styles.badgeOnline}>
+                        <Text style={styles.badgeTextOnline}>DIRECT UPI</Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    {/* Online UPI Payment Details & Proof Upload Container */}
+                    {selectedPaymentMethod === 'online' && (
+                      <View style={styles.onlineDetailsContainer}>
+                        <View style={styles.onlineNoticeHeader}>
+                          <Text style={styles.onlineNoticeTitle}>📲 Complete Your UPI Payment</Text>
+                          <Text style={styles.onlineNoticeSub}>
+                            Pay the exact order amount ({formatCurrency(totals.payableAmount)}) and attach the payment screenshot below.
+                          </Text>
+                        </View>
+
+                        {/* QR Code and UPI ID Row */}
+                        <View style={styles.qrUpiWrapper}>
+                          {(restSettingsData?.delivery_payment_qr_url || restSettingsData?.payment_qr_url) ? (
+                            <View style={styles.qrCodeBox}>
+                              <TouchableOpacity
+                                onPress={() => setQrModalVisible(true)}
+                                activeOpacity={0.85}
+                                style={styles.qrTouchable}
+                              >
+                                <Image
+                                  source={{ uri: restSettingsData?.delivery_payment_qr_url || restSettingsData?.payment_qr_url }}
+                                  style={styles.qrImage}
+                                  resizeMode="contain"
+                                />
+                                <Text style={styles.qrTapHint}>🔍 Tap to enlarge QR</Text>
+                              </TouchableOpacity>
+                            </View>
+                          ) : (
+                            <View style={styles.noQrPlaceholder}>
+                              <Text style={{ fontSize: 24 }}>📱</Text>
+                              <Text style={styles.noQrText}>Scan restaurant QR or use UPI ID</Text>
+                            </View>
+                          )}
+
+                          <View style={styles.upiInfoBox}>
+                            {(restSettingsData?.delivery_upi_id || restSettingsData?.upi_id) ? (
+                              <View style={styles.upiIdCard}>
+                                <Text style={styles.upiIdLabel}>RESTAURANT UPI ID</Text>
+                                <Text style={styles.upiIdValue} numberOfLines={1} selectable>
+                                  {restSettingsData?.delivery_upi_id || restSettingsData?.upi_id}
+                                </Text>
+                                <TouchableOpacity
+                                  style={[styles.copyUpiBtn, copiedUpi && styles.copyUpiBtnSuccess]}
+                                  onPress={() => handleCopyUpiId(restSettingsData?.delivery_upi_id || restSettingsData?.upi_id || '')}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={[styles.copyUpiBtnText, copiedUpi && styles.copyUpiBtnTextSuccess]}>
+                                    {copiedUpi ? '✓ Copied!' : '📋 Copy UPI ID'}
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                            ) : null}
+
+                            {(restSettingsData?.delivery_sample_screenshot_url || restSettingsData?.sample_screenshot_url) ? (
+                              <TouchableOpacity
+                                style={styles.samplePreviewBtn}
+                                onPress={() => setSampleModalVisible(true)}
+                                activeOpacity={0.8}
+                              >
+                                <Text style={styles.samplePreviewBtnText}>🖼️ View Sample Screenshot</Text>
+                              </TouchableOpacity>
+                            ) : null}
+                          </View>
+                        </View>
+
+                        {/* Customer Payment Proof Upload Box */}
+                        <View style={styles.proofUploadCard}>
+                          <View style={styles.proofHeaderRow}>
+                            <Text style={styles.proofTitle}>
+                              📷 Upload Payment Screenshot <Text style={styles.requiredStar}>*</Text>
+                            </Text>
+                            {paymentProofUrl ? (
+                              <View style={styles.proofVerifiedBadge}>
+                                <Text style={styles.proofVerifiedText}>✓ Attached</Text>
+                              </View>
+                            ) : (
+                              <View style={styles.proofRequiredBadge}>
+                                <Text style={styles.proofRequiredText}>Mandatory</Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={styles.proofDesc}>
+                            After completing payment in GPay, PhonePe, Paytm, etc., upload the transaction receipt screenshot.
+                          </Text>
+
+                          {paymentProofUrl ? (
+                            <View style={styles.uploadedProofContainer}>
+                              <Image
+                                source={{ uri: paymentProofUrl }}
+                                style={styles.uploadedProofThumbnail}
+                                resizeMode="cover"
+                              />
+                              <View style={styles.uploadedProofMeta}>
+                                <Text style={styles.uploadedProofSuccess}>✓ Payment Screenshot Attached</Text>
+                                <Text style={styles.uploadedProofHint}>Ready to place table order</Text>
+                                <View style={styles.uploadedProofActions}>
+                                  <TouchableOpacity
+                                    style={styles.proofActionBtn}
+                                    onPress={handleUploadPaymentProof}
+                                    disabled={uploadingProof}
+                                  >
+                                    <Text style={styles.proofActionBtnText}>🔄 Replace</Text>
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    style={[styles.proofActionBtn, styles.proofActionRemove]}
+                                    onPress={() => setPaymentProofUrl(null)}
+                                  >
+                                    <Text style={[styles.proofActionBtnText, styles.proofActionRemoveText]}>✕ Remove</Text>
+                                  </TouchableOpacity>
+                                </View>
+                              </View>
+                            </View>
+                          ) : (
+                            <TouchableOpacity
+                              style={[styles.uploadButton, uploadingProof && styles.uploadButtonDisabled]}
+                              onPress={handleUploadPaymentProof}
+                              disabled={uploadingProof}
+                              activeOpacity={0.8}
+                            >
+                              {uploadingProof ? (
+                                <View style={styles.uploadingWrapper}>
+                                  <ActivityIndicator size="small" color="#2563eb" />
+                                  <Text style={styles.uploadingText}>Compressing & Uploading...</Text>
+                                </View>
+                              ) : (
+                                <View style={styles.uploadBtnContent}>
+                                  <Text style={styles.uploadIcon}>📎</Text>
+                                  <View>
+                                    <Text style={styles.uploadBtnTitle}>Attach Payment Screenshot</Text>
+                                    <Text style={styles.uploadBtnSub}>Tap to browse photo from gallery / camera</Text>
+                                  </View>
+                                </View>
+                              )}
+                            </TouchableOpacity>
+                          )}
+
+                          {proofError ? (
+                            <Text style={styles.proofErrorText}>⚠️ {proofError}</Text>
+                          ) : null}
+                        </View>
+                      </View>
+                    )}
+                  </>
                 ) : (
                   <>
                     <TouchableOpacity
@@ -1434,8 +1697,8 @@ export default function CustomerDigitalMenuScreen() {
                           <Text style={{ fontWeight: '900', color: '#16a34a', fontSize: 14 }}>
                             {formatCurrency(ord.payable_amount)}
                           </Text>
-                          <Text style={{ fontSize: 9, fontWeight: '800', color: ord.payment_status === 'paid' ? '#15803d' : '#b45309' }}>
-                            COD • {ord.payment_status === 'paid' ? 'PAID' : 'UNPAID'}
+                          <Text style={{ fontSize: 9, fontWeight: '800', color: ord.payment_status === 'paid' ? '#15803d' : (ord.payment_method === 'online' || ord.payment_method === 'upi' ? '#2563eb' : '#b45309') }}>
+                            {(ord.payment_method ? ord.payment_method.toUpperCase() : 'COD')} • {ord.payment_status === 'paid' ? 'PAID' : 'UNPAID'}
                           </Text>
                         </View>
                       </View>
@@ -1564,6 +1827,66 @@ export default function CustomerDigitalMenuScreen() {
           </View>
         </Modal>
       )}
+
+      {/* Enlarged QR Modal */}
+      <Modal visible={qrModalVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxWidth: 360, alignItems: 'center', padding: 20 }]}>
+            <View style={{ width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={{ fontSize: 16, fontWeight: '900', color: '#0f172a' }}>📱 Scan QR Code</Text>
+              <TouchableOpacity onPress={() => setQrModalVisible(false)}>
+                <Text style={{ fontSize: 20, color: '#64748b', fontWeight: 'bold' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {(restSettingsData?.delivery_payment_qr_url || restSettingsData?.payment_qr_url) && (
+              <Image
+                source={{ uri: restSettingsData?.delivery_payment_qr_url || restSettingsData?.payment_qr_url }}
+                style={{ width: 280, height: 280, borderRadius: 12, backgroundColor: '#ffffff' }}
+                resizeMode="contain"
+              />
+            )}
+            <Text style={{ fontSize: 12, color: '#64748b', marginTop: 10, textAlign: 'center' }}>
+              Scan using any UPI app (GPay, PhonePe, Paytm) and pay {formatCurrency(totals.payableAmount)}
+            </Text>
+            <TouchableOpacity
+              style={[styles.checkoutBtn, { width: '100%', marginTop: 14 }]}
+              onPress={() => setQrModalVisible(false)}
+            >
+              <Text style={styles.checkoutBtnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Sample Screenshot Reference Modal */}
+      <Modal visible={sampleModalVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxWidth: 380, alignItems: 'center', padding: 20 }]}>
+            <View style={{ width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={{ fontSize: 16, fontWeight: '900', color: '#0f172a' }}>🖼️ Sample Payment Proof</Text>
+              <TouchableOpacity onPress={() => setSampleModalVisible(false)}>
+                <Text style={{ fontSize: 20, color: '#64748b', fontWeight: 'bold' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {(restSettingsData?.delivery_sample_screenshot_url || restSettingsData?.sample_screenshot_url) && (
+              <Image
+                source={{ uri: restSettingsData?.delivery_sample_screenshot_url || restSettingsData?.sample_screenshot_url }}
+                style={{ width: 280, height: 360, borderRadius: 12, backgroundColor: '#ffffff' }}
+                resizeMode="contain"
+              />
+            )}
+            <Text style={{ fontSize: 12, color: '#64748b', marginTop: 10, textAlign: 'center' }}>
+              Ensure your screenshot clearly displays the Transaction / UTR ID and Paid Amount.
+            </Text>
+            <TouchableOpacity
+              style={[styles.checkoutBtn, { width: '100%', marginTop: 14 }]}
+              onPress={() => setSampleModalVisible(false)}
+            >
+              <Text style={styles.checkoutBtnText}>Close Sample</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -2369,5 +2692,306 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 12,
     fontWeight: '900',
+  },
+
+  // Online UPI & Payment Proof Styles
+  codDisabledNotice: {
+    backgroundColor: '#fff7ed',
+    borderWidth: 1,
+    borderColor: '#ffedd5',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+  },
+  codDisabledText: {
+    fontSize: 11,
+    color: '#c2410c',
+    fontWeight: '600',
+  },
+  badgeOnline: {
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  badgeTextOnline: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#1d4ed8',
+  },
+  onlineDetailsContainer: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  onlineNoticeHeader: {
+    marginBottom: 10,
+  },
+  onlineNoticeTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#166534',
+  },
+  onlineNoticeSub: {
+    fontSize: 11,
+    color: '#15803d',
+    marginTop: 2,
+  },
+  qrUpiWrapper: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  qrCodeBox: {
+    backgroundColor: '#ffffff',
+    padding: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    alignItems: 'center',
+  },
+  qrTouchable: {
+    alignItems: 'center',
+  },
+  qrImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 4,
+  },
+  qrTapHint: {
+    fontSize: 9,
+    color: '#15803d',
+    fontWeight: '700',
+    marginTop: 3,
+  },
+  noQrPlaceholder: {
+    width: 100,
+    height: 100,
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 6,
+  },
+  noQrText: {
+    fontSize: 9,
+    color: '#64748b',
+    textAlign: 'center',
+    marginTop: 2,
+  },
+  upiInfoBox: {
+    flex: 1,
+    gap: 6,
+  },
+  upiIdCard: {
+    backgroundColor: '#ffffff',
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  upiIdLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#64748b',
+  },
+  upiIdValue: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#0f172a',
+    marginVertical: 2,
+  },
+  copyUpiBtn: {
+    backgroundColor: '#f1f5f9',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 4,
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  copyUpiBtnSuccess: {
+    backgroundColor: '#dcfce7',
+  },
+  copyUpiBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  copyUpiBtnTextSuccess: {
+    color: '#15803d',
+    fontWeight: '800',
+  },
+  samplePreviewBtn: {
+    backgroundColor: '#ffffff',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    alignItems: 'center',
+  },
+  samplePreviewBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#2563eb',
+  },
+  proofUploadCard: {
+    backgroundColor: '#ffffff',
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  proofHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  proofTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  requiredStar: {
+    color: '#dc2626',
+    fontWeight: '900',
+  },
+  proofVerifiedBadge: {
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  proofVerifiedText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#15803d',
+  },
+  proofRequiredBadge: {
+    backgroundColor: '#fee2e2',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  proofRequiredText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#dc2626',
+  },
+  proofDesc: {
+    fontSize: 10,
+    color: '#64748b',
+    marginBottom: 8,
+  },
+  uploadedProofContainer: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  uploadedProofThumbnail: {
+    width: 56,
+    height: 56,
+    borderRadius: 6,
+    backgroundColor: '#e2e8f0',
+  },
+  uploadedProofMeta: {
+    flex: 1,
+  },
+  uploadedProofSuccess: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#15803d',
+  },
+  uploadedProofHint: {
+    fontSize: 10,
+    color: '#64748b',
+    marginTop: 1,
+  },
+  uploadedProofActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4,
+  },
+  proofActionBtn: {
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  proofActionBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#2563eb',
+  },
+  proofActionRemove: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+  },
+  proofActionRemoveText: {
+    color: '#dc2626',
+  },
+  uploadButton: {
+    backgroundColor: '#eff6ff',
+    borderWidth: 1.5,
+    borderColor: '#93c5fd',
+    borderStyle: 'dashed',
+    borderRadius: 8,
+    padding: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadButtonDisabled: {
+    opacity: 0.7,
+  },
+  uploadingWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  uploadingText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2563eb',
+  },
+  uploadBtnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  uploadIcon: {
+    fontSize: 18,
+  },
+  uploadBtnTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#1e40af',
+  },
+  uploadBtnSub: {
+    fontSize: 9,
+    color: '#3b82f6',
+    marginTop: 1,
+  },
+  proofErrorText: {
+    fontSize: 10,
+    color: '#dc2626',
+    fontWeight: '700',
+    marginTop: 4,
   },
 });

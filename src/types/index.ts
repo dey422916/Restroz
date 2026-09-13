@@ -87,6 +87,8 @@ export interface RestaurantSettings {
   enable_cod?: boolean;
   delivery_charge_base?: number;
   free_delivery_above?: number;
+  minimum_order_value?: number;
+  min_order_value?: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -213,6 +215,8 @@ export interface Order {
   paid_amount?: number;
   payment_method?: string;
   payment_proof_url?: string;
+  payment_verified_at?: string;
+  payment_verified_by?: string;
   payment_status: PaymentStatus;
   notes?: string;
   items: OrderItem[];
@@ -268,7 +272,7 @@ export interface Coupon {
   updated_at?: string;
 }
 
-export type PaymentMethod = 'cash' | 'card' | 'upi' | 'room' | 'other' | 'split' | 'due';
+export type PaymentMethod = 'cash' | 'card' | 'upi' | 'online' | 'cod' | 'room' | 'other' | 'split' | 'due';
 
 export interface Payment {
   id: string;

@@ -59,6 +59,75 @@ export function decodeBase64Image(dataString: string): { buffer: Uint8Array; mim
 }
 
 /**
+ * Universal Web File Picker Helper
+ * Accurately detects user cancel/dismissal across all mobile and desktop web browsers,
+ * preventing hanging promises / infinite loading spinners when the gallery is dismissed.
+ */
+export function pickFileFromWeb(accept = 'image/png,image/jpeg,image/jpg,image/webp'): Promise<File | null> {
+  return new Promise((resolve) => {
+    if (typeof document === 'undefined' || typeof window === 'undefined') {
+      resolve(null);
+      return;
+    }
+
+    let resolved = false;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.style.position = 'fixed';
+    input.style.top = '-10000px';
+    input.style.left = '-10000px';
+    input.style.opacity = '0';
+    input.style.pointerEvents = 'none';
+
+    let focusTimer: any = null;
+
+    const cleanup = () => {
+      if (focusTimer) {
+        clearTimeout(focusTimer);
+        focusTimer = null;
+      }
+      window.removeEventListener('focus', handleFocus);
+      if (input.parentNode) {
+        document.body.removeChild(input);
+      }
+    };
+
+    const finish = (file: File | null) => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve(file);
+    };
+
+    input.onchange = (e: any) => {
+      const file = e.target?.files?.[0] || null;
+      finish(file);
+    };
+
+    // Modern HTML5 file dialog cancel event (Chrome, Edge, Safari 15.4+, Firefox)
+    input.addEventListener('cancel', () => {
+      finish(null);
+    });
+
+    // Universal focus fallback: When file chooser dialog closes on cancel, window regains focus.
+    const handleFocus = () => {
+      focusTimer = setTimeout(() => {
+        if (!resolved) {
+          const file = input.files?.[0] || null;
+          finish(file);
+        }
+      }, 500);
+    };
+
+    window.addEventListener('focus', handleFocus, { once: true });
+
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
+/**
  * Universal Client-Side Image Resizer & Compressor
  * Resizes and compresses image before upload to drastically cut Supabase Storage egress.
  * Web: Uses HTML5 Canvas drawImage + toBlob
@@ -72,6 +141,7 @@ export async function compressAndResizeImage(
   const maxHeight = options.maxHeight || 800;
   const quality = options.quality !== undefined ? options.quality : 0.8;
   const targetFormat = options.format || 'webp';
+
 
   // 1. Web Platform (HTML5 Canvas)
   if (Platform.OS === 'web' && typeof document !== 'undefined') {
@@ -352,58 +422,38 @@ export const storageService = {
     try {
       // 1. Web Platform (native file input)
       if (Platform.OS === 'web' && typeof document !== 'undefined') {
-        return new Promise((resolve, reject) => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'image/png,image/jpeg,image/jpg,image/webp';
-          input.style.display = 'none';
+        const file = await pickFileFromWeb('image/png,image/jpeg,image/jpg,image/webp');
+        if (!file) {
+          return null;
+        }
 
-          input.onchange = async (e: any) => {
-            try {
-              const file = e.target?.files?.[0];
-              if (!file) {
-                resolve(null);
-                return;
-              }
-
-              // Compress & resize product (Max 800x800, quality 0.80 WebP)
-              const compressed = await compressAndResizeImage(file, {
-                maxWidth: 800,
-                maxHeight: 800,
-                quality: 0.8,
-                format: 'webp',
-              });
-
-              const fileExt = compressed.format || 'webp';
-              const timestamp = Date.now();
-              const rand = Math.random().toString(36).substring(2, 7);
-              const restScope = options?.restaurantId || 'global';
-              const prodScope = options?.productId || 'new';
-              const fileName = `${timestamp}_${rand}.${fileExt}`;
-              const path = `restaurants/${restScope}/products/${prodScope}/${fileName}`;
-
-              if (compressed.blob) {
-                const cdnUrl = await storageService.uploadBinary(
-                  'product-images',
-                  path,
-                  compressed.blob,
-                  `image/${fileExt}`
-                );
-                resolve({ url: cdnUrl, fileName });
-                return;
-              }
-
-              reject(new Error('Failed to process product image for upload.'));
-            } catch (err) {
-              reject(err);
-            } finally {
-              document.body.removeChild(input);
-            }
-          };
-
-          document.body.appendChild(input);
-          input.click();
+        // Compress & resize product (Max 800x800, quality 0.80 WebP)
+        const compressed = await compressAndResizeImage(file, {
+          maxWidth: 800,
+          maxHeight: 800,
+          quality: 0.8,
+          format: 'webp',
         });
+
+        const fileExt = compressed.format || 'webp';
+        const timestamp = Date.now();
+        const rand = Math.random().toString(36).substring(2, 7);
+        const restScope = options?.restaurantId || 'global';
+        const prodScope = options?.productId || 'new';
+        const fileName = `${timestamp}_${rand}.${fileExt}`;
+        const path = `restaurants/${restScope}/products/${prodScope}/${fileName}`;
+
+        if (compressed.blob) {
+          const cdnUrl = await storageService.uploadBinary(
+            'product-images',
+            path,
+            compressed.blob,
+            `image/${fileExt}`
+          );
+          return { url: cdnUrl, fileName };
+        }
+
+        return null;
       }
 
       // 2. React Native / Mobile Platform
@@ -471,57 +521,37 @@ export const storageService = {
     try {
       // 1. Web Platform (native file picker)
       if (Platform.OS === 'web' && typeof document !== 'undefined') {
-        return new Promise((resolve, reject) => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'image/png,image/jpeg,image/jpg,image/webp';
-          input.style.display = 'none';
+        const file = await pickFileFromWeb('image/png,image/jpeg,image/jpg,image/webp');
+        if (!file) {
+          return null;
+        }
 
-          input.onchange = async (e: any) => {
-            try {
-              const file = e.target?.files?.[0];
-              if (!file) {
-                resolve(null);
-                return;
-              }
-
-              // Compress & resize banner (Max 1200x800, quality 0.80 WebP)
-              const compressed = await compressAndResizeImage(file, {
-                maxWidth: 1200,
-                maxHeight: 800,
-                quality: 0.8,
-                format: 'webp',
-              });
-
-              const fileExt = compressed.format || 'webp';
-              const timestamp = Date.now();
-              const rand = Math.random().toString(36).substring(2, 7);
-              const restScope = options?.restaurantId || 'global';
-              const fileName = `${timestamp}_${rand}.${fileExt}`;
-              const path = `restaurants/${restScope}/banners/${fileName}`;
-
-              if (compressed.blob) {
-                const cdnUrl = await storageService.uploadBinary(
-                  'restaurant-assets',
-                  path,
-                  compressed.blob,
-                  `image/${fileExt}`
-                );
-                resolve({ url: cdnUrl, fileName });
-                return;
-              }
-
-              reject(new Error('Failed to process banner image for upload.'));
-            } catch (err) {
-              reject(err);
-            } finally {
-              document.body.removeChild(input);
-            }
-          };
-
-          document.body.appendChild(input);
-          input.click();
+        // Compress & resize banner (Max 1200x800, quality 0.80 WebP)
+        const compressed = await compressAndResizeImage(file, {
+          maxWidth: 1200,
+          maxHeight: 800,
+          quality: 0.8,
+          format: 'webp',
         });
+
+        const fileExt = compressed.format || 'webp';
+        const timestamp = Date.now();
+        const rand = Math.random().toString(36).substring(2, 7);
+        const restScope = options?.restaurantId || 'global';
+        const fileName = `${timestamp}_${rand}.${fileExt}`;
+        const path = `restaurants/${restScope}/banners/${fileName}`;
+
+        if (compressed.blob) {
+          const cdnUrl = await storageService.uploadBinary(
+            'restaurant-assets',
+            path,
+            compressed.blob,
+            `image/${fileExt}`
+          );
+          return { url: cdnUrl, fileName };
+        }
+
+        return null;
       }
 
       // 2. Mobile Native (Android / iOS)
@@ -587,57 +617,37 @@ export const storageService = {
     try {
       // 1. Web Platform (native file picker)
       if (Platform.OS === 'web' && typeof document !== 'undefined') {
-        return new Promise((resolve, reject) => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'image/png,image/jpeg,image/jpg,image/webp';
-          input.style.display = 'none';
+        const file = await pickFileFromWeb('image/png,image/jpeg,image/jpg,image/webp');
+        if (!file) {
+          return null;
+        }
 
-          input.onchange = async (e: any) => {
-            try {
-              const file = e.target?.files?.[0];
-              if (!file) {
-                resolve(null);
-                return;
-              }
-
-              // Compress & resize logo (Max 400x400, quality 0.85 WebP)
-              const compressed = await compressAndResizeImage(file, {
-                maxWidth: 400,
-                maxHeight: 400,
-                quality: 0.85,
-                format: 'webp',
-              });
-
-              const fileExt = compressed.format || 'webp';
-              const timestamp = Date.now();
-              const rand = Math.random().toString(36).substring(2, 7);
-              const restScope = options?.restaurantId || 'global';
-              const fileName = `${timestamp}_${rand}.${fileExt}`;
-              const path = `restaurants/${restScope}/logos/${fileName}`;
-
-              if (compressed.blob) {
-                const cdnUrl = await storageService.uploadBinary(
-                  'restaurant-assets',
-                  path,
-                  compressed.blob,
-                  `image/${fileExt}`
-                );
-                resolve({ url: cdnUrl, fileName });
-                return;
-              }
-
-              reject(new Error('Failed to process logo image for upload.'));
-            } catch (err) {
-              reject(err);
-            } finally {
-              document.body.removeChild(input);
-            }
-          };
-
-          document.body.appendChild(input);
-          input.click();
+        // Compress & resize logo (Max 400x400, quality 0.85 WebP)
+        const compressed = await compressAndResizeImage(file, {
+          maxWidth: 400,
+          maxHeight: 400,
+          quality: 0.85,
+          format: 'webp',
         });
+
+        const fileExt = compressed.format || 'webp';
+        const timestamp = Date.now();
+        const rand = Math.random().toString(36).substring(2, 7);
+        const restScope = options?.restaurantId || 'global';
+        const fileName = `${timestamp}_${rand}.${fileExt}`;
+        const path = `restaurants/${restScope}/logos/${fileName}`;
+
+        if (compressed.blob) {
+          const cdnUrl = await storageService.uploadBinary(
+            'restaurant-assets',
+            path,
+            compressed.blob,
+            `image/${fileExt}`
+          );
+          return { url: cdnUrl, fileName };
+        }
+
+        return null;
       }
 
       // 2. Mobile Native (Android / iOS)
@@ -703,54 +713,33 @@ export const storageService = {
     try {
       // 1. Web Platform
       if (Platform.OS === 'web' && typeof document !== 'undefined') {
-        return new Promise((resolve, reject) => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'image/png,image/jpeg,image/jpg,image/webp';
-          input.style.display = 'none';
+        const file = await pickFileFromWeb('image/png,image/jpeg,image/jpg,image/webp');
+        if (!file) {
+          return null;
+        }
 
-          input.onchange = async (e: any) => {
-            try {
-              const file = e.target?.files?.[0];
-              if (!file) {
-                resolve(null);
-                return;
-              }
-
-              const compressed = await compressAndResizeImage(file, {
-                maxWidth: 240,
-                maxHeight: 240,
-                quality: 0.8,
-                format: 'webp',
-              });
-
-              if (compressed.uri && compressed.uri.startsWith('data:')) {
-                resolve({ url: compressed.uri, fileName: 'avatar.webp' });
-                return;
-              }
-
-              if (compressed.blob) {
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                  const dataUrl = reader.result as string;
-                  resolve({ url: dataUrl, fileName: 'avatar.webp' });
-                };
-                reader.onerror = () => reject(new Error('Failed to read compressed avatar.'));
-                reader.readAsDataURL(compressed.blob);
-                return;
-              }
-
-              reject(new Error('Failed to process avatar image.'));
-            } catch (err) {
-              reject(err);
-            } finally {
-              document.body.removeChild(input);
-            }
-          };
-
-          document.body.appendChild(input);
-          input.click();
+        const compressed = await compressAndResizeImage(file, {
+          maxWidth: 240,
+          maxHeight: 240,
+          quality: 0.8,
+          format: 'webp',
         });
+
+        if (compressed.uri && compressed.uri.startsWith('data:')) {
+          return { url: compressed.uri, fileName: 'avatar.webp' };
+        }
+
+        if (compressed.blob) {
+          const reader = new FileReader();
+          const dataUrl = await new Promise<string>((res, rej) => {
+            reader.onloadend = () => res(reader.result as string);
+            reader.onerror = () => rej(new Error('Failed to read compressed avatar.'));
+            reader.readAsDataURL(compressed.blob!);
+          });
+          return { url: dataUrl, fileName: 'avatar.webp' };
+        }
+
+        return null;
       }
 
       // 2. Mobile Native
@@ -836,53 +825,35 @@ export const storageService = {
     try {
       const restScope = options?.restaurantId || 'global';
       if (Platform.OS === 'web' && typeof document !== 'undefined') {
-        return new Promise((resolve, reject) => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'image/png,image/jpeg,image/jpg,image/webp';
-          input.style.display = 'none';
+        const file = await pickFileFromWeb('image/png,image/jpeg,image/jpg,image/webp');
+        if (!file) {
+          return null;
+        }
 
-          input.onchange = async (e: any) => {
-            try {
-              const file = e.target?.files?.[0];
-              if (!file) {
-                resolve(null);
-                return;
-              }
-              const compressed = await compressAndResizeImage(file, {
-                maxWidth: 600,
-                maxHeight: 600,
-                quality: 0.85,
-                format: 'webp',
-              });
-
-              const fileExt = compressed.format || 'webp';
-              const timestamp = Date.now();
-              const rand = Math.random().toString(36).substring(2, 7);
-              const fileName = `${timestamp}_${rand}.${fileExt}`;
-              const path = `restaurants/${restScope}/payment-qr/${fileName}`;
-
-              if (compressed.blob) {
-                const cdnUrl = await storageService.uploadBinary(
-                  'restaurant-assets',
-                  path,
-                  compressed.blob,
-                  `image/${fileExt}`
-                );
-                resolve({ url: cdnUrl, fileName });
-                return;
-              }
-              reject(new Error('Failed to process QR code image.'));
-            } catch (err) {
-              reject(err);
-            } finally {
-              document.body.removeChild(input);
-            }
-          };
-
-          document.body.appendChild(input);
-          input.click();
+        const compressed = await compressAndResizeImage(file, {
+          maxWidth: 600,
+          maxHeight: 600,
+          quality: 0.85,
+          format: 'webp',
         });
+
+        const fileExt = compressed.format || 'webp';
+        const timestamp = Date.now();
+        const rand = Math.random().toString(36).substring(2, 7);
+        const fileName = `${timestamp}_${rand}.${fileExt}`;
+        const path = `restaurants/${restScope}/payment-qr/${fileName}`;
+
+        if (compressed.blob) {
+          const cdnUrl = await storageService.uploadBinary(
+            'restaurant-assets',
+            path,
+            compressed.blob,
+            `image/${fileExt}`
+          );
+          return { url: cdnUrl, fileName };
+        }
+
+        return null;
       }
 
       const ImagePicker = await import('expo-image-picker');
@@ -944,53 +915,35 @@ export const storageService = {
     try {
       const restScope = options?.restaurantId || 'global';
       if (Platform.OS === 'web' && typeof document !== 'undefined') {
-        return new Promise((resolve, reject) => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'image/png,image/jpeg,image/jpg,image/webp';
-          input.style.display = 'none';
+        const file = await pickFileFromWeb('image/png,image/jpeg,image/jpg,image/webp');
+        if (!file) {
+          return null;
+        }
 
-          input.onchange = async (e: any) => {
-            try {
-              const file = e.target?.files?.[0];
-              if (!file) {
-                resolve(null);
-                return;
-              }
-              const compressed = await compressAndResizeImage(file, {
-                maxWidth: 800,
-                maxHeight: 1200,
-                quality: 0.85,
-                format: 'webp',
-              });
-
-              const fileExt = compressed.format || 'webp';
-              const timestamp = Date.now();
-              const rand = Math.random().toString(36).substring(2, 7);
-              const fileName = `${timestamp}_${rand}.${fileExt}`;
-              const path = `restaurants/${restScope}/payment-samples/${fileName}`;
-
-              if (compressed.blob) {
-                const cdnUrl = await storageService.uploadBinary(
-                  'restaurant-assets',
-                  path,
-                  compressed.blob,
-                  `image/${fileExt}`
-                );
-                resolve({ url: cdnUrl, fileName });
-                return;
-              }
-              reject(new Error('Failed to process sample payment screenshot.'));
-            } catch (err) {
-              reject(err);
-            } finally {
-              document.body.removeChild(input);
-            }
-          };
-
-          document.body.appendChild(input);
-          input.click();
+        const compressed = await compressAndResizeImage(file, {
+          maxWidth: 800,
+          maxHeight: 1200,
+          quality: 0.85,
+          format: 'webp',
         });
+
+        const fileExt = compressed.format || 'webp';
+        const timestamp = Date.now();
+        const rand = Math.random().toString(36).substring(2, 7);
+        const fileName = `${timestamp}_${rand}.${fileExt}`;
+        const path = `restaurants/${restScope}/payment-samples/${fileName}`;
+
+        if (compressed.blob) {
+          const cdnUrl = await storageService.uploadBinary(
+            'restaurant-assets',
+            path,
+            compressed.blob,
+            `image/${fileExt}`
+          );
+          return { url: cdnUrl, fileName };
+        }
+
+        return null;
       }
 
       const ImagePicker = await import('expo-image-picker');
@@ -1053,53 +1006,35 @@ export const storageService = {
       const restScope = options?.restaurantId || 'global';
       const userScope = options?.customerId || 'guest';
       if (Platform.OS === 'web' && typeof document !== 'undefined') {
-        return new Promise((resolve, reject) => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'image/png,image/jpeg,image/jpg,image/webp';
-          input.style.display = 'none';
+        const file = await pickFileFromWeb('image/png,image/jpeg,image/jpg,image/webp');
+        if (!file) {
+          return null;
+        }
 
-          input.onchange = async (e: any) => {
-            try {
-              const file = e.target?.files?.[0];
-              if (!file) {
-                resolve(null);
-                return;
-              }
-              const compressed = await compressAndResizeImage(file, {
-                maxWidth: 800,
-                maxHeight: 1200,
-                quality: 0.85,
-                format: 'webp',
-              });
-
-              const fileExt = compressed.format || 'webp';
-              const timestamp = Date.now();
-              const rand = Math.random().toString(36).substring(2, 7);
-              const fileName = `proof_${timestamp}_${rand}.${fileExt}`;
-              const path = `orders/payment-proofs/${restScope}/${userScope}/${fileName}`;
-
-              if (compressed.blob) {
-                const cdnUrl = await storageService.uploadBinary(
-                  'restaurant-assets',
-                  path,
-                  compressed.blob,
-                  `image/${fileExt}`
-                );
-                resolve({ url: cdnUrl, fileName });
-                return;
-              }
-              reject(new Error('Failed to process payment screenshot.'));
-            } catch (err) {
-              reject(err);
-            } finally {
-              document.body.removeChild(input);
-            }
-          };
-
-          document.body.appendChild(input);
-          input.click();
+        const compressed = await compressAndResizeImage(file, {
+          maxWidth: 800,
+          maxHeight: 1200,
+          quality: 0.85,
+          format: 'webp',
         });
+
+        const fileExt = compressed.format || 'webp';
+        const timestamp = Date.now();
+        const rand = Math.random().toString(36).substring(2, 7);
+        const fileName = `proof_${timestamp}_${rand}.${fileExt}`;
+        const path = `orders/payment-proofs/${restScope}/${userScope}/${fileName}`;
+
+        if (compressed.blob) {
+          const cdnUrl = await storageService.uploadBinary(
+            'restaurant-assets',
+            path,
+            compressed.blob,
+            `image/${fileExt}`
+          );
+          return { url: cdnUrl, fileName };
+        }
+
+        return null;
       }
 
       const ImagePicker = await import('expo-image-picker');

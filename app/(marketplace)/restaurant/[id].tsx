@@ -277,10 +277,10 @@ export default function RestaurantMenuScreen() {
           minOrder={profile?.minimum_order_value || 0}
           deliveryFee={
             Number(profile?.delivery_charge_base || 0) === 0
-              ? 'FREE'
+              ? 'FREE Delivery'
               : Number(profile?.free_delivery_above || 0) > 0
-              ? `₹${profile?.delivery_charge_base} (Free > ₹${profile?.free_delivery_above})`
-              : `₹${profile?.delivery_charge_base}`
+              ? `₹${profile?.delivery_charge_base} Delivery • Free above ₹${profile?.free_delivery_above}`
+              : `₹${profile?.delivery_charge_base} Delivery`
           }
           isOpen={isOpen}
         />

@@ -66,7 +66,8 @@ export const marketplaceService = {
           public_profile:restaurant_public_profiles(
             id, restaurant_id, is_open, marketplace_enabled, accepts_delivery, accepts_takeaway,
             delivery_radius_km, minimum_order_value, estimated_delivery_minutes, cuisine_tags,
-            banner_url, public_description, opening_time, closing_time, latitude, longitude, created_at
+            banner_url, public_description, opening_time, closing_time, latitude, longitude, created_at,
+            delivery_charge_base, free_delivery_above, delivery_payment_qr_url, delivery_upi_id, delivery_sample_screenshot_url, enable_cod
           )
         `)
         .eq('status', 'ACTIVE')
@@ -160,6 +161,12 @@ export const marketplaceService = {
             `${r.name} - Fresh delicious meals prepared and delivered hot.`,
           opening_time: pubProf?.opening_time || '09:00 AM',
           closing_time: pubProf?.closing_time || '11:00 PM',
+          delivery_charge_base: Number(pubProf?.delivery_charge_base || 0),
+          free_delivery_above: Number(pubProf?.free_delivery_above || 0),
+          delivery_payment_qr_url: pubProf?.delivery_payment_qr_url || '',
+          delivery_upi_id: pubProf?.delivery_upi_id || '',
+          delivery_sample_screenshot_url: pubProf?.delivery_sample_screenshot_url || '',
+          enable_cod: pubProf?.enable_cod ?? true,
           latitude: restLat || null,
           longitude: restLng || null,
           distance_km,
@@ -209,7 +216,8 @@ export const marketplaceService = {
         public_profile:restaurant_public_profiles(
           id, restaurant_id, is_open, marketplace_enabled, accepts_delivery, accepts_takeaway,
           delivery_radius_km, minimum_order_value, estimated_delivery_minutes, cuisine_tags,
-          banner_url, public_description, opening_time, closing_time, latitude, longitude, created_at
+          banner_url, public_description, opening_time, closing_time, latitude, longitude, created_at,
+          delivery_charge_base, free_delivery_above, delivery_payment_qr_url, delivery_upi_id, delivery_sample_screenshot_url, enable_cod
         )
       `)
       .eq('id', restaurantId)
@@ -242,6 +250,12 @@ export const marketplaceService = {
         public_description: pubProf?.public_description || `${data.name} - Fresh delicious meals prepared and delivered hot.`,
         opening_time: pubProf?.opening_time || '09:00 AM',
         closing_time: pubProf?.closing_time || '11:00 PM',
+        delivery_charge_base: Number(pubProf?.delivery_charge_base || 0),
+        free_delivery_above: Number(pubProf?.free_delivery_above || 0),
+        delivery_payment_qr_url: pubProf?.delivery_payment_qr_url || '',
+        delivery_upi_id: pubProf?.delivery_upi_id || '',
+        delivery_sample_screenshot_url: pubProf?.delivery_sample_screenshot_url || '',
+        enable_cod: pubProf?.enable_cod ?? true,
       },
     };
   },
@@ -587,11 +601,30 @@ export const marketplaceService = {
       ? (payload.delivery_notes ? `${payload.delivery_notes} [IDEM:${payload.idempotency_key}]` : `[IDEM:${payload.idempotency_key}]`)
       : (payload.delivery_notes || null);
 
-    // 1. Primary Path: Server-Side Atomic RPC
+    // 1. Primary Path: Server-Side Atomic RPC (Canonical 9-Parameter Signature)
     try {
-      const { data: rpcData, error: rpcErr } = await supabase.rpc(
-        'create_customer_delivery_order',
-        {
+      let rpcData: any = null;
+      let rpcErr: any = null;
+
+      // Primary canonical call with p_payment_proof_url
+      const attempt9 = await supabase.rpc('create_customer_delivery_order', {
+        p_restaurant_id: payload.restaurant_id,
+        p_items: payload.items,
+        p_delivery_address: payload.delivery_address,
+        p_customer_name: payload.customer_name,
+        p_customer_phone: payload.customer_phone,
+        p_payment_method: payload.payment_method,
+        p_coupon_code: payload.coupon_code || null,
+        p_delivery_notes: effectiveDeliveryNotes,
+        p_payment_proof_url: payload.payment_proof_url || null,
+      });
+
+      rpcData = attempt9.data;
+      rpcErr = attempt9.error;
+
+      // Backward compatibility fallback for legacy 8-parameter RPC signature
+      if (rpcErr && (rpcErr.code === 'PGRST202' || rpcErr.message?.includes('schema cache'))) {
+        const attempt8 = await supabase.rpc('create_customer_delivery_order', {
           p_restaurant_id: payload.restaurant_id,
           p_items: payload.items,
           p_delivery_address: payload.delivery_address,
@@ -600,23 +633,67 @@ export const marketplaceService = {
           p_payment_method: payload.payment_method,
           p_coupon_code: payload.coupon_code || null,
           p_delivery_notes: effectiveDeliveryNotes,
-          p_payment_proof_url: payload.payment_proof_url || null,
+        });
+        rpcData = attempt8.data;
+        rpcErr = attempt8.error;
+
+        if (!rpcErr && rpcData && payload.payment_proof_url) {
+          try {
+            await supabase
+              .from('orders')
+              .update({
+                payment_proof_url: payload.payment_proof_url,
+                payment_method: payload.payment_method || 'online',
+              })
+              .eq('id', rpcData.id);
+            rpcData.payment_proof_url = payload.payment_proof_url;
+            rpcData.payment_method = payload.payment_method || 'online';
+          } catch (proofErr) {
+            console.warn('Post-order payment_proof_url sync warning on legacy RPC:', proofErr);
+          }
         }
-      );
+      }
 
       if (!rpcErr && rpcData) {
         return rpcData as Order;
       }
+
       if (rpcErr) {
         console.warn('create_customer_delivery_order RPC returned error, evaluating fallback:', rpcErr.message);
-        if (!rpcErr.message.includes('uuid') && !rpcErr.message.includes('type uuid')) {
-          throw new Error(rpcErr.message);
+        const errMsg = rpcErr.message || '';
+        // If it's a known business validation error, re-throw it so customer sees the message
+        if (
+          errMsg.includes('screenshot') ||
+          errMsg.includes('proof') ||
+          errMsg.includes('Delivery (COD)') ||
+          errMsg.includes('Minimum Order') ||
+          errMsg.includes('coupon') ||
+          errMsg.includes('stock') ||
+          errMsg.includes('closed') ||
+          errMsg.includes('inactive') ||
+          errMsg.includes('unavailable') ||
+          errMsg.includes('Cross-restaurant')
+        ) {
+          throw new Error(errMsg);
         }
       }
     } catch (e: any) {
-      if (!e.message?.includes('uuid') && !e.message?.includes('type uuid')) {
-        throw new Error(e.message || 'Failed to place delivery order.');
+      const errMsg = e.message || '';
+      if (
+        errMsg.includes('screenshot') ||
+        errMsg.includes('proof') ||
+        errMsg.includes('Delivery (COD)') ||
+        errMsg.includes('Minimum Order') ||
+        errMsg.includes('coupon') ||
+        errMsg.includes('stock') ||
+        errMsg.includes('closed') ||
+        errMsg.includes('inactive') ||
+        errMsg.includes('unavailable') ||
+        errMsg.includes('Cross-restaurant')
+      ) {
+        throw e;
       }
+      console.warn('RPC path encountered exception, transitioning to client fallback:', errMsg || e);
     }
 
     // 2. Fallback Path: Client-authenticated atomic sequence
@@ -667,15 +744,11 @@ export const marketplaceService = {
       const isGstEnabled = restSettings
         ? (restSettings.is_gst_enabled !== undefined && restSettings.is_gst_enabled !== null
             ? Boolean(restSettings.is_gst_enabled)
-            : (restSettings.gst_registered !== undefined
-                ? Boolean(restSettings.gst_registered)
-                : Boolean(restSettings.gstin?.trim()) && Number(restSettings.default_tax_rate ?? restSettings.tax_rate ?? 0) > 0))
+            : false)
         : (pubInfo
             ? (pubInfo.is_gst_enabled !== undefined && pubInfo.is_gst_enabled !== null
                 ? Boolean(pubInfo.is_gst_enabled)
-                : ((pubInfo as any).gst_registered !== undefined
-                    ? Boolean((pubInfo as any).gst_registered)
-                    : Boolean(pubInfo.gstin?.trim()) && Number(pubInfo.default_tax_rate ?? pubInfo.tax_rate ?? 0) > 0))
+                : false)
             : false);
 
       const resolvedTaxRate = isGstEnabled
@@ -732,6 +805,8 @@ export const marketplaceService = {
         }
 
         const itemId = 'item-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
+        const itemCgst = isGstEnabled ? Math.round(((lineSub * (itemTaxRate / 200.0))) * 100) / 100 : 0;
+        const itemSgst = isGstEnabled ? Math.round(((lineSub * (itemTaxRate / 200.0))) * 100) / 100 : 0;
         orderItemsToInsert.push({
           id: itemId,
           order_id: orderId,
@@ -741,9 +816,15 @@ export const marketplaceService = {
           quantity: item.quantity,
           tax_rate: itemTaxRate,
           tax_amount: taxAmount,
+          cgst_amount: itemCgst,
+          sgst_amount: itemSgst,
+          discount_amount: 0,
+          notes: item.notes || null,
           item_notes: item.notes || null,
           subtotal: lineSub,
           total: lineTotal,
+          total_price: lineTotal,
+          image_url: prod.image_url || null,
         });
       }
 
@@ -861,7 +942,8 @@ export const marketplaceService = {
       if (orderItemsToInsert.length > 0) {
         const { error: itemsErr } = await supabase.from('order_items').insert(orderItemsToInsert);
         if (itemsErr) {
-          console.warn('Error inserting order items for delivery order:', itemsErr);
+          console.error('Error inserting order items for delivery order:', itemsErr);
+          throw new Error('Failed to create order items: ' + (itemsErr.message || 'Database error'));
         }
       }
 
@@ -883,10 +965,13 @@ export const marketplaceService = {
           },
         });
       } catch (aErr) {
-        console.warn('Failed to record audit log for customer order:', aErr);
+        // Silently ignore RLS permission limitations for customer role on audit_logs
       }
 
-      return newOrder as Order;
+      return {
+        ...newOrder,
+        items: orderItemsToInsert,
+      } as Order;
     } catch (fallbackErr: any) {
       throw new Error(fallbackErr.message || 'Failed to place delivery order.');
     }

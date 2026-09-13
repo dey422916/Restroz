@@ -58,6 +58,9 @@ const RESTAURANT_SETTINGS_COLUMNS = new Set([
   'gallery_images',
   'invoice_sequence_prefix',
   'invoice_next_number',
+  'is_gst_enabled',
+  'gst_registered',
+  'tax_invoice_enabled',
   'restaurant_id',
   'updated_at',
 ]);
@@ -73,45 +76,80 @@ export const settingsService = {
     if (!targetRestId) return {};
 
     if (isSupabaseConfigured) {
+      let rpcResult: Partial<RestaurantSettings> = {};
       try {
         const { data, error } = await supabase.rpc('get_public_restaurant_info', {
           p_restaurant_id: targetRestId,
         });
         if (!error && data) {
-          return data as Partial<RestaurantSettings>;
+          rpcResult = data as Partial<RestaurantSettings>;
         }
       } catch (err) {
         console.warn('get_public_restaurant_info RPC failed:', err);
       }
 
-      // Safe fallback to public profiles view (never private restaurant_settings)
+      // Always fetch latest public profile to ensure delivery payment QR, UPI ID, delivery charges, and free delivery threshold are loaded
       try {
         const { data: prof, error: profErr } = await supabase
           .from('restaurant_public_profiles')
           .select('*')
           .eq('restaurant_id', targetRestId)
           .maybeSingle();
+
         if (!profErr && prof) {
           return {
+            ...rpcResult,
             restaurant_id: targetRestId,
-            name: (prof as any).restaurant_name || (prof as any).name || '',
-            logo_url: (prof as any).logo_url || '',
-            banner_url: (prof as any).banner_url || '',
-            banner_urls: (prof as any).banner_urls || [],
-            gallery_urls: (prof as any).gallery_urls || [],
-            phone: (prof as any).phone || '',
-            address: (prof as any).address || '',
-            online_orders_enabled: (prof as any).marketplace_enabled ?? true,
-            delivery_charge_base: Number((prof as any).delivery_charge_base || 0),
-            free_delivery_above: Number((prof as any).free_delivery_above || 0),
-            enable_cod: (prof as any).enable_cod ?? true,
-            delivery_payment_qr_url: (prof as any).delivery_payment_qr_url || '',
-            delivery_upi_id: (prof as any).delivery_upi_id || '',
-            delivery_sample_screenshot_url: (prof as any).delivery_sample_screenshot_url || '',
+            name: (prof as any).display_name || (prof as any).restaurant_name || (prof as any).name || rpcResult.name || '',
+            logo_url: (prof as any).logo_url || rpcResult.logo_url || '',
+            banner_url: (prof as any).banner_url || rpcResult.banner_url || '',
+            banner_urls: (prof as any).banner_urls || rpcResult.banner_urls || [],
+            gallery_urls: (prof as any).gallery_urls || rpcResult.gallery_urls || [],
+            phone: (prof as any).phone || rpcResult.phone || '',
+            address: (prof as any).address || rpcResult.address || '',
+            online_orders_enabled: (prof as any).marketplace_enabled ?? rpcResult.online_orders_enabled ?? true,
+            delivery_charge_base: (prof as any).delivery_charge_base !== undefined && (prof as any).delivery_charge_base !== null
+              ? Number((prof as any).delivery_charge_base)
+              : Number(rpcResult.delivery_charge_base || 0),
+            free_delivery_above: (prof as any).free_delivery_above !== undefined && (prof as any).free_delivery_above !== null
+              ? Number((prof as any).free_delivery_above)
+              : Number(rpcResult.free_delivery_above || 0),
+            minimum_order_value: (prof as any).minimum_order_value !== undefined && (prof as any).minimum_order_value !== null
+              ? Number((prof as any).minimum_order_value)
+              : Number(rpcResult.minimum_order_value || (rpcResult as any).min_order_value || 0),
+            min_order_value: (prof as any).minimum_order_value !== undefined && (prof as any).minimum_order_value !== null
+              ? Number((prof as any).minimum_order_value)
+              : Number(rpcResult.minimum_order_value || (rpcResult as any).min_order_value || 0),
+            enable_cod: (prof as any).enable_cod !== undefined && (prof as any).enable_cod !== null
+              ? Boolean((prof as any).enable_cod)
+              : (rpcResult.enable_cod ?? true),
+            delivery_payment_qr_url: (prof as any).delivery_payment_qr_url || rpcResult.delivery_payment_qr_url || '',
+            delivery_upi_id: (prof as any).delivery_upi_id || rpcResult.delivery_upi_id || '',
+            delivery_sample_screenshot_url: (prof as any).delivery_sample_screenshot_url || rpcResult.delivery_sample_screenshot_url || '',
+            is_gst_enabled: (prof as any).is_gst_enabled !== undefined && (prof as any).is_gst_enabled !== null
+              ? Boolean((prof as any).is_gst_enabled)
+              : (rpcResult.is_gst_enabled !== undefined ? Boolean(rpcResult.is_gst_enabled) : false),
+            gst_registered: (prof as any).gst_registered !== undefined && (prof as any).gst_registered !== null
+              ? Boolean((prof as any).gst_registered)
+              : Boolean(rpcResult.gst_registered),
+            tax_invoice_enabled: (prof as any).tax_invoice_enabled !== undefined && (prof as any).tax_invoice_enabled !== null
+              ? Boolean((prof as any).tax_invoice_enabled)
+              : Boolean(rpcResult.tax_invoice_enabled),
+            gstin: (prof as any).gstin || rpcResult.gstin || '',
+            default_tax_rate: (prof as any).default_tax_rate !== undefined
+              ? Number((prof as any).default_tax_rate)
+              : (rpcResult.default_tax_rate !== undefined ? Number(rpcResult.default_tax_rate) : 5.0),
+            tax_rate: (prof as any).tax_rate !== undefined
+              ? Number((prof as any).tax_rate)
+              : (rpcResult.tax_rate !== undefined ? Number(rpcResult.tax_rate) : 5.0),
           };
         }
       } catch (profErr) {
-        console.warn('restaurant_public_profiles fallback failed:', profErr);
+        console.warn('restaurant_public_profiles query failed:', profErr);
+      }
+
+      if (Object.keys(rpcResult).length > 0) {
+        return rpcResult;
       }
     }
     return {};
@@ -149,30 +187,42 @@ export const settingsService = {
         // 1. Query tenant-specific settings record (Staff/Admin) or Public Info (Anon/Guest)
         let data: any = null;
         let error: any = null;
+        let publicProf: any = null;
 
         if (isAuthenticated) {
-          const res = await supabase
-            .from('restaurant_settings')
-            .select('*')
-            .eq('restaurant_id', targetRestId)
-            .maybeSingle();
+          const [res, profRes] = await Promise.all([
+            supabase
+              .from('restaurant_settings')
+              .select('*')
+              .eq('restaurant_id', targetRestId)
+              .maybeSingle(),
+            supabase
+              .from('restaurant_public_profiles')
+              .select('*')
+              .eq('restaurant_id', targetRestId)
+              .maybeSingle(),
+          ]);
           data = res.data;
           error = res.error;
+          publicProf = profRes.data;
         } else {
           data = await this.getPublicRestaurantInfo(targetRestId);
+          publicProf = data;
         }
 
-        // 2. Query restaurant record to get latest banner_url and logo_url
+        // 2. Query restaurant record to get latest banner_url, logo_url, legal_name, and email
         let bannerUrl = '';
         let bannerUrls: string[] = [];
         let restName = '';
         let restLogo = '';
         let restPhone = '';
         let restAddress = '';
+        let restLegalName = '';
+        let restEmail = '';
 
         const { data: restData } = await supabase
           .from('restaurants')
-          .select('banner_url, logo_url, name, phone, address')
+          .select('banner_url, logo_url, name, phone, address, legal_name, email')
           .eq('id', targetRestId)
           .maybeSingle();
 
@@ -183,6 +233,8 @@ export const settingsService = {
           restLogo = restData.logo_url || '';
           restPhone = restData.phone || '';
           restAddress = restData.address || '';
+          restLegalName = restData.legal_name || '';
+          restEmail = restData.email || '';
         }
 
         // Extract printer settings directly from Supabase columns or local cache
@@ -196,15 +248,19 @@ export const settingsService = {
         const effectiveGstin = (data?.gstin || '').trim();
         const resolvedGstRegistered: boolean = localGstSettings?.gst_registered !== undefined
           ? localGstSettings.gst_registered
-          : Boolean(effectiveGstin);
+          : (data?.gst_registered !== undefined ? Boolean(data.gst_registered) : Boolean(effectiveGstin));
 
-        const resolvedIsGstEnabled: boolean = resolvedGstRegistered
-          ? (localGstSettings?.is_gst_enabled !== undefined ? localGstSettings.is_gst_enabled : Boolean(effectiveGstin))
-          : false;
+        const resolvedIsGstEnabled: boolean = data?.is_gst_enabled !== undefined && data?.is_gst_enabled !== null
+          ? Boolean(data.is_gst_enabled)
+          : (localGstSettings?.is_gst_enabled !== undefined
+              ? Boolean(localGstSettings.is_gst_enabled)
+              : false);
 
-        const resolvedTaxInvoiceEnabled: boolean = resolvedGstRegistered
-          ? (localGstSettings?.tax_invoice_enabled !== undefined ? localGstSettings.tax_invoice_enabled : Boolean(effectiveGstin))
-          : false;
+        const resolvedTaxInvoiceEnabled: boolean = data?.tax_invoice_enabled !== undefined && data?.tax_invoice_enabled !== null
+          ? Boolean(data.tax_invoice_enabled)
+          : (localGstSettings?.tax_invoice_enabled !== undefined
+              ? Boolean(localGstSettings.tax_invoice_enabled)
+              : false);
 
         // Sync local cache with Supabase values
         AsyncStorage.setItem(
@@ -227,29 +283,61 @@ export const settingsService = {
 
         const cleanLogo = cleanLogoOnly(restLogo || '');
 
-        if (data) {
+        if (data || publicProf) {
           const loaded: RestaurantSettings = {
             ...mockStorage.getSettings(),
-            ...data,
-            name: restName || data.name || 'Restaurant POS',
+            ...(data || {}),
+            name: restName || data?.name || publicProf?.display_name || 'Restaurant POS',
+            legal_name: restLegalName || data?.legal_name || restName || data?.name || '',
+            email: restEmail || data?.email || '',
             logo_url: cleanLogo,
-            phone: restPhone || data.phone || '',
-            address: restAddress || data.address || '',
-            gstin: effectiveGstin || data.gstin || '',
-            banner_url: bannerUrl,
+            phone: restPhone || data?.phone || '',
+            address: restAddress || data?.address || '',
+            gstin: effectiveGstin || data?.gstin || '',
+            banner_url: bannerUrl || publicProf?.banner_url || '',
             banner_urls: bannerUrls,
             gallery_urls: bannerUrls,
-            restaurant_id: data.restaurant_id || targetRestId,
+            restaurant_id: data?.restaurant_id || targetRestId,
             kot_paper_size: resolvedKotPaper,
             bill_paper_size: resolvedBillPaper,
             auto_print_kot: resolvedAutoPrint,
             gst_registered: resolvedGstRegistered,
             is_gst_enabled: resolvedIsGstEnabled,
             tax_invoice_enabled: resolvedTaxInvoiceEnabled,
+            minimum_order_value: Number(
+              publicProf?.minimum_order_value !== undefined && publicProf?.minimum_order_value !== null
+                ? publicProf.minimum_order_value
+                : (data?.minimum_order_value !== undefined && data?.minimum_order_value !== null
+                    ? data.minimum_order_value
+                    : (data?.min_order_value !== undefined && data?.min_order_value !== null ? data.min_order_value : 0))
+            ),
+            min_order_value: Number(
+              publicProf?.minimum_order_value !== undefined && publicProf?.minimum_order_value !== null
+                ? publicProf.minimum_order_value
+                : (data?.minimum_order_value !== undefined && data?.minimum_order_value !== null
+                    ? data.minimum_order_value
+                    : (data?.min_order_value !== undefined && data?.min_order_value !== null ? data.min_order_value : 0))
+            ),
+            delivery_charge_base: Number(
+              publicProf?.delivery_charge_base !== undefined && publicProf?.delivery_charge_base !== null
+                ? publicProf.delivery_charge_base
+                : (data?.delivery_charge_base !== undefined && data?.delivery_charge_base !== null ? data.delivery_charge_base : 0)
+            ),
+            free_delivery_above: Number(
+              publicProf?.free_delivery_above !== undefined && publicProf?.free_delivery_above !== null
+                ? publicProf.free_delivery_above
+                : (data?.free_delivery_above !== undefined && data?.free_delivery_above !== null ? data.free_delivery_above : 0)
+            ),
+            enable_cod: publicProf?.enable_cod !== undefined && publicProf?.enable_cod !== null
+              ? Boolean(publicProf.enable_cod)
+              : (data?.enable_cod !== undefined && data?.enable_cod !== null ? Boolean(data.enable_cod) : true),
+            delivery_payment_qr_url: publicProf?.delivery_payment_qr_url || data?.delivery_payment_qr_url || '',
+            delivery_upi_id: publicProf?.delivery_upi_id || data?.delivery_upi_id || '',
+            delivery_sample_screenshot_url: publicProf?.delivery_sample_screenshot_url || data?.delivery_sample_screenshot_url || '',
             default_tax_rate: Number(
-              data.default_tax_rate !== undefined && data.default_tax_rate !== null
+              data?.default_tax_rate !== undefined && data?.default_tax_rate !== null
                 ? data.default_tax_rate
-                : (data.tax_rate !== undefined && data.tax_rate !== null ? data.tax_rate : 5.0)
+                : (data?.tax_rate !== undefined && data?.tax_rate !== null ? data.tax_rate : 5.0)
             ),
           };
           mockStorage.saveSettings(loaded);
@@ -259,6 +347,8 @@ export const settingsService = {
             ...mockStorage.getSettings(),
             id: 'rest-' + targetRestId,
             name: restName || 'Restaurant POS',
+            legal_name: restLegalName || restName || '',
+            email: restEmail || '',
             logo_url: cleanLogo,
             phone: restPhone || '',
             address: restAddress || '',
@@ -273,6 +363,14 @@ export const settingsService = {
             gst_registered: resolvedGstRegistered,
             is_gst_enabled: resolvedIsGstEnabled,
             tax_invoice_enabled: resolvedTaxInvoiceEnabled,
+            minimum_order_value: Number(publicProf?.minimum_order_value || 0),
+            min_order_value: Number(publicProf?.minimum_order_value || 0),
+            delivery_charge_base: Number(publicProf?.delivery_charge_base || 0),
+            free_delivery_above: Number(publicProf?.free_delivery_above || 0),
+            enable_cod: publicProf?.enable_cod !== undefined ? Boolean(publicProf.enable_cod) : true,
+            delivery_payment_qr_url: publicProf?.delivery_payment_qr_url || '',
+            delivery_upi_id: publicProf?.delivery_upi_id || '',
+            delivery_sample_screenshot_url: publicProf?.delivery_sample_screenshot_url || '',
             default_tax_rate: 5.0,
           };
           mockStorage.saveSettings(loaded);
@@ -314,11 +412,11 @@ export const settingsService = {
     const targetGstRegistered = updated.gst_registered !== undefined
       ? Boolean(updated.gst_registered)
       : Boolean((updated.gstin || '').trim());
-    const targetIsGstEnabled = targetGstRegistered
-      ? (updated.is_gst_enabled !== undefined ? Boolean(updated.is_gst_enabled) : Boolean((updated.gstin || '').trim()))
+    const targetIsGstEnabled = updated.is_gst_enabled !== undefined
+      ? Boolean(updated.is_gst_enabled)
       : false;
-    const targetTaxInvoiceEnabled = targetGstRegistered
-      ? (updated.tax_invoice_enabled !== undefined ? Boolean(updated.tax_invoice_enabled) : Boolean((updated.gstin || '').trim()))
+    const targetTaxInvoiceEnabled = updated.tax_invoice_enabled !== undefined
+      ? Boolean(updated.tax_invoice_enabled)
       : false;
 
     // Save to local AsyncStorage cache for instant response
@@ -386,19 +484,34 @@ export const settingsService = {
       if (safeBannerPayload !== undefined) profileUpdates.banner_url = safeBannerPayload || null;
       if (settings.delivery_charge_base !== undefined) profileUpdates.delivery_charge_base = Number(settings.delivery_charge_base);
       if (settings.free_delivery_above !== undefined) profileUpdates.free_delivery_above = Number(settings.free_delivery_above);
+      if (settings.minimum_order_value !== undefined) profileUpdates.minimum_order_value = Number(settings.minimum_order_value);
+      if (settings.min_order_value !== undefined) profileUpdates.minimum_order_value = Number(settings.min_order_value);
       if (settings.enable_cod !== undefined) profileUpdates.enable_cod = Boolean(settings.enable_cod);
       if (settings.delivery_payment_qr_url !== undefined) profileUpdates.delivery_payment_qr_url = settings.delivery_payment_qr_url || null;
       if (settings.delivery_upi_id !== undefined) profileUpdates.delivery_upi_id = settings.delivery_upi_id || null;
       if (settings.delivery_sample_screenshot_url !== undefined) profileUpdates.delivery_sample_screenshot_url = settings.delivery_sample_screenshot_url || null;
+      profileUpdates.is_gst_enabled = targetIsGstEnabled;
+      profileUpdates.gst_registered = targetGstRegistered;
+      profileUpdates.tax_invoice_enabled = targetTaxInvoiceEnabled;
+      if (settings.gstin !== undefined || updated.gstin !== undefined) profileUpdates.gstin = (settings.gstin ?? updated.gstin ?? '').trim();
+      if (settings.default_tax_rate !== undefined || updated.default_tax_rate !== undefined) profileUpdates.default_tax_rate = Number(settings.default_tax_rate ?? updated.default_tax_rate ?? 5.0);
+      if (settings.tax_rate !== undefined || updated.tax_rate !== undefined) profileUpdates.tax_rate = Number(settings.tax_rate ?? updated.tax_rate ?? 5.0);
 
       if (Object.keys(profileUpdates).length > 0) {
         try {
-          await supabase
+          const { error: profErr } = await supabase
             .from('restaurant_public_profiles')
-            .update(profileUpdates)
-            .eq('restaurant_id', targetRestId);
+            .upsert({
+              restaurant_id: targetRestId,
+              display_name: settings.name || current.name || 'Restaurant',
+              ...profileUpdates,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'restaurant_id' });
+          if (profErr) {
+            console.warn('Failed to upsert restaurant_public_profiles:', profErr);
+          }
         } catch (pErr) {
-          console.warn('Failed to update restaurant_public_profiles:', pErr);
+          console.warn('Failed to upsert restaurant_public_profiles:', pErr);
         }
       }
 

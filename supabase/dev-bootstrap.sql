@@ -1093,6 +1093,9 @@ END;
 $$;
 
 -- Atomic Customer Delivery Order RPC (8 Parameters - Authoritative Marketplace Signature)
+DROP FUNCTION IF EXISTS public.create_customer_delivery_order(UUID, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT);
+DROP FUNCTION IF EXISTS public.create_customer_delivery_order(UUID, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT);
+
 CREATE OR REPLACE FUNCTION public.create_customer_delivery_order(
     p_restaurant_id UUID,
     p_items JSONB,                    -- Array of {product_id: TEXT, quantity: INT, notes/item_notes: TEXT}
@@ -1849,8 +1852,12 @@ END;
 $$;
 
 -- Staff Permissions Management RPC
+DROP FUNCTION IF EXISTS public.update_staff_permissions(UUID, JSONB);
+DROP FUNCTION IF EXISTS public.update_staff_permissions(TEXT, JSONB);
+DROP FUNCTION IF EXISTS public.update_staff_permissions;
+
 CREATE OR REPLACE FUNCTION public.update_staff_permissions(
-    p_member_id UUID,
+    p_restaurant_member_id UUID,
     p_permissions JSONB
 )
 RETURNS JSONB
@@ -1861,7 +1868,7 @@ AS $$
 DECLARE
     v_member RECORD;
 BEGIN
-    SELECT * INTO v_member FROM public.restaurant_members WHERE id = p_member_id;
+    SELECT * INTO v_member FROM public.restaurant_members WHERE id = p_restaurant_member_id;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Member not found.';
@@ -1877,7 +1884,7 @@ BEGIN
         can_manage_products, can_manage_categories, can_manage_tables, can_manage_coupons,
         can_view_reports, can_manage_register, can_view_settings, can_manage_settings, can_manage_staff
     ) VALUES (
-        p_member_id,
+        p_restaurant_member_id,
         COALESCE((p_permissions->>'can_use_pos')::BOOLEAN, TRUE),
         COALESCE((p_permissions->>'can_view_orders')::BOOLEAN, TRUE),
         COALESCE((p_permissions->>'can_edit_orders')::BOOLEAN, FALSE),
@@ -1908,10 +1915,12 @@ BEGIN
         can_manage_staff = EXCLUDED.can_manage_staff,
         updated_at = NOW();
 
-    RETURN jsonb_build_object('success', true, 'member_id', p_member_id);
+    RETURN jsonb_build_object('success', true, 'member_id', p_restaurant_member_id);
 END;
 $$;
 
+DROP FUNCTION IF EXISTS public.set_staff_membership_status(UUID, BOOLEAN);
+DROP FUNCTION IF EXISTS public.set_staff_membership_status;
 CREATE OR REPLACE FUNCTION public.set_staff_membership_status(
     p_member_id UUID,
     p_is_active BOOLEAN
@@ -2603,16 +2612,24 @@ ON CONFLICT (id) DO UPDATE SET public = TRUE;
 
 -- Storage RLS Policies
 DROP POLICY IF EXISTS "Public Access to product-images" ON storage.objects;
-CREATE POLICY "Public Access to product-images" ON storage.objects
+DROP POLICY IF EXISTS "Public Read Access" ON storage.objects;
+CREATE POLICY "Public Read Access" ON storage.objects
     FOR SELECT USING (bucket_id IN ('product-images', 'restaurant-assets'));
 
 DROP POLICY IF EXISTS "Authenticated users can upload assets" ON storage.objects;
-CREATE POLICY "Authenticated users can upload assets" ON storage.objects
-    FOR INSERT WITH CHECK (bucket_id IN ('product-images', 'restaurant-assets') AND auth.role() = 'authenticated');
+DROP POLICY IF EXISTS "Allow upload for all users" ON storage.objects;
+CREATE POLICY "Allow upload for all users" ON storage.objects
+    FOR INSERT WITH CHECK (bucket_id IN ('product-images', 'restaurant-assets'));
 
 DROP POLICY IF EXISTS "Authenticated users can update assets" ON storage.objects;
-CREATE POLICY "Authenticated users can update assets" ON storage.objects
-    FOR UPDATE USING (bucket_id IN ('product-images', 'restaurant-assets') AND auth.role() = 'authenticated');
+DROP POLICY IF EXISTS "Allow update for all users" ON storage.objects;
+CREATE POLICY "Allow update for all users" ON storage.objects
+    FOR UPDATE USING (bucket_id IN ('product-images', 'restaurant-assets'));
+
+DROP POLICY IF EXISTS "Authenticated users can delete assets" ON storage.objects;
+DROP POLICY IF EXISTS "Allow delete for authenticated users" ON storage.objects;
+CREATE POLICY "Allow delete for authenticated users" ON storage.objects
+    FOR DELETE USING (bucket_id IN ('product-images', 'restaurant-assets') AND auth.role() = 'authenticated');
 
 -- ----------------------------------------------------------------------------
 -- 35. REALTIME PUBLICATION CONFIGURATION (GENUINELY IDEMPOTENT)

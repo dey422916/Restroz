@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator, Image, useWindowDimensions, Platform } from 'react-native';
 import { useSettings } from '../../src/context/SettingsContext';
 import { useAuth } from '../../src/context/AuthContext';
@@ -7,8 +7,13 @@ import { authService } from '../../src/services/api/authService';
 import { storageService } from '../../src/services/api/storageService';
 import { supabase } from '../../src/services/supabase';
 import { UserRole, PaperSize } from '../../src/types';
-
-import { parseBannerUrls } from '../../src/utils/mediaUtils';
+import { OptimizedImage } from '../../src/components/common/OptimizedImage';
+import {
+  parseBannerUrls,
+  extractBannerCleanUrl,
+  extractBannerPosY,
+  formatBannerWithPosY,
+} from '../../src/utils/mediaUtils';
 
 export default function SettingsScreen() {
   const { width: windowWidth } = useWindowDimensions();
@@ -35,17 +40,30 @@ export default function SettingsScreen() {
   const [isGstEnabled, setIsGstEnabled] = useState<boolean>(
     settings.is_gst_enabled !== undefined
       ? Boolean(settings.is_gst_enabled)
-      : (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()))
+      : false
   );
   const [taxInvoiceEnabled, setTaxInvoiceEnabled] = useState<boolean>(
     settings.tax_invoice_enabled !== undefined
       ? Boolean(settings.tax_invoice_enabled)
-      : (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()))
+      : false
   );
   const [logoUrl, setLogoUrl] = useState(settings.logo_url || '');
   const [bannerUrls, setBannerUrls] = useState<string[]>(() =>
     parseBannerUrls(settings.banner_url || settings.banner_urls)
   );
+
+  // Banner Drag & Focal Position Adjuster State
+  const [selectedBannerIdx, setSelectedBannerIdx] = useState<number>(0);
+  const [bannerPosY, setBannerPosY] = useState<number>(50);
+  const [showOverlaysInPreview, setShowOverlaysInPreview] = useState<boolean>(true);
+  const [showCropGuides, setShowCropGuides] = useState<boolean>(true);
+  const [previewDeviceMode, setPreviewDeviceMode] = useState<'desktop' | 'mobile'>('desktop');
+  const [isSavingBannerPos, setIsSavingBannerPos] = useState<boolean>(false);
+  const [isDraggingBanner, setIsDraggingBanner] = useState<boolean>(false);
+
+  const isDraggingRef = useRef(false);
+  const dragStartYRef = useRef(0);
+  const dragStartPosYRef = useRef(50);
 
   // Printer settings state
   const [kotPaperSize, setKotPaperSize] = useState<PaperSize>(settings.kot_paper_size || '80mm');
@@ -67,6 +85,11 @@ export default function SettingsScreen() {
     settings.free_delivery_above !== undefined && settings.free_delivery_above !== null
       ? settings.free_delivery_above.toString()
       : '0'
+  );
+  const [minimumOrderValue, setMinimumOrderValue] = useState(
+    settings.minimum_order_value !== undefined && settings.minimum_order_value !== null
+      ? settings.minimum_order_value.toString()
+      : (settings.min_order_value !== undefined && settings.min_order_value !== null ? settings.min_order_value.toString() : '0')
   );
   const [isSavingDeliverySettings, setIsSavingDeliverySettings] = useState(false);
   const [isUploadingPaymentQr, setIsUploadingPaymentQr] = useState(false);
@@ -107,12 +130,12 @@ export default function SettingsScreen() {
       setIsGstEnabled(
         settings.is_gst_enabled !== undefined
           ? Boolean(settings.is_gst_enabled)
-          : (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()))
+          : false
       );
       setTaxInvoiceEnabled(
         settings.tax_invoice_enabled !== undefined
           ? Boolean(settings.tax_invoice_enabled)
-          : (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()))
+          : false
       );
       setLogoUrl(settings.logo_url || '');
       setBannerUrls(parseBannerUrls(settings.banner_url || settings.banner_urls));
@@ -133,6 +156,11 @@ export default function SettingsScreen() {
         settings.free_delivery_above !== undefined && settings.free_delivery_above !== null
           ? settings.free_delivery_above.toString()
           : '0'
+      );
+      setMinimumOrderValue(
+        settings.minimum_order_value !== undefined && settings.minimum_order_value !== null
+          ? settings.minimum_order_value.toString()
+          : (settings.min_order_value !== undefined && settings.min_order_value !== null ? settings.min_order_value.toString() : '0')
       );
     }
   }, [settings, isDirty, activeRestaurantId]);
@@ -215,18 +243,20 @@ export default function SettingsScreen() {
       setDeliveryStatusMessage(null);
       const parsedDeliveryFee = parseFloat(deliveryChargeBase) || 0;
       const parsedFreeThreshold = parseFloat(freeDeliveryAbove) || 0;
+      const parsedMinOrder = parseFloat(minimumOrderValue) || 0;
 
       await updateSettings({
-        delivery_payment_qr_url: deliveryPaymentQrUrl.trim() || undefined,
-        delivery_upi_id: deliveryUpiId.trim() || undefined,
-        delivery_sample_screenshot_url: deliverySampleScreenshotUrl.trim() || undefined,
+        delivery_payment_qr_url: deliveryPaymentQrUrl.trim() || '',
+        delivery_upi_id: deliveryUpiId.trim() || '',
+        delivery_sample_screenshot_url: deliverySampleScreenshotUrl.trim() || '',
         enable_cod: enableCod,
         delivery_charge_base: parsedDeliveryFee >= 0 ? parsedDeliveryFee : 0,
         free_delivery_above: parsedFreeThreshold >= 0 ? parsedFreeThreshold : 0,
+        minimum_order_value: parsedMinOrder >= 0 ? parsedMinOrder : 0,
       });
 
       setIsDirty(false);
-      const summaryText = `COD: ${enableCod ? 'ON' : 'OFF'} • Delivery Fee: ₹${parsedDeliveryFee} • Free Above: ${parsedFreeThreshold > 0 ? `₹${parsedFreeThreshold}` : 'N/A'} • UPI ID: ${deliveryUpiId.trim() || 'None'}`;
+      const summaryText = `COD: ${enableCod ? 'ON' : 'OFF'} • Min. Order: ₹${parsedMinOrder} • Delivery Fee: ₹${parsedDeliveryFee} • Free Above: ${parsedFreeThreshold > 0 ? `₹${parsedFreeThreshold}` : 'N/A'} • UPI ID: ${deliveryUpiId.trim() || 'None'}`;
 
       setDeliveryStatusMessage({
         type: 'success',
@@ -424,6 +454,77 @@ export default function SettingsScreen() {
     }
   };
 
+  // Sync banner position when selected banner or list changes
+  useEffect(() => {
+    if (bannerUrls.length > 0) {
+      const idx = Math.min(selectedBannerIdx, bannerUrls.length - 1);
+      if (idx !== selectedBannerIdx) {
+        setSelectedBannerIdx(idx);
+      }
+      setBannerPosY(extractBannerPosY(bannerUrls[idx]));
+    }
+  }, [selectedBannerIdx, bannerUrls]);
+
+  const handlePointerDown = (e: any) => {
+    isDraggingRef.current = true;
+    setIsDraggingBanner(true);
+    const clientY = e.clientY ?? e.nativeEvent?.pageY ?? e.nativeEvent?.touches?.[0]?.pageY ?? 0;
+    dragStartYRef.current = clientY;
+    dragStartPosYRef.current = bannerPosY;
+  };
+
+  const handlePointerMove = (e: any) => {
+    if (!isDraggingRef.current) return;
+    const clientY = e.clientY ?? e.nativeEvent?.pageY ?? e.nativeEvent?.touches?.[0]?.pageY ?? 0;
+    const deltaY = clientY - dragStartYRef.current;
+    // Dragging down shifts image focal point up; dragging up shifts focal point down
+    const percentDelta = (deltaY / 220) * 100;
+    const newPos = Math.min(100, Math.max(0, Math.round(dragStartPosYRef.current - percentDelta)));
+    setBannerPosY(newPos);
+  };
+
+  const handlePointerUp = () => {
+    if (isDraggingRef.current) {
+      isDraggingRef.current = false;
+      setIsDraggingBanner(false);
+    }
+  };
+
+  const handleSaveBannerPosition = async (customY?: number) => {
+    if (!canManage || bannerUrls.length === 0) return;
+    const targetY = customY !== undefined ? customY : bannerPosY;
+    const idx = Math.min(selectedBannerIdx, bannerUrls.length - 1);
+    const current = bannerUrls[idx];
+    const updatedUrl = formatBannerWithPosY(current, targetY);
+    const updated = [...bannerUrls];
+    updated[idx] = updatedUrl;
+    setBannerUrls(updated);
+    setBannerPosY(targetY);
+
+    try {
+      setIsSavingBannerPos(true);
+      const bannerPayload = JSON.stringify(updated);
+      await updateSettings({
+        banner_url: bannerPayload,
+        banner_urls: updated,
+        gallery_urls: updated,
+      });
+      if (activeRestaurantId) {
+        await Promise.all([
+          supabase.from('restaurants').update({ banner_url: bannerPayload }).eq('id', activeRestaurantId),
+          supabase.from('restaurant_public_profiles').update({ banner_url: bannerPayload }).eq('restaurant_id', activeRestaurantId),
+        ]);
+      }
+      showToast('success', 'Banner Position Saved', `Focal alignment saved at ${targetY}%. Changes are live in customer storefront.`);
+      Alert.alert('Banner Position Saved', `Banner focal alignment saved at ${targetY}%. The customer panel will now display this focal area.`);
+    } catch (err: any) {
+      showToast('error', 'Save Failed', err.message || 'Failed to save banner position.');
+      Alert.alert('Save Failed', err.message || 'Failed to save banner position.');
+    } finally {
+      setIsSavingBannerPos(false);
+    }
+  };
+
   const handleRemoveBanner = async (index: number) => {
     if (!canManage) {
       showToast('error', 'Permission Denied', 'Only ADMIN users can manage restaurant banners.');
@@ -563,12 +664,12 @@ export default function SettingsScreen() {
         setIsGstEnabled(
           persisted.is_gst_enabled !== undefined
             ? Boolean(persisted.is_gst_enabled)
-            : (persisted.gst_registered !== undefined ? Boolean(persisted.gst_registered) : Boolean(persisted.gstin?.trim()))
+            : false
         );
         setTaxInvoiceEnabled(
           persisted.tax_invoice_enabled !== undefined
             ? Boolean(persisted.tax_invoice_enabled)
-            : (persisted.gst_registered !== undefined ? Boolean(persisted.gst_registered) : Boolean(persisted.gstin?.trim()))
+            : false
         );
       }
 
@@ -750,23 +851,49 @@ export default function SettingsScreen() {
                     {/* Banner Previews */}
                     {bannerUrls.length > 0 ? (
                       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 2 }}>
-                        <View style={{ flexDirection: 'row', gap: 6 }}>
-                          {bannerUrls.map((url, idx) => (
-                            <View key={`banner-${idx}`} style={styles.bannerThumbWrap}>
-                              <Image source={{ uri: url }} style={styles.bannerThumb} resizeMode="cover" />
-                              {canManage && (
-                                <TouchableOpacity
-                                  style={styles.bannerDeleteBtn}
-                                  onPress={() => handleRemoveBanner(idx)}
+                        <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                          {bannerUrls.map((url, idx) => {
+                            const isSelected = idx === selectedBannerIdx;
+                            return (
+                              <TouchableOpacity
+                                key={`banner-${idx}`}
+                                style={[
+                                  styles.bannerThumbWrap,
+                                  isSelected && styles.bannerThumbWrapSelected,
+                                ]}
+                                onPress={() => setSelectedBannerIdx(idx)}
+                                activeOpacity={0.8}
+                              >
+                                <OptimizedImage
+                                  source={url}
+                                  type="banner"
+                                  style={styles.bannerThumb}
+                                  contentFit="cover"
+                                />
+                                {canManage && (
+                                  <TouchableOpacity
+                                    style={styles.bannerDeleteBtn}
+                                    onPress={(e) => {
+                                      e.stopPropagation?.();
+                                      handleRemoveBanner(idx);
+                                    }}
+                                  >
+                                    <Text style={styles.bannerDeleteBtnText}>✕</Text>
+                                  </TouchableOpacity>
+                                )}
+                                <View
+                                  style={[
+                                    styles.bannerIndexBadge,
+                                    isSelected && { backgroundColor: '#2563eb' },
+                                  ]}
                                 >
-                                  <Text style={styles.bannerDeleteBtnText}>✕</Text>
-                                </TouchableOpacity>
-                              )}
-                              <View style={styles.bannerIndexBadge}>
-                                <Text style={styles.bannerIndexText}>#{idx + 1}</Text>
-                              </View>
-                            </View>
-                          ))}
+                                  <Text style={styles.bannerIndexText}>
+                                    {isSelected ? `✓ #${idx + 1} Selected` : `#${idx + 1}`}
+                                  </Text>
+                                </View>
+                              </TouchableOpacity>
+                            );
+                          })}
                         </View>
                       </ScrollView>
                     ) : (
@@ -777,6 +904,321 @@ export default function SettingsScreen() {
                     )}
                   </View>
                 </View>
+
+                {/* Interactive Banner Drag & Focal Adjuster with Exact Customer Storefront Preview */}
+                {bannerUrls.length > 0 && (
+                  <View style={styles.bannerAdjusterCard}>
+                    <View style={styles.adjusterHeaderRow}>
+                      <View style={{ flex: 1, minWidth: 260 }}>
+                        <Text style={styles.adjusterTitle}>
+                          🎯 Banner Focal Area Adjuster & Customer Preview
+                        </Text>
+                        <Text style={styles.adjusterSubTitle}>
+                          Drag the banner up/down to align the focal area. The preview below reflects the exact customer storefront layout.
+                        </Text>
+                      </View>
+                      <View style={styles.adjusterActionsWrap}>
+                        {/* Device Mode Switcher */}
+                        <View style={styles.previewToggleGroup}>
+                          <TouchableOpacity
+                            style={[
+                              styles.previewToggleBtn,
+                              previewDeviceMode === 'desktop' && styles.previewToggleBtnActive,
+                            ]}
+                            onPress={() => setPreviewDeviceMode('desktop')}
+                          >
+                            <Text
+                              style={[
+                                styles.previewToggleBtnText,
+                                previewDeviceMode === 'desktop' && styles.previewToggleBtnTextActive,
+                              ]}
+                            >
+                              🖥️ Desktop View
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[
+                              styles.previewToggleBtn,
+                              previewDeviceMode === 'mobile' && styles.previewToggleBtnActive,
+                            ]}
+                            onPress={() => setPreviewDeviceMode('mobile')}
+                          >
+                            <Text
+                              style={[
+                                styles.previewToggleBtnText,
+                                previewDeviceMode === 'mobile' && styles.previewToggleBtnTextActive,
+                              ]}
+                            >
+                              📱 Mobile View
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        {/* Overlays Toggle */}
+                        <TouchableOpacity
+                          style={[
+                            styles.previewOptionBtn,
+                            showOverlaysInPreview && styles.previewOptionBtnActive,
+                          ]}
+                          onPress={() => setShowOverlaysInPreview(!showOverlaysInPreview)}
+                        >
+                          <Text
+                            style={[
+                              styles.previewOptionBtnText,
+                              showOverlaysInPreview && styles.previewOptionBtnTextActive,
+                            ]}
+                          >
+                            {showOverlaysInPreview ? '👁️ Customer UI: ON' : '👁️ Customer UI: OFF'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Customer Storefront Browser Mockup Shell */}
+                    <View style={styles.storefrontBrowserShell}>
+                      {/* Browser Mockup Top Navbar */}
+                      <View style={styles.storefrontTopNav}>
+                        <View style={styles.storefrontBrandWrap}>
+                          <Text style={styles.storefrontFlameLogo}>🔥</Text>
+                          <View>
+                            <Text style={styles.storefrontBrandName}>RestroZ</Text>
+                            <Text style={styles.storefrontBrandTag}>Every flavor. one place</Text>
+                          </View>
+                        </View>
+                        <View style={styles.storefrontNavLinks}>
+                          <Text style={styles.storefrontNavLink}>🏠 Explore</Text>
+                          <Text style={styles.storefrontNavLink}>🛍️ Cart</Text>
+                          <Text style={styles.storefrontNavLink}>📋 My Orders</Text>
+                          <Text style={styles.storefrontNavLink}>📍 Addresses</Text>
+                          <Text style={styles.storefrontNavLink}>👤 Profile</Text>
+                        </View>
+                      </View>
+
+                      {/* Storefront Subheader (Back & Title) */}
+                      <View style={styles.storefrontSubHeader}>
+                        <Text style={styles.storefrontBackLink}>← Restaurants</Text>
+                        <Text style={styles.storefrontCenterTitle} numberOfLines={1}>
+                          {name || 'Crunchy Dosa'}
+                        </Text>
+                        <Text style={styles.storefrontCartIcon}>🛍️</Text>
+                      </View>
+
+                      {/* Interactive Drag & Preview Banner Frame */}
+                      <View
+                        style={[
+                          styles.bannerPreviewFrame,
+                          {
+                            aspectRatio: previewDeviceMode === 'desktop' ? 16 / 4.6 : 16 / 9,
+                            cursor: (Platform.OS === 'web' ? (isDraggingBanner ? 'grabbing' : 'grab') : undefined) as any,
+                          },
+                        ]}
+                        {...(Platform.OS === 'web'
+                          ? {
+                              onMouseDown: handlePointerDown,
+                              onMouseMove: handlePointerMove,
+                              onMouseUp: handlePointerUp,
+                              onMouseLeave: handlePointerUp,
+                            }
+                          : {
+                              onTouchStart: handlePointerDown,
+                              onTouchMove: handlePointerMove,
+                              onTouchEnd: handlePointerUp,
+                            })}
+                      >
+                        {/* Background Banner Image with focal position */}
+                        <OptimizedImage
+                          key={`preview-banner-${selectedBannerIdx}-${extractBannerCleanUrl(bannerUrls[selectedBannerIdx])}-${bannerPosY}`}
+                          source={formatBannerWithPosY(bannerUrls[selectedBannerIdx], bannerPosY)}
+                          type="banner"
+                          style={StyleSheet.absoluteFill}
+                          contentFit="cover"
+                        />
+
+                        {/* Dark gradient overlay matching customer panel */}
+                        <View style={styles.bannerDarkGradient} pointerEvents="none" />
+
+                        {/* Customer Panel Overlays (Matching Customer Storefront) */}
+                        {showOverlaysInPreview && (
+                          <View style={styles.customerOverlayMockup} pointerEvents="none">
+                            <View style={styles.mockupStatusPill}>
+                              <View style={styles.mockupStatusDot} />
+                              <Text style={styles.mockupStatusText}>Open</Text>
+                            </View>
+
+                            <View style={styles.mockupTitleRow}>
+                              {logoUrl ? (
+                                <Image source={{ uri: logoUrl }} style={styles.mockupLogo} resizeMode="contain" />
+                              ) : null}
+                              <Text style={styles.mockupTitle} numberOfLines={1}>
+                                {name || 'Crunchy Dosa'}
+                              </Text>
+                              <Text style={{ fontSize: 13 }}>🎖️</Text>
+                            </View>
+
+                            <Text style={styles.mockupCuisine} numberOfLines={1}>
+                              Multi-Cuisine • Indian
+                            </Text>
+
+                            <Text style={styles.mockupAddress} numberOfLines={1}>
+                              📍 {address || 'Doorstep Delivery Available'}
+                            </Text>
+
+                            <View style={styles.mockupRatingPill}>
+                              <Text style={styles.mockupRatingStar}>★</Text>
+                              <Text style={styles.mockupRatingScore}>4.6</Text>
+                              <Text style={styles.mockupRatingReviews}>50+ reviews</Text>
+                            </View>
+
+                            <View style={styles.mockupMetaRow}>
+                              <View style={styles.mockupCapsule}>
+                                <Text style={{ fontSize: 11 }}>⏱️</Text>
+                                <View>
+                                  <Text style={styles.mockupCapsuleMain}>35 mins</Text>
+                                  <Text style={styles.mockupCapsuleSub}>Delivery Time</Text>
+                                </View>
+                              </View>
+
+                              <View style={styles.mockupCapsule}>
+                                <Text style={{ fontSize: 11 }}>₹</Text>
+                                <View>
+                                  <Text style={styles.mockupCapsuleMain}>₹{minimumOrderValue || '0'}</Text>
+                                  <Text style={styles.mockupCapsuleSub}>Min. Order</Text>
+                                </View>
+                              </View>
+
+                              <View style={styles.mockupCapsule}>
+                                <Text style={{ fontSize: 11 }}>🛵</Text>
+                                <View>
+                                  <Text style={styles.mockupCapsuleMain}>
+                                    ₹{deliveryChargeBase || '20'} Delivery • Free above ₹{freeDeliveryAbove || '200'}
+                                  </Text>
+                                </View>
+                              </View>
+                            </View>
+                          </View>
+                        )}
+
+                        {/* Carousel Navigation Mockup Elements */}
+                        <View style={styles.mockupCarouselArrowLeft} pointerEvents="none">
+                          <Text style={styles.mockupCarouselArrowText}>‹</Text>
+                        </View>
+                        <View style={styles.mockupCarouselArrowRight} pointerEvents="none">
+                          <Text style={styles.mockupCarouselArrowText}>›</Text>
+                        </View>
+                        <View style={styles.mockupDotsContainer} pointerEvents="none">
+                          <View style={styles.mockupActiveDot} />
+                          <View style={styles.mockupInactiveDot} />
+                          <View style={styles.mockupInactiveDot} />
+                        </View>
+
+                        {/* Floating Drag Guide Badge */}
+                        <View style={styles.focalBadge} pointerEvents="none">
+                          <Text style={styles.focalBadgeText}>
+                            ↕️ Drag to Reposition • Focal: {bannerPosY}%
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Mockup Storefront Categories & Search Strip */}
+                      <View style={styles.storefrontFilterRow}>
+                        <View style={styles.mockupCategoryChips}>
+                          <View style={[styles.mockupCatChip, styles.mockupCatChipActive]}>
+                            <Text style={styles.mockupCatTextActive}>All Items</Text>
+                          </View>
+                          <View style={styles.mockupCatChip}>
+                            <Text style={styles.mockupCatText}>Dosa</Text>
+                          </View>
+                          <View style={styles.mockupCatChip}>
+                            <Text style={styles.mockupCatText}>Uttapam</Text>
+                          </View>
+                          <View style={styles.mockupCatChip}>
+                            <Text style={styles.mockupCatText}>Extra Add On</Text>
+                          </View>
+                          <View style={styles.mockupCatChip}>
+                            <Text style={styles.mockupCatText}>Starters & Appetizers</Text>
+                          </View>
+                          <View style={styles.mockupCatChip}>
+                            <Text style={styles.mockupCatText}>Breakfast</Text>
+                          </View>
+                        </View>
+                        <View style={styles.mockupSearchBox}>
+                          <Text style={{ fontSize: 10, color: '#94A3B8' }}>🔍 Search items...</Text>
+                        </View>
+                      </View>
+                    </View>
+
+                    {/* Quick Presets and Adjustment Steppers */}
+                    <View style={styles.adjusterControlsRow}>
+                      <View style={styles.presetsWrap}>
+                        <Text style={styles.controlSectionLabel}>Quick Presets:</Text>
+                        <View style={{ flexDirection: 'row', gap: 5, flexWrap: 'wrap' }}>
+                          {[
+                            { label: 'Top (10%)', val: 10 },
+                            { label: 'Upper (30%)', val: 30 },
+                            { label: 'Center (50%)', val: 50 },
+                            { label: 'Lower (70%)', val: 70 },
+                            { label: 'Bottom (90%)', val: 90 },
+                          ].map((p) => (
+                            <TouchableOpacity
+                              key={`preset-${p.val}`}
+                              style={[
+                                styles.presetChip,
+                                bannerPosY === p.val && styles.presetChipActive,
+                              ]}
+                              onPress={() => setBannerPosY(p.val)}
+                            >
+                              <Text
+                                style={[
+                                  styles.presetChipText,
+                                  bannerPosY === p.val && styles.presetChipTextActive,
+                                ]}
+                              >
+                                {p.label}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+
+                      <View style={styles.fineTuneRow}>
+                        <Text style={styles.controlSectionLabel}>Fine Tune:</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <TouchableOpacity
+                            style={styles.stepBtn}
+                            onPress={() => setBannerPosY((prev) => Math.max(0, prev - 5))}
+                          >
+                            <Text style={styles.stepBtnText}>- 5%</Text>
+                          </TouchableOpacity>
+
+                          <Text style={styles.posValueDisplay}>{bannerPosY}%</Text>
+
+                          <TouchableOpacity
+                            style={styles.stepBtn}
+                            onPress={() => setBannerPosY((prev) => Math.min(100, prev + 5))}
+                          >
+                            <Text style={styles.stepBtnText}>+ 5%</Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        {canManage && (
+                          <TouchableOpacity
+                            style={[styles.savePosBtn, isSavingBannerPos && { opacity: 0.6 }]}
+                            onPress={() => handleSaveBannerPosition()}
+                            disabled={isSavingBannerPos}
+                          >
+                            {isSavingBannerPos ? (
+                              <ActivityIndicator size="small" color="#FFFFFF" />
+                            ) : (
+                              <Text style={styles.savePosBtnText}>
+                                💾 Save Banner Alignment ({bannerPosY}%)
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </View>
+                  </View>
+                )}
 
                 {/* Form Fields */}
                 <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
@@ -956,8 +1398,27 @@ export default function SettingsScreen() {
                   </Text>
                 </View>
 
-                {/* Delivery Charges and Free Delivery Threshold */}
+                {/* Delivery Charges, Minimum Order Value and Free Delivery Threshold */}
                 <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>Min. Order Value (₹)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={minimumOrderValue}
+                      onChangeText={(v) => {
+                        setMinimumOrderValue(v);
+                        setIsDirty(true);
+                      }}
+                      keyboardType="numeric"
+                      placeholder="0.00"
+                      placeholderTextColor="#94a3b8"
+                      editable={canManage}
+                    />
+                    <Text style={styles.helperText}>
+                      Minimum order subtotal to place online delivery orders. Shown as "Min. Order" on your storefront.
+                    </Text>
+                  </View>
+
                   <View style={styles.formCol}>
                     <Text style={styles.label}>Standard Delivery Charge (₹)</Text>
                     <TextInput
@@ -978,7 +1439,7 @@ export default function SettingsScreen() {
                   </View>
 
                   <View style={styles.formCol}>
-                    <Text style={styles.label}>Free Delivery Above Order Value (₹)</Text>
+                    <Text style={styles.label}>Free Delivery Above (₹)</Text>
                     <TextInput
                       style={styles.input}
                       value={freeDeliveryAbove}
@@ -1048,7 +1509,7 @@ export default function SettingsScreen() {
                             style={styles.logoRemoveBtn}
                             onPress={async () => {
                               setDeliveryPaymentQrUrl('');
-                              await updateSettings({ delivery_payment_qr_url: undefined });
+                              await updateSettings({ delivery_payment_qr_url: '' });
                             }}
                           >
                             <Text style={styles.logoRemoveBtnText}>✕ Remove</Text>
@@ -1087,7 +1548,7 @@ export default function SettingsScreen() {
                             style={styles.logoRemoveBtn}
                             onPress={async () => {
                               setDeliverySampleScreenshotUrl('');
-                              await updateSettings({ delivery_sample_screenshot_url: undefined });
+                              await updateSettings({ delivery_sample_screenshot_url: '' });
                             }}
                           >
                             <Text style={styles.logoRemoveBtnText}>✕ Remove</Text>
@@ -1231,8 +1692,8 @@ export default function SettingsScreen() {
                   </View>
                   <Text style={styles.toggleDesc}>
                     {autoPrintKot
-                      ? 'Newly generated KOTs automatically trigger the kitchen thermal printer.'
-                      : 'Cashier manually clicks Print KOT when ready.'}
+                      ? 'Clicking KOT triggers the kitchen thermal printer immediately with zero extra steps.'
+                      : 'Clicking KOT follows manual confirmation & print flow.'}
                   </Text>
                 </View>
 
@@ -1806,9 +2267,512 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#CBD5E1',
   },
+  bannerThumbWrapSelected: {
+    borderColor: '#2563EB',
+    borderWidth: 2.5,
+    shadowColor: '#2563EB',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
   bannerThumb: {
     width: '100%',
     height: '100%',
+  },
+  bannerAdjusterCard: {
+    marginTop: 10,
+    marginBottom: 12,
+    backgroundColor: '#0B1329',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#1E293B',
+    width: '100%',
+  },
+  adjusterHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
+  },
+  adjusterTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#F8FAFC',
+    letterSpacing: 0.2,
+  },
+  adjusterSubTitle: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
+    lineHeight: 14,
+  },
+  adjusterActionsWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  previewToggleGroup: {
+    flexDirection: 'row',
+    backgroundColor: '#1E293B',
+    borderRadius: 6,
+    padding: 2,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  previewToggleBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  previewToggleBtnActive: {
+    backgroundColor: '#2563EB',
+  },
+  previewToggleBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#94A3B8',
+  },
+  previewToggleBtnTextActive: {
+    color: '#FFFFFF',
+  },
+  previewOptionBtn: {
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 8,
+    paddingVertical: 4.5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  previewOptionBtnActive: {
+    backgroundColor: 'rgba(37, 99, 235, 0.25)',
+    borderColor: '#3B82F6',
+  },
+  previewOptionBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#94A3B8',
+  },
+  previewOptionBtnTextActive: {
+    color: '#93C5FD',
+  },
+  storefrontBrowserShell: {
+    width: '100%',
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#334155',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  storefrontTopNav: {
+    backgroundColor: '#FFFFFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  storefrontBrandWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  storefrontFlameLogo: {
+    fontSize: 16,
+  },
+  storefrontBrandName: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#EA580C',
+    letterSpacing: -0.2,
+  },
+  storefrontBrandTag: {
+    fontSize: 7.5,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  storefrontNavLinks: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  storefrontNavLink: {
+    fontSize: 9.5,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  storefrontSubHeader: {
+    backgroundColor: '#FFFFFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  storefrontBackLink: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#EA580C',
+  },
+  storefrontCenterTitle: {
+    fontSize: 12.5,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  storefrontCartIcon: {
+    fontSize: 13,
+  },
+  bannerPreviewFrame: {
+    width: '100%',
+    position: 'relative',
+    backgroundColor: '#020617',
+    overflow: 'hidden',
+  },
+  bannerDarkGradient: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.42)',
+  },
+  customerOverlayMockup: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    justifyContent: 'space-between',
+    zIndex: 5,
+  },
+  mockupStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(22, 101, 52, 0.85)',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 12,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(74, 222, 128, 0.4)',
+  },
+  mockupStatusDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#4ADE80',
+  },
+  mockupStatusText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#DCFCE7',
+  },
+  mockupTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+  },
+  mockupLogo: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  mockupTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    letterSpacing: -0.3,
+  },
+  mockupCuisine: {
+    fontSize: 9.5,
+    color: '#E2E8F0',
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  mockupAddress: {
+    fontSize: 9,
+    color: '#CBD5E1',
+    marginTop: 1,
+  },
+  mockupRatingPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(22, 101, 52, 0.85)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    gap: 3,
+    marginTop: 3,
+  },
+  mockupRatingStar: {
+    color: '#4ADE80',
+    fontSize: 9.5,
+    fontWeight: '800',
+  },
+  mockupRatingScore: {
+    color: '#FFFFFF',
+    fontSize: 9.5,
+    fontWeight: '800',
+  },
+  mockupRatingReviews: {
+    color: '#E2E8F0',
+    fontSize: 8.5,
+    fontWeight: '500',
+    marginLeft: 2,
+  },
+  mockupMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+    marginTop: 4,
+  },
+  mockupCapsule: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.22)',
+  },
+  mockupCapsuleMain: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  mockupCapsuleSub: {
+    color: '#E2E8F0',
+    fontSize: 7.5,
+    fontWeight: '600',
+  },
+  mockupCarouselArrowLeft: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -12,
+    left: 6,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    zIndex: 6,
+  },
+  mockupCarouselArrowRight: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -12,
+    right: 6,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    zIndex: 6,
+  },
+  mockupCarouselArrowText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '300',
+    marginTop: -2,
+  },
+  mockupDotsContainer: {
+    position: 'absolute',
+    bottom: 6,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 4,
+    zIndex: 6,
+  },
+  mockupActiveDot: {
+    width: 12,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#EA580C',
+  },
+  mockupInactiveDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+  },
+  focalBadge: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: 'rgba(234, 88, 12, 0.6)',
+    zIndex: 7,
+  },
+  focalBadgeText: {
+    color: '#FDBA74',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  storefrontFilterRow: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  mockupCategoryChips: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flexWrap: 'wrap',
+  },
+  mockupCatChip: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  mockupCatChipActive: {
+    backgroundColor: '#EA580C',
+  },
+  mockupCatText: {
+    fontSize: 8.5,
+    color: '#475569',
+    fontWeight: '700',
+  },
+  mockupCatTextActive: {
+    fontSize: 8.5,
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  mockupSearchBox: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  adjusterControlsRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#1E293B',
+  },
+  presetsWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  controlSectionLabel: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#94A3B8',
+  },
+  presetChip: {
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  presetChipActive: {
+    backgroundColor: '#EA580C',
+    borderColor: '#FB923C',
+  },
+  presetChipText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#94A3B8',
+  },
+  presetChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  fineTuneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  stepBtn: {
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  stepBtnText: {
+    color: '#F8FAFC',
+    fontSize: 10.5,
+    fontWeight: '800',
+  },
+  posValueDisplay: {
+    color: '#38BDF8',
+    fontSize: 12,
+    fontWeight: '900',
+    minWidth: 36,
+    textAlign: 'center',
+  },
+  savePosBtn: {
+    backgroundColor: '#16A34A',
+    paddingHorizontal: 10,
+    paddingVertical: 5.5,
+    borderRadius: 6,
+    shadowColor: '#16A34A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  savePosBtnText: {
+    color: '#FFFFFF',
+    fontSize: 10.5,
+    fontWeight: '800',
   },
   bannerDeleteBtn: {
     position: 'absolute',

@@ -92,6 +92,7 @@ export default function OrdersScreen() {
   const [payDiscountType, setPayDiscountType] = useState<'none' | 'fixed' | 'percentage'>('none');
   const [payDiscountValue, setPayDiscountValue] = useState<string>('');
   const [closingOrder, setClosingOrder] = useState<boolean>(false);
+  const [verifyingPaymentOrderId, setVerifyingPaymentOrderId] = useState<string | null>(null);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isTwoColumn = (Platform.OS === 'web' && windowWidth >= 600) || windowWidth >= 768;
 
@@ -477,7 +478,9 @@ export default function OrdersScreen() {
       recalculatedCouponDiscount = Math.min(editOrderModal.coupon_discount, currentSubtotal);
     }
 
-    const isGstEnabled = settings?.is_gst_enabled ?? (settings?.gst_registered ?? Boolean(settings?.gstin?.trim()));
+    const isGstEnabled = settings?.is_gst_enabled !== undefined && settings?.is_gst_enabled !== null
+      ? Boolean(settings.is_gst_enabled)
+      : false;
     const taxRate = settings?.default_tax_rate !== undefined ? settings.default_tax_rate : 5.0;
 
     return calculateOrderTotals({
@@ -729,17 +732,22 @@ export default function OrdersScreen() {
         clearOrdersCache(order.restaurant_id || activeRestaurantId);
         clearKotsCache(order.restaurant_id || activeRestaurantId);
         await loadData(true);
-        Alert.alert(
-          '🖨️ KOT Generated & Printed',
-          hasExistingKot
-            ? `Supplementary KOT #${newKot.kot_number} generated for new items.`
-            : `KOT #${newKot.kot_number} generated for kitchen.`
-        );
+
+        if (!settings.auto_print_kot) {
+          Alert.alert(
+            '🖨️ KOT Generated & Printed',
+            hasExistingKot
+              ? `Supplementary KOT #${newKot.kot_number} generated for new items.`
+              : `KOT #${newKot.kot_number} generated for kitchen.`
+          );
+        }
       } else {
         // Manual reprint of existing KOT - same KOT is printed
         const activeKot = order.kots && order.kots.length > 0 ? order.kots[order.kots.length - 1] : undefined;
         await printService.printKotThermal(order, settings, activeKot, true);
-        Alert.alert('🖨️ KOT Reprinted', `Kitchen slip reprinted for Order #${order.order_number}.`);
+        if (!settings.auto_print_kot) {
+          Alert.alert('🖨️ KOT Reprinted', `Kitchen slip reprinted for Order #${order.order_number}.`);
+        }
       }
     } catch (err: any) {
       Alert.alert('KOT Error', err.message || 'Failed to generate KOT.');
@@ -823,10 +831,97 @@ export default function OrdersScreen() {
     );
   };
 
+  const handleMarkPaymentVerified = async (order: Order) => {
+    if (!order || !order.id) return;
+    if (user?.role !== 'SUPER_ADMIN' && user?.role !== 'ADMIN') {
+      Alert.alert('Permission Denied', 'Only Restaurant Admins and Super Admins can verify online payments.');
+      return;
+    }
+
+    const payableVal =
+      order.payable_amount !== undefined && order.payable_amount !== null
+        ? Number(order.payable_amount)
+        : Number(order.grand_total || 0);
+
+    const confirmMsg = `Are you sure you want to verify and confirm payment for Order #${order.order_number} (${formatCurrency(payableVal)})?`;
+
+    const executeVerify = async () => {
+      try {
+        setVerifyingPaymentOrderId(order.id);
+        const res = await orderService.markPaymentVerified(order.id, order.restaurant_id || activeRestaurantId);
+
+        // Optimistically update order state in current list, modal, and tenant cache
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.id === order.id
+              ? {
+                  ...o,
+                  payment_status: 'paid',
+                  paid_amount: o.payable_amount || o.grand_total,
+                  payment_verified_at: res.payment_verified_at || new Date().toISOString(),
+                  payment_verified_by: res.payment_verified_by || user?.id,
+                }
+              : o
+          )
+        );
+
+        setAllTenantOrders((prev) =>
+          prev.map((o) =>
+            o.id === order.id
+              ? {
+                  ...o,
+                  payment_status: 'paid',
+                  paid_amount: o.payable_amount || o.grand_total,
+                  payment_verified_at: res.payment_verified_at || new Date().toISOString(),
+                  payment_verified_by: res.payment_verified_by || user?.id,
+                }
+              : o
+          )
+        );
+
+        setViewOrderModal((prev) =>
+          prev && prev.id === order.id
+            ? {
+                ...prev,
+                payment_status: 'paid',
+                paid_amount: prev.payable_amount || prev.grand_total,
+                payment_verified_at: res.payment_verified_at || new Date().toISOString(),
+                payment_verified_by: res.payment_verified_by || user?.id,
+              }
+            : prev
+        );
+
+        Alert.alert('✓ Payment Verified', `Payment for Order #${order.order_number} has been verified and marked as PAID.`);
+        await loadData(true);
+      } catch (err: any) {
+        Alert.alert('Verification Failed', err.message || 'Could not verify payment.');
+      } finally {
+        setVerifyingPaymentOrderId(null);
+      }
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(`Mark Payment Verified\n\n${confirmMsg}`)) {
+        executeVerify();
+      }
+    } else {
+      Alert.alert('Verify Payment', confirmMsg, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Verify Payment', style: 'default', onPress: executeVerify },
+      ]);
+    }
+  };
+
   const openPayModal = (order: Order) => {
     markAsSeen(order.id);
     setPayOrderModal(order);
-    setPayMethod('cash');
+    const defaultMethod: PaymentMethod =
+      order.payment_method === 'online' || order.payment_method === 'upi'
+        ? 'upi'
+        : order.payment_method === 'card'
+        ? 'card'
+        : 'cash';
+    setPayMethod(defaultMethod);
     setPayReceived(true);
     setPayTxnRef('');
     setPayCustomerGstin(order.customer_gstin || '');
@@ -883,7 +978,9 @@ export default function OrdersScreen() {
       };
     }
 
-    const isGstEnabled = settings?.is_gst_enabled ?? (settings?.gst_registered ?? Boolean(settings?.gstin?.trim()));
+    const isGstEnabled = settings?.is_gst_enabled !== undefined && settings?.is_gst_enabled !== null
+      ? Boolean(settings.is_gst_enabled)
+      : false;
     const taxRate = settings?.default_tax_rate !== undefined ? settings.default_tax_rate : 5.0;
 
     return calculateOrderTotals({
@@ -1340,6 +1437,74 @@ export default function OrdersScreen() {
                     </View>
                   )}
 
+                  {/* Payment Screenshot Proof Banner for Online / Table QR Orders */}
+                  {Boolean(order.payment_proof_url) && (
+                    <View
+                      style={{
+                        backgroundColor: order.payment_status === 'paid' ? '#f0fdf4' : '#eff6ff',
+                        borderWidth: 1,
+                        borderColor: order.payment_status === 'paid' ? '#86efac' : '#93c5fd',
+                        borderRadius: 8,
+                        paddingHorizontal: 10,
+                        paddingVertical: 8,
+                        marginBottom: 8,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={() => {
+                            markAsSeen(order.id);
+                            setViewOrderModal(order);
+                          }}
+                          style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}
+                        >
+                          <Text style={{ fontSize: 14 }}>📷</Text>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '800', color: order.payment_status === 'paid' ? '#166534' : '#1e40af' }}>
+                              {order.payment_status === 'paid' ? 'Payment Proof Verified' : 'Payment Proof Attached'}
+                            </Text>
+                            <Text style={{ fontSize: 10, color: order.payment_status === 'paid' ? '#15803d' : '#3b82f6' }} numberOfLines={1}>
+                              {order.payment_status === 'paid'
+                                ? (order.payment_verified_at ? `Verified at ${formatOrderDateTime(order.payment_verified_at)}` : 'Payment Verified & Confirmed')
+                                : 'Online Payment Screenshot • Pending Admin Verification'}
+                            </Text>
+                          </View>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#2563eb' }}>
+                            View Proof 🔍
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      {/* Immediate Verify Button on card for unverified online orders */}
+                      {order.payment_status !== 'paid' && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
+                        <TouchableOpacity
+                          style={{
+                            backgroundColor: '#16a34a',
+                            paddingVertical: 6,
+                            paddingHorizontal: 10,
+                            borderRadius: 6,
+                            marginTop: 6,
+                            alignItems: 'center',
+                            flexDirection: 'row',
+                            justifyContent: 'center',
+                            gap: 4,
+                          }}
+                          onPress={() => handleMarkPaymentVerified(order)}
+                          disabled={verifyingPaymentOrderId === order.id}
+                        >
+                          {verifyingPaymentOrderId === order.id ? (
+                            <ActivityIndicator size="small" color="#ffffff" />
+                          ) : (
+                            <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '900' }}>
+                              ✓ Mark Payment Verified
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  )}
+
                   {/* Bill Summary Row */}
                   <View style={styles.summaryRow}>
                     <View>
@@ -1356,21 +1521,53 @@ export default function OrdersScreen() {
                         )}
                       </Text>
                     </View>
-                    <View
-                      style={[
-                        styles.payStatusBadge,
-                        isPaid ? styles.payStatusPaid : styles.payStatusUnpaid,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.payStatusText,
-                          isPaid ? styles.payStatusTextPaid : styles.payStatusTextUnpaid,
-                        ]}
-                      >
-                        {isPaid ? '✓ PAID' : '⚠️ UNPAID / COD'}
-                      </Text>
-                    </View>
+                    {(() => {
+                      const isOnlinePay = order.payment_method === 'online' || order.payment_method === 'upi' || Boolean(order.payment_proof_url);
+                      const isCodPay = order.payment_method === 'cod';
+                      const isCardPay = order.payment_method === 'card';
+                      const isCashPay = order.payment_method === 'cash';
+
+                      let badgeContainerStyle = styles.payStatusUnpaid;
+                      let badgeTextStyle = styles.payStatusTextUnpaid;
+                      let badgeLabel = '⚠️ UNPAID';
+
+                      if (isPaid) {
+                        badgeContainerStyle = styles.payStatusPaid;
+                        badgeTextStyle = styles.payStatusTextPaid;
+                        if (isOnlinePay) badgeLabel = '✓ PAYMENT VERIFIED';
+                        else if (isCardPay) badgeLabel = '✓ PAID (CARD)';
+                        else if (isCashPay || isCodPay) badgeLabel = '✓ PAID (CASH)';
+                        else badgeLabel = '✓ PAID';
+                      } else {
+                        if (isOnlinePay) {
+                          badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
+                          badgeTextStyle = { color: '#1d4ed8' } as any;
+                          badgeLabel = Boolean(order.payment_proof_url)
+                            ? '📱 ONLINE • PROOF ATTACHED • PENDING VERIFICATION'
+                            : '📱 ONLINE (PENDING VERIFICATION)';
+                        } else if (isCodPay) {
+                          badgeContainerStyle = { backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fed7aa' } as any;
+                          badgeTextStyle = { color: '#c2410c' } as any;
+                          badgeLabel = '💵 COD (PAY ON DELIVERY)';
+                        } else if (isCardPay) {
+                          badgeContainerStyle = styles.payStatusUnpaid;
+                          badgeTextStyle = styles.payStatusTextUnpaid;
+                          badgeLabel = '💳 CARD (UNPAID)';
+                        } else {
+                          badgeContainerStyle = styles.payStatusUnpaid;
+                          badgeTextStyle = styles.payStatusTextUnpaid;
+                          badgeLabel = '⚠️ UNPAID';
+                        }
+                      }
+
+                      return (
+                        <View style={[styles.payStatusBadge, badgeContainerStyle]}>
+                          <Text style={[styles.payStatusText, badgeTextStyle]}>
+                            {badgeLabel}
+                          </Text>
+                        </View>
+                      );
+                    })()}
                   </View>
 
                   {/* Action Buttons based on order status: 3 up, 3 below */}
@@ -2349,9 +2546,10 @@ export default function OrdersScreen() {
       {/* ============================================================ */}
       {viewOrderModal && (() => {
         const isTaxInvoice =
-          (viewOrderModal.cgst_amount || 0) > 0 ||
-          (viewOrderModal.sgst_amount || 0) > 0 ||
-          (settings?.is_gst_enabled !== false && settings?.tax_invoice_enabled !== false && Boolean(settings?.gstin?.trim()));
+          settings?.is_gst_enabled !== false &&
+          ((viewOrderModal.cgst_amount || 0) > 0 ||
+           (viewOrderModal.sgst_amount || 0) > 0 ||
+           (settings?.tax_invoice_enabled !== false && Boolean(settings?.gstin?.trim())));
         const invNo = viewOrderModal.invoice_number || viewOrderModal.order_number;
         const dynamicTaxRate = Number(settings?.default_tax_rate) > 0 ? Number(settings.default_tax_rate) : 5.0;
         const halfRate = (dynamicTaxRate / 2).toFixed(1);
@@ -2454,15 +2652,74 @@ export default function OrdersScreen() {
                     ) : null}
 
                     {viewOrderModal.payment_proof_url ? (
-                      <View style={{ marginVertical: 8, padding: 10, backgroundColor: '#eff6ff', borderRadius: 8, borderWidth: 1, borderColor: '#bfdbfe' }}>
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#1e40af', marginBottom: 6 }}>
-                          📷 Customer Payment Screenshot Proof:
-                        </Text>
+                      <View
+                        style={{
+                          marginVertical: 8,
+                          padding: 12,
+                          backgroundColor: viewOrderModal.payment_status === 'paid' ? '#f0fdf4' : '#eff6ff',
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: viewOrderModal.payment_status === 'paid' ? '#86efac' : '#bfdbfe',
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                          <Text style={{ fontSize: 12, fontWeight: '800', color: viewOrderModal.payment_status === 'paid' ? '#166534' : '#1e40af' }}>
+                            📷 Customer Payment Screenshot Proof:
+                          </Text>
+                          <View
+                            style={{
+                              backgroundColor: viewOrderModal.payment_status === 'paid' ? '#dcfce7' : '#fee2e2',
+                              paddingHorizontal: 8,
+                              paddingVertical: 3,
+                              borderRadius: 4,
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 10,
+                                fontWeight: '900',
+                                color: viewOrderModal.payment_status === 'paid' ? '#15803d' : '#dc2626',
+                              }}
+                            >
+                              {viewOrderModal.payment_status === 'paid' ? '✓ VERIFIED & PAID' : '⚠️ PENDING VERIFICATION'}
+                            </Text>
+                          </View>
+                        </View>
+
                         <Image
                           source={{ uri: viewOrderModal.payment_proof_url }}
-                          style={{ width: '100%', height: 220, borderRadius: 6, backgroundColor: '#ffffff' }}
+                          style={{ width: '100%', height: 260, borderRadius: 6, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#e2e8f0' }}
                           resizeMode="contain"
                         />
+
+                        {viewOrderModal.payment_status !== 'paid' && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
+                          <TouchableOpacity
+                            style={{
+                              backgroundColor: '#16a34a',
+                              paddingVertical: 10,
+                              borderRadius: 8,
+                              marginTop: 10,
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                            onPress={() => handleMarkPaymentVerified(viewOrderModal)}
+                            disabled={verifyingPaymentOrderId === viewOrderModal.id}
+                          >
+                            {verifyingPaymentOrderId === viewOrderModal.id ? (
+                              <ActivityIndicator size="small" color="#ffffff" />
+                            ) : (
+                              <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '900' }}>
+                                ✓ Mark Payment Verified
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                        )}
+
+                        {viewOrderModal.payment_status === 'paid' && viewOrderModal.payment_verified_at && (
+                          <Text style={{ fontSize: 11, color: '#166534', fontWeight: '700', marginTop: 8, textAlign: 'center' }}>
+                            ✓ Verified by Admin on {formatOrderDateTime(viewOrderModal.payment_verified_at)}
+                          </Text>
+                        )}
                       </View>
                     ) : null}
 

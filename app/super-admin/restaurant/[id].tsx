@@ -289,10 +289,11 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
         status: editStatus,
       });
 
-      // Also update restaurant_settings if exists
+      // Also update/upsert restaurant_settings
       await supabase
         .from('restaurant_settings')
-        .update({
+        .upsert({
+          restaurant_id: restaurant.id,
           name: editName.trim(),
           legal_name: editLegalName.trim() || editName.trim(),
           phone: editPhone.trim() || undefined,
@@ -301,8 +302,7 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
           state: editState.trim(),
           logo_url: editLogoUrl.trim() || undefined,
           updated_at: new Date().toISOString(),
-        })
-        .eq('restaurant_id', restaurant.id);
+        }, { onConflict: 'restaurant_id' });
 
       setRestaurant(updated);
       Alert.alert('Success', 'Restaurant details updated successfully!');

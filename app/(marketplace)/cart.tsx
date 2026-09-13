@@ -358,8 +358,23 @@ export default function CustomerCartScreen() {
                 ) : null}
 
                 <View style={styles.billRow}>
-                  <Text style={styles.billLabel}>Delivery Fee</Text>
-                  <Text style={styles.billValFree}>FREE</Text>
+                  <View>
+                    <Text style={styles.billLabel}>Delivery Fee</Text>
+                    {cart.free_delivery_above && cart.free_delivery_above > 0 ? (
+                      cart.deliveryFee === 0 ? (
+                        <Text style={{ fontSize: 11, color: '#059669', fontWeight: '700' }}>
+                          🎉 Free above ₹{formatPrice(cart.free_delivery_above)}
+                        </Text>
+                      ) : (
+                        <Text style={{ fontSize: 11, color: '#64748B' }}>
+                          Add ₹{formatPrice(Math.max(0, cart.free_delivery_above - cart.subtotal))} for FREE delivery
+                        </Text>
+                      )
+                    ) : null}
+                  </View>
+                  <Text style={[styles.billVal, cart.deliveryFee === 0 && styles.billValFree]}>
+                    {cart.deliveryFee === 0 ? 'FREE' : `₹${formatPrice(cart.deliveryFee)}`}
+                  </Text>
                 </View>
 
                 <View style={styles.billDivider} />

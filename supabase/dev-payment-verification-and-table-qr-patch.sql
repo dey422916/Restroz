@@ -1,49 +1,352 @@
 -- ============================================================================
--- RESTROZ DEV ENVIRONMENT — ONLINE DELIVERY PAYMENTS & DELIVERY CHARGE PATCH
--- Environment: DEVELOPMENT (restroz-dev)
+-- RESTROZ DEV ENVIRONMENT: PAYMENT VERIFICATION & TABLE QR PAYMENT FLOW PATCH
 -- ============================================================================
 
 DO $$
 BEGIN
-    RAISE NOTICE 'Applying RestroZ DEV Online Delivery Payments & Delivery Charge Patch...';
+    RAISE NOTICE 'Applying RestroZ Payment Verification & Table QR Payment Patch...';
 END $$;
 
--- ----------------------------------------------------------------------------
--- 1. EXTEND RESTAURANT_SETTINGS TABLE
--- ----------------------------------------------------------------------------
-ALTER TABLE public.restaurant_settings ADD COLUMN IF NOT EXISTS delivery_payment_qr_url TEXT;
-ALTER TABLE public.restaurant_settings ADD COLUMN IF NOT EXISTS delivery_upi_id TEXT;
-ALTER TABLE public.restaurant_settings ADD COLUMN IF NOT EXISTS delivery_sample_screenshot_url TEXT;
-ALTER TABLE public.restaurant_settings ADD COLUMN IF NOT EXISTS enable_cod BOOLEAN DEFAULT TRUE;
-ALTER TABLE public.restaurant_settings ADD COLUMN IF NOT EXISTS delivery_charge_base NUMERIC(10, 2) DEFAULT 0.0;
-ALTER TABLE public.restaurant_settings ADD COLUMN IF NOT EXISTS free_delivery_above NUMERIC(10, 2) DEFAULT 0.0;
+-- 1. Extend Orders Table with payment verification metadata & ensure GST columns in settings
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS payment_method TEXT DEFAULT 'cash';
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS payment_proof_url TEXT;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS payment_verified_at TIMESTAMPTZ;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS payment_verified_by UUID;
+
 ALTER TABLE public.restaurant_settings ADD COLUMN IF NOT EXISTS is_gst_enabled BOOLEAN DEFAULT FALSE;
 ALTER TABLE public.restaurant_settings ADD COLUMN IF NOT EXISTS gst_registered BOOLEAN DEFAULT FALSE;
 ALTER TABLE public.restaurant_settings ADD COLUMN IF NOT EXISTS tax_invoice_enabled BOOLEAN DEFAULT FALSE;
 
--- ----------------------------------------------------------------------------
--- 2. EXTEND RESTAURANT_PUBLIC_PROFILES TABLE
--- ----------------------------------------------------------------------------
-ALTER TABLE public.restaurant_public_profiles ADD COLUMN IF NOT EXISTS delivery_payment_qr_url TEXT;
-ALTER TABLE public.restaurant_public_profiles ADD COLUMN IF NOT EXISTS delivery_upi_id TEXT;
-ALTER TABLE public.restaurant_public_profiles ADD COLUMN IF NOT EXISTS delivery_sample_screenshot_url TEXT;
-ALTER TABLE public.restaurant_public_profiles ADD COLUMN IF NOT EXISTS enable_cod BOOLEAN DEFAULT TRUE;
-ALTER TABLE public.restaurant_public_profiles ADD COLUMN IF NOT EXISTS delivery_charge_base NUMERIC(10, 2) DEFAULT 0.0;
-ALTER TABLE public.restaurant_public_profiles ADD COLUMN IF NOT EXISTS free_delivery_above NUMERIC(10, 2) DEFAULT 0.0;
 ALTER TABLE public.restaurant_public_profiles ADD COLUMN IF NOT EXISTS is_gst_enabled BOOLEAN DEFAULT FALSE;
 ALTER TABLE public.restaurant_public_profiles ADD COLUMN IF NOT EXISTS gst_registered BOOLEAN DEFAULT FALSE;
 ALTER TABLE public.restaurant_public_profiles ADD COLUMN IF NOT EXISTS tax_invoice_enabled BOOLEAN DEFAULT FALSE;
 
--- ----------------------------------------------------------------------------
--- 3. EXTEND ORDERS TABLE
--- ----------------------------------------------------------------------------
-ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS payment_method TEXT DEFAULT 'cod';
-ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS payment_proof_url TEXT;
-ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS delivery_charge NUMERIC(10, 2) DEFAULT 0.0;
+-- 2. Update create_guest_qr_order RPC with payment method & server-side validation
+DROP FUNCTION IF EXISTS public.create_guest_qr_order(UUID, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT);
+DROP FUNCTION IF EXISTS public.create_guest_qr_order(UUID, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT, TEXT, TEXT);
 
--- ----------------------------------------------------------------------------
--- 4. UPDATE get_public_restaurant_info RPC
--- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.create_guest_qr_order(
+    p_restaurant_id UUID,
+    p_table_id TEXT,
+    p_customer_name TEXT,
+    p_customer_phone TEXT,
+    p_items JSONB,
+    p_notes TEXT DEFAULT NULL,
+    p_coupon_code TEXT DEFAULT NULL,
+    p_payment_method TEXT DEFAULT 'cash', -- 'cash', 'cod', 'online', 'upi'
+    p_payment_proof_url TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_catalog, pg_temp
+AS $$
+DECLARE
+    v_order_id TEXT;
+    v_order_number TEXT;
+    v_subtotal NUMERIC(10,2) := 0;
+    v_cgst NUMERIC(10,2) := 0;
+    v_sgst NUMERIC(10,2) := 0;
+    v_grand_total NUMERIC(10,2) := 0;
+    v_payable NUMERIC(10,2) := 0;
+    v_discount NUMERIC(10,2) := 0;
+    v_coupon_discount NUMERIC(10,2) := 0;
+    v_coupon RECORD;
+    v_item JSONB;
+    v_product RECORD;
+    v_item_subtotal NUMERIC(10,2);
+    v_item_tax NUMERIC(10,2);
+    v_item_cgst NUMERIC(10,2);
+    v_item_sgst NUMERIC(10,2);
+    v_item_tax_rate NUMERIC(5,2) := 0.0;
+    v_table_num TEXT;
+    v_enable_cod BOOLEAN := TRUE;
+    v_norm_payment_method TEXT := LOWER(TRIM(COALESCE(p_payment_method, 'cash')));
+    v_is_gst_enabled BOOLEAN := FALSE;
+    v_tax_rate NUMERIC(5,2) := 0.0;
+BEGIN
+    -- 1. Validate Table & Restaurant match
+    SELECT table_number INTO v_table_num
+    FROM public.tables
+    WHERE id = p_table_id AND restaurant_id = p_restaurant_id;
+
+    IF v_table_num IS NULL THEN
+        RAISE EXCEPTION 'Invalid table or restaurant mismatch';
+    END IF;
+
+    -- 2. Fetch Restaurant Payment & GST Settings
+    SELECT
+        COALESCE(enable_cod, TRUE),
+        COALESCE(is_gst_enabled, FALSE),
+        COALESCE(default_tax_rate, tax_rate, 5.0)
+    INTO
+        v_enable_cod,
+        v_is_gst_enabled,
+        v_tax_rate
+    FROM public.restaurant_settings
+    WHERE restaurant_id = p_restaurant_id
+    LIMIT 1;
+
+    IF v_enable_cod IS NULL THEN
+        SELECT
+            COALESCE(enable_cod, TRUE),
+            COALESCE(is_gst_enabled, FALSE),
+            COALESCE(default_tax_rate, 5.0)
+        INTO
+            v_enable_cod,
+            v_is_gst_enabled,
+            v_tax_rate
+        FROM public.restaurant_public_profiles
+        WHERE restaurant_id = p_restaurant_id
+        LIMIT 1;
+    END IF;
+
+    IF v_enable_cod IS NULL THEN
+        v_enable_cod := TRUE;
+    END IF;
+    IF v_is_gst_enabled IS NULL THEN
+        v_is_gst_enabled := FALSE;
+    END IF;
+    IF v_is_gst_enabled IS NOT TRUE THEN
+        v_tax_rate := 0.0;
+    END IF;
+
+    -- 3. Validate Payment Method and Proof Server-Side
+    IF v_norm_payment_method IN ('online', 'upi') THEN
+        IF p_payment_proof_url IS NULL OR TRIM(p_payment_proof_url) = '' THEN
+            RAISE EXCEPTION 'Please upload your payment screenshot before placing the order.';
+        END IF;
+    ELSIF v_norm_payment_method IN ('cash', 'cod') THEN
+        IF v_enable_cod IS FALSE THEN
+            RAISE EXCEPTION 'Cash / Pay at Counter is not available for this restaurant.';
+        END IF;
+    END IF;
+
+    v_order_id := 'ord-' || gen_random_uuid();
+    v_order_number := public.get_next_order_number(p_restaurant_id);
+
+    -- 4. Validate and calculate item subtotals & taxes
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+    LOOP
+        SELECT * INTO v_product
+        FROM public.products
+        WHERE id = (v_item->>'product_id') AND restaurant_id = p_restaurant_id;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Product % not found in this restaurant', (v_item->>'product_id');
+        END IF;
+
+        IF NOT v_product.is_available OR NOT v_product.is_active THEN
+            RAISE EXCEPTION 'Product % is currently unavailable', v_product.name;
+        END IF;
+
+        v_item_subtotal := v_product.price * (v_item->>'quantity')::INTEGER;
+
+        IF v_is_gst_enabled IS TRUE AND v_tax_rate > 0 THEN
+            v_item_tax_rate := COALESCE(v_product.tax_rate, v_tax_rate);
+            v_item_cgst := ROUND(v_item_subtotal * (v_item_tax_rate / 200.0), 2);
+            v_item_sgst := ROUND(v_item_subtotal * (v_item_tax_rate / 200.0), 2);
+            v_item_tax := v_item_cgst + v_item_sgst;
+        ELSE
+            v_item_tax_rate := 0.0;
+            v_item_cgst := 0.0;
+            v_item_sgst := 0.0;
+            v_item_tax := 0.0;
+        END IF;
+
+        v_subtotal := v_subtotal + v_item_subtotal;
+        v_cgst := v_cgst + v_item_cgst;
+        v_sgst := v_sgst + v_item_sgst;
+    END LOOP;
+
+    -- 5. Validate Coupon if provided
+    IF p_coupon_code IS NOT NULL AND TRIM(p_coupon_code) != '' THEN
+        SELECT * INTO v_coupon
+        FROM public.coupons
+        WHERE code = UPPER(TRIM(p_coupon_code))
+          AND restaurant_id = p_restaurant_id
+          AND is_active = TRUE;
+
+        IF FOUND THEN
+            IF v_coupon.discount_type = 'percentage' THEN
+                v_coupon_discount := ROUND((v_subtotal * v_coupon.discount_value) / 100.0, 2);
+                IF v_coupon.max_discount IS NOT NULL AND v_coupon_discount > v_coupon.max_discount THEN
+                    v_coupon_discount := v_coupon.max_discount;
+                END IF;
+            ELSE
+                v_coupon_discount := LEAST(v_coupon.discount_value, v_subtotal);
+            END IF;
+
+            PERFORM public.increment_coupon_usage(v_coupon.id, p_restaurant_id);
+        END IF;
+    END IF;
+
+    v_grand_total := v_subtotal + v_cgst + v_sgst - v_coupon_discount;
+    v_payable := ROUND(v_grand_total);
+
+    -- 6. Insert Order Record
+    INSERT INTO public.orders (
+        id, restaurant_id, order_number, order_type, table_id, table_number,
+        customer_name, customer_phone, status,
+        subtotal, discount_amount, coupon_code, coupon_discount,
+        cgst_amount, sgst_amount, grand_total, payable_amount, paid_amount,
+        payment_method, payment_proof_url, payment_status, notes, created_by
+    ) VALUES (
+        v_order_id, p_restaurant_id, v_order_number, 'dine_in', p_table_id, v_table_num,
+        COALESCE(p_customer_name, 'Guest Customer'), p_customer_phone, 'confirmed',
+        v_subtotal, v_discount, p_coupon_code, v_coupon_discount,
+        v_cgst, v_sgst, v_grand_total, v_payable, 0,
+        v_norm_payment_method, p_payment_proof_url, 'unpaid', p_notes, 'QR_GUEST'
+    );
+
+    -- 7. Insert Order Items
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+    LOOP
+        SELECT * INTO v_product FROM public.products WHERE id = (v_item->>'product_id');
+        v_item_subtotal := v_product.price * (v_item->>'quantity')::INTEGER;
+
+        IF v_is_gst_enabled IS TRUE AND v_tax_rate > 0 THEN
+            v_item_tax_rate := COALESCE(v_product.tax_rate, v_tax_rate);
+            v_item_cgst := ROUND(v_item_subtotal * (v_item_tax_rate / 200.0), 2);
+            v_item_sgst := ROUND(v_item_subtotal * (v_item_tax_rate / 200.0), 2);
+            v_item_tax := v_item_cgst + v_item_sgst;
+        ELSE
+            v_item_tax_rate := 0.0;
+            v_item_cgst := 0.0;
+            v_item_sgst := 0.0;
+            v_item_tax := 0.0;
+        END IF;
+
+        INSERT INTO public.order_items (
+            order_id, product_id, product_name, unit_price, quantity,
+            tax_rate, tax_amount, cgst_amount, sgst_amount, subtotal, total, total_price, notes
+        ) VALUES (
+            v_order_id, v_product.id, v_product.name, v_product.price, (v_item->>'quantity')::INTEGER,
+            v_item_tax_rate, v_item_tax, v_item_cgst, v_item_sgst, v_item_subtotal, (v_item_subtotal + v_item_tax), v_item_subtotal, v_item->>'notes'
+        );
+    END LOOP;
+
+    -- 8. Update Table Occupancy
+    UPDATE public.tables
+    SET status = 'occupied', current_order_id = v_order_id, updated_at = NOW()
+    WHERE id = p_table_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'order_id', v_order_id,
+        'order_number', v_order_number,
+        'payable_amount', v_payable,
+        'payment_method', v_norm_payment_method,
+        'payment_proof_url', p_payment_proof_url,
+        'payment_status', 'unpaid'
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.create_guest_qr_order(UUID, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.create_guest_qr_order(UUID, TEXT, TEXT, TEXT, JSONB, TEXT, TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+
+
+-- 3. Atomic, Role-Guarded mark_order_payment_verified RPC
+DROP FUNCTION IF EXISTS public.mark_order_payment_verified(TEXT, UUID);
+
+CREATE OR REPLACE FUNCTION public.mark_order_payment_verified(
+    p_order_id TEXT,
+    p_restaurant_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+DECLARE
+    v_caller_id UUID;
+    v_order RECORD;
+    v_caller_role TEXT;
+    v_is_super_admin BOOLEAN := FALSE;
+    v_is_tenant_admin BOOLEAN := FALSE;
+BEGIN
+    v_caller_id := auth.uid();
+    IF v_caller_id IS NULL THEN
+        RAISE EXCEPTION 'Authentication required: User is not logged in.';
+    END IF;
+
+    -- 1. Locate Target Order
+    SELECT * INTO v_order
+    FROM public.orders
+    WHERE id = p_order_id
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Order with ID % not found.', p_order_id;
+    END IF;
+
+    -- Tenant parameter cross-check if provided
+    IF p_restaurant_id IS NOT NULL AND v_order.restaurant_id != p_restaurant_id THEN
+        RAISE EXCEPTION 'Tenant mismatch: Order does not belong to specified restaurant.';
+    END IF;
+
+    -- 2. Verify Caller Permissions (ADMIN / SUPER_ADMIN only)
+    -- Check if user is system SUPER_ADMIN
+    SELECT (role = 'SUPER_ADMIN') INTO v_is_super_admin
+    FROM public.profiles
+    WHERE id = v_caller_id;
+
+    IF v_is_super_admin IS NOT TRUE THEN
+        -- Check if user is ADMIN in this specific restaurant
+        SELECT (role = 'ADMIN') INTO v_is_tenant_admin
+        FROM public.restaurant_members
+        WHERE restaurant_id = v_order.restaurant_id
+          AND user_id = v_caller_id
+          AND is_active = TRUE;
+    END IF;
+
+    IF (v_is_super_admin IS NOT TRUE) AND (v_is_tenant_admin IS NOT TRUE) THEN
+        RAISE EXCEPTION 'Permission Denied: Only Restaurant Admins and Super Admins can verify payments.';
+    END IF;
+
+    -- 3. Validate that the order is an ONLINE / UPI or Proof-Attached order
+    IF LOWER(COALESCE(v_order.payment_method, '')) NOT IN ('online', 'upi') AND (v_order.payment_proof_url IS NULL OR TRIM(v_order.payment_proof_url) = '') THEN
+        RAISE EXCEPTION 'Cannot verify payment: Order is not an online/UPI payment or has no proof attached.';
+    END IF;
+
+    -- 4. Idempotency Check: If already verified as paid, return success immediately without modifying
+    IF v_order.payment_status = 'paid' THEN
+        RETURN jsonb_build_object(
+            'success', true,
+            'order_id', v_order.id,
+            'order_number', v_order.order_number,
+            'payment_status', 'paid',
+            'already_verified', true,
+            'payment_verified_at', v_order.payment_verified_at,
+            'payment_verified_by', v_order.payment_verified_by
+        );
+    END IF;
+
+    -- 5. Mark Payment Verified
+    UPDATE public.orders
+    SET payment_status = 'paid',
+        payment_verified_at = NOW(),
+        payment_verified_by = v_caller_id,
+        updated_at = NOW()
+    WHERE id = v_order.id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'order_id', v_order.id,
+        'order_number', v_order.order_number,
+        'payment_status', 'paid',
+        'already_verified', false,
+        'payment_verified_at', NOW(),
+        'payment_verified_by', v_caller_id
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.mark_order_payment_verified(TEXT, UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mark_order_payment_verified(TEXT, UUID) TO authenticated, service_role;
+
+-- 4. Update get_public_restaurant_info RPC to expose GST settings
 CREATE OR REPLACE FUNCTION public.get_public_restaurant_info(p_restaurant_id UUID)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -69,11 +372,14 @@ BEGIN
         'is_open', s.is_open,
         'opening_time', s.opening_time,
         'closing_time', s.closing_time,
-        'tax_rate', s.tax_rate,
-        'default_tax_rate', s.default_tax_rate,
-        'cgst_rate', s.cgst_rate,
-        'sgst_rate', s.sgst_rate,
-        'gstin', s.gstin,
+        'is_gst_enabled', COALESCE(s.is_gst_enabled, FALSE),
+        'gst_registered', COALESCE(s.gst_registered, FALSE),
+        'tax_invoice_enabled', COALESCE(s.tax_invoice_enabled, FALSE),
+        'tax_rate', COALESCE(s.tax_rate, 5.0),
+        'default_tax_rate', COALESCE(s.default_tax_rate, s.tax_rate, 5.0),
+        'cgst_rate', COALESCE(s.cgst_rate, 2.5),
+        'sgst_rate', COALESCE(s.sgst_rate, 2.5),
+        'gstin', COALESCE(s.gstin, ''),
         'service_charge_rate', s.service_charge_rate,
         'packaging_charge_rate', s.packaging_charge_rate,
         'delivery_charge_base', COALESCE(s.delivery_charge_base, 0.0),
@@ -98,9 +404,7 @@ $$;
 REVOKE ALL ON FUNCTION public.get_public_restaurant_info(UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_public_restaurant_info(UUID) TO anon, authenticated, service_role;
 
--- ----------------------------------------------------------------------------
--- 5. UPDATE create_customer_delivery_order RPC (AUTHORITATIVE SERVER-SIDE LOGIC)
--- ----------------------------------------------------------------------------
+-- 5. UPDATE create_customer_delivery_order RPC (AUTHORITATIVE SERVER-SIDE LOGIC & JSONB FIX)
 DROP FUNCTION IF EXISTS public.create_customer_delivery_order(UUID, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.create_customer_delivery_order(UUID, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT);
 
@@ -145,25 +449,17 @@ DECLARE
     v_grand_total NUMERIC(10,2) := 0.00;
     v_payable NUMERIC(10,2) := 0.00;
     v_round_off NUMERIC(10,2) := 0.00;
+    v_coupon_record RECORD;
     v_unit_price NUMERIC(10,2);
     v_item_subtotal NUMERIC(10,2);
     v_item_tax NUMERIC(10,2);
     v_item_notes TEXT;
-    v_coupon_record RECORD;
-    v_addr_text TEXT;
     v_norm_payment_method TEXT := LOWER(TRIM(COALESCE(p_payment_method, 'cod')));
+    v_addr_text TEXT;
     v_res JSONB;
 BEGIN
+    -- 1. Identify Caller (Optional: authenticated customer or anonymous guest)
     v_user_id := auth.uid();
-    IF v_user_id IS NULL THEN
-        SELECT id INTO v_user_id FROM auth.users WHERE email = 'ppcu@yopmail.com' LIMIT 1;
-    END IF;
-
-    -- 1. Validate Restaurant existence and operational status
-    SELECT status INTO v_rest_status FROM public.restaurants WHERE id = p_restaurant_id;
-    IF v_rest_status IS NULL OR v_rest_status != 'ACTIVE' THEN
-        RAISE EXCEPTION 'This restaurant is currently inactive or not found.';
-    END IF;
 
     -- 2. Validate Restaurant Public Profile & Open Ordering Status
     SELECT * INTO v_prof_record FROM public.restaurant_public_profiles WHERE restaurant_id = p_restaurant_id;
@@ -584,7 +880,7 @@ REVOKE ALL ON FUNCTION public.create_customer_delivery_order(UUID, JSONB, JSONB,
 GRANT EXECUTE ON FUNCTION public.create_customer_delivery_order(UUID, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
--- STORAGE BUCKETS & GUEST PAYMENT PROOF UPLOAD POLICIES
+-- 6. STORAGE BUCKETS & GUEST PAYMENT PROOF UPLOAD POLICIES
 -- ----------------------------------------------------------------------------
 INSERT INTO storage.buckets (id, name, public)
 VALUES

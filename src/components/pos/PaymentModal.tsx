@@ -53,7 +53,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const windowHeight = Dimensions.get('window').height;
   const { settings } = useSettings();
 
-  const isGstEnabled = settings?.is_gst_enabled ?? (settings?.gst_registered ?? Boolean(settings?.gstin?.trim()));
+  const isGstEnabled = settings?.is_gst_enabled !== undefined && settings?.is_gst_enabled !== null
+    ? Boolean(settings.is_gst_enabled)
+    : false;
   const taxRate = settings?.default_tax_rate !== undefined ? settings.default_tax_rate : 5.0;
 
   // Discount configuration state

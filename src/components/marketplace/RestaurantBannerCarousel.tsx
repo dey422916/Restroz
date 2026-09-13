@@ -177,9 +177,15 @@ export const RestaurantBannerCarousel: React.FC<RestaurantBannerCarouselProps> =
           <Text style={{ fontSize: 16 }}>🛵</Text>
           <View>
             <Text style={styles.metaMain}>
-              {typeof deliveryFee === 'number' ? (deliveryFee === 0 ? 'FREE' : `₹${deliveryFee}`) : deliveryFee}
+              {typeof deliveryFee === 'number'
+                ? deliveryFee === 0
+                  ? 'FREE Delivery'
+                  : `₹${deliveryFee} Delivery`
+                : deliveryFee}
             </Text>
-            <Text style={styles.metaSub}>Delivery Fee</Text>
+            {typeof deliveryFee === 'string' && deliveryFee.toLowerCase().includes('delivery') ? null : (
+              <Text style={styles.metaSub}>Delivery Fee</Text>
+            )}
           </View>
         </View>
       </View>

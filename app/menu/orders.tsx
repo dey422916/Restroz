@@ -248,10 +248,10 @@ export default function CustomerOrdersScreen() {
                     <Text
                       style={[
                         styles.paymentBadge,
-                        { color: ord.payment_status === 'paid' ? '#15803d' : '#b45309' },
+                        { color: ord.payment_status === 'paid' ? '#15803d' : (ord.payment_method === 'online' || ord.payment_method === 'upi' ? '#2563eb' : '#b45309') },
                       ]}
                     >
-                      COD • {ord.payment_status === 'paid' ? 'PAID' : 'UNPAID'}
+                      {(ord.payment_method ? ord.payment_method.toUpperCase() : 'COD')} • {ord.payment_status === 'paid' ? 'PAID' : 'UNPAID'}
                     </Text>
                   </View>
                 </View>

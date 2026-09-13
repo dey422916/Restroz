@@ -44,18 +44,35 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = ({
 
   const fallback = fallbackSource || DEFAULT_FALLBACKS[type] || DEFAULT_FALLBACKS.generic;
 
-  // Resolve valid image source string / object
+  // Resolve valid image source string / object and extract focal position if encoded
+  let rawUri: string = '';
+  if (typeof source === 'string') {
+    rawUri = source;
+  } else if (source && typeof source === 'object' && 'uri' in source) {
+    rawUri = (source as any).uri || '';
+  }
+
+  const isRawUrl = Boolean(rawUri);
+  let resolvedPosY = 50;
+  if (rawUri.includes('#pos=') || rawUri.includes('#y=')) {
+    const match = rawUri.match(/#(?:pos|y)=(\d+(?:\.\d+)?)/);
+    if (match && match[1]) {
+      const val = parseFloat(match[1]);
+      if (!isNaN(val)) resolvedPosY = Math.min(100, Math.max(0, Math.round(val)));
+    }
+  }
+
+  const cleanUri = rawUri ? rawUri.split('#')[0] : '';
+
   let resolvedUri: string = '';
   let resolvedSource: any = source;
 
   if (!source || hasError) {
     resolvedSource = fallback;
     resolvedUri = typeof fallback === 'string' ? fallback : '';
-  } else if (typeof source === 'string') {
-    resolvedSource = { uri: source };
-    resolvedUri = source;
-  } else if (source && typeof source === 'object' && 'uri' in source) {
-    resolvedUri = (source as any).uri;
+  } else if (cleanUri) {
+    resolvedSource = { uri: cleanUri };
+    resolvedUri = cleanUri;
   }
 
   // Web rendering: Use reliable standard <img> with object-fit for 100% robust layout & zero height collapsing
@@ -73,6 +90,7 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = ({
             width: '100%',
             height: '100%',
             objectFit: imgFit,
+            objectPosition: `50% ${resolvedPosY}%`,
             display: 'block',
             borderRadius: (flattened as any)?.borderRadius || 0,
           }}
@@ -95,6 +113,7 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = ({
         {...restProps}
         source={resolvedSource}
         contentFit={contentFit}
+        contentPosition={{ top: `${resolvedPosY}%`, left: '50%' }}
         cachePolicy="memory-disk"
         placeholder={blurhash}
         transition={transition}

@@ -864,6 +864,8 @@ export const orderService = {
       round_off: orderData.round_off || 0,
       payable_amount: orderData.payable_amount || 0,
       paid_amount: isPaid ? (orderData.payable_amount || 0) : 0,
+      payment_method: (orderData.payment_method as any) || paymentMethod || 'cash',
+      payment_proof_url: orderData.payment_proof_url || undefined,
       payment_status: isPaid ? 'paid' : 'unpaid',
       notes: finalNotesWithDiscAndGstin,
       items: orderData.items || [],
@@ -891,6 +893,8 @@ export const orderService = {
               })),
               p_notes: newOrder.notes || '',
               p_coupon_code: newOrder.coupon_code || null,
+              p_payment_method: newOrder.payment_method || 'cash',
+              p_payment_proof_url: newOrder.payment_proof_url || null,
             });
 
             if (!rpcError && rpcData) {
@@ -900,14 +904,21 @@ export const orderService = {
                 items: rpcData.items || newOrder.items || [],
                 customer_gstin: newOrder.customer_gstin,
                 invoice_number: newOrder.invoice_number,
+                payment_method: rpcData.payment_method || newOrder.payment_method || 'cash',
+                payment_proof_url: rpcData.payment_proof_url || newOrder.payment_proof_url || null,
+                payment_status: (rpcData.payment_status as PaymentStatus) || newOrder.payment_status || 'unpaid',
               };
               const localOrders = mockStorage.getOrders(targetRestaurantId);
               mockStorage.saveOrders([parsedOrder, ...localOrders.filter((o) => o.id !== parsedOrder.id)], targetRestaurantId);
               clearOrdersCache(targetRestaurantId);
               return parsedOrder;
+            } else if (rpcError) {
+              console.warn('create_guest_qr_order RPC error:', rpcError);
+              throw new Error(rpcError.message || 'Failed to place table QR order');
             }
-          } catch (rpcEx) {
-            console.warn('create_guest_qr_order RPC fallback to direct insert:', rpcEx);
+          } catch (rpcEx: any) {
+            console.warn('create_guest_qr_order RPC failed:', rpcEx);
+            throw rpcEx;
           }
         }
 
@@ -1333,7 +1344,7 @@ export const orderService = {
     const restSettings = await settingsService.getSettings(existingOrder.restaurant_id);
     const isGstEnabled = (restSettings.is_gst_enabled !== undefined && restSettings.is_gst_enabled !== null)
       ? Boolean(restSettings.is_gst_enabled)
-      : (restSettings.gst_registered !== undefined ? Boolean(restSettings.gst_registered) : Boolean(restSettings.gstin));
+      : false;
 
     const calculated = calculateOrderTotals({
       items: normalizedItems,
@@ -1630,6 +1641,93 @@ export const orderService = {
       table_number: order.table_number,
     });
     return updated;
+  },
+
+  /**
+   * Mark Online / UPI Order Payment Verified (Admin / Super Admin Only):
+   * - Calls server-side role-guarded mark_order_payment_verified RPC.
+   * - Verifies payment proof and marks payment_status = 'paid'.
+   * - Records payment_verified_at and payment_verified_by.
+   * - Idempotent, tenant-isolated, preserves order items, totals, KOT.
+   */
+  async markPaymentVerified(
+    orderId: string,
+    restaurantId?: string
+  ): Promise<{
+    success: boolean;
+    order_id: string;
+    order_number?: string;
+    payment_status: string;
+    already_verified: boolean;
+    payment_verified_at?: string;
+    payment_verified_by?: string;
+  }> {
+    const targetOrder = await this.getOrderById(orderId, restaurantId);
+    if (!targetOrder) throw new Error('Order not found');
+    const restId = restaurantId || targetOrder.restaurant_id;
+
+    if (isSupabaseConfigured) {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('mark_order_payment_verified', {
+        p_order_id: orderId,
+        p_restaurant_id: restId || null,
+      });
+
+      if (rpcError) {
+        console.error('mark_order_payment_verified RPC error:', rpcError);
+        throw new Error(rpcError.message || 'Failed to verify payment');
+      }
+
+      clearOrdersCache(restId);
+      const updated = await this.getOrderById(orderId, restId);
+      if (updated) {
+        await auditService.log('VERIFY_PAYMENT', {
+          order_id: orderId,
+          order_number: updated.order_number,
+          payment_status: 'paid',
+        });
+      }
+
+      // Update local storage cache
+      const localOrders = mockStorage.getOrders(restId);
+      const idx = localOrders.findIndex((o) => o.id === orderId);
+      if (idx !== -1) {
+        localOrders[idx] = {
+          ...localOrders[idx],
+          payment_status: 'paid',
+          paid_amount: localOrders[idx].payable_amount || localOrders[idx].grand_total,
+          payment_verified_at: rpcData?.payment_verified_at || new Date().toISOString(),
+          payment_verified_by: rpcData?.payment_verified_by,
+        };
+        mockStorage.saveOrders(localOrders, restId);
+      }
+
+      return rpcData;
+    }
+
+    // Local fallback
+    const localOrders = mockStorage.getOrders(restId);
+    const idx = localOrders.findIndex((o) => o.id === orderId);
+    if (idx === -1) throw new Error('Order not found');
+
+    const alreadyVerified = localOrders[idx].payment_status === 'paid';
+    const nowIso = new Date().toISOString();
+    localOrders[idx] = {
+      ...localOrders[idx],
+      payment_status: 'paid',
+      paid_amount: localOrders[idx].payable_amount || localOrders[idx].grand_total,
+      payment_verified_at: localOrders[idx].payment_verified_at || nowIso,
+    };
+    mockStorage.saveOrders(localOrders, restId);
+    if (restId) clearOrdersCache(restId);
+
+    return {
+      success: true,
+      order_id: orderId,
+      order_number: localOrders[idx].order_number,
+      payment_status: 'paid',
+      already_verified: alreadyVerified,
+      payment_verified_at: localOrders[idx].payment_verified_at,
+    };
   },
 
   /**

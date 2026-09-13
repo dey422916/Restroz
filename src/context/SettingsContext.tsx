@@ -22,7 +22,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [settings, setSettings] = useState<RestaurantSettings>({
     id: activeRestaurantId || '',
     name: activeRestaurant?.name || 'Restaurant POS',
-    legal_name: activeRestaurant?.name || 'Restaurant POS Pvt Ltd',
+    legal_name: activeRestaurant?.legal_name || activeRestaurant?.name || 'Restaurant POS Pvt Ltd',
     address: activeRestaurant?.address || 'Main Road',
     phone: activeRestaurant?.phone || '+91 9876543210',
     email: activeRestaurant?.email || 'contact@restaurant.com',
@@ -74,6 +74,8 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         ...prev,
         ...s,
         name: activeRestaurantRef.current?.name || s.name || prev.name || 'Restaurant POS',
+        legal_name: s.legal_name || activeRestaurantRef.current?.legal_name || s.name || activeRestaurantRef.current?.name || prev.legal_name || '',
+        email: s.email || activeRestaurantRef.current?.email || prev.email || '',
         logo_url: activeRestaurantRef.current?.logo_url || s.logo_url || prev.logo_url || '',
         phone: activeRestaurantRef.current?.phone || s.phone || prev.phone || '',
         address: activeRestaurantRef.current?.address || s.address || prev.address || '',
@@ -141,13 +143,22 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           },
           (payload) => {
             if (payload.new && (payload.new as any).restaurant_id) {
+              const newRec = payload.new as any;
               const newIsOpen =
-                (payload.new as any).is_open !== false &&
-                (payload.new as any).marketplace_enabled !== false;
+                newRec.is_open !== false &&
+                newRec.marketplace_enabled !== false;
               setIsOnlineOrdersEnabled(newIsOpen);
               setSettings((prev) => ({
                 ...prev,
                 online_orders_enabled: newIsOpen,
+                minimum_order_value: newRec.minimum_order_value !== undefined && newRec.minimum_order_value !== null ? Number(newRec.minimum_order_value) : prev.minimum_order_value,
+                min_order_value: newRec.minimum_order_value !== undefined && newRec.minimum_order_value !== null ? Number(newRec.minimum_order_value) : prev.min_order_value,
+                delivery_charge_base: newRec.delivery_charge_base !== undefined && newRec.delivery_charge_base !== null ? Number(newRec.delivery_charge_base) : prev.delivery_charge_base,
+                free_delivery_above: newRec.free_delivery_above !== undefined && newRec.free_delivery_above !== null ? Number(newRec.free_delivery_above) : prev.free_delivery_above,
+                enable_cod: newRec.enable_cod !== undefined ? Boolean(newRec.enable_cod) : prev.enable_cod,
+                delivery_payment_qr_url: newRec.delivery_payment_qr_url !== undefined ? newRec.delivery_payment_qr_url : prev.delivery_payment_qr_url,
+                delivery_upi_id: newRec.delivery_upi_id !== undefined ? newRec.delivery_upi_id : prev.delivery_upi_id,
+                delivery_sample_screenshot_url: newRec.delivery_sample_screenshot_url !== undefined ? newRec.delivery_sample_screenshot_url : prev.delivery_sample_screenshot_url,
               }));
             }
           }
@@ -163,6 +174,16 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const updateSettings = async (newSettings: Partial<RestaurantSettings>): Promise<RestaurantSettings> => {
     const updated = await settingsService.saveSettings(newSettings, activeRestaurantId);
     setSettings(updated);
+    if (activeRestaurantRef.current) {
+      activeRestaurantRef.current = {
+        ...activeRestaurantRef.current,
+        ...(newSettings.name ? { name: newSettings.name } : {}),
+        ...(newSettings.legal_name ? { legal_name: newSettings.legal_name } : {}),
+        ...(newSettings.email !== undefined ? { email: newSettings.email } : {}),
+        ...(newSettings.phone !== undefined ? { phone: newSettings.phone } : {}),
+        ...(newSettings.address !== undefined ? { address: newSettings.address } : {}),
+      };
+    }
     return updated;
   };
 

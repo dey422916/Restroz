@@ -56,13 +56,27 @@ export default function DeliveryCheckoutScreen() {
   }, [cart.enable_cod]);
 
   const handleCopyUpi = async (upiStr: string) => {
+    if (!upiStr) return;
     try {
-      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
-        await navigator.clipboard.writeText(upiStr);
+      if (Platform.OS === 'web') {
+        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(upiStr);
+        } else if (typeof document !== 'undefined') {
+          const textArea = document.createElement('textarea');
+          textArea.value = upiStr;
+          textArea.style.position = 'fixed';
+          textArea.style.opacity = '0';
+          document.body.appendChild(textArea);
+          textArea.focus();
+          textArea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textArea);
+        }
       }
       setCopiedUpi(true);
       setTimeout(() => setCopiedUpi(false), 2500);
     } catch (e) {
+      console.warn('Clipboard copy error:', e);
       setCopiedUpi(true);
       setTimeout(() => setCopiedUpi(false), 2500);
     }
@@ -1041,9 +1055,20 @@ export default function DeliveryCheckoutScreen() {
               />
             ) : null}
             {cart.delivery_upi_id ? (
-              <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A', marginTop: 12 }}>
-                UPI ID: {cart.delivery_upi_id}
-              </Text>
+              <View style={{ marginTop: 12, alignItems: 'center', width: '100%', gap: 8 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
+                  UPI ID: {cart.delivery_upi_id}
+                </Text>
+                <TouchableOpacity
+                  style={[styles.copyUpiBtn, copiedUpi && styles.copyUpiBtnSuccess, { paddingHorizontal: 16 }]}
+                  onPress={() => handleCopyUpi(cart.delivery_upi_id || '')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.copyUpiBtnText, copiedUpi && styles.copyUpiBtnTextSuccess]}>
+                    {copiedUpi ? '✓ Copied to Clipboard!' : '📋 Copy UPI ID'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             ) : null}
             <TouchableOpacity
               style={[styles.modalSaveBtn, { width: '100%', alignItems: 'center', marginTop: 16 }]}

@@ -164,9 +164,7 @@ export const CustomerCartProvider: React.FC<{ children: React.ReactNode }> = ({ 
     const gstEnabled = taxInfo
       ? (taxInfo.is_gst_enabled !== undefined && taxInfo.is_gst_enabled !== null
           ? Boolean(taxInfo.is_gst_enabled)
-          : (taxInfo.gst_registered !== undefined
-              ? Boolean(taxInfo.gst_registered)
-              : Boolean(taxInfo.gstin?.trim()) && Number(taxInfo.default_tax_rate ?? taxInfo.tax_rate ?? 0) > 0))
+          : false)
       : false;
 
     const rate = gstEnabled

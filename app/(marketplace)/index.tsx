@@ -449,6 +449,18 @@ export default function MarketplaceHomeScreen() {
                           </View>
                         )}
                       </View>
+
+                      {/* Delivery Charge and Free Delivery Threshold Display */}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
+                        <Text style={{ fontSize: 11, color: '#475569', fontWeight: '700' }}>
+                          🚚 {Number(profile?.delivery_charge_base || 0) === 0 ? 'FREE Delivery' : `Delivery: ₹${profile?.delivery_charge_base}`}
+                        </Text>
+                        {Number(profile?.free_delivery_above || 0) > 0 && Number(profile?.delivery_charge_base || 0) > 0 ? (
+                          <Text style={{ fontSize: 11, color: '#16A34A', fontWeight: '800' }}>
+                            Free above ₹{profile?.free_delivery_above}
+                          </Text>
+                        ) : null}
+                      </View>
                     </View>
                   </TouchableOpacity>
                 );

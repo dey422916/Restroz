@@ -12,6 +12,7 @@ import {
   Image,
   Switch,
   Linking,
+  Platform,
   useWindowDimensions,
 } from 'react-native';
 import * as Location from 'expo-location';

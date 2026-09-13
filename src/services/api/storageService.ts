@@ -18,17 +18,30 @@ export function decodeBase64Image(dataString: string): { buffer: Uint8Array; mim
     rawBase64 = matches[2];
   }
 
-  // Cross-platform base64 decode
+  // Cross-platform base64 decode (Web, Hermes React Native, or universal pure JS fallback)
   let binaryStr = '';
   if (typeof atob !== 'undefined') {
     binaryStr = atob(rawBase64);
-  } else if (typeof Buffer !== 'undefined') {
-    const buf = Buffer.from(rawBase64, 'base64');
+  } else if (typeof (globalThis as any).Buffer !== 'undefined') {
+    const buf = (globalThis as any).Buffer.from(rawBase64, 'base64');
     let ext = 'jpg';
     if (mimeType.includes('png')) ext = 'png';
     else if (mimeType.includes('webp')) ext = 'webp';
     else if (mimeType.includes('gif')) ext = 'gif';
     return { buffer: new Uint8Array(buf), mimeType, ext };
+  } else {
+    // Pure JS base64 decode for any environment
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+    const str = rawBase64.replace(/=+$/, '');
+    let output = '';
+    for (let bc = 0, bs = 0, buffer, idx = 0; (buffer = str.charAt(idx++)); ) {
+      const charIndex = chars.indexOf(buffer);
+      if (~charIndex) {
+        bs = bc % 4 ? bs * 64 + charIndex : charIndex;
+        if (bc++ % 4) output += String.fromCharCode(255 & (bs >> ((-2 * bc) & 6)));
+      }
+    }
+    binaryStr = output;
   }
 
   const len = binaryStr.length;
@@ -810,6 +823,330 @@ export const storageService = {
     } catch (err: any) {
       console.error('Avatar upload error:', err);
       throw new Error(err.message || 'Failed to select or upload avatar.');
+    }
+  },
+
+  /**
+   * Prompts admin to pick a Payment QR Code image, compresses it,
+   * and uploads to Supabase Storage returning public CDN URL.
+   */
+  async pickAndUploadPaymentQr(options?: {
+    restaurantId?: string;
+  }): Promise<{ url: string; fileName: string } | null> {
+    try {
+      const restScope = options?.restaurantId || 'global';
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        return new Promise((resolve, reject) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/png,image/jpeg,image/jpg,image/webp';
+          input.style.display = 'none';
+
+          input.onchange = async (e: any) => {
+            try {
+              const file = e.target?.files?.[0];
+              if (!file) {
+                resolve(null);
+                return;
+              }
+              const compressed = await compressAndResizeImage(file, {
+                maxWidth: 600,
+                maxHeight: 600,
+                quality: 0.85,
+                format: 'webp',
+              });
+
+              const fileExt = compressed.format || 'webp';
+              const timestamp = Date.now();
+              const rand = Math.random().toString(36).substring(2, 7);
+              const fileName = `${timestamp}_${rand}.${fileExt}`;
+              const path = `restaurants/${restScope}/payment-qr/${fileName}`;
+
+              if (compressed.blob) {
+                const cdnUrl = await storageService.uploadBinary(
+                  'restaurant-assets',
+                  path,
+                  compressed.blob,
+                  `image/${fileExt}`
+                );
+                resolve({ url: cdnUrl, fileName });
+                return;
+              }
+              reject(new Error('Failed to process QR code image.'));
+            } catch (err) {
+              reject(err);
+            } finally {
+              document.body.removeChild(input);
+            }
+          };
+
+          document.body.appendChild(input);
+          input.click();
+        });
+      }
+
+      const ImagePicker = await import('expo-image-picker');
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        throw new Error('Camera roll / gallery permissions are required to upload payment QR code.');
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.85,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        return null;
+      }
+
+      const asset = result.assets[0];
+      const uri = asset.uri;
+
+      const compressed = await compressAndResizeImage(uri, {
+        maxWidth: 600,
+        maxHeight: 600,
+        quality: 0.85,
+        format: 'webp',
+      });
+
+      const effectiveUri = compressed.uri || uri;
+      const fileExt = compressed.format || 'webp';
+      const timestamp = Date.now();
+      const rand = Math.random().toString(36).substring(2, 7);
+      const fileName = `${timestamp}_${rand}.${fileExt}`;
+      const path = `restaurants/${restScope}/payment-qr/${fileName}`;
+
+      const uploadBytes = await getUploadBytesFromUri(effectiveUri);
+      const cdnUrl = await this.uploadBinary(
+        'restaurant-assets',
+        path,
+        uploadBytes,
+        `image/${fileExt}`
+      );
+
+      return { url: cdnUrl, fileName };
+    } catch (err: any) {
+      console.error('Payment QR upload error:', err);
+      throw new Error(err.message || 'Failed to select or upload payment QR code.');
+    }
+  },
+
+  /**
+   * Prompts admin to pick a reference/sample payment screenshot,
+   * compresses it, and uploads to Supabase Storage returning public CDN URL.
+   */
+  async pickAndUploadPaymentSample(options?: {
+    restaurantId?: string;
+  }): Promise<{ url: string; fileName: string } | null> {
+    try {
+      const restScope = options?.restaurantId || 'global';
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        return new Promise((resolve, reject) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/png,image/jpeg,image/jpg,image/webp';
+          input.style.display = 'none';
+
+          input.onchange = async (e: any) => {
+            try {
+              const file = e.target?.files?.[0];
+              if (!file) {
+                resolve(null);
+                return;
+              }
+              const compressed = await compressAndResizeImage(file, {
+                maxWidth: 800,
+                maxHeight: 1200,
+                quality: 0.85,
+                format: 'webp',
+              });
+
+              const fileExt = compressed.format || 'webp';
+              const timestamp = Date.now();
+              const rand = Math.random().toString(36).substring(2, 7);
+              const fileName = `${timestamp}_${rand}.${fileExt}`;
+              const path = `restaurants/${restScope}/payment-samples/${fileName}`;
+
+              if (compressed.blob) {
+                const cdnUrl = await storageService.uploadBinary(
+                  'restaurant-assets',
+                  path,
+                  compressed.blob,
+                  `image/${fileExt}`
+                );
+                resolve({ url: cdnUrl, fileName });
+                return;
+              }
+              reject(new Error('Failed to process sample payment screenshot.'));
+            } catch (err) {
+              reject(err);
+            } finally {
+              document.body.removeChild(input);
+            }
+          };
+
+          document.body.appendChild(input);
+          input.click();
+        });
+      }
+
+      const ImagePicker = await import('expo-image-picker');
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        throw new Error('Camera roll permissions are required to upload sample screenshot.');
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        quality: 0.85,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        return null;
+      }
+
+      const asset = result.assets[0];
+      const uri = asset.uri;
+
+      const compressed = await compressAndResizeImage(uri, {
+        maxWidth: 800,
+        maxHeight: 1200,
+        quality: 0.85,
+        format: 'webp',
+      });
+
+      const effectiveUri = compressed.uri || uri;
+      const fileExt = compressed.format || 'webp';
+      const timestamp = Date.now();
+      const rand = Math.random().toString(36).substring(2, 7);
+      const fileName = `${timestamp}_${rand}.${fileExt}`;
+      const path = `restaurants/${restScope}/payment-samples/${fileName}`;
+
+      const uploadBytes = await getUploadBytesFromUri(effectiveUri);
+      const cdnUrl = await this.uploadBinary(
+        'restaurant-assets',
+        path,
+        uploadBytes,
+        `image/${fileExt}`
+      );
+
+      return { url: cdnUrl, fileName };
+    } catch (err: any) {
+      console.error('Payment sample upload error:', err);
+      throw new Error(err.message || 'Failed to upload sample payment screenshot.');
+    }
+  },
+
+  /**
+   * Prompts customer to pick their payment transaction proof screenshot,
+   * compresses it, and uploads to Supabase Storage returning CDN URL.
+   */
+  async pickAndUploadPaymentProof(options?: {
+    restaurantId?: string;
+    customerId?: string;
+  }): Promise<{ url: string; fileName: string } | null> {
+    try {
+      const restScope = options?.restaurantId || 'global';
+      const userScope = options?.customerId || 'guest';
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        return new Promise((resolve, reject) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/png,image/jpeg,image/jpg,image/webp';
+          input.style.display = 'none';
+
+          input.onchange = async (e: any) => {
+            try {
+              const file = e.target?.files?.[0];
+              if (!file) {
+                resolve(null);
+                return;
+              }
+              const compressed = await compressAndResizeImage(file, {
+                maxWidth: 800,
+                maxHeight: 1200,
+                quality: 0.85,
+                format: 'webp',
+              });
+
+              const fileExt = compressed.format || 'webp';
+              const timestamp = Date.now();
+              const rand = Math.random().toString(36).substring(2, 7);
+              const fileName = `proof_${timestamp}_${rand}.${fileExt}`;
+              const path = `orders/payment-proofs/${restScope}/${userScope}/${fileName}`;
+
+              if (compressed.blob) {
+                const cdnUrl = await storageService.uploadBinary(
+                  'restaurant-assets',
+                  path,
+                  compressed.blob,
+                  `image/${fileExt}`
+                );
+                resolve({ url: cdnUrl, fileName });
+                return;
+              }
+              reject(new Error('Failed to process payment screenshot.'));
+            } catch (err) {
+              reject(err);
+            } finally {
+              document.body.removeChild(input);
+            }
+          };
+
+          document.body.appendChild(input);
+          input.click();
+        });
+      }
+
+      const ImagePicker = await import('expo-image-picker');
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        throw new Error('Camera roll permissions are required to upload payment screenshot.');
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        quality: 0.85,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        return null;
+      }
+
+      const asset = result.assets[0];
+      const uri = asset.uri;
+
+      const compressed = await compressAndResizeImage(uri, {
+        maxWidth: 800,
+        maxHeight: 1200,
+        quality: 0.85,
+        format: 'webp',
+      });
+
+      const effectiveUri = compressed.uri || uri;
+      const fileExt = compressed.format || 'webp';
+      const timestamp = Date.now();
+      const rand = Math.random().toString(36).substring(2, 7);
+      const fileName = `proof_${timestamp}_${rand}.${fileExt}`;
+      const path = `orders/payment-proofs/${restScope}/${userScope}/${fileName}`;
+
+      const uploadBytes = await getUploadBytesFromUri(effectiveUri);
+      const cdnUrl = await this.uploadBinary(
+        'restaurant-assets',
+        path,
+        uploadBytes,
+        `image/${fileExt}`
+      );
+
+      return { url: cdnUrl, fileName };
+    } catch (err: any) {
+      console.error('Payment proof upload error:', err);
+      throw new Error(err.message || 'Failed to upload payment screenshot.');
     }
   },
 };

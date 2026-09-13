@@ -34,6 +34,10 @@ const RESTAURANT_SETTINGS_COLUMNS = new Set([
   'delivery_charge_per_km',
   'delivery_radius_km',
   'free_delivery_above',
+  'enable_cod',
+  'delivery_payment_qr_url',
+  'delivery_upi_id',
+  'delivery_sample_screenshot_url',
   'theme_color',
   'primary_color',
   'header_color',
@@ -98,6 +102,12 @@ export const settingsService = {
             phone: (prof as any).phone || '',
             address: (prof as any).address || '',
             online_orders_enabled: (prof as any).marketplace_enabled ?? true,
+            delivery_charge_base: Number((prof as any).delivery_charge_base || 0),
+            free_delivery_above: Number((prof as any).free_delivery_above || 0),
+            enable_cod: (prof as any).enable_cod ?? true,
+            delivery_payment_qr_url: (prof as any).delivery_payment_qr_url || '',
+            delivery_upi_id: (prof as any).delivery_upi_id || '',
+            delivery_sample_screenshot_url: (prof as any).delivery_sample_screenshot_url || '',
           };
         }
       } catch (profErr) {
@@ -371,15 +381,24 @@ export const settingsService = {
         }
       }
 
-      // 2. Update restaurant_public_profiles table with banner_url
-      if (safeBannerPayload !== undefined) {
+      // 2. Update restaurant_public_profiles table with banner and delivery settings
+      const profileUpdates: Record<string, any> = {};
+      if (safeBannerPayload !== undefined) profileUpdates.banner_url = safeBannerPayload || null;
+      if (settings.delivery_charge_base !== undefined) profileUpdates.delivery_charge_base = Number(settings.delivery_charge_base);
+      if (settings.free_delivery_above !== undefined) profileUpdates.free_delivery_above = Number(settings.free_delivery_above);
+      if (settings.enable_cod !== undefined) profileUpdates.enable_cod = Boolean(settings.enable_cod);
+      if (settings.delivery_payment_qr_url !== undefined) profileUpdates.delivery_payment_qr_url = settings.delivery_payment_qr_url || null;
+      if (settings.delivery_upi_id !== undefined) profileUpdates.delivery_upi_id = settings.delivery_upi_id || null;
+      if (settings.delivery_sample_screenshot_url !== undefined) profileUpdates.delivery_sample_screenshot_url = settings.delivery_sample_screenshot_url || null;
+
+      if (Object.keys(profileUpdates).length > 0) {
         try {
           await supabase
             .from('restaurant_public_profiles')
-            .update({ banner_url: safeBannerPayload || null })
+            .update(profileUpdates)
             .eq('restaurant_id', targetRestId);
         } catch (pErr) {
-          console.warn('Failed to update restaurant_public_profiles banner_url:', pErr);
+          console.warn('Failed to update restaurant_public_profiles:', pErr);
         }
       }
 

@@ -25,8 +25,8 @@
       "env": {
         "APP_ENV": "development",
         "EXPO_PUBLIC_APP_ENV": "development",
-        "EXPO_PUBLIC_SUPABASE_URL": "https://<your-restroz-dev-project-ref>.supabase.co",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "<your-restroz-dev-anon-key>",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://ymonclyfwtdyjagrnvpo.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_XA2rhUq_SMpuL3CFxxU3ZQ_3V14WziJ",
         "EXPO_PUBLIC_APP_URL": "https://restroz.shop"
       }
     },

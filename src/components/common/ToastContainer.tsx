@@ -1,14 +1,26 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNotification } from '../../context/NotificationContext';
 
 export const ToastContainer: React.FC = () => {
   const { toasts, removeToast } = useNotification();
+  const insets = useSafeAreaInsets();
 
   if (toasts.length === 0) return null;
 
+  // On Web: preserve standard fixed 20px bottom spacing.
+  // On Mobile (Android / iOS): position above system navigation / gesture bar using safe area insets.
+  const bottomPosition = Platform.OS === 'web' ? 20 : (insets.bottom || 0) + 20;
+
   return (
-    <View style={styles.container} pointerEvents="box-none">
+    <View
+      style={[
+        styles.container,
+        { bottom: bottomPosition },
+      ]}
+      pointerEvents="box-none"
+    >
       {toasts.map((toast) => {
         const isSuccess = toast.type === 'success';
         const isError = toast.type === 'error';
@@ -41,7 +53,6 @@ export const ToastContainer: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    bottom: 20,
     right: 20,
     left: 20,
     zIndex: 9999,

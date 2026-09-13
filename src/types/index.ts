@@ -81,6 +81,12 @@ export interface RestaurantSettings {
   bill_paper_size?: PaperSize;
   auto_print_kot?: boolean;
   online_orders_enabled?: boolean;
+  delivery_payment_qr_url?: string;
+  delivery_upi_id?: string;
+  delivery_sample_screenshot_url?: string;
+  enable_cod?: boolean;
+  delivery_charge_base?: number;
+  free_delivery_above?: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -206,6 +212,7 @@ export interface Order {
   final_amount?: number;
   paid_amount?: number;
   payment_method?: string;
+  payment_proof_url?: string;
   payment_status: PaymentStatus;
   notes?: string;
   items: OrderItem[];
@@ -269,6 +276,7 @@ export interface Payment {
   payment_method: PaymentMethod;
   amount: number;
   reference_number?: string;
+  transaction_reference?: string;
   notes?: string;
   created_at: string;
 }

@@ -9,12 +9,15 @@ import {
   ActivityIndicator,
   Modal,
   Alert,
+  Image,
+  Platform,
   useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
 import { useCustomerCart } from '../../src/context/CustomerCartContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
+import { storageService } from '../../src/services/api/storageService';
 import { CustomerAddress } from '../../src/types';
 import { customerColors } from '../../src/utils/colors';
 import { isValidPhoneNumber } from '../../src/utils/phone';
@@ -36,6 +39,54 @@ export default function DeliveryCheckoutScreen() {
   const [placingOrder, setPlacingOrder] = useState(false);
   const [loadingAddresses, setLoadingAddresses] = useState(true);
   const [minOrderValue, setMinOrderValue] = useState<number>(0);
+
+  // Online Payment & Proof State
+  const [paymentProofUrl, setPaymentProofUrl] = useState<string | null>(null);
+  const [uploadingProof, setUploadingProof] = useState(false);
+  const [proofError, setProofError] = useState<string | null>(null);
+  const [copiedUpi, setCopiedUpi] = useState(false);
+  const [sampleModalVisible, setSampleModalVisible] = useState(false);
+  const [qrModalVisible, setQrModalVisible] = useState(false);
+
+  // Sync payment method if restaurant has COD disabled
+  useEffect(() => {
+    if (cart.enable_cod === false && paymentMethod === 'cod') {
+      setPaymentMethod('online');
+    }
+  }, [cart.enable_cod]);
+
+  const handleCopyUpi = async (upiStr: string) => {
+    try {
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(upiStr);
+      }
+      setCopiedUpi(true);
+      setTimeout(() => setCopiedUpi(false), 2500);
+    } catch (e) {
+      setCopiedUpi(true);
+      setTimeout(() => setCopiedUpi(false), 2500);
+    }
+  };
+
+  const handleUploadPaymentProof = async () => {
+    try {
+      setUploadingProof(true);
+      setProofError(null);
+      const res = await storageService.pickAndUploadPaymentProof({
+        restaurantId: cart.restaurantId || undefined,
+        customerId: user?.id,
+      });
+      if (res && res.url) {
+        setPaymentProofUrl(res.url);
+        setProofError(null);
+      }
+    } catch (e: any) {
+      setProofError(e.message || 'Failed to upload payment screenshot.');
+      Alert.alert('Upload Failed', e.message || 'Could not upload payment screenshot.');
+    } finally {
+      setUploadingProof(false);
+    }
+  };
 
   // Add Address Modal
   const [addModalVisible, setAddModalVisible] = useState(false);
@@ -250,6 +301,18 @@ export default function DeliveryCheckoutScreen() {
       console.warn('Online status check error:', onlineErr);
     }
 
+    // Enforce payment proof if online payment is selected
+    if (paymentMethod === 'online' && !paymentProofUrl) {
+      isSubmittingRef.current = false;
+      setPlacingOrder(false);
+      setProofError('Payment screenshot is required for online payments. Please upload proof before placing order.');
+      Alert.alert(
+        'Payment Screenshot Required',
+        'Please upload your payment screenshot/receipt before placing your order.'
+      );
+      return;
+    }
+
     try {
       const idempotencyKey = `idem-${user.id}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
       const orderPayload = {
@@ -263,6 +326,7 @@ export default function DeliveryCheckoutScreen() {
         customer_name: customerName.trim() || user.full_name || 'Customer',
         customer_phone: customerPhone.trim() || selectedAddr.phone,
         payment_method: paymentMethod,
+        payment_proof_url: paymentMethod === 'online' ? (paymentProofUrl || undefined) : undefined,
         coupon_code: cart.couponCode,
         delivery_notes: deliveryNotes.trim() || undefined,
         idempotency_key: idempotencyKey,
@@ -439,25 +503,28 @@ export default function DeliveryCheckoutScreen() {
               <View style={styles.sectionCard}>
                 <Text style={styles.sectionTitle}>💳 Payment Method</Text>
 
-                {/* Cash on Delivery (COD) Option */}
-                <TouchableOpacity
-                  style={[styles.payOption, paymentMethod === 'cod' && styles.payOptionSelected]}
-                  onPress={() => setPaymentMethod('cod')}
-                  activeOpacity={0.8}
-                >
-                  <View style={styles.radioCircle}>
-                    {paymentMethod === 'cod' && <View style={styles.radioInner} />}
+                {/* Cash on Delivery (COD) Option - only shown if restaurant enabled COD */}
+                {cart.enable_cod !== false ? (
+                  <TouchableOpacity
+                    style={[styles.payOption, paymentMethod === 'cod' && styles.payOptionSelected]}
+                    onPress={() => setPaymentMethod('cod')}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.radioCircle}>
+                      {paymentMethod === 'cod' && <View style={styles.radioInner} />}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.payTitle}>💵 Cash on Delivery (COD)</Text>
+                      <Text style={styles.paySub}>Pay cash or scan on delivery directly to rider</Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.codDisabledNotice}>
+                    <Text style={styles.codDisabledText}>ℹ️ Cash on Delivery is currently unavailable for this restaurant.</Text>
                   </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.payTitle}>💵 Cash on Delivery (COD)</Text>
-                    <Text style={styles.paySub}>Pay cash or UPI directly to delivery agent on arrival</Text>
-                  </View>
-                  <View style={styles.badgeActive}>
-                    <Text style={styles.badgeTextActive}>RECOMMENDED</Text>
-                  </View>
-                </TouchableOpacity>
+                )}
 
-                {/* Online Payment */}
+                {/* Online Payment (UPI / QR / Screenshot Verification) */}
                 <TouchableOpacity
                   style={[styles.payOption, paymentMethod === 'online' && styles.payOptionSelected]}
                   onPress={() => setPaymentMethod('online')}
@@ -467,12 +534,153 @@ export default function DeliveryCheckoutScreen() {
                     {paymentMethod === 'online' && <View style={styles.radioInner} />}
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.payTitle}>💳 Online Payment (UPI / Cards / NetBanking)</Text>
+                    <Text style={styles.payTitle}>📱 Pay via UPI / QR Code</Text>
                     <Text style={styles.paySub}>
-                      Online gateway integration (creates confirmed pending payment order)
+                      Scan QR, pay via UPI, and upload payment screenshot proof
                     </Text>
                   </View>
+                  <View style={styles.badgeOnline}>
+                    <Text style={styles.badgeTextOnline}>DIRECT UPI</Text>
+                  </View>
                 </TouchableOpacity>
+
+                {/* Online Payment Details Container (Visible only when Online Payment is selected) */}
+                {paymentMethod === 'online' && (
+                  <View style={styles.onlineDetailsContainer}>
+                    <View style={styles.onlineNoticeHeader}>
+                      <Text style={styles.onlineNoticeTitle}>📲 Complete Your UPI Payment</Text>
+                      <Text style={styles.onlineNoticeSub}>
+                        Pay the exact order amount (₹{formatPrice(cart.payableAmount)}) and attach the screenshot below.
+                      </Text>
+                    </View>
+
+                    {/* QR Code and UPI ID Row */}
+                    <View style={styles.qrUpiWrapper}>
+                      {cart.delivery_payment_qr_url ? (
+                        <View style={styles.qrCodeBox}>
+                          <TouchableOpacity
+                            onPress={() => setQrModalVisible(true)}
+                            activeOpacity={0.85}
+                            style={styles.qrTouchable}
+                          >
+                            <Image
+                              source={{ uri: cart.delivery_payment_qr_url }}
+                              style={styles.qrImage}
+                              resizeMode="contain"
+                            />
+                            <Text style={styles.qrTapHint}>🔍 Tap to enlarge QR</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : (
+                        <View style={styles.noQrPlaceholder}>
+                          <Text style={{ fontSize: 24 }}>📱</Text>
+                          <Text style={styles.noQrText}>Scan restaurant QR or use UPI ID</Text>
+                        </View>
+                      )}
+
+                      <View style={styles.upiInfoBox}>
+                        {cart.delivery_upi_id ? (
+                          <View style={styles.upiIdCard}>
+                            <Text style={styles.upiIdLabel}>RESTAURANT UPI ID</Text>
+                            <Text style={styles.upiIdValue} numberOfLines={1} selectable>
+                              {cart.delivery_upi_id}
+                            </Text>
+                            <TouchableOpacity
+                              style={[styles.copyUpiBtn, copiedUpi && styles.copyUpiBtnSuccess]}
+                              onPress={() => handleCopyUpi(cart.delivery_upi_id || '')}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={[styles.copyUpiBtnText, copiedUpi && styles.copyUpiBtnTextSuccess]}>
+                                {copiedUpi ? '✓ Copied!' : '📋 Copy UPI ID'}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        ) : null}
+
+                        {cart.delivery_sample_screenshot_url ? (
+                          <TouchableOpacity
+                            style={styles.samplePreviewBtn}
+                            onPress={() => setSampleModalVisible(true)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.samplePreviewBtnText}>🖼️ View Sample Screenshot</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    </View>
+
+                    {/* Customer Payment Proof Upload Box */}
+                    <View style={styles.proofUploadCard}>
+                      <View style={styles.proofHeaderRow}>
+                        <Text style={styles.proofTitle}>
+                          📷 Upload Payment Screenshot <Text style={styles.requiredStar}>*</Text>
+                        </Text>
+                        {paymentProofUrl ? (
+                          <View style={styles.proofVerifiedBadge}>
+                            <Text style={styles.proofVerifiedText}>✓ Attached</Text>
+                          </View>
+                        ) : (
+                          <View style={styles.proofRequiredBadge}>
+                            <Text style={styles.proofRequiredText}>Mandatory</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.proofDesc}>
+                        After completing payment in GPay, PhonePe, Paytm, etc., upload the transaction receipt screenshot.
+                      </Text>
+
+                      {paymentProofUrl ? (
+                        <View style={styles.uploadedProofContainer}>
+                          <Image
+                            source={{ uri: paymentProofUrl }}
+                            style={styles.uploadedProofThumbnail}
+                            resizeMode="cover"
+                          />
+                          <View style={{ flex: 1, marginLeft: 12 }}>
+                            <Text style={styles.uploadedProofLabel}>Payment Proof Attached</Text>
+                            <Text style={styles.uploadedProofSub}>Ready for restaurant verification</Text>
+                            <TouchableOpacity
+                              style={styles.changeProofBtn}
+                              onPress={handleUploadPaymentProof}
+                              disabled={uploadingProof}
+                              activeOpacity={0.8}
+                            >
+                              {uploadingProof ? (
+                                <ActivityIndicator size="small" color={customerColors.primary} />
+                              ) : (
+                                <Text style={styles.changeProofBtnText}>🔄 Replace Screenshot</Text>
+                              )}
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ) : (
+                        <TouchableOpacity
+                          style={[styles.uploadProofBtn, proofError ? styles.uploadProofBtnError : null]}
+                          onPress={handleUploadPaymentProof}
+                          disabled={uploadingProof}
+                          activeOpacity={0.8}
+                        >
+                          {uploadingProof ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                              <ActivityIndicator size="small" color="#FFFFFF" />
+                              <Text style={styles.uploadProofBtnText}>Uploading Screenshot...</Text>
+                            </View>
+                          ) : (
+                            <View style={{ alignItems: 'center', gap: 4 }}>
+                              <Text style={{ fontSize: 20 }}>📤</Text>
+                              <Text style={styles.uploadProofBtnText}>Select & Upload Payment Screenshot</Text>
+                              <Text style={styles.uploadProofBtnSub}>Supports JPG, PNG, WebP (Max 5MB)</Text>
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      )}
+
+                      {proofError ? (
+                        <Text style={styles.proofErrorText}>⚠️ {proofError}</Text>
+                      ) : null}
+                    </View>
+                  </View>
+                )}
               </View>
             </View>
 
@@ -542,9 +750,23 @@ export default function DeliveryCheckoutScreen() {
                   </>
                 ) : null}
 
+                {/* Authoritative Delivery Fee Display */}
                 <View style={styles.summaryItemRow}>
-                  <Text style={styles.summaryLabel}>Delivery Fee</Text>
-                  <Text style={[styles.summaryValue, { color: '#16A34A', fontWeight: '800' }]}>FREE</Text>
+                  <View>
+                    <Text style={styles.summaryLabel}>Delivery Fee</Text>
+                    {cart.free_delivery_above && cart.free_delivery_above > 0 ? (
+                      cart.deliveryFee === 0 ? (
+                        <Text style={styles.freeDeliveryApplied}>🎉 Free above ₹{formatPrice(cart.free_delivery_above)}</Text>
+                      ) : (
+                        <Text style={styles.freeDeliveryHint}>
+                          Add ₹{formatPrice(Math.max(0, cart.free_delivery_above - cart.subtotal))} for FREE delivery
+                        </Text>
+                      )
+                    ) : null}
+                  </View>
+                  <Text style={[styles.summaryValue, cart.deliveryFee === 0 && { color: '#16A34A', fontWeight: '800' }]}>
+                    {cart.deliveryFee === 0 ? 'FREE' : `₹${formatPrice(cart.deliveryFee)}`}
+                  </Text>
                 </View>
 
                 <View style={{ height: 1, backgroundColor: '#E2E8F0', marginVertical: 12 }} />
@@ -797,6 +1019,68 @@ export default function DeliveryCheckoutScreen() {
                 )}
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* QR Code Zoom Modal */}
+      <Modal visible={qrModalVisible} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { alignItems: 'center', maxWidth: 380 }]}>
+            <View style={{ width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={styles.modalTitle}>Scan QR Code</Text>
+              <TouchableOpacity onPress={() => setQrModalVisible(false)}>
+                <Text style={{ fontSize: 18, color: '#64748B' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {cart.delivery_payment_qr_url ? (
+              <Image
+                source={{ uri: cart.delivery_payment_qr_url }}
+                style={{ width: 280, height: 280, borderRadius: 12, backgroundColor: '#F8FAFC' }}
+                resizeMode="contain"
+              />
+            ) : null}
+            {cart.delivery_upi_id ? (
+              <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A', marginTop: 12 }}>
+                UPI ID: {cart.delivery_upi_id}
+              </Text>
+            ) : null}
+            <TouchableOpacity
+              style={[styles.modalSaveBtn, { width: '100%', alignItems: 'center', marginTop: 16 }]}
+              onPress={() => setQrModalVisible(false)}
+            >
+              <Text style={styles.modalSaveText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Sample Payment Screenshot Preview Modal */}
+      <Modal visible={sampleModalVisible} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { alignItems: 'center', maxWidth: 420 }]}>
+            <View style={{ width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={styles.modalTitle}>Sample Payment Screenshot</Text>
+              <TouchableOpacity onPress={() => setSampleModalVisible(false)}>
+                <Text style={{ fontSize: 18, color: '#64748B' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={{ fontSize: 12, color: '#64748B', marginBottom: 10, alignSelf: 'flex-start' }}>
+              Reference screenshot of what a successful payment confirmation looks like:
+            </Text>
+            {cart.delivery_sample_screenshot_url ? (
+              <Image
+                source={{ uri: cart.delivery_sample_screenshot_url }}
+                style={{ width: 320, height: 380, borderRadius: 12, backgroundColor: '#F8FAFC' }}
+                resizeMode="contain"
+              />
+            ) : null}
+            <TouchableOpacity
+              style={[styles.modalSaveBtn, { width: '100%', alignItems: 'center', marginTop: 16 }]}
+              onPress={() => setSampleModalVisible(false)}
+            >
+              <Text style={styles.modalSaveText}>Close Preview</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -1060,16 +1344,287 @@ const styles = StyleSheet.create({
     color: customerColors.textSecondary,
     marginTop: 2,
   },
-  badgeActive: {
-    backgroundColor: '#DCFCE7',
+  badgeOnline: {
+    backgroundColor: '#EFF6FF',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
   },
-  badgeTextActive: {
-    color: '#15803D',
+  badgeTextOnline: {
+    color: '#1D4ED8',
     fontSize: 10,
     fontWeight: '800',
+  },
+  codDisabledNotice: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 10,
+  },
+  codDisabledText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  onlineDetailsContainer: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 16,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  onlineNoticeHeader: {
+    marginBottom: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  onlineNoticeTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  onlineNoticeSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+    lineHeight: 18,
+  },
+  qrUpiWrapper: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 14,
+    marginBottom: 16,
+  },
+  qrCodeBox: {
+    backgroundColor: '#FFFFFF',
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrTouchable: {
+    alignItems: 'center',
+  },
+  qrImage: {
+    width: 140,
+    height: 140,
+    borderRadius: 8,
+  },
+  qrTapHint: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: customerColors.primary,
+    marginTop: 6,
+  },
+  noQrPlaceholder: {
+    width: 140,
+    height: 140,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 10,
+  },
+  noQrText: {
+    fontSize: 11,
+    color: '#64748B',
+    textAlign: 'center',
+    marginTop: 6,
+    fontWeight: '600',
+  },
+  upiInfoBox: {
+    flex: 1,
+    minWidth: 180,
+    justifyContent: 'center',
+    gap: 10,
+  },
+  upiIdCard: {
+    backgroundColor: '#FFFFFF',
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  upiIdLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+  },
+  upiIdValue: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 2,
+    marginBottom: 8,
+  },
+  copyUpiBtn: {
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  copyUpiBtnSuccess: {
+    backgroundColor: '#DCFCE7',
+  },
+  copyUpiBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  copyUpiBtnTextSuccess: {
+    color: '#15803D',
+  },
+  samplePreviewBtn: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  samplePreviewBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  proofUploadCard: {
+    backgroundColor: '#FFFFFF',
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  proofHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  proofTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  proofVerifiedBadge: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  proofVerifiedText: {
+    color: '#15803D',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  proofRequiredBadge: {
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  proofRequiredText: {
+    color: '#B91C1C',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  proofDesc: {
+    fontSize: 11,
+    color: '#64748B',
+    marginBottom: 10,
+    lineHeight: 16,
+  },
+  uploadedProofContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  uploadedProofThumbnail: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+  },
+  uploadedProofLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  uploadedProofSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+    marginBottom: 4,
+  },
+  changeProofBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  changeProofBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: customerColors.primary,
+  },
+  uploadProofBtn: {
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: customerColors.primary,
+    borderRadius: 10,
+    backgroundColor: customerColors.primaryBg,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadProofBtnError: {
+    borderColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
+  },
+  uploadProofBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: customerColors.primary,
+  },
+  uploadProofBtnSub: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  proofErrorText: {
+    fontSize: 11,
+    color: '#DC2626',
+    fontWeight: '700',
+    marginTop: 6,
+  },
+  freeDeliveryApplied: {
+    fontSize: 11,
+    color: '#16A34A',
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  freeDeliveryHint: {
+    fontSize: 11,
+    color: '#D97706',
+    fontWeight: '600',
+    marginTop: 2,
   },
   desktopPlaceOrderBtn: {
     backgroundColor: customerColors.primary,

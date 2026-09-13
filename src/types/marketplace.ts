@@ -21,6 +21,12 @@ export interface RestaurantPublicProfile {
   longitude?: number | null;
   distance_km?: number;
   is_outside_radius?: boolean;
+  delivery_payment_qr_url?: string;
+  delivery_upi_id?: string;
+  delivery_sample_screenshot_url?: string;
+  enable_cod?: boolean;
+  delivery_charge_base?: number;
+  free_delivery_above?: number;
   created_at: string;
   updated_at?: string;
   restaurant?: Restaurant;
@@ -72,6 +78,12 @@ export interface CustomerCart {
   payableAmount: number;
   isGstEnabled?: boolean;
   taxRate?: number;
+  delivery_charge_base?: number;
+  free_delivery_above?: number;
+  enable_cod?: boolean;
+  delivery_payment_qr_url?: string;
+  delivery_upi_id?: string;
+  delivery_sample_screenshot_url?: string;
 }
 
 export interface DeliveryOrderPayload {
@@ -85,6 +97,7 @@ export interface DeliveryOrderPayload {
   customer_name: string;
   customer_phone: string;
   payment_method: 'cod' | 'online';
+  payment_proof_url?: string;
   coupon_code?: string;
   delivery_notes?: string;
   idempotency_key?: string;

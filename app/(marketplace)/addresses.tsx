@@ -283,7 +283,7 @@ export default function CustomerAddressesScreen() {
         <View style={styles.pageInner}>
           {/* Header Banner Box */}
           <View style={styles.header}>
-            <View>
+            <View style={styles.headerTextWrap}>
               <Text style={styles.headerTitle}>My Delivery Addresses</Text>
               <Text style={styles.headerSubtitle}>
                 Manage your delivery locations for fast 1-tap ordering
@@ -597,21 +597,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     marginBottom: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    gap: 12,
     shadowColor: '#0F172A',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.04,
     shadowRadius: 6,
     elevation: 1,
   },
+  headerTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '800',
     color: customerColors.text,
     letterSpacing: -0.3,
@@ -620,12 +625,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748B',
     marginTop: 2,
+    lineHeight: 16,
   },
   addBtn: {
     backgroundColor: customerColors.primary,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: 10,
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
     shadowColor: customerColors.primary,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,

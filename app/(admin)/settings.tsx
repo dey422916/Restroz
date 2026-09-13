@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator, Image, useWindowDimensions } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator, Image, useWindowDimensions, Platform } from 'react-native';
 import { useSettings } from '../../src/context/SettingsContext';
 import { useAuth } from '../../src/context/AuthContext';
+import { useNotification } from '../../src/context/NotificationContext';
 import { authService } from '../../src/services/api/authService';
 import { storageService } from '../../src/services/api/storageService';
 import { supabase } from '../../src/services/supabase';
@@ -14,6 +15,7 @@ export default function SettingsScreen() {
   const isDesktop = windowWidth >= 860;
   const { settings, updateSettings, isOnlineOrdersEnabled, toggleOnlineOrders, loading: settingsLoading } = useSettings();
   const { user, role, isSuperAdmin, isAdmin, activeRestaurantId } = useAuth();
+  const { showToast } = useNotification();
   const [isTogglingOnline, setIsTogglingOnline] = useState(false);
 
   const [name, setName] = useState(settings.name);
@@ -50,6 +52,30 @@ export default function SettingsScreen() {
   const [billPaperSize, setBillPaperSize] = useState<PaperSize>(settings.bill_paper_size || '80mm');
   const [autoPrintKot, setAutoPrintKot] = useState<boolean>(Boolean(settings.auto_print_kot));
   const [isSavingPrinter, setIsSavingPrinter] = useState(false);
+
+  // Online Delivery & Payment settings state
+  const [deliveryPaymentQrUrl, setDeliveryPaymentQrUrl] = useState(settings.delivery_payment_qr_url || '');
+  const [deliveryUpiId, setDeliveryUpiId] = useState(settings.delivery_upi_id || '');
+  const [deliverySampleScreenshotUrl, setDeliverySampleScreenshotUrl] = useState(settings.delivery_sample_screenshot_url || '');
+  const [enableCod, setEnableCod] = useState<boolean>(settings.enable_cod !== undefined ? Boolean(settings.enable_cod) : true);
+  const [deliveryChargeBase, setDeliveryChargeBase] = useState(
+    settings.delivery_charge_base !== undefined && settings.delivery_charge_base !== null
+      ? settings.delivery_charge_base.toString()
+      : '0'
+  );
+  const [freeDeliveryAbove, setFreeDeliveryAbove] = useState(
+    settings.free_delivery_above !== undefined && settings.free_delivery_above !== null
+      ? settings.free_delivery_above.toString()
+      : '0'
+  );
+  const [isSavingDeliverySettings, setIsSavingDeliverySettings] = useState(false);
+  const [isUploadingPaymentQr, setIsUploadingPaymentQr] = useState(false);
+  const [isUploadingPaymentSample, setIsUploadingPaymentSample] = useState(false);
+  const [deliveryStatusMessage, setDeliveryStatusMessage] = useState<{
+    type: 'success' | 'error';
+    title: string;
+    text: string;
+  } | null>(null);
 
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -93,11 +119,139 @@ export default function SettingsScreen() {
       setKotPaperSize(settings.kot_paper_size || '80mm');
       setBillPaperSize(settings.bill_paper_size || '80mm');
       setAutoPrintKot(Boolean(settings.auto_print_kot));
+
+      setDeliveryPaymentQrUrl(settings.delivery_payment_qr_url || '');
+      setDeliveryUpiId(settings.delivery_upi_id || '');
+      setDeliverySampleScreenshotUrl(settings.delivery_sample_screenshot_url || '');
+      setEnableCod(settings.enable_cod !== undefined ? Boolean(settings.enable_cod) : true);
+      setDeliveryChargeBase(
+        settings.delivery_charge_base !== undefined && settings.delivery_charge_base !== null
+          ? settings.delivery_charge_base.toString()
+          : '0'
+      );
+      setFreeDeliveryAbove(
+        settings.free_delivery_above !== undefined && settings.free_delivery_above !== null
+          ? settings.free_delivery_above.toString()
+          : '0'
+      );
     }
   }, [settings, isDirty, activeRestaurantId]);
 
+  const handleUploadPaymentQr = async () => {
+    if (!canManage) {
+      Alert.alert('Permission Denied', 'Only ADMIN users can modify delivery payment settings.');
+      return;
+    }
+    try {
+      setIsUploadingPaymentQr(true);
+      setDeliveryStatusMessage(null);
+      const res = await storageService.pickAndUploadPaymentQr({ restaurantId: activeRestaurantId });
+      if (res && res.url) {
+        setDeliveryPaymentQrUrl(res.url);
+        await updateSettings({ delivery_payment_qr_url: res.url });
+        setDeliveryStatusMessage({
+          type: 'success',
+          title: '✓ Payment QR Code Saved',
+          text: 'Payment QR code was uploaded and saved successfully.',
+        });
+        showToast('success', 'Payment QR Saved', 'Payment QR code uploaded successfully.');
+        Alert.alert('Payment QR Saved', 'Payment QR code uploaded successfully.');
+      }
+    } catch (e: any) {
+      const errMsg = e.message || 'Failed to upload QR code.';
+      setDeliveryStatusMessage({
+        type: 'error',
+        title: '❌ QR Upload Failed',
+        text: errMsg,
+      });
+      showToast('error', 'Upload Failed', errMsg);
+      Alert.alert('Upload Failed', errMsg);
+    } finally {
+      setIsUploadingPaymentQr(false);
+    }
+  };
+
+  const handleUploadPaymentSample = async () => {
+    if (!canManage) {
+      Alert.alert('Permission Denied', 'Only ADMIN users can modify delivery payment settings.');
+      return;
+    }
+    try {
+      setIsUploadingPaymentSample(true);
+      setDeliveryStatusMessage(null);
+      const res = await storageService.pickAndUploadPaymentSample({ restaurantId: activeRestaurantId });
+      if (res && res.url) {
+        setDeliverySampleScreenshotUrl(res.url);
+        await updateSettings({ delivery_sample_screenshot_url: res.url });
+        setDeliveryStatusMessage({
+          type: 'success',
+          title: '✓ Sample Screenshot Saved',
+          text: 'Sample payment reference screenshot was uploaded and saved successfully.',
+        });
+        showToast('success', 'Sample Screenshot Saved', 'Sample payment screenshot uploaded successfully.');
+        Alert.alert('Sample Screenshot Saved', 'Sample payment screenshot uploaded successfully.');
+      }
+    } catch (e: any) {
+      const errMsg = e.message || 'Failed to upload sample screenshot.';
+      setDeliveryStatusMessage({
+        type: 'error',
+        title: '❌ Sample Upload Failed',
+        text: errMsg,
+      });
+      showToast('error', 'Upload Failed', errMsg);
+      Alert.alert('Upload Failed', errMsg);
+    } finally {
+      setIsUploadingPaymentSample(false);
+    }
+  };
+
+  const handleSaveDeliverySettings = async () => {
+    if (!canManage) {
+      Alert.alert('Permission Denied', 'Only ADMIN users can update delivery settings.');
+      return;
+    }
+    try {
+      setIsSavingDeliverySettings(true);
+      setDeliveryStatusMessage(null);
+      const parsedDeliveryFee = parseFloat(deliveryChargeBase) || 0;
+      const parsedFreeThreshold = parseFloat(freeDeliveryAbove) || 0;
+
+      await updateSettings({
+        delivery_payment_qr_url: deliveryPaymentQrUrl.trim() || undefined,
+        delivery_upi_id: deliveryUpiId.trim() || undefined,
+        delivery_sample_screenshot_url: deliverySampleScreenshotUrl.trim() || undefined,
+        enable_cod: enableCod,
+        delivery_charge_base: parsedDeliveryFee >= 0 ? parsedDeliveryFee : 0,
+        free_delivery_above: parsedFreeThreshold >= 0 ? parsedFreeThreshold : 0,
+      });
+
+      setIsDirty(false);
+      const summaryText = `COD: ${enableCod ? 'ON' : 'OFF'} • Delivery Fee: ₹${parsedDeliveryFee} • Free Above: ${parsedFreeThreshold > 0 ? `₹${parsedFreeThreshold}` : 'N/A'} • UPI ID: ${deliveryUpiId.trim() || 'None'}`;
+
+      setDeliveryStatusMessage({
+        type: 'success',
+        title: '✓ Delivery & Payment Settings Saved Successfully!',
+        text: summaryText,
+      });
+      showToast('success', 'Settings Saved', 'Delivery & payment settings saved successfully.');
+      Alert.alert('Delivery & Payment Settings Saved', summaryText);
+    } catch (e: any) {
+      const errMsg = e.message || 'Failed to save delivery settings.';
+      setDeliveryStatusMessage({
+        type: 'error',
+        title: '❌ Settings Not Saved',
+        text: errMsg,
+      });
+      showToast('error', 'Save Failed', errMsg);
+      Alert.alert('Save Failed', errMsg);
+    } finally {
+      setIsSavingDeliverySettings(false);
+    }
+  };
+
   const handleSavePrinterSettings = async () => {
     if (!canManage) {
+      showToast('error', 'Permission Denied', 'Only ADMIN users can update printer settings.');
       Alert.alert('Permission Denied', 'Only ADMIN users can update printer settings.');
       return;
     }
@@ -108,11 +262,14 @@ export default function SettingsScreen() {
         bill_paper_size: billPaperSize,
         auto_print_kot: autoPrintKot,
       });
+      const summary = `KOT Paper: ${kotPaperSize} • Bill Paper: ${billPaperSize} • Auto-Print: ${autoPrintKot ? 'ON' : 'OFF'}`;
+      showToast('success', 'Printer Settings Saved', summary);
       Alert.alert(
         'Printer Settings Saved',
         `KOT Paper: ${kotPaperSize}\nBill Paper: ${billPaperSize}\nAuto-Print KOT: ${autoPrintKot ? 'ON' : 'OFF'}`
       );
     } catch (e: any) {
+      showToast('error', 'Save Failed', e.message || 'Failed to save printer settings.');
       Alert.alert('Save Failed', e.message || 'Failed to save printer settings.');
     } finally {
       setIsSavingPrinter(false);
@@ -129,6 +286,7 @@ export default function SettingsScreen() {
 
   const handleUploadLogo = async () => {
     if (!canManage) {
+      showToast('error', 'Permission Denied', 'Only ADMIN users can update restaurant logo.');
       Alert.alert('Permission Denied', 'Only ADMIN users can update restaurant logo.');
       return;
     }
@@ -147,9 +305,11 @@ export default function SettingsScreen() {
           ]);
         }
         setIsDirty(false);
+        showToast('success', 'Logo Updated', 'Restaurant logo uploaded and saved successfully.');
         Alert.alert('Logo Updated', 'Restaurant logo uploaded and saved successfully.');
       }
     } catch (err: any) {
+      showToast('error', 'Logo Upload Failed', err.message || 'Failed to upload logo.');
       Alert.alert('Logo Upload Failed', err.message || 'Failed to upload logo.');
     } finally {
       setIsUploadingLogo(false);
@@ -158,6 +318,7 @@ export default function SettingsScreen() {
 
   const handleRemoveLogo = async () => {
     if (!canManage) {
+      showToast('error', 'Permission Denied', 'Only ADMIN users can update restaurant logo.');
       Alert.alert('Permission Denied', 'Only ADMIN users can update restaurant logo.');
       return;
     }
@@ -169,8 +330,10 @@ export default function SettingsScreen() {
         await supabase.from('restaurants').update({ logo_url: null }).eq('id', activeRestaurantId);
       }
       setIsDirty(false);
+      showToast('success', 'Logo Removed', 'Restaurant logo has been removed.');
       Alert.alert('Logo Removed', 'Restaurant logo has been removed.');
     } catch (err: any) {
+      showToast('error', 'Error', err.message || 'Failed to remove logo.');
       Alert.alert('Error', err.message || 'Failed to remove logo.');
     } finally {
       setIsSaving(false);
@@ -179,6 +342,7 @@ export default function SettingsScreen() {
 
   const handleUploadBanner = async () => {
     if (!canManage) {
+      showToast('error', 'Permission Denied', 'Only ADMIN users can update restaurant banners.');
       Alert.alert('Permission Denied', 'Only ADMIN users can update restaurant banners.');
       return;
     }
@@ -204,9 +368,11 @@ export default function SettingsScreen() {
         }
 
         setIsDirty(false);
+        showToast('success', 'Banner Added', 'New banner image added to restaurant showcase carousel.');
         Alert.alert('Banner Added', 'New banner image added to restaurant showcase carousel.');
       }
     } catch (err: any) {
+      showToast('error', 'Upload Failed', err.message || 'Failed to upload banner image. You can also paste an image URL directly.');
       Alert.alert('Upload Failed', err.message || 'Failed to upload banner image. You can also paste an image URL directly.');
     } finally {
       setIsUploadingBanner(false);
@@ -215,11 +381,13 @@ export default function SettingsScreen() {
 
   const handleAddBannerByUrl = async () => {
     if (!canManage) {
+      showToast('error', 'Permission Denied', 'Only ADMIN users can manage restaurant banners.');
       Alert.alert('Permission Denied', 'Only ADMIN users can manage restaurant banners.');
       return;
     }
     const cleanUrl = customBannerUrl.trim();
     if (!cleanUrl || (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://') && !cleanUrl.startsWith('data:'))) {
+      showToast('error', 'Invalid URL', 'Please enter a valid HTTP, HTTPS, or Data URI image address.');
       Alert.alert('Invalid URL', 'Please enter a valid HTTP, HTTPS, or Data URI image address.');
       return;
     }
@@ -246,8 +414,10 @@ export default function SettingsScreen() {
       }
 
       setIsDirty(false);
+      showToast('success', 'Image Added', 'Image URL added to restaurant showcase carousel.');
       Alert.alert('Image Added', 'Image URL added to restaurant showcase carousel.');
     } catch (err: any) {
+      showToast('error', 'Error', err.message || 'Failed to save image URL.');
       Alert.alert('Error', err.message || 'Failed to save image URL.');
     } finally {
       setIsSaving(false);
@@ -256,6 +426,7 @@ export default function SettingsScreen() {
 
   const handleRemoveBanner = async (index: number) => {
     if (!canManage) {
+      showToast('error', 'Permission Denied', 'Only ADMIN users can manage restaurant banners.');
       Alert.alert('Permission Denied', 'Only ADMIN users can manage restaurant banners.');
       return;
     }
@@ -279,8 +450,10 @@ export default function SettingsScreen() {
       }
 
       setIsDirty(false);
+      showToast('success', 'Banner Removed', 'Image removed from restaurant carousel.');
       Alert.alert('Banner Removed', 'Image removed from restaurant carousel.');
     } catch (err: any) {
+      showToast('error', 'Error', err.message || 'Failed to remove banner image.');
       Alert.alert('Error', err.message || 'Failed to remove banner image.');
     } finally {
       setIsSaving(false);
@@ -290,10 +463,12 @@ export default function SettingsScreen() {
   // 1. Save Profile & Branding Info Only (updates restaurants and restaurant_settings profile fields)
   const handleSaveProfileInfo = async () => {
     if (!canManage) {
+      showToast('error', 'Permission Denied', 'Only ADMIN users can save restaurant profile info.');
       Alert.alert('Permission Denied', 'Only ADMIN users can save restaurant profile info.');
       return;
     }
     if (!name.trim()) {
+      showToast('error', 'Validation Error', 'Restaurant Name cannot be empty.');
       Alert.alert('Validation Error', 'Restaurant Name cannot be empty.');
       return;
     }
@@ -342,8 +517,10 @@ export default function SettingsScreen() {
       }
 
       setIsDirty(false);
+      showToast('success', 'Profile Saved', 'Restaurant profile and branding updated successfully.');
       Alert.alert('Profile Saved', 'Restaurant profile and branding information updated successfully.');
     } catch (err: any) {
+      showToast('error', 'Save Failed', err.message || 'Failed to save restaurant profile.');
       Alert.alert('Save Failed', err.message || 'Failed to save restaurant profile.');
     } finally {
       setIsSaving(false);
@@ -353,6 +530,7 @@ export default function SettingsScreen() {
   // 2. Save GST & Tax Settings Only (updates public.restaurant_settings only, NO restaurants PATCH)
   const handleSaveGstSettings = async () => {
     if (!canManage) {
+      showToast('error', 'Permission Denied', 'Only ADMIN users can save GST settings.');
       Alert.alert('Permission Denied', 'Only ADMIN users can save GST settings.');
       return;
     }
@@ -395,11 +573,14 @@ export default function SettingsScreen() {
       }
 
       setIsDirty(false);
+      const summary = `GSTIN: ${gstin.trim() || 'None'} • Rate: ${validatedRate}% • Status: ${isGstEnabled ? 'Active' : 'Disabled'}`;
+      showToast('success', 'GST Settings Saved', summary);
       Alert.alert(
         'GST Settings Saved',
         `GSTIN: ${gstin.trim() || 'None'}\nGST Rate: ${validatedRate}%\nCGST: ${(validatedRate / 2).toFixed(1)}% | SGST: ${(validatedRate / 2).toFixed(1)}%\nStatus: ${isGstEnabled ? 'Active' : 'Disabled'}`
       );
     } catch (err: any) {
+      showToast('error', 'Save Failed', err.message || 'Failed to save GST settings.');
       Alert.alert('Save Failed', err.message || 'Failed to save GST settings.');
     } finally {
       setIsSavingGst(false);
@@ -408,16 +589,19 @@ export default function SettingsScreen() {
 
   const handleCreateNewAccount = async () => {
     if (!canManage) {
+      showToast('error', 'Permission Denied', 'Only authenticated ADMIN users can create staff or admin accounts.');
       Alert.alert('Permission Denied', 'Only authenticated ADMIN users can create staff or admin accounts.');
       return;
     }
 
     if (!accountEmail || !accountPassword || !accountName) {
+      showToast('error', 'Missing Fields', 'Please fill in Email, Full Name, and Password.');
       Alert.alert('Missing Fields', 'Please fill in Email, Full Name, and Password.');
       return;
     }
 
     if (accountPassword.length < 6) {
+      showToast('error', 'Weak Password', 'Password must be at least 6 characters long.');
       Alert.alert('Weak Password', 'Password must be at least 6 characters long.');
       return;
     }
@@ -433,6 +617,11 @@ export default function SettingsScreen() {
         accountRole,
         targetRestId
       );
+      showToast(
+        'success',
+        'Account Created!',
+        `New ${accountRole} account (${newUser.email}) created successfully.`
+      );
       Alert.alert(
         'Account Created!',
         `New ${accountRole} account (${newUser.email}) created successfully and recorded in Audit Logs.`
@@ -442,6 +631,7 @@ export default function SettingsScreen() {
       setAccountPhone('');
       setAccountPassword('');
     } catch (e: any) {
+      showToast('error', 'Account Creation Error', e.message || 'Failed to create account.');
       Alert.alert('Account Creation Error', e.message || 'Failed to create account.');
     } finally {
       setIsCreatingAccount(false);
@@ -700,6 +890,7 @@ export default function SettingsScreen() {
                     ]}
                     onPress={async () => {
                       if (!canManage) {
+                        showToast('error', 'Permission Denied', 'Only Restaurant Admins can change online ordering status.');
                         Alert.alert('Permission Denied', 'Only Restaurant Admins can change online ordering status.');
                         return;
                       }
@@ -707,13 +898,14 @@ export default function SettingsScreen() {
                       try {
                         const next = !isOnlineOrdersEnabled;
                         await toggleOnlineOrders(next);
-                        Alert.alert(
-                          next ? 'Online Orders Enabled' : 'Online Orders Disabled',
-                          next
-                            ? 'Restaurant is now OPEN for customer marketplace orders.'
-                            : 'Restaurant is now CLOSED in customer marketplace. Delivery checkout is blocked.'
-                        );
+                        const statusTitle = next ? 'Online Orders Enabled' : 'Online Orders Disabled';
+                        const statusDesc = next
+                          ? 'Restaurant is now OPEN for customer marketplace orders.'
+                          : 'Restaurant is now CLOSED in customer marketplace. Delivery checkout is blocked.';
+                        showToast('success', statusTitle, statusDesc);
+                        Alert.alert(statusTitle, statusDesc);
                       } catch (e: any) {
+                        showToast('error', 'Error', e.message || 'Failed to update online ordering status');
                         Alert.alert('Error', e.message || 'Failed to update online ordering status');
                       } finally {
                         setIsTogglingOnline(false);
@@ -725,6 +917,236 @@ export default function SettingsScreen() {
                     </Text>
                   </TouchableOpacity>
                 </View>
+              </View>
+
+              {/* 3.1. Online Delivery & Payment Settings */}
+              <View style={styles.card}>
+                <Text style={styles.cardHeader}>🚚 Online Delivery & Payment Settings</Text>
+                <Text style={styles.cardSubHeader}>
+                  Configure restaurant UPI payments, QR code, verification sample screenshot, Cash on Delivery, and delivery charges.
+                </Text>
+
+                {/* COD Availability Toggle */}
+                <View style={styles.toggleCard}>
+                  <View style={styles.toggleHeaderRow}>
+                    <Text style={styles.toggleTitle}>Cash on Delivery (COD)</Text>
+                    <TouchableOpacity
+                      testID="settings-enable-cod-toggle"
+                      disabled={!canManage}
+                      style={[
+                        styles.toggleBadge,
+                        enableCod ? styles.toggleBadgeOn : styles.toggleBadgeOff,
+                        !canManage && { opacity: 0.6 },
+                      ]}
+                      onPress={() => {
+                        if (!canManage) return;
+                        setEnableCod(!enableCod);
+                        setIsDirty(true);
+                      }}
+                    >
+                      <Text style={[styles.toggleBadgeText, !enableCod && styles.toggleBadgeTextOff]}>
+                        {enableCod ? '● COD ENABLED' : '○ COD DISABLED'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.toggleDesc}>
+                    {enableCod
+                      ? 'Customers can place delivery orders with Cash on Delivery.'
+                      : 'Customers can only pay online via UPI/QR code.'}
+                  </Text>
+                </View>
+
+                {/* Delivery Charges and Free Delivery Threshold */}
+                <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>Standard Delivery Charge (₹)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={deliveryChargeBase}
+                      onChangeText={(v) => {
+                        setDeliveryChargeBase(v);
+                        setIsDirty(true);
+                      }}
+                      keyboardType="numeric"
+                      placeholder="0.00"
+                      placeholderTextColor="#94a3b8"
+                      editable={canManage}
+                    />
+                    <Text style={styles.helperText}>
+                      Delivery fee applied to customer orders.
+                    </Text>
+                  </View>
+
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>Free Delivery Above Order Value (₹)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={freeDeliveryAbove}
+                      onChangeText={(v) => {
+                        setFreeDeliveryAbove(v);
+                        setIsDirty(true);
+                      }}
+                      keyboardType="numeric"
+                      placeholder="0.00"
+                      placeholderTextColor="#94a3b8"
+                      editable={canManage}
+                    />
+                    <Text style={styles.helperText}>
+                      Orders above this amount get FREE delivery. Set 0 if not offering free delivery.
+                    </Text>
+                  </View>
+                </View>
+
+                {/* UPI ID */}
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Restaurant UPI ID</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={deliveryUpiId}
+                    onChangeText={(v) => {
+                      setDeliveryUpiId(v);
+                      setIsDirty(true);
+                    }}
+                    placeholder="e.g. restaurant@okhdfcbank"
+                    placeholderTextColor="#94a3b8"
+                    autoCapitalize="none"
+                    editable={canManage}
+                  />
+                  <Text style={styles.helperText}>
+                    Displayed at checkout for customers to pay directly via UPI apps.
+                  </Text>
+                </View>
+
+                {/* Payment QR Code & Sample Screenshot Uploads */}
+                <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile, { marginTop: 8 }]}>
+                  {/* Payment QR Code */}
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>Payment QR Code</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                      {deliveryPaymentQrUrl ? (
+                        <Image source={{ uri: deliveryPaymentQrUrl }} style={{ width: 64, height: 64, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }} resizeMode="contain" />
+                      ) : (
+                        <View style={{ width: 64, height: 64, borderRadius: 8, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ fontSize: 20 }}>📱</Text>
+                          <Text style={{ fontSize: 8, color: '#94a3b8', fontWeight: '700' }}>NO QR</Text>
+                        </View>
+                      )}
+                      <View style={{ gap: 4 }}>
+                        <TouchableOpacity
+                          style={[styles.logoBtn, isUploadingPaymentQr && { opacity: 0.6 }]}
+                          onPress={handleUploadPaymentQr}
+                          disabled={isUploadingPaymentQr || !canManage}
+                        >
+                          {isUploadingPaymentQr ? (
+                            <ActivityIndicator size="small" color="#2563eb" />
+                          ) : (
+                            <Text style={styles.logoBtnText}>📷 {deliveryPaymentQrUrl ? 'Change QR' : 'Upload QR'}</Text>
+                          )}
+                        </TouchableOpacity>
+                        {deliveryPaymentQrUrl && canManage ? (
+                          <TouchableOpacity
+                            style={styles.logoRemoveBtn}
+                            onPress={async () => {
+                              setDeliveryPaymentQrUrl('');
+                              await updateSettings({ delivery_payment_qr_url: undefined });
+                            }}
+                          >
+                            <Text style={styles.logoRemoveBtnText}>✕ Remove</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Sample / Reference Payment Screenshot */}
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>Sample Payment Screenshot</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                      {deliverySampleScreenshotUrl ? (
+                        <Image source={{ uri: deliverySampleScreenshotUrl }} style={{ width: 64, height: 64, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }} resizeMode="cover" />
+                      ) : (
+                        <View style={{ width: 64, height: 64, borderRadius: 8, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ fontSize: 20 }}>🖼️</Text>
+                          <Text style={{ fontSize: 8, color: '#94a3b8', fontWeight: '700' }}>NO SAMPLE</Text>
+                        </View>
+                      )}
+                      <View style={{ gap: 4 }}>
+                        <TouchableOpacity
+                          style={[styles.logoBtn, isUploadingPaymentSample && { opacity: 0.6 }]}
+                          onPress={handleUploadPaymentSample}
+                          disabled={isUploadingPaymentSample || !canManage}
+                        >
+                          {isUploadingPaymentSample ? (
+                            <ActivityIndicator size="small" color="#2563eb" />
+                          ) : (
+                            <Text style={styles.logoBtnText}>📷 {deliverySampleScreenshotUrl ? 'Change' : 'Upload'}</Text>
+                          )}
+                        </TouchableOpacity>
+                        {deliverySampleScreenshotUrl && canManage ? (
+                          <TouchableOpacity
+                            style={styles.logoRemoveBtn}
+                            onPress={async () => {
+                              setDeliverySampleScreenshotUrl('');
+                              await updateSettings({ delivery_sample_screenshot_url: undefined });
+                            }}
+                          >
+                            <Text style={styles.logoRemoveBtnText}>✕ Remove</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Visual Confirmation Banner (Success / Error) */}
+                {deliveryStatusMessage && (
+                  <View
+                    style={{
+                      marginTop: 14,
+                      padding: 12,
+                      borderRadius: 8,
+                      borderWidth: 1.5,
+                      backgroundColor: deliveryStatusMessage.type === 'success' ? '#f0fdf4' : '#fef2f2',
+                      borderColor: deliveryStatusMessage.type === 'success' ? '#86efac' : '#fca5a5',
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 13,
+                        fontWeight: '800',
+                        color: deliveryStatusMessage.type === 'success' ? '#15803d' : '#b91c1c',
+                        marginBottom: 2,
+                      }}
+                    >
+                      {deliveryStatusMessage.title}
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        color: deliveryStatusMessage.type === 'success' ? '#166534' : '#991b1b',
+                        lineHeight: 16,
+                      }}
+                    >
+                      {deliveryStatusMessage.text}
+                    </Text>
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  testID="save-delivery-settings-btn"
+                  style={[styles.saveBtn, { marginTop: 16 }, (isSavingDeliverySettings || !canManage) && { opacity: 0.6 }]}
+                  onPress={handleSaveDeliverySettings}
+                  disabled={isSavingDeliverySettings || !canManage}
+                >
+                  {isSavingDeliverySettings ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <ActivityIndicator color="#ffffff" size="small" />
+                      <Text style={styles.saveBtnText}>Saving Delivery Settings...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.saveBtnText}>Save Delivery & Payment Settings</Text>
+                  )}
+                </TouchableOpacity>
               </View>
 
               {/* 4. Printer Settings */}

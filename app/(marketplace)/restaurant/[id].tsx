@@ -275,7 +275,13 @@ export default function RestaurantMenuScreen() {
           ratingCount="50+ reviews"
           estimatedTime={profile?.estimated_delivery_minutes || 35}
           minOrder={profile?.minimum_order_value || 0}
-          deliveryFee="₹15"
+          deliveryFee={
+            Number(profile?.delivery_charge_base || 0) === 0
+              ? 'FREE'
+              : Number(profile?.free_delivery_above || 0) > 0
+              ? `₹${profile?.delivery_charge_base} (Free > ₹${profile?.free_delivery_above})`
+              : `₹${profile?.delivery_charge_base}`
+          }
           isOpen={isOpen}
         />
 

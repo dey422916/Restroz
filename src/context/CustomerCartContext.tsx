@@ -10,6 +10,12 @@ interface RestaurantTaxInfo {
   cgst_rate?: number;
   sgst_rate?: number;
   default_tax_rate?: number;
+  delivery_charge_base?: number;
+  free_delivery_above?: number;
+  enable_cod?: boolean;
+  delivery_payment_qr_url?: string;
+  delivery_upi_id?: string;
+  delivery_sample_screenshot_url?: string;
 }
 
 interface CartConflictModalState {
@@ -75,7 +81,7 @@ export const CustomerCartProvider: React.FC<{ children: React.ReactNode }> = ({ 
     }
 
     let isMounted = true;
-    // Fetch public tax info for the restaurant
+    // Fetch public tax and delivery info for the restaurant
     settingsService.getPublicRestaurantInfo(restaurantId)
       .then((info) => {
         if (isMounted && info) {
@@ -87,11 +93,17 @@ export const CustomerCartProvider: React.FC<{ children: React.ReactNode }> = ({ 
             cgst_rate: info.cgst_rate,
             sgst_rate: info.sgst_rate,
             default_tax_rate: info.default_tax_rate,
+            delivery_charge_base: Number(info.delivery_charge_base || 0),
+            free_delivery_above: Number(info.free_delivery_above || 0),
+            enable_cod: info.enable_cod ?? true,
+            delivery_payment_qr_url: info.delivery_payment_qr_url || '',
+            delivery_upi_id: info.delivery_upi_id || '',
+            delivery_sample_screenshot_url: info.delivery_sample_screenshot_url || '',
           });
         }
       })
       .catch((err) => {
-        console.warn('Could not load restaurant tax info for cart:', err);
+        console.warn('Could not load restaurant tax and delivery info for cart:', err);
       });
 
     return () => {
@@ -173,7 +185,13 @@ export const CustomerCartProvider: React.FC<{ children: React.ReactNode }> = ({ 
       totalTax = Math.round((cgstAmt + sgstAmt) * 100) / 100;
     }
 
-    const fee = 0; // Flat or waived delivery fee (FREE)
+    // Delivery Fee calculation:
+    // If subtotal >= free_delivery_above and free_delivery_above > 0 -> FREE (0)
+    // Otherwise -> delivery_charge_base
+    const freeAbove = Number(taxInfo?.free_delivery_above || 0);
+    const baseCharge = Number(taxInfo?.delivery_charge_base || 0);
+    const fee = (freeAbove > 0 && roundedSubtotal >= freeAbove) ? 0 : baseCharge;
+
     const gross = Math.round((taxable + totalTax + fee) * 100) / 100;
     const payable = Math.max(0, gross);
 
@@ -208,6 +226,12 @@ export const CustomerCartProvider: React.FC<{ children: React.ReactNode }> = ({ 
     payableAmount,
     isGstEnabled,
     taxRate,
+    delivery_charge_base: taxInfo?.delivery_charge_base,
+    free_delivery_above: taxInfo?.free_delivery_above,
+    enable_cod: taxInfo?.enable_cod,
+    delivery_payment_qr_url: taxInfo?.delivery_payment_qr_url,
+    delivery_upi_id: taxInfo?.delivery_upi_id,
+    delivery_sample_screenshot_url: taxInfo?.delivery_sample_screenshot_url,
   };
 
   const executeAdd = (

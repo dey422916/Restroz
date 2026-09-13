@@ -2447,13 +2447,31 @@ export default function OrdersScreen() {
                       </Text>
                     </View>
 
+                    {viewOrderModal.payment_method ? (
+                      <View style={styles.billRow}>
+                        <Text><Text style={{ fontWeight: '700' }}>Payment Mode:</Text> {viewOrderModal.payment_method.toUpperCase()}</Text>
+                      </View>
+                    ) : null}
+
+                    {viewOrderModal.payment_proof_url ? (
+                      <View style={{ marginVertical: 8, padding: 10, backgroundColor: '#eff6ff', borderRadius: 8, borderWidth: 1, borderColor: '#bfdbfe' }}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#1e40af', marginBottom: 6 }}>
+                          📷 Customer Payment Screenshot Proof:
+                        </Text>
+                        <Image
+                          source={{ uri: viewOrderModal.payment_proof_url }}
+                          style={{ width: '100%', height: 220, borderRadius: 6, backgroundColor: '#ffffff' }}
+                          resizeMode="contain"
+                        />
+                      </View>
+                    ) : null}
+
                     <View style={{ borderTopWidth: 1, borderColor: '#cbd5e1', marginVertical: 8 }} />
 
                     {(viewOrderModal.items || []).map((itm, i) => (
                       <View key={itm.id || i} style={styles.billRow}>
                         <Text>
                           {itm.quantity}x {itm.product_name}
-                          {isTaxInvoice ? ` (${itm.hsn_code || '996331'})` : ''}
                         </Text>
                         <Text style={{ fontWeight: 'bold' }}>
                           {formatCurrency(Number(itm.total) || Number((itm as any).total_price) || Number(itm.subtotal) || ((Number(itm.unit_price) || 0) * (Number(itm.quantity) || 1)))}

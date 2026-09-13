@@ -443,6 +443,17 @@ export default function CustomerOrderDetailsScreen() {
                     {order.payment_status === 'paid' ? 'PAID ✅' : 'UNPAID'})
                   </Text>
                 </View>
+
+                {order.payment_proof_url ? (
+                  <View style={[styles.infoBlock, { marginTop: 8 }]}>
+                    <Text style={styles.infoLabel}>Payment Screenshot Proof</Text>
+                    <Image
+                      source={{ uri: order.payment_proof_url }}
+                      style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 4, backgroundColor: '#F1F5F9' }}
+                      resizeMode="contain"
+                    />
+                  </View>
+                ) : null}
               </View>
 
               {/* Status Timeline */}

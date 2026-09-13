@@ -246,15 +246,6 @@ export const marketplaceService = {
     };
   },
 
-  // In-memory cache for restaurant menus (30s TTL)
-  clearRestaurantMenuCache(restaurantId?: string) {
-    if (restaurantId) {
-      delete cachedRestaurantMenus[restaurantId];
-    } else {
-      Object.keys(cachedRestaurantMenus).forEach((k) => delete cachedRestaurantMenus[k]);
-    }
-  },
-
   // 3. Get Restaurant Public Menu (Categories + Active/Available Products with 30s in-memory caching)
   async getRestaurantMenu(
     restaurantId: string,
@@ -609,6 +600,7 @@ export const marketplaceService = {
           p_payment_method: payload.payment_method,
           p_coupon_code: payload.coupon_code || null,
           p_delivery_notes: effectiveDeliveryNotes,
+          p_payment_proof_url: payload.payment_proof_url || null,
         }
       );
 
@@ -689,6 +681,21 @@ export const marketplaceService = {
       const resolvedTaxRate = isGstEnabled
         ? Number(restSettings?.default_tax_rate !== undefined ? restSettings.default_tax_rate : (restSettings?.tax_rate !== undefined ? restSettings.tax_rate : (pubInfo?.default_tax_rate !== undefined ? pubInfo.default_tax_rate : (pubInfo?.tax_rate !== undefined ? pubInfo.tax_rate : 5.0))))
         : 0;
+
+      // Authoritative COD and Payment Proof Validation
+      const enableCod = restSettings?.enable_cod !== undefined
+        ? Boolean(restSettings.enable_cod)
+        : (pubInfo?.enable_cod !== undefined ? Boolean(pubInfo.enable_cod) : ((pubProf as any)?.enable_cod ?? true));
+
+      if (payload.payment_method === 'cod' && enableCod === false) {
+        throw new Error('Cash on Delivery (COD) is not available for this restaurant.');
+      }
+
+      if (payload.payment_method === 'online') {
+        if (!payload.payment_proof_url || !payload.payment_proof_url.trim()) {
+          throw new Error('Please upload your payment screenshot before placing the order.');
+        }
+      }
 
       let subtotal = 0;
       const orderItemsToInsert: any[] = [];
@@ -783,21 +790,15 @@ export const marketplaceService = {
         }
       }
 
-      // 2. Deduct product stock after coupon validation passes
-      for (const item of payload.items) {
-        const prod = prods.find((p) => p.id === item.product_id);
-        if (prod && prod.stock_quantity !== null && prod.stock_quantity !== undefined) {
-          await supabase
-            .from('products')
-            .update({ stock_quantity: Math.max(0, prod.stock_quantity - item.quantity) })
-            .eq('id', prod.id);
-        }
-      }
+      // 2. Authoritative Delivery Fee calculation
+      const freeDeliveryAbove = Number(restSettings?.free_delivery_above !== undefined ? restSettings.free_delivery_above : (pubInfo?.free_delivery_above !== undefined ? pubInfo.free_delivery_above : ((pubProf as any)?.free_delivery_above || 0)));
+      const deliveryChargeBase = Number(restSettings?.delivery_charge_base !== undefined ? restSettings.delivery_charge_base : (pubInfo?.delivery_charge_base !== undefined ? pubInfo.delivery_charge_base : ((pubProf as any)?.delivery_charge_base || 0)));
+      const authoritativeDeliveryFee = (freeDeliveryAbove > 0 && subtotal >= freeDeliveryAbove) ? 0 : deliveryChargeBase;
 
       const calc = calculateOrderTotals({
         items: orderItemsToInsert,
         couponDiscount: serverCouponDiscount,
-        deliveryCharge: 0,
+        deliveryCharge: authoritativeDeliveryFee,
         isGstEnabled,
         taxRate: resolvedTaxRate,
       });
@@ -842,6 +843,8 @@ export const marketplaceService = {
           round_off: roundOff,
           grand_total: grandTotal,
           payable_amount: payableAmount,
+          payment_method: payload.payment_method,
+          payment_proof_url: payload.payment_proof_url || null,
           payment_status: 'unpaid',
           notes: payload.delivery_notes || `Customer Online Order [MARKETPLACE] (${payload.payment_method.toUpperCase()})`,
           created_by: user.id,

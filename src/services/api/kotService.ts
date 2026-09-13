@@ -4,6 +4,7 @@ import { settingsService } from './settingsService';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import { auditService } from './auditService';
 import { clearOrdersCache } from './ordersCache';
+import { restaurantService } from './restaurantService';
 
 // High-performance in-memory cache for KOTs per tenant (10s TTL)
 const inMemoryKotsCache: Record<string, { timestamp: number; data: KOT[] }> = {};

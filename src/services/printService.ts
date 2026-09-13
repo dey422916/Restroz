@@ -174,19 +174,33 @@ export const printService = {
    * Matches the official KOT reference specification with responsive layout per paper size.
    */
   async printKotThermal(order: Order, settings: RestaurantSettings, kot?: KOT, isReprint: boolean = false): Promise<void> {
-    const activeKot = kot || (order.kots && order.kots[0]);
-    let kotNum = activeKot?.kot_number || 'KOT-001';
+    const activeKot = kot;
+    let kotNum = activeKot?.kot_number;
+    if (!kotNum) {
+      if (order.kots && order.kots.length > 1) {
+        kotNum = order.kots.map((k) => k.kot_number).filter(Boolean).join(', ');
+      } else if (order.kots && order.kots.length === 1) {
+        kotNum = order.kots[0]?.kot_number;
+      }
+      if (!kotNum) {
+        kotNum = 'KOT-001';
+      }
+    }
 
-    const formattedOrderDateTime = formatOrderDateTime(activeKot?.created_at || order.created_at);
+    const formattedOrderDateTime = formatOrderDateTime(activeKot?.created_at || order.updated_at || order.created_at);
 
     const paperSize = settings.kot_paper_size || '80mm';
     const showReprintBanner = isReprint || Boolean(activeKot?.kitchen_notes && activeKot.kitchen_notes.includes('[AUTO_PRINTED]'));
-    const isSupplementary =
-      Boolean(kotNum.includes('SUP')) ||
-      Boolean(activeKot?.kitchen_notes && activeKot.kitchen_notes.toUpperCase().includes('SUP')) ||
-      Boolean(order.kots && order.kots.length > 1 && activeKot?.id !== order.kots[0]?.id);
+    const isSupplementary = activeKot
+      ? Boolean(kotNum.includes('SUP')) ||
+        Boolean(activeKot.kitchen_notes && activeKot.kitchen_notes.toUpperCase().includes('SUP')) ||
+        Boolean(order.kots && order.kots.length > 1 && activeKot.id !== order.kots[0]?.id)
+      : false;
 
-    // Print ONLY the specific items for this KOT (for delta KOTs, only the newly added/increased items)
+    // Print items for KOT:
+    // 1. If a specific KOT was provided (e.g. delta KOT on edit or specific reprint), print that KOT's items.
+    // 2. If no specific KOT was provided (e.g. viewing/printing KOT Slip from the order view modal or table view),
+    //    print ALL items currently present in the updated order.
     const itemsToPrint: Array<{ name: string; quantity: number; notes?: string }> = [];
 
     if (activeKot && activeKot.items && activeKot.items.length > 0) {
@@ -204,6 +218,19 @@ export const printService = {
           quantity: oi.quantity,
           notes: oi.item_notes,
         });
+      });
+    } else if (order.kots && order.kots.length > 0) {
+      // Fallback: aggregate items across all kots if order.items is not populated
+      order.kots.forEach((k) => {
+        if (k.items) {
+          k.items.forEach((ki) => {
+            itemsToPrint.push({
+              name: ki.product_name.replace('[CANCELLED]', '').trim(),
+              quantity: ki.quantity,
+              notes: ki.notes,
+            });
+          });
+        }
       });
     }
 

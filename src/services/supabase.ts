@@ -5,13 +5,43 @@ import { AppState, Platform } from 'react-native';
 const PROD_SUPABASE_PROJECT_ID = 'szpjsibrwxegaopcaukb';
 const PROD_SUPABASE_URL = 'https://szpjsibrwxegaopcaukb.supabase.co';
 
-export const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-export const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
-export const APP_ENV = process.env.EXPO_PUBLIC_APP_ENV || (typeof __DEV__ !== 'undefined' && __DEV__ ? 'development' : 'production');
+// Sanitize inputs (strip whitespace and accidental surrounding quotes)
+const rawUrl = (process.env.EXPO_PUBLIC_SUPABASE_URL || '').trim().replace(/^["']|["']$/g, '');
+const rawAnonKey = (process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '').trim().replace(/^["']|["']$/g, '');
+const rawAppEnv = (process.env.EXPO_PUBLIC_APP_ENV || (typeof __DEV__ !== 'undefined' && __DEV__ ? 'development' : 'production')).trim().replace(/^["']|["']$/g, '');
 
+export const SUPABASE_URL = rawUrl;
+export const SUPABASE_ANON_KEY = rawAnonKey;
+export const APP_ENV = rawAppEnv;
+
+// Startup Validation & Diagnostic Checks
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   throw new Error(
-    'Missing required Supabase environment variables: EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY must be defined in your environment (.env.development or .env.production).'
+    '[RESTROZ STARTUP ERROR] Missing required Supabase environment variables: EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY must be defined in your environment.'
+  );
+}
+
+if (
+  SUPABASE_URL.includes('<') ||
+  SUPABASE_URL.includes('>') ||
+  SUPABASE_URL.includes('your-') ||
+  SUPABASE_ANON_KEY.includes('<') ||
+  SUPABASE_ANON_KEY.includes('>') ||
+  SUPABASE_ANON_KEY.includes('your-')
+) {
+  throw new Error(
+    '[RESTROZ CONFIG ERROR] EXPO_PUBLIC_SUPABASE_URL or EXPO_PUBLIC_SUPABASE_ANON_KEY contains placeholder values. Ensure eas.json or .env contains valid Supabase project credentials.'
+  );
+}
+
+try {
+  const parsed = new URL(SUPABASE_URL);
+  if (!parsed.protocol || !['https:', 'http:'].includes(parsed.protocol) || !parsed.hostname) {
+    throw new Error('Invalid protocol or hostname');
+  }
+} catch {
+  throw new Error(
+    '[RESTROZ CONFIG ERROR] EXPO_PUBLIC_SUPABASE_URL is malformed. Expected valid absolute HTTPS URL (e.g. https://<project-ref>.supabase.co).'
   );
 }
 

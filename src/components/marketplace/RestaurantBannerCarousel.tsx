@@ -198,7 +198,7 @@ export const RestaurantBannerCarousel: React.FC<RestaurantBannerCarouselProps> =
           key={`hero-img-${currentIndex}-${currentImageUri}`}
           source={currentImageUri}
           type="banner"
-          style={[StyleSheet.absoluteFillObject, styles.slideImage]}
+          style={[StyleSheet.absoluteFill, styles.slideImage]}
           contentFit="cover"
         />
 
@@ -286,7 +286,11 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   darkGradientOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: 'rgba(15, 23, 42, 0.42)',
   },
   overlayContent: {

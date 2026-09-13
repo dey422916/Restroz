@@ -18,6 +18,7 @@ import { productService } from '../../src/services/api/productService';
 import { categoryService } from '../../src/services/api/categoryService';
 import { settingsService } from '../../src/services/api/settingsService';
 import { dayRegisterService, getLocalRestaurantDate } from '../../src/services/api/dayRegisterService';
+import { subscriptionGuardService } from '../../src/services/api/subscriptionGuardService';
 import { analyticsService } from '../../src/services/api/analyticsService';
 import { reportExportService, ReportType } from '../../src/services/api/reportExportService';
 import { printService } from '../../src/services/printService';
@@ -251,6 +252,20 @@ export default function DashboardScreen() {
       return matchesSearch && matchesCat && matchesFoodType;
     });
   }, [itemSalesData.items, itemSearch, selectedCategoryFilter, selectedFoodTypeFilter]);
+
+  // Check active subscription before opening modal
+  const handleInitiateOpenRegister = async () => {
+    if (activeRestaurantId && isSupabaseConfigured) {
+      const hasSub = await subscriptionGuardService.hasActiveSubscription(activeRestaurantId);
+      if (!hasSub) {
+        const msg = "You don't have any active subscription";
+        if (Platform.OS === 'web') window.alert(msg);
+        else Alert.alert('Subscription Required', msg);
+        return;
+      }
+    }
+    setShowOpenModal(true);
+  };
 
   // Handle Open Register
   const handleOpenRegisterSubmit = async () => {
@@ -516,7 +531,7 @@ export default function DashboardScreen() {
           <TouchableOpacity
             testID="dashboard-open-register-btn"
             style={styles.compactOpenBtn}
-            onPress={() => setShowOpenModal(true)}
+            onPress={handleInitiateOpenRegister}
             activeOpacity={0.85}
           >
             <Text style={styles.compactOpenBtnText}>Open Register</Text>
@@ -1154,7 +1169,7 @@ export default function DashboardScreen() {
                   </View>
                   <TouchableOpacity
                     style={[styles.openRegBtn, isMobile && { width: '100%', alignItems: 'center' }]}
-                    onPress={() => setShowOpenModal(true)}
+                    onPress={handleInitiateOpenRegister}
                   >
                     <Text style={styles.openRegBtnText}>💵 Open Register Now</Text>
                   </TouchableOpacity>

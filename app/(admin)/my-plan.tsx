@@ -77,18 +77,26 @@ export default function MyPlanScreen() {
   const getStatusBadgeStyle = (status: string) => {
     switch (status) {
       case 'ACTIVE':
-        return { bg: '#dcfce7', text: '#15803d' };
+        return { bg: '#dcfce7', text: '#15803d', label: 'ACTIVE' };
       case 'TRIAL':
-        return { bg: '#e0e7ff', text: '#4338ca' };
+      case 'TRIALING':
+        return { bg: '#e0e7ff', text: '#4338ca', label: 'TRIAL' };
       case 'EXPIRED':
+        return { bg: '#fee2e2', text: '#b91c1c', label: 'EXPIRED' };
       case 'SUSPENDED':
-        return { bg: '#fee2e2', text: '#b91c1c' };
+        return { bg: '#fee2e2', text: '#b91c1c', label: 'SUSPENDED' };
+      case 'CANCELLED':
+        return { bg: '#fee2e2', text: '#b91c1c', label: 'CANCELLED' };
+      case 'NO_SUBSCRIPTION':
+      case 'NONE':
+        return { bg: '#fef3c7', text: '#b45309', label: 'NO ACTIVE PLAN' };
       default:
-        return { bg: '#f1f5f9', text: '#64748b' };
+        return { bg: '#f1f5f9', text: '#64748b', label: status || 'NONE' };
     }
   };
 
   const statusStyle = getStatusBadgeStyle(plan.status);
+  const isNoSubscription = plan.status === 'NO_SUBSCRIPTION' || plan.id === 'none';
 
   return (
     <ScrollView
@@ -103,23 +111,33 @@ export default function MyPlanScreen() {
           <Text style={styles.headerSub}>{activeRestaurant?.name || 'Restaurant'}</Text>
         </View>
         <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
-          <Text style={[styles.statusText, { color: statusStyle.text }]}>{plan.status}</Text>
+          <Text style={[styles.statusText, { color: statusStyle.text }]}>{statusStyle.label}</Text>
         </View>
       </View>
 
       {/* Plan Card */}
       <View style={styles.planCard}>
         <View style={styles.planCardTop}>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={styles.planName}>{plan.name}</Text>
             <Text style={styles.planPricing}>
-              ₹{plan.price.toLocaleString('en-IN')} / {plan.billing_cycle}
+              {isNoSubscription
+                ? 'No plan assigned (Pending Super Admin assignment)'
+                : `₹${plan.price.toLocaleString('en-IN')} / ${plan.billing_cycle}`}
             </Text>
           </View>
           <TouchableOpacity style={styles.upgradeBtn} onPress={handleContactUpgrade}>
-            <Text style={styles.upgradeBtnText}>✨ Upgrade Plan</Text>
+            <Text style={styles.upgradeBtnText}>✨ {isNoSubscription ? 'Request Plan' : 'Upgrade Plan'}</Text>
           </TouchableOpacity>
         </View>
+
+        {isNoSubscription && (
+          <View style={{ marginTop: 8, padding: 8, backgroundColor: '#fef3c7', borderRadius: 6, borderWidth: 1, borderColor: '#fde68a' }}>
+            <Text style={{ fontSize: 12, color: '#92400e', lineHeight: 16 }}>
+              ⚠️ No active subscription plan has been assigned to this restaurant yet. Please contact the Super Admin platform administrator to assign a plan.
+            </Text>
+          </View>
+        )}
 
         <View style={styles.planDatesRow}>
           <View style={styles.dateCol}>
@@ -131,7 +149,7 @@ export default function MyPlanScreen() {
           <View style={styles.dateCol}>
             <Text style={styles.dateLabel}>Expiry / Renewal</Text>
             <Text style={styles.dateValue}>
-              {plan.end_date ? new Date(plan.end_date).toLocaleDateString() : 'Lifetime / Active'}
+              {plan.end_date ? new Date(plan.end_date).toLocaleDateString() : (isNoSubscription ? 'N/A' : 'Lifetime / Active')}
             </Text>
           </View>
         </View>
@@ -145,10 +163,12 @@ export default function MyPlanScreen() {
         <View style={styles.usageHeader}>
           <Text style={styles.usageLabel}>👥 Staff Members</Text>
           <Text style={styles.usageNumbers}>
-            {staff.current} / {staff.is_unlimited ? 'Unlimited' : staff.max}
+            {isNoSubscription
+              ? `${staff.current} / 0 (No Plan)`
+              : `${staff.current} / ${staff.is_unlimited ? 'Unlimited' : staff.max}`}
           </Text>
         </View>
-        {!staff.is_unlimited && (
+        {!staff.is_unlimited && !isNoSubscription && (
           <View style={styles.progressBarBg}>
             <View
               style={[
@@ -160,7 +180,9 @@ export default function MyPlanScreen() {
           </View>
         )}
         <Text style={styles.usageHint}>
-          {staff.is_unlimited
+          {isNoSubscription
+            ? 'Staff account creation is locked until an active subscription plan is assigned.'
+            : staff.is_unlimited
             ? 'You have unlimited staff slots.'
             : staff.max !== null && staff.current >= staff.max
               ? `Plan limit reached (${staff.percentage}% utilized) • Please upgrade or contact Super Admin.`
@@ -173,10 +195,12 @@ export default function MyPlanScreen() {
         <View style={styles.usageHeader}>
           <Text style={styles.usageLabel}>🪑 Dining Tables</Text>
           <Text style={styles.usageNumbers}>
-            {tables.current} / {tables.is_unlimited ? 'Unlimited' : tables.max}
+            {isNoSubscription
+              ? `${tables.current} / 0 (No Plan)`
+              : `${tables.current} / ${tables.is_unlimited ? 'Unlimited' : tables.max}`}
           </Text>
         </View>
-        {!tables.is_unlimited && (
+        {!tables.is_unlimited && !isNoSubscription && (
           <View style={styles.progressBarBg}>
             <View
               style={[
@@ -188,7 +212,9 @@ export default function MyPlanScreen() {
           </View>
         )}
         <Text style={styles.usageHint}>
-          {tables.is_unlimited
+          {isNoSubscription
+            ? 'Table creation is locked until an active subscription plan is assigned.'
+            : tables.is_unlimited
             ? 'You have unlimited dining tables.'
             : tables.max !== null && tables.current >= tables.max
               ? `Plan limit reached (${tables.percentage}% utilized) • Please upgrade or contact Super Admin.`
@@ -201,22 +227,26 @@ export default function MyPlanScreen() {
         <View style={styles.usageHeader}>
           <Text style={styles.usageLabel}>🍲 Menu Products</Text>
           <Text style={styles.usageNumbers}>
-            {products.current} / {products.is_unlimited ? 'Unlimited' : products.max}
+            {isNoSubscription
+              ? `${products.current} / 0 (No Plan)`
+              : `${products.current} / ${products.is_unlimited ? 'Unlimited' : products.max}`}
           </Text>
         </View>
-        {!products.is_unlimited && (
+        {!products.is_unlimited && !isNoSubscription && (
           <View style={styles.progressBarBg}>
             <View
               style={[
                 styles.progressBarFill,
                 { width: `${Math.min(100, products.percentage)}%` },
-                products.percentage >= 80 ? styles.progressWarning : styles.progressNormal,
+                staff.percentage >= 80 ? styles.progressWarning : styles.progressNormal,
               ]}
             />
           </View>
         )}
         <Text style={styles.usageHint}>
-          {products.is_unlimited
+          {isNoSubscription
+            ? 'Product creation is locked until an active subscription plan is assigned.'
+            : products.is_unlimited
             ? 'You have unlimited menu items.'
             : products.max !== null && products.current >= products.max
               ? `Plan limit reached (${products.percentage}% utilized) • Please upgrade or contact Super Admin.`

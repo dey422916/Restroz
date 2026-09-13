@@ -4,6 +4,7 @@ import { supabase, isSupabaseConfigured } from '../supabase';
 import { auditService } from './auditService';
 import { orderService } from './orderService';
 import { restaurantService } from './restaurantService';
+import { subscriptionGuardService } from './subscriptionGuardService';
 
 const STORAGE_KEY_REGISTERS = '@kullad_chai_day_registers';
 
@@ -220,6 +221,13 @@ export const dayRegisterService = {
     restaurant_id?: string;
   }): Promise<DayRegister> {
     const targetRestId = params.restaurant_id || (await restaurantService.getDefaultRestaurant())?.id || '';
+    if (targetRestId && isSupabaseConfigured) {
+      const hasSub = await subscriptionGuardService.hasActiveSubscription(targetRestId);
+      if (!hasSub) {
+        throw new Error("You don't have any active subscription");
+      }
+    }
+
     const registers = await this.getRegisters(targetRestId);
 
     // Rule: Allow ONLY ONE open register per restaurant scope at a time

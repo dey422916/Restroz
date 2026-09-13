@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  Image,
   useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -189,7 +190,11 @@ export default function SuperAdminDashboardScreen() {
                   activeOpacity={0.7}
                 >
                   <View style={styles.restAvatar}>
-                    <Text style={styles.restAvatarText}>{r.name.slice(0, 1).toUpperCase()}</Text>
+                    {r.logo_url ? (
+                      <Image source={{ uri: r.logo_url }} style={styles.restAvatarImage} />
+                    ) : (
+                      <Text style={styles.restAvatarText}>{r.name.slice(0, 1).toUpperCase()}</Text>
+                    )}
                   </View>
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={styles.restName} numberOfLines={1}>
@@ -432,13 +437,21 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F1F5F9',
   },
   restAvatar: {
-    width: 36,
-    height: 36,
+    width: 38,
+    height: 38,
     borderRadius: 8,
     backgroundColor: '#EEF2F6',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  restAvatarImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   restAvatarText: {
     fontSize: 15,

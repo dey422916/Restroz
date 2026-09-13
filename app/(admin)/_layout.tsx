@@ -80,7 +80,6 @@ export default function AdminLayout() {
     { label: '🎟️ Coupons', route: '/(admin)/coupons', match: ['/coupons', '/(admin)/coupons'], perm: 'can_manage_coupons' },
     { label: '👥 Staff & Roles', route: '/(admin)/staff', match: ['/staff', '/(admin)/staff'], perm: 'can_manage_staff' },
     { label: '💎 My Plan', route: '/(admin)/my-plan', match: ['/my-plan', '/(admin)/my-plan'], perm: 'can_view_settings' },
-    { label: '📥 CSV Import', route: '/(admin)/bulk-import', match: ['/bulk-import', '/(admin)/bulk-import'], perm: 'can_manage_products' },
     { label: '⚙️ Settings', route: '/(admin)/settings', match: ['/settings', '/(admin)/settings'], perm: 'can_view_settings' },
   ];
 

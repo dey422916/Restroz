@@ -20,10 +20,66 @@ export const subscriptionGuardService = {
           supabase.from('products').select('*', { count: 'exact', head: true }).eq('restaurant_id', restaurantId).eq('is_active', true),
         ]);
 
-        const plan = subData?.plan || {};
-        const staffCount = staffRes.count !== null && staffRes.count !== undefined ? staffRes.count : 1;
-        const tablesCount = tablesRes.count !== null && tablesRes.count !== undefined ? tablesRes.count : 1;
-        const prodsCount = prodsRes.count !== null && prodsRes.count !== undefined ? prodsRes.count : 1;
+        const staffCount = staffRes.count !== null && staffRes.count !== undefined ? staffRes.count : 0;
+        const tablesCount = tablesRes.count !== null && tablesRes.count !== undefined ? tablesRes.count : 0;
+        const prodsCount = prodsRes.count !== null && prodsRes.count !== undefined ? prodsRes.count : 0;
+
+        if (!subData || !subData.plan) {
+          return {
+            restaurant_id: restaurantId,
+            plan: {
+              id: 'none',
+              name: 'No Active Subscription',
+              code: 'NONE',
+              status: 'NO_SUBSCRIPTION' as any,
+              start_date: undefined,
+              end_date: undefined,
+              price: 0,
+              billing_cycle: 'none',
+            },
+            staff: {
+              current: staffCount,
+              max: 0,
+              is_unlimited: false,
+              percentage: 0,
+            },
+            tables: {
+              current: tablesCount,
+              max: 0,
+              is_unlimited: false,
+              percentage: 0,
+            },
+            products: {
+              current: prodsCount,
+              max: 0,
+              is_unlimited: false,
+              percentage: 0,
+            },
+            features: {
+              qr_ordering: false,
+              inventory: false,
+              reports: false,
+              advanced_analytics: false,
+              coupons: false,
+              delivery_marketplace: false,
+              split_bill: false,
+              csv_import: false,
+            },
+          };
+        }
+
+        const plan = subData.plan;
+        const now = new Date();
+        const isExpired = subData.end_date ? new Date(subData.end_date) < now : false;
+        const isSuspended = subData.status === 'suspended';
+        const isCancelled = subData.status === 'cancelled';
+        const effectiveStatus = isSuspended
+          ? 'SUSPENDED'
+          : isCancelled
+          ? 'CANCELLED'
+          : isExpired
+          ? 'EXPIRED'
+          : (subData.status || 'ACTIVE').toUpperCase();
 
         const maxStaff = plan.max_staff !== null && plan.max_staff !== undefined && plan.max_staff > 0 ? plan.max_staff : null;
         const maxTables = plan.max_tables !== null && plan.max_tables !== undefined && plan.max_tables > 0 ? plan.max_tables : null;
@@ -32,14 +88,14 @@ export const subscriptionGuardService = {
         return {
           restaurant_id: restaurantId,
           plan: {
-            id: plan.id || 'plan-fallback',
-            name: plan.name || 'Enterprise Plan',
-            code: plan.code || 'ENTERPRISE',
-            status: (subData?.status || 'ACTIVE').toUpperCase() as any,
-            start_date: subData?.start_date,
-            end_date: subData?.end_date,
-            price: plan.price || subData?.amount || 19999,
-            billing_cycle: plan.billing_cycle || 'yearly',
+            id: plan.id,
+            name: plan.name,
+            code: plan.code || 'PLAN',
+            status: effectiveStatus as any,
+            start_date: subData.start_date,
+            end_date: subData.end_date,
+            price: plan.price ?? subData.amount ?? 0,
+            billing_cycle: plan.billing_cycle || 'monthly',
           },
           staff: {
             current: staffCount,
@@ -79,25 +135,25 @@ export const subscriptionGuardService = {
     return {
       restaurant_id: restaurantId,
       plan: {
-        id: 'plan-fallback',
-        name: 'Enterprise Plan',
-        code: 'ENTERPRISE',
-        status: 'ACTIVE',
-        price: 9999,
-        billing_cycle: 'yearly',
+        id: 'none',
+        name: 'No Active Subscription',
+        code: 'NONE',
+        status: 'NO_SUBSCRIPTION' as any,
+        price: 0,
+        billing_cycle: 'none',
       },
-      staff: { current: 1, max: null, is_unlimited: true, percentage: 0 },
-      tables: { current: 10, max: null, is_unlimited: true, percentage: 0 },
-      products: { current: 25, max: null, is_unlimited: true, percentage: 0 },
+      staff: { current: 0, max: 0, is_unlimited: false, percentage: 0 },
+      tables: { current: 0, max: 0, is_unlimited: false, percentage: 0 },
+      products: { current: 0, max: 0, is_unlimited: false, percentage: 0 },
       features: {
-        qr_ordering: true,
-        inventory: true,
-        reports: true,
-        advanced_analytics: true,
-        coupons: true,
-        delivery_marketplace: true,
-        split_bill: true,
-        csv_import: true,
+        qr_ordering: false,
+        inventory: false,
+        reports: false,
+        advanced_analytics: false,
+        coupons: false,
+        delivery_marketplace: false,
+        split_bill: false,
+        csv_import: false,
       },
     };
   },
@@ -210,5 +266,29 @@ export const subscriptionGuardService = {
     }
 
     return true;
+  },
+
+  // 4. Check if restaurant has an active subscription
+  async hasActiveSubscription(restaurantId: string): Promise<boolean> {
+    if (!isSupabaseConfigured || !restaurantId) return true;
+    try {
+      const { data: subData } = await supabase
+        .from('restaurant_subscriptions')
+        .select('*, plan:subscription_plans(*)')
+        .eq('restaurant_id', restaurantId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!subData || !subData.plan) return false;
+
+      const rawStatus = (subData.status || '').toLowerCase().trim();
+      const isExpired = subData.end_date ? new Date(subData.end_date) < new Date() : false;
+
+      return ['active', 'trial', 'trialing'].includes(rawStatus) && !isExpired;
+    } catch (err: any) {
+      console.warn('hasActiveSubscription check error:', err?.message);
+      return false;
+    }
   },
 };

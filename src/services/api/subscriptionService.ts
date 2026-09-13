@@ -19,12 +19,12 @@ export const subscriptionService = {
   async checkTenantAccess(restaurantId: string): Promise<SubscriptionAccessStatus> {
     if (!isSupabaseConfigured) {
       return {
-        isAllowed: true,
-        status: 'active',
-        restaurantStatus: 'ACTIVE',
-        planName: 'Enterprise Plan',
-        daysRemaining: 365,
-        endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+        isAllowed: false,
+        status: 'none',
+        restaurantStatus: 'INACTIVE',
+        planName: 'No Active Plan',
+        daysRemaining: 0,
+        endDate: null,
       };
     }
 
@@ -36,15 +36,26 @@ export const subscriptionService = {
         });
 
         if (!rpcErr && rpcRes && typeof rpcRes === 'object') {
-          const hasSub = (rpcRes as any).is_allowed ?? (rpcRes as any).is_active ?? (rpcRes as any).has_subscription;
+          const hasSub = (rpcRes as any).has_subscription ?? (rpcRes as any).is_active;
+          const isAllowed = Boolean((rpcRes as any).is_active ?? hasSub);
+          if (hasSub === false || (rpcRes as any).status === 'none') {
+            return {
+              isAllowed: false,
+              status: 'none',
+              restaurantStatus: (rpcRes as any).restaurant_status || 'ACTIVE',
+              planName: 'No Active Plan',
+              daysRemaining: 0,
+              endDate: null,
+              message: 'No active subscription plan assigned to this restaurant.',
+            };
+          }
           if (hasSub !== undefined) {
-            const isAllowed = Boolean(hasSub);
             return {
               isAllowed,
               status: (rpcRes as any).status || (isAllowed ? 'active' : 'none'),
               restaurantStatus: (rpcRes as any).restaurant_status || (isAllowed ? 'ACTIVE' : 'INACTIVE'),
-              planName: (rpcRes as any).plan_name || 'Standard Plan',
-              daysRemaining: typeof (rpcRes as any).days_left === 'number' ? (rpcRes as any).days_left : (typeof (rpcRes as any).days_remaining === 'number' ? (rpcRes as any).days_remaining : 30),
+              planName: (rpcRes as any).plan_name || (isAllowed ? 'Active Plan' : 'No Active Plan'),
+              daysRemaining: typeof (rpcRes as any).days_left === 'number' ? (rpcRes as any).days_left : (typeof (rpcRes as any).days_remaining === 'number' ? (rpcRes as any).days_remaining : (isAllowed ? 30 : 0)),
               endDate: (rpcRes as any).end_date || null,
               message: (rpcRes as any).message,
             };
@@ -94,27 +105,14 @@ export const subscriptionService = {
         .limit(1);
 
       if (subErr || !subs || subs.length === 0) {
-        // If restaurant is ACTIVE in directory but direct table select is restricted by Supabase RLS
-        // (e.g. for unauthenticated / anonymous QR diners), grant access to allow dine-in orders
-        if (restaurant.status === 'ACTIVE') {
-          return {
-            isAllowed: true,
-            status: 'active',
-            restaurantStatus: 'ACTIVE',
-            planName: 'Active Plan',
-            daysRemaining: 30,
-            endDate: null,
-          };
-        }
-
         return {
           isAllowed: false,
           status: 'none',
           restaurantStatus: restaurant.status as any,
-          planName: 'No Plan',
+          planName: 'No Active Plan',
           daysRemaining: 0,
           endDate: null,
-          message: `No active subscription plan found for "${restaurant.name}". Please subscribe to a SaaS plan to take orders.`,
+          message: `No active subscription plan assigned to "${restaurant.name}". Please assign a subscription plan from the Super Admin panel.`,
         };
       }
 
@@ -164,19 +162,20 @@ export const subscriptionService = {
         isAllowed: true,
         status: activeSub.status as any,
         restaurantStatus: restaurant.status as any,
-        planName: activeSub.plan?.name || 'Enterprise Plan',
+        planName: activeSub.plan?.name || 'Active Plan',
         daysRemaining,
         endDate: activeSub.end_date,
       };
     } catch (e: any) {
       console.warn('checkTenantAccess error:', e);
       return {
-        isAllowed: true,
-        status: 'active',
-        restaurantStatus: 'ACTIVE',
-        planName: 'Enterprise Plan',
-        daysRemaining: 365,
+        isAllowed: false,
+        status: 'none',
+        restaurantStatus: 'INACTIVE',
+        planName: 'No Active Plan',
+        daysRemaining: 0,
         endDate: null,
+        message: 'Could not verify restaurant subscription status.',
       };
     }
   },

@@ -348,10 +348,22 @@ export const mockStorage = {
     AsyncStorage.setItem(TABLES_KEY, JSON.stringify(sorted)).catch(() => {});
   },
 
-  getCoupons: (): Coupon[] => inMemoryData[COUPONS_KEY],
-  saveCoupons: (coups: Coupon[]) => {
-    inMemoryData[COUPONS_KEY] = coups;
-    AsyncStorage.setItem(COUPONS_KEY, JSON.stringify(coups)).catch(() => {});
+  getCoupons: (restaurantId?: string): Coupon[] => {
+    const list: Coupon[] = inMemoryData[COUPONS_KEY] || [];
+    if (!restaurantId) return list;
+    return list.filter((c: Coupon) => c.restaurant_id === restaurantId);
+  },
+  saveCoupons: (coups: Coupon[], restaurantId?: string) => {
+    if (!restaurantId) {
+      inMemoryData[COUPONS_KEY] = coups;
+      AsyncStorage.setItem(COUPONS_KEY, JSON.stringify(coups)).catch(() => {});
+      return;
+    }
+    const existing: Coupon[] = inMemoryData[COUPONS_KEY] || [];
+    const others = existing.filter((c) => c.restaurant_id && c.restaurant_id !== restaurantId);
+    const combined = [...others, ...coups];
+    inMemoryData[COUPONS_KEY] = combined;
+    AsyncStorage.setItem(COUPONS_KEY, JSON.stringify(combined)).catch(() => {});
   },
 
   getOrders: (restaurantId?: string): Order[] => {

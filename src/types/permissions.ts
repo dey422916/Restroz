@@ -47,11 +47,11 @@ export interface RestaurantPlanUsage {
     id: string;
     name: string;
     code: string;
-    status: 'ACTIVE' | 'TRIAL' | 'EXPIRED' | 'SUSPENDED' | 'CANCELLED' | 'INACTIVE';
+    status: 'ACTIVE' | 'TRIAL' | 'EXPIRED' | 'SUSPENDED' | 'CANCELLED' | 'INACTIVE' | 'NO_SUBSCRIPTION';
     start_date?: string;
     end_date?: string;
     price: number;
-    billing_cycle: 'monthly' | 'yearly';
+    billing_cycle: 'monthly' | 'yearly' | 'none';
   };
   staff: ResourceUsageMetric;
   tables: ResourceUsageMetric;

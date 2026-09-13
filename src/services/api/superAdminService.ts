@@ -218,13 +218,6 @@ export const superAdminService = {
       closing_time: '11:00 PM',
     }, { onConflict: 'restaurant_id' });
 
-    // Seed 4 demo tables, categories, and foods for immediate POS & ordering use
-    try {
-      await superAdminService.seedDemoRestaurantData(newRest.id, newRest.name, cleanSlug);
-    } catch (seedErr) {
-      console.warn('Demo data seeding error:', seedErr);
-    }
-
     return newRest;
   },
 
@@ -459,8 +452,10 @@ export const superAdminService = {
     if (!isSupabaseConfigured) throw new Error('Supabase is not configured.');
 
     const restUpdates: any = { ...updates };
-    const bannerUrl = updates.banner_url;
-    delete restUpdates.banner_url;
+    const bannerUrl = updates.banner_url !== undefined ? (updates.banner_url ? updates.banner_url.trim() : null) : undefined;
+    if (bannerUrl !== undefined) {
+      restUpdates.banner_url = bannerUrl;
+    }
 
     const { data, error } = await supabase
       .from('restaurants')
@@ -472,13 +467,20 @@ export const superAdminService = {
     if (error || !data) throw error || new Error('Failed to update restaurant.');
 
     if (bannerUrl !== undefined) {
-      await supabase
-        .from('restaurant_public_profiles')
-        .update({ banner_url: bannerUrl || null, updated_at: new Date().toISOString() })
-        .eq('restaurant_id', id);
+      try {
+        await supabase
+          .from('restaurant_public_profiles')
+          .upsert({
+            restaurant_id: id,
+            banner_url: bannerUrl,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'restaurant_id' });
+      } catch (profErr) {
+        console.warn('Sync banner to restaurant_public_profiles warning:', profErr);
+      }
     }
 
-    return { ...data, banner_url: bannerUrl };
+    return { ...data, banner_url: bannerUrl !== undefined ? (bannerUrl || undefined) : data.banner_url };
   },
 
   async updateRestaurantStatus(id: string, status: 'ACTIVE' | 'SUSPENDED' | 'INACTIVE'): Promise<void> {

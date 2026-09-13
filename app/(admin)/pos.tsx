@@ -32,6 +32,8 @@ import { getOrderSubtotal } from '../../src/utils/gst';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { printService } from '../../src/services/printService';
 import { dayRegisterService } from '../../src/services/api/dayRegisterService';
+import { subscriptionGuardService } from '../../src/services/api/subscriptionGuardService';
+import { isSupabaseConfigured } from '../../src/services/supabase';
 import { TableSelectorModal } from '../../src/components/pos/TableSelectorModal';
 import { SplitBillModal } from '../../src/components/pos/SplitBillModal';
 import { HoldOrdersModal } from '../../src/components/pos/HoldOrdersModal';
@@ -301,6 +303,15 @@ export default function PosScreen() {
     if (targetRestId) {
       const isOpen = await dayRegisterService.isRegisterOpen(targetRestId);
       if (!isOpen) {
+        if (isSupabaseConfigured) {
+          const hasSub = await subscriptionGuardService.hasActiveSubscription(targetRestId);
+          if (!hasSub) {
+            const msg = "You don't have any active subscription";
+            if (Platform.OS === 'web') window.alert(msg);
+            else Alert.alert('Subscription Required', msg);
+            return;
+          }
+        }
         setShowRegisterClosedModal(true);
         return;
       }
@@ -386,6 +397,15 @@ export default function PosScreen() {
     if (targetRestId) {
       const isOpen = await dayRegisterService.isRegisterOpen(targetRestId);
       if (!isOpen) {
+        if (isSupabaseConfigured) {
+          const hasSub = await subscriptionGuardService.hasActiveSubscription(targetRestId);
+          if (!hasSub) {
+            const msg = "You don't have any active subscription";
+            if (Platform.OS === 'web') window.alert(msg);
+            else Alert.alert('Subscription Required', msg);
+            return;
+          }
+        }
         setShowRegisterClosedModal(true);
         return;
       }

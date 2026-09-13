@@ -438,18 +438,18 @@ export default function SuperAdminRestaurantsScreen() {
             <View style={styles.mobileCardList}>
               {filteredRestaurants.map((r) => {
                 const sub = subscriptions[r.id];
-                const planName =
-                  sub?.plan?.name ||
-                  (r.id === 'a0000000-0000-0000-0000-000000000001'
-                    ? 'Enterprise Plan'
-                    : 'No Active Plan');
+                const planName = sub?.plan?.name || 'No Active Plan';
 
                 return (
                   <View key={r.id} style={styles.mobileCard}>
                     {/* Top Row: Avatar, Name & Status Badge */}
                     <View style={styles.mobileCardTop}>
                       <View style={styles.avatar}>
-                        <Text style={styles.avatarText}>{r.name.slice(0, 1).toUpperCase()}</Text>
+                        {r.logo_url ? (
+                          <Image source={{ uri: r.logo_url }} style={styles.avatarImage} />
+                        ) : (
+                          <Text style={styles.avatarText}>{r.name.slice(0, 1).toUpperCase()}</Text>
+                        )}
                       </View>
                       <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
                         <Text style={styles.restName} numberOfLines={1}>
@@ -579,7 +579,11 @@ export default function SuperAdminRestaurantsScreen() {
                       onPress={() => router.push(`/super-admin/restaurant/${r.id}` as any)}
                     >
                       <View style={styles.avatar}>
-                        <Text style={styles.avatarText}>{r.name.slice(0, 1).toUpperCase()}</Text>
+                        {r.logo_url ? (
+                          <Image source={{ uri: r.logo_url }} style={styles.avatarImage} />
+                        ) : (
+                          <Text style={styles.avatarText}>{r.name.slice(0, 1).toUpperCase()}</Text>
+                        )}
                       </View>
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={styles.restName} numberOfLines={1}>
@@ -620,10 +624,7 @@ export default function SuperAdminRestaurantsScreen() {
 
                     <View style={{ flex: 1.5 }}>
                       <Text style={styles.planName}>
-                        {sub?.plan?.name ||
-                          (r.id === 'a0000000-0000-0000-0000-000000000001'
-                            ? 'Enterprise Plan'
-                            : 'No Plan')}
+                        {sub?.plan?.name || 'No Plan'}
                       </Text>
                       <Text style={styles.subStatus}>
                         {sub ? `Status: ${sub.status}` : 'Pending assignment'}
@@ -1307,17 +1308,25 @@ const styles = StyleSheet.create({
     color: '#0F172A',
   },
   avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
+    width: 42,
+    height: 42,
+    borderRadius: 10,
     backgroundColor: '#EEF2F6',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   avatarText: {
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '800',
     color: colors.primary,
   },
   restName: {

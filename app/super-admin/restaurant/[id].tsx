@@ -144,6 +144,22 @@ export default function SuperAdminRestaurantDetailScreen() {
   const [payNotes, setPayNotes] = useState('');
   const [recordingPay, setRecordingPay] = useState(false);
 
+const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
+  if (!bannerRaw) return '';
+  const trimmed = bannerRaw.trim();
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return typeof parsed[0] === 'string' ? parsed[0].trim() : '';
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return trimmed;
+};
+
   const populateEditFields = (rest: Restaurant) => {
     setEditName(rest.name || '');
     setEditSlug(rest.slug || '');
@@ -154,7 +170,7 @@ export default function SuperAdminRestaurantDetailScreen() {
     setEditCity(rest.city || '');
     setEditState(rest.state || '');
     setEditPostalCode(rest.postal_code || '');
-    setEditBannerUrl(rest.banner_url || '');
+    setEditBannerUrl(extractSingleBannerUrl(rest.banner_url));
     setEditLogoUrl(rest.logo_url || '');
     setEditLat(rest.latitude != null ? String(rest.latitude) : '');
     setEditLng(rest.longitude != null ? String(rest.longitude) : '');
@@ -266,8 +282,8 @@ export default function SuperAdminRestaurantDetailScreen() {
         city: editCity.trim(),
         state: editState.trim(),
         postal_code: editPostalCode.trim(),
-        banner_url: editBannerUrl.trim() || undefined,
-        logo_url: editLogoUrl.trim() || undefined,
+        banner_url: editBannerUrl.trim(),
+        logo_url: editLogoUrl.trim(),
         latitude: editLat.trim() ? parseFloat(editLat.trim()) : null,
         longitude: editLng.trim() ? parseFloat(editLng.trim()) : null,
         status: editStatus,
@@ -681,32 +697,7 @@ export default function SuperAdminRestaurantDetailScreen() {
     );
   }
 
-  const activeSub = subscriptions.find((s) => s.status === 'active') || (restaurant.id === 'a0000000-0000-0000-0000-000000000001' ? {
-    id: 'seed-ratnadeep-sub',
-    restaurant_id: restaurant.id,
-    plan_id: 'plan-enterprise',
-    status: 'active',
-    start_date: new Date().toISOString(),
-    end_date: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-    amount: 19999,
-    currency: 'INR',
-    auto_renew: true,
-    created_at: new Date().toISOString(),
-    plan: {
-      id: 'plan-enterprise',
-      name: 'Enterprise Plan',
-      code: 'ENTERPRISE_YEARLY',
-      billing_cycle: 'yearly',
-      price: 19999,
-      currency: 'INR',
-      max_staff: 999,
-      max_tables: 999,
-      max_products: 9999,
-      features: { qr_ordering: true, inventory: true, reports: true, analytics: true },
-      is_active: true,
-      created_at: new Date().toISOString(),
-    } as SubscriptionPlan,
-  } as RestaurantSubscription : null);
+  const activeSub = subscriptions.find((s) => s.status === 'active') || null;
 
   return (
     <ScrollView
@@ -724,7 +715,7 @@ export default function SuperAdminRestaurantDetailScreen() {
 
         <View style={[styles.headerActionRow, isMobile && styles.headerActionRowMobile]}>
           <TouchableOpacity
-            style={[styles.primaryBtn, { backgroundColor: '#0284C7', borderColor: '#0369A1' }, isMobile && { flex: 1, justifyContent: 'center' }]}
+            style={[styles.primaryBtn, { backgroundColor: '#0284C7', borderColor: '#0369A1' }]}
             onPress={() => {
               if (restaurant) {
                 setActiveRestaurantId(restaurant.id);
@@ -736,20 +727,16 @@ export default function SuperAdminRestaurantDetailScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.editBtnTop, isMobile && { flex: 1, justifyContent: 'center' }]}
-            onPress={() => {
-              if (restaurant) populateEditFields(restaurant);
-              setEditModalVisible(true);
-            }}
+            style={styles.primaryBtn}
+            onPress={() => setAssignModalVisible(true)}
           >
-            <Text style={styles.editBtnTopText}>✏️ Edit Details</Text>
+            <Text style={styles.primaryBtnText}>🏷️ Plan</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[
               styles.statusBtn,
               restaurant.status === 'ACTIVE' ? styles.statusBtnWarn : styles.statusBtnSuccess,
-              isMobile && { flex: 1, justifyContent: 'center' },
             ]}
             onPress={handleToggleStatus}
           >
@@ -762,86 +749,140 @@ export default function SuperAdminRestaurantDetailScreen() {
               {restaurant.status === 'ACTIVE' ? '🚫 Suspend' : '✅ Activate'}
             </Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.primaryBtn, isMobile && { flex: 1, justifyContent: 'center' }]}
-            onPress={() => setAssignModalVisible(true)}
-          >
-            <Text style={styles.primaryBtnText}>🏷️ Plan</Text>
-          </TouchableOpacity>
         </View>
       </View>
 
       {/* Restaurant Header Card */}
       <View style={[styles.restaurantHero, isMobile && styles.restaurantHeroMobile]}>
-        <View style={styles.avatarLarge}>
-          <Text style={styles.avatarLargeText}>{restaurant.name.slice(0, 1).toUpperCase()}</Text>
-        </View>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <Text style={styles.restaurantHeroName}>{restaurant.name}</Text>
-            <View
-              style={[
-                styles.badge,
-                restaurant.status === 'ACTIVE' ? styles.badgeActive : styles.badgeSuspended,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.badgeText,
-                  restaurant.status === 'ACTIVE' ? styles.badgeTextActive : styles.badgeTextSuspended,
-                ]}
-              >
-                {restaurant.status}
-              </Text>
-            </View>
+        {Boolean(extractSingleBannerUrl(restaurant.banner_url)) && (
+          <View style={styles.heroBannerWrap}>
+            <Image
+              source={{ uri: extractSingleBannerUrl(restaurant.banner_url) }}
+              style={styles.heroBannerImage}
+            />
           </View>
-          <Text style={styles.restaurantHeroMeta}>
-            Slug: <Text style={{ color: '#0F172A', fontWeight: '700' }}>{restaurant.slug}</Text> • Legal:{' '}
-            {restaurant.legal_name || restaurant.name}
-          </Text>
-          <Text style={styles.restaurantHeroMeta}>
-            {restaurant.address ? `${restaurant.address}, ` : ''}
-            {restaurant.city ? `${restaurant.city}, ` : ''}
-            {restaurant.state || ''} {restaurant.postal_code ? `- ${restaurant.postal_code}` : ''}
-          </Text>
-          <Text style={styles.restaurantHeroMeta}>
-            📞 {restaurant.phone || 'No phone'} • ✉️ {restaurant.email || 'No email'}
-          </Text>
-        </View>
+        )}
 
-        <TouchableOpacity
-          style={styles.editHeroBtn}
-          onPress={() => {
-            if (restaurant) populateEditFields(restaurant);
-            setEditModalVisible(true);
-          }}
-        >
-          <Text style={styles.editHeroBtnText}>✏️ Edit Restaurant</Text>
-        </TouchableOpacity>
+        <View style={[styles.heroBody, isMobile && styles.heroBodyMobile]}>
+          <View
+            style={[
+              styles.avatarLarge,
+              Boolean(extractSingleBannerUrl(restaurant.banner_url)) && styles.avatarLargeWithBanner,
+            ]}
+          >
+            {restaurant.logo_url ? (
+              <Image source={{ uri: restaurant.logo_url }} style={styles.avatarLargeImage} />
+            ) : (
+              <Text style={styles.avatarLargeText}>{restaurant.name.slice(0, 1).toUpperCase()}</Text>
+            )}
+          </View>
+
+          <View style={{ flex: 1, minWidth: 0, width: isMobile ? '100%' : 'auto' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+                <Text style={styles.restaurantHeroName} numberOfLines={1}>{restaurant.name}</Text>
+                <View
+                  style={[
+                    styles.badge,
+                    restaurant.status === 'ACTIVE' ? styles.badgeActive : styles.badgeSuspended,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.badgeText,
+                      restaurant.status === 'ACTIVE' ? styles.badgeTextActive : styles.badgeTextSuspended,
+                    ]}
+                  >
+                    {restaurant.status}
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={styles.editHeroBtn}
+                onPress={() => {
+                  if (restaurant) populateEditFields(restaurant);
+                  setEditModalVisible(true);
+                }}
+              >
+                <Text style={styles.editHeroBtnText}>✏️ Edit Restaurant</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6, marginBottom: 4 }}>
+              <View style={styles.heroMetaChip}>
+                <Text style={styles.heroMetaChipText}>
+                  Slug: <Text style={{ color: '#0F172A', fontWeight: '700' }}>{restaurant.slug}</Text>
+                </Text>
+              </View>
+              {Boolean(restaurant.legal_name && restaurant.legal_name !== restaurant.name) && (
+                <View style={styles.heroMetaChip}>
+                  <Text style={styles.heroMetaChipText}>
+                    Legal: <Text style={{ color: '#0F172A', fontWeight: '700' }}>{restaurant.legal_name}</Text>
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {(restaurant.address || restaurant.city || restaurant.state) && (
+              <Text style={styles.restaurantHeroMeta}>
+                📍 {restaurant.address ? `${restaurant.address}, ` : ''}
+                {restaurant.city ? `${restaurant.city}, ` : ''}
+                {restaurant.state || ''} {restaurant.postal_code ? `- ${restaurant.postal_code}` : ''}
+              </Text>
+            )}
+
+            {(restaurant.phone || restaurant.email) && (
+              <Text style={styles.restaurantHeroMeta}>
+                {restaurant.phone ? `📞 ${restaurant.phone}` : ''}
+                {restaurant.phone && restaurant.email ? '  •  ' : ''}
+                {restaurant.email ? `✉️ ${restaurant.email}` : ''}
+              </Text>
+            )}
+          </View>
+        </View>
       </View>
 
       {/* Platform Level Basic Stats */}
-      <View style={styles.statsRow}>
-        <View style={[styles.statCard, isMobile && { width: '47%' }]}>
-          <Text style={{ fontSize: 18 }}>🍔</Text>
-          <Text style={styles.statValue}>{stats?.productCount || 0}</Text>
-          <Text style={styles.statLabel}>Products</Text>
+      <View style={[styles.statsRow, isMobile && styles.statsRowMobile]}>
+        <View style={[styles.statCard, isMobile && styles.statCardMobile]}>
+          <View style={[styles.statIconBadge, { backgroundColor: '#FFF7ED' }]}>
+            <Text style={{ fontSize: 18 }}>🍔</Text>
+          </View>
+          <View style={{ alignItems: isMobile ? 'flex-start' : 'center' }}>
+            <Text style={styles.statValue}>{stats?.productCount || 0}</Text>
+            <Text style={styles.statLabel}>Products</Text>
+          </View>
         </View>
-        <View style={[styles.statCard, isMobile && { width: '47%' }]}>
-          <Text style={{ fontSize: 18 }}>🪑</Text>
-          <Text style={styles.statValue}>{stats?.tableCount || 0}</Text>
-          <Text style={styles.statLabel}>Tables</Text>
+
+        <View style={[styles.statCard, isMobile && styles.statCardMobile]}>
+          <View style={[styles.statIconBadge, { backgroundColor: '#EFF6FF' }]}>
+            <Text style={{ fontSize: 18 }}>🪑</Text>
+          </View>
+          <View style={{ alignItems: isMobile ? 'flex-start' : 'center' }}>
+            <Text style={styles.statValue}>{stats?.tableCount || 0}</Text>
+            <Text style={styles.statLabel}>Tables</Text>
+          </View>
         </View>
-        <View style={[styles.statCard, isMobile && { width: '47%' }]}>
-          <Text style={{ fontSize: 18 }}>🧾</Text>
-          <Text style={styles.statValue}>{stats?.orderCount || 0}</Text>
-          <Text style={styles.statLabel}>Orders</Text>
+
+        <View style={[styles.statCard, isMobile && styles.statCardMobile]}>
+          <View style={[styles.statIconBadge, { backgroundColor: '#F0FDF4' }]}>
+            <Text style={{ fontSize: 18 }}>🧾</Text>
+          </View>
+          <View style={{ alignItems: isMobile ? 'flex-start' : 'center' }}>
+            <Text style={styles.statValue}>{stats?.orderCount || 0}</Text>
+            <Text style={styles.statLabel}>Orders</Text>
+          </View>
         </View>
-        <View style={[styles.statCard, isMobile && { width: '47%' }]}>
-          <Text style={{ fontSize: 18 }}>👥</Text>
-          <Text style={styles.statValue}>{stats?.staffCount || members.length}</Text>
-          <Text style={styles.statLabel}>Members</Text>
+
+        <View style={[styles.statCard, isMobile && styles.statCardMobile]}>
+          <View style={[styles.statIconBadge, { backgroundColor: '#FAF5FF' }]}>
+            <Text style={{ fontSize: 18 }}>👥</Text>
+          </View>
+          <View style={{ alignItems: isMobile ? 'flex-start' : 'center' }}>
+            <Text style={styles.statValue}>{stats?.staffCount || members.length}</Text>
+            <Text style={styles.statLabel}>Members</Text>
+          </View>
         </View>
       </View>
 
@@ -862,7 +903,7 @@ export default function SuperAdminRestaurantDetailScreen() {
 
             {activeSub ? (
               <View style={styles.subDetailBox}>
-                <Text style={styles.subPlanTitle}>{activeSub.plan?.name || 'Enterprise Plan'}</Text>
+                <Text style={styles.subPlanTitle}>{activeSub.plan?.name || 'Custom Plan'}</Text>
                 <Text style={styles.subPlanPrice}>
                   ₹{(activeSub.amount || 0).toLocaleString('en-IN')}{' '}
                   <Text style={{ fontSize: 13, color: '#64748B' }}>
@@ -1505,104 +1546,137 @@ export default function SuperAdminRestaurantDetailScreen() {
       </Modal>
 
       {/* Assign Plan Modal */}
-      <Modal visible={assignModalVisible} animationType="slide" transparent>
+      <Modal visible={assignModalVisible} animationType="fade" transparent>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, isMobile && { width: '95%', padding: 16, maxHeight: '92%' }]}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Assign / Upgrade Plan</Text>
-              <TouchableOpacity onPress={() => setAssignModalVisible(false)}>
-                <Text style={{ fontSize: 18, color: '#64748B' }}>✕</Text>
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text style={styles.modalTitle}>Assign / Upgrade Plan</Text>
+                <Text style={styles.modalSubtitle}>Choose a subscription package for this restaurant</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setAssignModalVisible(false)}
+                style={styles.modalCloseBtn}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={styles.modalCloseText}>✕</Text>
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ maxHeight: 440 }} showsVerticalScrollIndicator={false}>
-              <Text style={styles.label}>Select Subscription Tier</Text>
-              {plans.map((p) => (
-                <TouchableOpacity
-                  key={p.id}
-                  style={[
-                    styles.planOption,
-                    selectedPlanId === p.id && styles.planOptionSelected,
-                  ]}
-                  onPress={() => {
-                    setSelectedPlanId(p.id);
-                    setCustomAmount(p.price.toString());
-                  }}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.planOptTitle}>{p.name}</Text>
-                    <Text style={styles.planOptDesc}>
-                      Max {p.max_tables || '∞'} tables • Max {p.max_products || '∞'} items
-                    </Text>
-                  </View>
-                  <Text style={styles.planOptPrice}>
-                    ₹{p.price.toLocaleString('en-IN')}/{p.billing_cycle}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+            <ScrollView style={{ maxHeight: 460 }} showsVerticalScrollIndicator={false}>
+              <Text style={styles.fieldSectionTitle}>Select Subscription Tier</Text>
+              <View style={{ gap: 8, marginBottom: 16 }}>
+                {plans.map((p) => {
+                  const isSelected = selectedPlanId === p.id;
+                  return (
+                    <TouchableOpacity
+                      key={p.id}
+                      style={[
+                        styles.planCardEnhanced,
+                        isSelected && styles.planCardEnhancedSelected,
+                      ]}
+                      onPress={() => {
+                        setSelectedPlanId(p.id);
+                        setCustomAmount(p.price.toString());
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.planRadio, isSelected && styles.planRadioSelected]}>
+                        {isSelected && <View style={styles.planRadioInner} />}
+                      </View>
 
-              <View style={[styles.inputRow, isMobile && { flexDirection: 'column' }]}>
+                      <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
+                        <Text style={[styles.planOptTitle, isSelected && { color: colors.primary }]}>{p.name}</Text>
+                        <Text style={styles.planOptDesc}>
+                          Max {p.max_tables || '∞'} tables • Max {p.max_products || '∞'} items
+                        </Text>
+                      </View>
+
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={[styles.planOptPrice, isSelected && { color: colors.primary }]}>
+                          ₹{p.price.toLocaleString('en-IN')}
+                        </Text>
+                        <Text style={styles.planOptBillingCycle}>/{p.billing_cycle}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <View style={[styles.inputRow, { gap: 12, marginBottom: 14 }, isMobile && { flexDirection: 'column', gap: 10 }]}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.label}>Duration (Days)</Text>
                   <TextInput
-                    style={styles.input}
+                    style={styles.inputEnhanced}
                     value={durationDays}
                     onChangeText={setDurationDays}
                     keyboardType="numeric"
+                    placeholder="30"
                   />
                 </View>
-                <View style={[{ flex: 1, marginLeft: isMobile ? 0 : 12 }]}>
+                <View style={{ flex: 1 }}>
                   <Text style={styles.label}>Amount Charged (₹)</Text>
                   <TextInput
-                    style={styles.input}
+                    style={styles.inputEnhanced}
                     value={customAmount}
                     onChangeText={setCustomAmount}
                     keyboardType="numeric"
+                    placeholder="0"
                   />
                 </View>
               </View>
 
               <Text style={styles.label}>Payment Method</Text>
-              <View style={styles.methodRow}>
-                {['upi', 'bank_transfer', 'cash', 'card'].map((m) => (
-                  <TouchableOpacity
-                    key={m}
-                    style={[
-                      styles.methodBtn,
-                      paymentMethod === m && styles.methodBtnActive,
-                    ]}
-                    onPress={() => setPaymentMethod(m)}
-                  >
-                    <Text
+              <View style={styles.paymentMethodGrid}>
+                {[
+                  { key: 'upi', label: 'UPI', icon: '⚡' },
+                  { key: 'bank_transfer', label: 'Bank Transfer', icon: '🏦' },
+                  { key: 'cash', label: 'Cash', icon: '💵' },
+                  { key: 'card', label: 'Card', icon: '💳' },
+                ].map((m) => {
+                  const isActive = paymentMethod === m.key;
+                  return (
+                    <TouchableOpacity
+                      key={m.key}
                       style={[
-                        styles.methodBtnText,
-                        paymentMethod === m && styles.methodBtnTextActive,
+                        styles.paymentMethodChip,
+                        isActive && styles.paymentMethodChipActive,
                       ]}
+                      onPress={() => setPaymentMethod(m.key)}
+                      activeOpacity={0.7}
                     >
-                      {m.toUpperCase()}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                      <Text style={{ fontSize: 14 }}>{m.icon}</Text>
+                      <Text
+                        style={[
+                          styles.paymentMethodChipText,
+                          isActive && styles.paymentMethodChipTextActive,
+                        ]}
+                      >
+                        {m.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             </ScrollView>
 
             <View style={styles.modalFooter}>
               <TouchableOpacity
-                style={styles.cancelBtn}
+                style={styles.cancelBtnEnhanced}
                 onPress={() => setAssignModalVisible(false)}
                 disabled={assigning}
               >
-                <Text style={styles.cancelBtnText}>Cancel</Text>
+                <Text style={styles.cancelBtnTextEnhanced}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.submitBtn}
+                style={styles.submitBtnEnhanced}
                 onPress={handleAssignPlan}
                 disabled={assigning}
               >
                 {assigning ? (
                   <ActivityIndicator color="#FFF" size="small" />
                 ) : (
-                  <Text style={styles.submitBtnText}>Confirm Plan</Text>
+                  <Text style={styles.submitBtnTextEnhanced}>Confirm Plan</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -1611,52 +1685,69 @@ export default function SuperAdminRestaurantDetailScreen() {
       </Modal>
 
       {/* Record Payment Modal */}
-      <Modal visible={payModalVisible} animationType="slide" transparent>
+      <Modal visible={payModalVisible} animationType="fade" transparent>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, isMobile && { width: '95%', padding: 16, maxHeight: '92%' }]}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Record Subscription Payment</Text>
-              <TouchableOpacity onPress={() => setPayModalVisible(false)}>
-                <Text style={{ fontSize: 18, color: '#64748B' }}>✕</Text>
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text style={styles.modalTitle}>Record Subscription Payment</Text>
+                <Text style={styles.modalSubtitle}>Manually log an offline or manual payment transaction</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setPayModalVisible(false)}
+                style={styles.modalCloseBtn}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={styles.modalCloseText}>✕</Text>
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+            <ScrollView style={{ maxHeight: 440 }} showsVerticalScrollIndicator={false}>
               <Text style={styles.label}>Payment Amount (₹) *</Text>
               <TextInput
-                style={styles.input}
-                placeholder="19999"
+                style={styles.inputEnhanced}
+                placeholder="e.g. 19999"
                 value={payAmount}
                 onChangeText={setPayAmount}
                 keyboardType="numeric"
               />
 
               <Text style={styles.label}>Payment Method</Text>
-              <View style={styles.methodRow}>
-                {['upi', 'bank_transfer', 'cash', 'card'].map((m) => (
-                  <TouchableOpacity
-                    key={m}
-                    style={[
-                      styles.methodBtn,
-                      payMethod === m && styles.methodBtnActive,
-                    ]}
-                    onPress={() => setPayMethod(m)}
-                  >
-                    <Text
+              <View style={styles.paymentMethodGrid}>
+                {[
+                  { key: 'upi', label: 'UPI', icon: '⚡' },
+                  { key: 'bank_transfer', label: 'Bank Transfer', icon: '🏦' },
+                  { key: 'cash', label: 'Cash', icon: '💵' },
+                  { key: 'card', label: 'Card', icon: '💳' },
+                ].map((m) => {
+                  const isActive = payMethod === m.key;
+                  return (
+                    <TouchableOpacity
+                      key={m.key}
                       style={[
-                        styles.methodBtnText,
-                        payMethod === m && styles.methodBtnTextActive,
+                        styles.paymentMethodChip,
+                        isActive && styles.paymentMethodChipActive,
                       ]}
+                      onPress={() => setPayMethod(m.key)}
+                      activeOpacity={0.7}
                     >
-                      {m.toUpperCase()}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                      <Text style={{ fontSize: 14 }}>{m.icon}</Text>
+                      <Text
+                        style={[
+                          styles.paymentMethodChipText,
+                          isActive && styles.paymentMethodChipTextActive,
+                        ]}
+                      >
+                        {m.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
 
               <Text style={styles.label}>Transaction / Payment Reference ID</Text>
               <TextInput
-                style={styles.input}
+                style={styles.inputEnhanced}
                 placeholder="e.g. UPI-TXN-8849201"
                 value={payRef}
                 onChangeText={setPayRef}
@@ -1664,7 +1755,7 @@ export default function SuperAdminRestaurantDetailScreen() {
 
               <Text style={styles.label}>Notes</Text>
               <TextInput
-                style={styles.input}
+                style={styles.inputEnhanced}
                 placeholder="Offline settlement details"
                 value={payNotes}
                 onChangeText={setPayNotes}
@@ -1673,21 +1764,21 @@ export default function SuperAdminRestaurantDetailScreen() {
 
             <View style={styles.modalFooter}>
               <TouchableOpacity
-                style={styles.cancelBtn}
+                style={styles.cancelBtnEnhanced}
                 onPress={() => setPayModalVisible(false)}
                 disabled={recordingPay}
               >
-                <Text style={styles.cancelBtnText}>Cancel</Text>
+                <Text style={styles.cancelBtnTextEnhanced}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.submitBtn}
+                style={styles.submitBtnEnhanced}
                 onPress={handleRecordPayment}
                 disabled={recordingPay}
               >
                 {recordingPay ? (
                   <ActivityIndicator color="#FFF" size="small" />
                 ) : (
-                  <Text style={styles.submitBtnText}>Record Payment</Text>
+                  <Text style={styles.submitBtnTextEnhanced}>Save Payment</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -2082,11 +2173,14 @@ const styles = StyleSheet.create({
   headerMobile: {
     flexDirection: 'column',
     alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 16,
   },
   backBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    paddingVertical: 4,
   },
   backBtnText: {
     fontSize: 14,
@@ -2095,11 +2189,15 @@ const styles = StyleSheet.create({
   },
   headerActionRow: {
     flexDirection: 'row',
-    gap: 10,
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
   },
   headerActionRowMobile: {
     width: '100%',
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   editBtnTop: {
     backgroundColor: '#FFFFFF',
@@ -2142,6 +2240,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 9,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.primary,
   },
   primaryBtnText: {
     color: '#FFFFFF',
@@ -2149,17 +2249,38 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   restaurantHero: {
-    flexDirection: 'row',
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20,
+    borderRadius: 16,
+    overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    alignItems: 'center',
-    gap: 16,
     marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
   },
   restaurantHeroMobile: {
+    marginBottom: 16,
+  },
+  heroBannerWrap: {
+    width: '100%',
+    height: 120,
+    backgroundColor: '#F1F5F9',
+  },
+  heroBannerImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  heroBody: {
+    flexDirection: 'row',
+    padding: 20,
+    alignItems: 'center',
+    gap: 16,
+  },
+  heroBodyMobile: {
     flexDirection: 'column',
     alignItems: 'flex-start',
     padding: 16,
@@ -2168,13 +2289,31 @@ const styles = StyleSheet.create({
   avatarLarge: {
     width: 64,
     height: 64,
-    borderRadius: 16,
+    borderRadius: 14,
     backgroundColor: '#EEF2F6',
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  avatarLargeWithBanner: {
+    marginTop: -38,
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  avatarLargeImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   avatarLargeText: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: '800',
     color: colors.primary,
   },
@@ -2187,6 +2326,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#64748B',
     marginTop: 3,
+  },
+  heroMetaChip: {
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  heroMetaChipText: {
+    fontSize: 12,
+    color: '#64748B',
   },
   editHeroBtn: {
     backgroundColor: '#F8FAFC',
@@ -2245,30 +2396,55 @@ const styles = StyleSheet.create({
   },
   statsRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 12,
     marginBottom: 20,
   },
+  statsRowMobile: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 16,
+  },
   statCard: {
     flex: 1,
-    minWidth: 100,
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    alignItems: 'center',
+    gap: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  statCardMobile: {
+    width: '48%',
+    flex: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    gap: 10,
+  },
+  statIconBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    justifyContent: 'center',
     alignItems: 'center',
   },
   statValue: {
     fontSize: 20,
     fontWeight: '800',
     color: '#0F172A',
-    marginTop: 6,
   },
   statLabel: {
     fontSize: 12,
-    color: '#64748B',
     fontWeight: '600',
+    color: '#64748B',
+    marginTop: 1,
   },
   twoCol: {
     flexDirection: 'row',
@@ -2680,6 +2856,154 @@ const styles = StyleSheet.create({
   cyclePillTextActive: {
     color: '#FFFFFF',
   },
+  modalSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  modalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCloseText: {
+    fontSize: 15,
+    color: '#475569',
+    fontWeight: '700',
+  },
+  fieldSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  planCardEnhanced: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    gap: 12,
+  },
+  planCardEnhancedSelected: {
+    borderColor: colors.primary,
+    backgroundColor: '#F0F9FF',
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  planRadio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#94A3B8',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  planRadioSelected: {
+    borderColor: colors.primary,
+  },
+  planRadioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.primary,
+  },
+  planOptBillingCycle: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  inputEnhanced: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#0F172A',
+    backgroundColor: '#F8FAFC',
+  },
+  paymentMethodGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  paymentMethodChip: {
+    flex: 1,
+    minWidth: 120,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+  },
+  paymentMethodChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  paymentMethodChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  paymentMethodChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  cancelBtnEnhanced: {
+    paddingVertical: 11,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelBtnTextEnhanced: {
+    color: '#475569',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  submitBtnEnhanced: {
+    paddingVertical: 11,
+    paddingHorizontal: 22,
+    borderRadius: 10,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  submitBtnTextEnhanced: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
   planOption: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2736,6 +3060,7 @@ const styles = StyleSheet.create({
   modalFooter: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    alignItems: 'center',
     gap: 12,
     marginTop: 16,
     paddingTop: 12,
@@ -2743,24 +3068,35 @@ const styles = StyleSheet.create({
     borderTopColor: '#E2E8F0',
   },
   cancelBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
+    paddingVertical: 11,
+    paddingHorizontal: 18,
+    borderRadius: 10,
     backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cancelBtnText: {
     color: '#475569',
     fontWeight: '600',
+    fontSize: 14,
   },
   submitBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
+    paddingVertical: 11,
+    paddingHorizontal: 22,
+    borderRadius: 10,
     backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
   },
   submitBtnText: {
     color: '#FFFFFF',
-    fontWeight: '600',
+    fontWeight: '700',
+    fontSize: 14,
   },
   addMemberHeaderBtn: {
     backgroundColor: 'rgba(56, 189, 248, 0.1)',

@@ -17,7 +17,7 @@ export const couponService = {
         }
 
         const { data, error } = await query;
-        if (!error && data && data.length > 0) {
+        if (!error && data) {
           const list = (data as any[]).map(c => ({
             ...c,
             restaurant_id: c.restaurant_id || restaurantId || '',
@@ -31,18 +31,14 @@ export const couponService = {
             start_date: c.start_date || undefined,
             expiry_date: c.expiry_date || c.end_date || undefined,
           }));
-          mockStorage.saveCoupons(list);
+          mockStorage.saveCoupons(list, restaurantId);
           return list;
         }
       } catch (e) {
         console.warn('Supabase getCoupons failed, using local cache:', e);
       }
     }
-    const local = mockStorage.getCoupons() || [];
-    if (restaurantId) {
-      const filtered = local.filter((c) => !c.restaurant_id || c.restaurant_id === restaurantId);
-      if (filtered.length > 0) return filtered;
-    }
+    const local = mockStorage.getCoupons(restaurantId) || [];
     return local;
   },
 
@@ -222,13 +218,30 @@ export const couponService = {
             .update(payload)
             .eq('id', coupon.id)
             .select()
-            .single();
+            .maybeSingle();
 
           if (!error && data) {
             mockStorage.updateCoupon(coupon.id, payload);
             await this.getCoupons(targetRestId);
             return data as Coupon;
           }
+
+          if (!error && !data) {
+            payload.created_at = new Date().toISOString();
+            const { data: upsertData, error: upsertErr } = await supabase
+              .from('coupons')
+              .upsert([payload], { onConflict: 'id' })
+              .select()
+              .single();
+
+            if (!upsertErr && upsertData) {
+              mockStorage.updateCoupon(coupon.id, payload);
+              await this.getCoupons(targetRestId);
+              return upsertData as Coupon;
+            }
+            if (upsertErr) throw upsertErr;
+          }
+
           if (error) throw error;
         } else {
           payload.created_at = new Date().toISOString();
@@ -289,7 +302,7 @@ export const couponService = {
       }
     }
 
-    const local = mockStorage.getCoupons().find((c) => c.id === id);
+    const local = (mockStorage.getCoupons(restaurantId) || []).find((c) => c.id === id);
     if (local && (local.used_count || 0) > 0) {
       mockStorage.updateCoupon(id, { is_active: false } as any);
     } else {

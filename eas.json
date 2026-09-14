@@ -34,7 +34,7 @@
       "autoIncrement": true,
       "node": "22.16.0",
       "android": {
-        "buildType": "apk"
+        "buildType": "app-bundle"
       },
       "env": {
         "APP_ENV": "production",

@@ -77,30 +77,28 @@ export const kotService = {
   },
 
   /**
-   * Generates a unique sequential KOT number for a new order, resetting daily.
+   * Generates a unique sequential KOT number for a new order.
+   * Scans existing restaurant KOTs to ensure uniqueness under the uq_kots_restaurant_kot_number constraint.
    * Format: KOT-001, KOT-002, KOT-003...
    */
   async generateNextUniqueKotNumber(restaurantId: string): Promise<string> {
     const settings = await settingsService.getSettings(restaurantId);
     const prefix = settings.kot_prefix || 'KOT-';
-    const now = new Date();
-    const { startISO, endISO } = getTodayDateBounds();
     let maxSeq = 0;
 
     if (isSupabaseConfigured) {
       try {
         const { data } = await supabase
           .from('kots')
-          .select('kot_number, created_at')
+          .select('kot_number')
           .eq('restaurant_id', restaurantId)
-          .gte('created_at', startISO)
-          .lte('created_at', endISO)
-          .order('created_at', { ascending: false });
+          .order('created_at', { ascending: false })
+          .limit(200);
 
         if (data && data.length > 0) {
           for (const row of data) {
             if (row.kot_number) {
-              const baseMatch = row.kot_number.replace(/-SUP.*$/i, '').match(/(\d+)/);
+              const baseMatch = row.kot_number.replace(/-SUP.*$/i, '').replace(/-CNL.*$/i, '').match(/(\d+)/);
               if (baseMatch) {
                 const num = parseInt(baseMatch[1], 10);
                 if (!isNaN(num) && num > maxSeq) {
@@ -111,21 +109,18 @@ export const kotService = {
           }
         }
       } catch (e) {
-        console.warn('Supabase daily kot_number lookup failed:', e);
+        console.warn('Supabase kot_number lookup failed:', e);
       }
     }
 
     const localKots = mockStorage.getKots(restaurantId);
     for (const k of localKots) {
-      if (k.kot_number && k.created_at) {
-        const kotDate = new Date(k.created_at);
-        if (isSameDay(kotDate, now)) {
-          const baseMatch = k.kot_number.replace(/-SUP.*$/i, '').match(/(\d+)/);
-          if (baseMatch) {
-            const num = parseInt(baseMatch[1], 10);
-            if (!isNaN(num) && num > maxSeq) {
-              maxSeq = num;
-            }
+      if (k.kot_number) {
+        const baseMatch = k.kot_number.replace(/-SUP.*$/i, '').replace(/-CNL.*$/i, '').match(/(\d+)/);
+        if (baseMatch) {
+          const num = parseInt(baseMatch[1], 10);
+          if (!isNaN(num) && num > maxSeq) {
+            maxSeq = num;
           }
         }
       }
@@ -155,7 +150,7 @@ export const kotService = {
       const supCount = orderKots.length;
       kotNumber = supCount === 1 ? `${baseKotNumber}-SUP` : `${baseKotNumber}-SUP${supCount}`;
     } else {
-      // Brand new order -> Generate next unique sequential KOT number resetting daily
+      // Brand new order -> Generate next unique sequential KOT number
       kotNumber = await this.generateNextUniqueKotNumber(targetRestId);
     }
 
@@ -193,8 +188,20 @@ export const kotService = {
 
     if (isSupabaseConfigured) {
       try {
-        const { items, ...kotRecord } = newKot;
-        const { data, error } = await supabase.from('kots').insert([kotRecord]).select().single();
+        let { items, ...kotRecord } = newKot;
+        let { data, error } = await supabase.from('kots').insert([kotRecord]).select().single();
+
+        // If duplicate kot_number collision occurs, regenerate next sequential number and retry once
+        if (error && (error.code === '23505' || error.message?.includes('uq_kots_restaurant_kot_number'))) {
+          console.warn('KOT number collision detected, regenerating unique sequence...');
+          const retryKotNumber = await this.generateNextUniqueKotNumber(targetRestId);
+          kotRecord.kot_number = retryKotNumber;
+          newKot.kot_number = retryKotNumber;
+          const retryRes = await supabase.from('kots').insert([kotRecord]).select().single();
+          data = retryRes.data;
+          error = retryRes.error;
+        }
+
         if (!error && data) {
           if (items && items.length > 0) {
             const formatted = items.map((i) => ({ ...i, kot_id: data.id }));
@@ -204,7 +211,7 @@ export const kotService = {
             restaurant_id: targetRestId,
             kot_id: data.id,
             order_id: order.id,
-            kot_number: kotNumber,
+            kot_number: newKot.kot_number,
             order_number: order.order_number,
             items_count: items.length,
           });
@@ -313,7 +320,6 @@ export const kotService = {
           await supabase.from('kot_items').insert([
             {
               kot_id: data.id,
-              product_id: null,
               product_name: item.product_name,
               quantity: -cancelledQty,
               notes: reasonText,

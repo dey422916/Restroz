@@ -947,26 +947,8 @@ export const marketplaceService = {
         }
       }
 
-      // 5. Record audit log & clear cache
+      // 5. Clear cache
       clearOrdersCache(payload.restaurant_id);
-      try {
-        await supabase.from('audit_logs').insert({
-          restaurant_id: payload.restaurant_id,
-          user_id: user.id,
-          action: 'CUSTOMER_ORDER_PLACED',
-          entity_type: 'ORDER',
-          entity_id: orderId,
-          new_values: {
-            order_id: orderId,
-            order_number: orderNumber,
-            payable_amount: payableAmount,
-            payment_method: payload.payment_method,
-            coupon_code: validCoupon ? validCoupon.code : null,
-          },
-        });
-      } catch (aErr) {
-        // Silently ignore RLS permission limitations for customer role on audit_logs
-      }
 
       return {
         ...newOrder,

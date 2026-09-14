@@ -24,20 +24,12 @@ ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS payment_proof_url TEXT;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS payment_verified_at TIMESTAMPTZ;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS payment_verified_by UUID;
 
--- Product Deletion Foreign Key Resilience (Preserve order/kot history when product is deleted)
+-- Product Deletion Foreign Key Resilience (Preserve order history when product or category is deleted)
 ALTER TABLE public.order_items ALTER COLUMN product_id DROP NOT NULL;
-ALTER TABLE public.kot_items ALTER COLUMN product_id DROP NOT NULL;
 
 ALTER TABLE public.order_items 
     DROP CONSTRAINT IF EXISTS order_items_product_id_fkey,
     ADD CONSTRAINT order_items_product_id_fkey 
-        FOREIGN KEY (product_id) 
-        REFERENCES public.products(id) 
-        ON DELETE SET NULL;
-
-ALTER TABLE public.kot_items 
-    DROP CONSTRAINT IF EXISTS kot_items_product_id_fkey,
-    ADD CONSTRAINT kot_items_product_id_fkey 
         FOREIGN KEY (product_id) 
         REFERENCES public.products(id) 
         ON DELETE SET NULL;
@@ -99,7 +91,7 @@ ALTER TABLE public.restaurants ADD COLUMN IF NOT EXISTS gallery_urls TEXT[] DEFA
 CREATE INDEX IF NOT EXISTS idx_orders_payment_status ON public.orders (payment_status);
 CREATE INDEX IF NOT EXISTS idx_orders_restaurant_status ON public.orders (restaurant_id, status);
 CREATE INDEX IF NOT EXISTS idx_order_items_product_id ON public.order_items (product_id);
-CREATE INDEX IF NOT EXISTS idx_kot_items_product_id ON public.kot_items (product_id);
+CREATE INDEX IF NOT EXISTS idx_kot_items_kot_id ON public.kot_items (kot_id);
 CREATE INDEX IF NOT EXISTS idx_products_restaurant_active ON public.products (restaurant_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_categories_restaurant_active ON public.categories (restaurant_id, is_active);
 

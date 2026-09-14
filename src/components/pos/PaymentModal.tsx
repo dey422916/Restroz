@@ -71,9 +71,40 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   );
 
   const [customerGstinInput, setCustomerGstinInput] = useState<string>(order.customer_gstin || '');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
+    order.payment_method === 'online' || order.payment_method === 'upi'
+      ? 'upi'
+      : order.payment_method === 'card'
+      ? 'card'
+      : order.payment_method === 'room'
+      ? 'room'
+      : 'cash'
+  );
   const [refNo, setRefNo] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (order) {
+      setPaymentMethod(
+        order.payment_method === 'online' || order.payment_method === 'upi'
+          ? 'upi'
+          : order.payment_method === 'card'
+          ? 'card'
+          : order.payment_method === 'room'
+          ? 'room'
+          : 'cash'
+      );
+      setCustomerGstinInput(order.customer_gstin || '');
+      setDiscountType(order.discount_type || (order.discount_amount > 0 ? 'fixed' : 'none'));
+      setDiscountInput(
+        order.discount_value !== undefined
+          ? String(order.discount_value)
+          : order.discount_amount > 0
+          ? String(order.discount_amount)
+          : ''
+      );
+    }
+  }, [order?.id]);
 
   // Centralized real-time calculation
   const subtotal = useMemo(() => getOrderSubtotal(order), [order]);

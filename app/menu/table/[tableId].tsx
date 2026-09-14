@@ -1296,7 +1296,7 @@ export default function CustomerDigitalMenuScreen() {
                                   style={styles.qrImage}
                                   resizeMode="contain"
                                 />
-                                <Text style={styles.qrTapHint}>🔍 Tap to enlarge QR</Text>
+                                <Text style={styles.qrTapHint}>🔍 Tap to view full screen</Text>
                               </TouchableOpacity>
                             </View>
                           ) : (
@@ -2744,53 +2744,70 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   qrUpiWrapper: {
-    flexDirection: 'row',
-    gap: 10,
+    flexDirection: 'column',
     alignItems: 'center',
-    marginBottom: 12,
+    gap: 12,
+    marginBottom: 14,
+    width: '100%',
   },
   qrCodeBox: {
     backgroundColor: '#ffffff',
-    padding: 6,
-    borderRadius: 8,
-    borderWidth: 1,
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1.5,
     borderColor: '#bbf7d0',
     alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    maxWidth: 300,
+    alignSelf: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
   },
   qrTouchable: {
     alignItems: 'center',
+    width: '100%',
   },
   qrImage: {
-    width: 100,
-    height: 100,
-    borderRadius: 4,
+    width: 230,
+    height: 230,
+    maxWidth: '100%',
+    borderRadius: 8,
   },
   qrTapHint: {
-    fontSize: 9,
+    fontSize: 11,
     color: '#15803d',
     fontWeight: '700',
-    marginTop: 3,
+    marginTop: 6,
   },
   noQrPlaceholder: {
-    width: 100,
-    height: 100,
+    width: '100%',
+    maxWidth: 300,
+    height: 180,
     backgroundColor: '#ffffff',
-    borderRadius: 8,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#bbf7d0',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 6,
+    padding: 12,
+    alignSelf: 'center',
   },
   noQrText: {
-    fontSize: 9,
+    fontSize: 11,
     color: '#64748b',
     textAlign: 'center',
-    marginTop: 2,
+    marginTop: 6,
+    fontWeight: '600',
   },
   upiInfoBox: {
-    flex: 1,
-    gap: 6,
+    width: '100%',
+    maxWidth: 300,
+    alignSelf: 'center',
+    gap: 8,
   },
   upiIdCard: {
     backgroundColor: '#ffffff',

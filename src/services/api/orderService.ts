@@ -1809,6 +1809,7 @@ export const orderService = {
     const updatePayload: Record<string, any> = {
       status: finalOrderStatus,
       payment_status: finalPaymentStatus,
+      payment_method: paymentMethod,
       paid_amount: finalPaidAmount,
       notes: finalNotesWithGstin,
       updated_at: new Date().toISOString(),
@@ -1859,14 +1860,15 @@ export const orderService = {
           const localOrders = mockStorage.getOrders(updated.restaurant_id);
           const orderIndex = localOrders.findIndex((o) => o.id === orderId);
           if (orderIndex !== -1) {
-            localOrders[orderIndex] = { ...localOrders[orderIndex], ...updated };
+            localOrders[orderIndex] = { ...localOrders[orderIndex], ...updated, payment_method: paymentMethod };
           } else {
-            localOrders.unshift(updated);
+            localOrders.unshift({ ...updated, payment_method: paymentMethod });
           }
           mockStorage.saveOrders(localOrders, updated.restaurant_id);
           await this.getOrders(updated.restaurant_id, true);
           return {
             ...updated,
+            payment_method: paymentMethod,
             order_source: resolveOrderSource(updated),
             subtotal: getOrderSubtotal(updated),
             discount_type: discountType,
@@ -2011,19 +2013,27 @@ export const orderService = {
     return orders[idx];
   },
 
-  async updatePaymentStatus(orderId: string, paymentStatus: PaymentStatus): Promise<Order> {
+  async updatePaymentStatus(orderId: string, paymentStatus: PaymentStatus, paymentMethod?: PaymentMethod): Promise<Order> {
     if (isSupabaseConfigured) {
       try {
+        const updatePayload: Record<string, any> = {
+          payment_status: paymentStatus,
+          updated_at: new Date().toISOString(),
+        };
+        if (paymentMethod) {
+          updatePayload.payment_method = paymentMethod;
+        }
+
         const { data, error } = await supabase
           .from('orders')
-          .update({ payment_status: paymentStatus, updated_at: new Date().toISOString() })
+          .update(updatePayload)
           .eq('id', orderId)
           .select('*, items:order_items(*), payments:payments(*), kots:kots(*, items:kot_items(*))')
           .single();
 
         if (!error && data) {
           clearOrdersCache(data.restaurant_id);
-          await auditService.log('UPDATE_PAYMENT_STATUS', { order_id: orderId, payment_status: paymentStatus });
+          await auditService.log('UPDATE_PAYMENT_STATUS', { order_id: orderId, payment_status: paymentStatus, payment_method: paymentMethod });
           return {
             ...data,
             order_source: resolveOrderSource(data),
@@ -2040,6 +2050,9 @@ export const orderService = {
     const idx = orders.findIndex((o) => o.id === orderId);
     if (idx === -1) throw new Error('Order not found');
     orders[idx].payment_status = paymentStatus;
+    if (paymentMethod) {
+      orders[idx].payment_method = paymentMethod;
+    }
     orders[idx].updated_at = new Date().toISOString();
     mockStorage.saveOrders(orders, orders[idx].restaurant_id);
     clearOrdersCache(orders[idx].restaurant_id);
@@ -2063,9 +2076,18 @@ export const orderService = {
             const newPaid = (order.paid_amount || 0) + payment.amount;
             const newPayStatus = newPaid >= order.payable_amount ? 'paid' : newPaid > 0 ? 'partially_paid' : 'unpaid';
 
+            const updatePayload: Record<string, any> = {
+              paid_amount: newPaid,
+              payment_status: newPayStatus,
+              updated_at: new Date().toISOString(),
+            };
+            if (payment.payment_method) {
+              updatePayload.payment_method = payment.payment_method;
+            }
+
             const { data: updated } = await supabase
               .from('orders')
-              .update({ paid_amount: newPaid, payment_status: newPayStatus })
+              .update(updatePayload)
               .eq('id', orderId)
               .select('*, items:order_items(*), payments:payments(*), kots:kots(*, items:kot_items(*))')
               .single();
@@ -2090,6 +2112,9 @@ export const orderService = {
 
     const totalPaid = orders[idx].payments!.reduce((sum, p) => sum + p.amount, 0);
     orders[idx].paid_amount = totalPaid;
+    if (payment.payment_method) {
+      orders[idx].payment_method = payment.payment_method;
+    }
 
     if (totalPaid >= orders[idx].payable_amount) {
       orders[idx].payment_status = 'paid';
@@ -2135,6 +2160,7 @@ export const orderService = {
     const updatePayload: Record<string, any> = {
       status: 'completed',
       payment_status: 'paid',
+      payment_method: params.payment_method,
       paid_amount: finalPaid,
       notes: finalNotesWithGstin,
       updated_at: new Date().toISOString(),
@@ -2181,14 +2207,15 @@ export const orderService = {
           const localOrders = mockStorage.getOrders(target.restaurant_id);
           const orderIndex = localOrders.findIndex((o) => o.id === orderId);
           if (orderIndex !== -1) {
-            localOrders[orderIndex] = { ...localOrders[orderIndex], ...updated };
+            localOrders[orderIndex] = { ...localOrders[orderIndex], ...updated, payment_method: params.payment_method };
           } else {
-            localOrders.unshift(updated);
+            localOrders.unshift({ ...updated, payment_method: params.payment_method });
           }
           mockStorage.saveOrders(localOrders, target.restaurant_id);
           await this.getOrders(target.restaurant_id, true);
           return {
             ...updated,
+            payment_method: params.payment_method,
             order_source: resolveOrderSource(updated),
             subtotal: getOrderSubtotal(updated),
             discount_type: params.discount_type,
@@ -2207,6 +2234,7 @@ export const orderService = {
       localOrders[idx] = {
         ...localOrders[idx],
         ...updatePayload,
+        payment_method: params.payment_method,
         discount_type: params.discount_type,
         discount_value: params.discount_value,
         taxable_amount: params.taxable_amount,

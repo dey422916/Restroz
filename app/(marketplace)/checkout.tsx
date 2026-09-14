@@ -12,6 +12,7 @@ import {
   Image,
   Platform,
   useWindowDimensions,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
@@ -582,7 +583,7 @@ export default function DeliveryCheckoutScreen() {
                               style={styles.qrImage}
                               resizeMode="contain"
                             />
-                            <Text style={styles.qrTapHint}>🔍 Tap to enlarge QR</Text>
+                            <Text style={styles.qrTapHint}>🔍 Tap to view full screen</Text>
                           </TouchableOpacity>
                         </View>
                       ) : (
@@ -851,189 +852,207 @@ export default function DeliveryCheckoutScreen() {
       )}
 
       {/* Add Address Modal */}
-      <Modal visible={addModalVisible} animationType="slide" transparent>
+      <Modal
+        visible={addModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setAddModalVisible(false)}
+      >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Add Delivery Address</Text>
-              <TouchableOpacity onPress={() => setAddModalVisible(false)}>
-                <Text style={{ fontSize: 18, color: '#64748B' }}>✕</Text>
-              </TouchableOpacity>
-            </View>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.keyboardAvoidingView}
+          >
+            <View style={styles.modalCard}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Add Delivery Address</Text>
+                <TouchableOpacity
+                  onPress={() => setAddModalVisible(false)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={{ fontSize: 18, color: '#64748B', fontWeight: '700' }}>✕</Text>
+                </TouchableOpacity>
+              </View>
 
-            <ScrollView style={{ maxHeight: 420 }}>
-              <Text style={styles.label}>Address Label</Text>
-              <View style={styles.labelPicker}>
-                {['Home', 'Work', 'Other'].map((l) => (
-                  <TouchableOpacity
-                    key={l}
-                    style={[styles.labelChip, newLabel === l && styles.labelChipActive]}
-                    onPress={() => setNewLabel(l)}
-                  >
-                    <Text
-                      style={[
-                        styles.labelChipText,
-                        newLabel === l && styles.labelChipTextActive,
-                      ]}
+              <ScrollView
+                style={styles.modalScroll}
+                contentContainerStyle={styles.modalScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                <Text style={styles.label}>Address Label</Text>
+                <View style={styles.labelPicker}>
+                  {['Home', 'Work', 'Other'].map((l) => (
+                    <TouchableOpacity
+                      key={l}
+                      style={[styles.labelChip, newLabel === l && styles.labelChipActive]}
+                      onPress={() => setNewLabel(l)}
                     >
-                      {l}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <View style={styles.labelHeaderRow}>
-                <Text style={styles.label}>
-                  Full Name <Text style={styles.requiredStar}>*</Text>
-                </Text>
-                {newAddrErrors.fullName ? (
-                  <Text style={styles.requiredBadge}>Required</Text>
-                ) : null}
-              </View>
-              <TextInput
-                style={[styles.input, Boolean(newAddrErrors.fullName) && styles.inputError]}
-                value={newFullName}
-                onChangeText={(v) => {
-                  setNewFullName(v);
-                  if (newAddrErrors.fullName) setNewAddrErrors((prev) => ({ ...prev, fullName: undefined }));
-                }}
-                placeholder="Receiver name"
-                placeholderTextColor="#94A3B8"
-              />
-              {Boolean(newAddrErrors.fullName) && (
-                <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.fullName}</Text>
-              )}
-
-              <View style={styles.labelHeaderRow}>
-                <Text style={styles.label}>
-                  Phone Number <Text style={styles.requiredStar}>*</Text>
-                </Text>
-                {newAddrErrors.phone ? (
-                  <Text style={styles.requiredBadge}>Required</Text>
-                ) : null}
-              </View>
-              <TextInput
-                style={[styles.input, Boolean(newAddrErrors.phone) && styles.inputError]}
-                value={newPhone}
-                onChangeText={(v) => {
-                  const cleaned = v.replace(/[^\d+]/g, '');
-                  setNewPhone(cleaned);
-                  if (newAddrErrors.phone) setNewAddrErrors((prev) => ({ ...prev, phone: undefined }));
-                }}
-                placeholder="10-digit mobile number"
-                placeholderTextColor="#94A3B8"
-                keyboardType="phone-pad"
-                maxLength={13}
-              />
-              {Boolean(newAddrErrors.phone) ? (
-                <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.phone}</Text>
-              ) : Boolean(newPhone && !isValidPhoneNumber(newPhone)) ? (
-                <Text style={styles.fieldErrorText}>
-                  ⚠️ Please enter a valid 10-digit mobile number
-                </Text>
-              ) : null}
-
-              <View style={styles.labelHeaderRow}>
-                <Text style={styles.label}>
-                  Flat / House / Street Address <Text style={styles.requiredStar}>*</Text>
-                </Text>
-                {newAddrErrors.line1 ? (
-                  <Text style={styles.requiredBadge}>Required</Text>
-                ) : null}
-              </View>
-              <TextInput
-                style={[styles.input, Boolean(newAddrErrors.line1) && styles.inputError]}
-                value={newLine1}
-                onChangeText={(v) => {
-                  setNewLine1(v);
-                  if (newAddrErrors.line1) setNewAddrErrors((prev) => ({ ...prev, line1: undefined }));
-                }}
-                placeholder="e.g. Flat 302, Palm Heights, Link Road"
-                placeholderTextColor="#94A3B8"
-              />
-              {Boolean(newAddrErrors.line1) && (
-                <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.line1}</Text>
-              )}
-
-              <Text style={styles.label}>Landmark (Optional)</Text>
-              <TextInput
-                style={styles.input}
-                value={newLandmark}
-                onChangeText={setNewLandmark}
-                placeholder="e.g. Near City Hospital"
-                placeholderTextColor="#94A3B8"
-              />
-
-              <View style={styles.inputRow}>
-                <View style={{ flex: 1 }}>
-                  <View style={styles.labelHeaderRow}>
-                    <Text style={styles.label}>
-                      City <Text style={styles.requiredStar}>*</Text>
-                    </Text>
-                    {newAddrErrors.city ? <Text style={styles.requiredBadge}>Required</Text> : null}
-                  </View>
-                  <TextInput
-                    style={[styles.input, Boolean(newAddrErrors.city) && styles.inputError]}
-                    value={newCity}
-                    onChangeText={(v) => {
-                      setNewCity(v);
-                      if (newAddrErrors.city) setNewAddrErrors((prev) => ({ ...prev, city: undefined }));
-                    }}
-                    placeholder="e.g. Mumbai"
-                    placeholderTextColor="#94A3B8"
-                  />
-                  {Boolean(newAddrErrors.city) && (
-                    <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.city}</Text>
-                  )}
+                      <Text
+                        style={[
+                          styles.labelChipText,
+                          newLabel === l && styles.labelChipTextActive,
+                        ]}
+                      >
+                        {l}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
                 </View>
-                <View style={{ flex: 1, marginLeft: 8 }}>
-                  <View style={styles.labelHeaderRow}>
-                    <Text style={styles.label}>
-                      PIN Code <Text style={styles.requiredStar}>*</Text>
-                    </Text>
-                    {newAddrErrors.postal ? <Text style={styles.requiredBadge}>Required</Text> : null}
-                  </View>
-                  <TextInput
-                    style={[styles.input, Boolean(newAddrErrors.postal) && styles.inputError]}
-                    value={newPostal}
-                    onChangeText={(v) => {
-                      const cleaned = v.replace(/\D/g, '').slice(0, 6);
-                      setNewPostal(cleaned);
-                      if (newAddrErrors.postal) setNewAddrErrors((prev) => ({ ...prev, postal: undefined }));
-                    }}
-                    keyboardType="numeric"
-                    maxLength={6}
-                    placeholder="6-digit PIN"
-                    placeholderTextColor="#94A3B8"
-                  />
-                  {Boolean(newAddrErrors.postal) && (
-                    <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.postal}</Text>
-                  )}
+
+                <View style={styles.labelHeaderRow}>
+                  <Text style={styles.label}>
+                    Full Name <Text style={styles.requiredStar}>*</Text>
+                  </Text>
+                  {newAddrErrors.fullName ? (
+                    <Text style={styles.requiredBadge}>Required</Text>
+                  ) : null}
                 </View>
-              </View>
-            </ScrollView>
-
-            <View style={styles.modalFooter}>
-              <TouchableOpacity
-                style={styles.modalCancelBtn}
-                onPress={() => setAddModalVisible(false)}
-              >
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.modalSaveBtn}
-                onPress={handleSaveNewAddress}
-                disabled={savingAddr}
-              >
-                {savingAddr ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.modalSaveText}>Save Address</Text>
+                <TextInput
+                  style={[styles.input, Boolean(newAddrErrors.fullName) && styles.inputError]}
+                  value={newFullName}
+                  onChangeText={(v) => {
+                    setNewFullName(v);
+                    if (newAddrErrors.fullName) setNewAddrErrors((prev) => ({ ...prev, fullName: undefined }));
+                  }}
+                  placeholder="Receiver name"
+                  placeholderTextColor="#94A3B8"
+                />
+                {Boolean(newAddrErrors.fullName) && (
+                  <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.fullName}</Text>
                 )}
-              </TouchableOpacity>
+
+                <View style={styles.labelHeaderRow}>
+                  <Text style={styles.label}>
+                    Phone Number <Text style={styles.requiredStar}>*</Text>
+                  </Text>
+                  {newAddrErrors.phone ? (
+                    <Text style={styles.requiredBadge}>Required</Text>
+                  ) : null}
+                </View>
+                <TextInput
+                  style={[styles.input, Boolean(newAddrErrors.phone) && styles.inputError]}
+                  value={newPhone}
+                  onChangeText={(v) => {
+                    const cleaned = v.replace(/[^\d+]/g, '');
+                    setNewPhone(cleaned);
+                    if (newAddrErrors.phone) setNewAddrErrors((prev) => ({ ...prev, phone: undefined }));
+                  }}
+                  placeholder="10-digit mobile number"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="phone-pad"
+                  maxLength={13}
+                />
+                {Boolean(newAddrErrors.phone) ? (
+                  <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.phone}</Text>
+                ) : Boolean(newPhone && !isValidPhoneNumber(newPhone)) ? (
+                  <Text style={styles.fieldErrorText}>
+                    ⚠️ Please enter a valid 10-digit mobile number
+                  </Text>
+                ) : null}
+
+                <View style={styles.labelHeaderRow}>
+                  <Text style={styles.label}>
+                    Flat / House / Street Address <Text style={styles.requiredStar}>*</Text>
+                  </Text>
+                  {newAddrErrors.line1 ? (
+                    <Text style={styles.requiredBadge}>Required</Text>
+                  ) : null}
+                </View>
+                <TextInput
+                  style={[styles.input, Boolean(newAddrErrors.line1) && styles.inputError]}
+                  value={newLine1}
+                  onChangeText={(v) => {
+                    setNewLine1(v);
+                    if (newAddrErrors.line1) setNewAddrErrors((prev) => ({ ...prev, line1: undefined }));
+                  }}
+                  placeholder="e.g. Flat 302, Palm Heights, Link Road"
+                  placeholderTextColor="#94A3B8"
+                />
+                {Boolean(newAddrErrors.line1) && (
+                  <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.line1}</Text>
+                )}
+
+                <Text style={styles.label}>Landmark (Optional)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={newLandmark}
+                  onChangeText={setNewLandmark}
+                  placeholder="e.g. Near City Hospital"
+                  placeholderTextColor="#94A3B8"
+                />
+
+                <View style={styles.inputRow}>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.labelHeaderRow}>
+                      <Text style={styles.label}>
+                        City <Text style={styles.requiredStar}>*</Text>
+                      </Text>
+                      {newAddrErrors.city ? <Text style={styles.requiredBadge}>Required</Text> : null}
+                    </View>
+                    <TextInput
+                      style={[styles.input, Boolean(newAddrErrors.city) && styles.inputError]}
+                      value={newCity}
+                      onChangeText={(v) => {
+                        setNewCity(v);
+                        if (newAddrErrors.city) setNewAddrErrors((prev) => ({ ...prev, city: undefined }));
+                      }}
+                      placeholder="e.g. Mumbai"
+                      placeholderTextColor="#94A3B8"
+                    />
+                    {Boolean(newAddrErrors.city) && (
+                      <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.city}</Text>
+                    )}
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 8 }}>
+                    <View style={styles.labelHeaderRow}>
+                      <Text style={styles.label}>
+                        PIN Code <Text style={styles.requiredStar}>*</Text>
+                      </Text>
+                      {newAddrErrors.postal ? <Text style={styles.requiredBadge}>Required</Text> : null}
+                    </View>
+                    <TextInput
+                      style={[styles.input, Boolean(newAddrErrors.postal) && styles.inputError]}
+                      value={newPostal}
+                      onChangeText={(v) => {
+                        const cleaned = v.replace(/\D/g, '').slice(0, 6);
+                        setNewPostal(cleaned);
+                        if (newAddrErrors.postal) setNewAddrErrors((prev) => ({ ...prev, postal: undefined }));
+                      }}
+                      keyboardType="numeric"
+                      maxLength={6}
+                      placeholder="6-digit PIN"
+                      placeholderTextColor="#94A3B8"
+                    />
+                    {Boolean(newAddrErrors.postal) && (
+                      <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.postal}</Text>
+                    )}
+                  </View>
+                </View>
+              </ScrollView>
+
+              <View style={styles.modalFooter}>
+                <TouchableOpacity
+                  style={styles.modalCancelBtn}
+                  onPress={() => setAddModalVisible(false)}
+                >
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.modalSaveBtn}
+                  onPress={handleSaveNewAddress}
+                  disabled={savingAddr}
+                >
+                  {savingAddr ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.modalSaveText}>Save Address</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 
@@ -1419,56 +1438,69 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   qrUpiWrapper: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: 'column',
+    alignItems: 'center',
     gap: 14,
     marginBottom: 16,
+    width: '100%',
   },
   qrCodeBox: {
     backgroundColor: '#FFFFFF',
-    padding: 10,
-    borderRadius: 12,
-    borderWidth: 1,
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1.5,
     borderColor: '#E2E8F0',
     alignItems: 'center',
     justifyContent: 'center',
+    width: '100%',
+    maxWidth: 320,
+    alignSelf: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
   },
   qrTouchable: {
     alignItems: 'center',
+    width: '100%',
   },
   qrImage: {
-    width: 140,
-    height: 140,
-    borderRadius: 8,
+    width: 250,
+    height: 250,
+    maxWidth: '100%',
+    borderRadius: 10,
   },
   qrTapHint: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
     color: customerColors.primary,
-    marginTop: 6,
+    marginTop: 8,
   },
   noQrPlaceholder: {
-    width: 140,
-    height: 140,
+    width: '100%',
+    maxWidth: 320,
+    height: 200,
     backgroundColor: '#F1F5F9',
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 10,
+    padding: 16,
+    alignSelf: 'center',
   },
   noQrText: {
-    fontSize: 11,
+    fontSize: 12,
     color: '#64748B',
     textAlign: 'center',
-    marginTop: 6,
+    marginTop: 8,
     fontWeight: '600',
   },
   upiInfoBox: {
-    flex: 1,
-    minWidth: 180,
-    justifyContent: 'center',
+    width: '100%',
+    maxWidth: 320,
+    alignSelf: 'center',
     gap: 10,
   },
   upiIdCard: {
@@ -1738,20 +1770,38 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: 16,
+    paddingVertical: Platform.OS === 'web' ? 24 : 12,
+  },
+  keyboardAvoidingView: {
+    width: '100%',
+    maxWidth: 480,
+    maxHeight: '94%',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   modalCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     width: '100%',
-    maxWidth: 480,
+    maxHeight: '100%',
     padding: 20,
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 14,
+    flexShrink: 0,
+  },
+  modalScroll: {
+    flexShrink: 1,
+  },
+  modalScrollContent: {
+    paddingBottom: 10,
   },
   modalTitle: {
     fontSize: 16,
@@ -1827,10 +1877,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-end',
     gap: 10,
-    marginTop: 16,
+    marginTop: 12,
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#EEEEEE',
+    flexShrink: 0,
   },
   modalCancelBtn: {
     paddingVertical: 8,

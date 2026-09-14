@@ -11,6 +11,7 @@ import {
   Alert,
   Platform,
   useWindowDimensions,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
@@ -366,188 +367,206 @@ export default function CustomerAddressesScreen() {
       </ScrollView>
 
       {/* Add/Edit Modal */}
-      <Modal visible={modalVisible} animationType="slide" transparent>
+      <Modal
+        visible={modalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setModalVisible(false)}
+      >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {editingId ? 'Edit Address' : 'Add Delivery Address'}
-              </Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <Text style={{ fontSize: 18, color: '#64748B' }}>✕</Text>
-              </TouchableOpacity>
-            </View>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.keyboardAvoidingView}
+          >
+            <View style={styles.modalCard}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>
+                  {editingId ? 'Edit Address' : 'Add Delivery Address'}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setModalVisible(false)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={{ fontSize: 18, color: '#64748B', fontWeight: '700' }}>✕</Text>
+                </TouchableOpacity>
+              </View>
 
-            <ScrollView style={{ maxHeight: 420 }}>
-              <Text style={styles.labelTitle}>Label</Text>
-              <View style={styles.labelPicker}>
-                {['Home', 'Work', 'Other'].map((l) => (
-                  <TouchableOpacity
-                    key={l}
-                    style={[styles.labelChip, label === l && styles.labelChipActive]}
-                    onPress={() => setLabel(l)}
-                  >
-                    <Text
-                      style={[styles.labelChipText, label === l && styles.labelChipTextActive]}
+              <ScrollView
+                style={styles.modalScroll}
+                contentContainerStyle={styles.modalScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                <Text style={styles.labelTitle}>Label</Text>
+                <View style={styles.labelPicker}>
+                  {['Home', 'Work', 'Other'].map((l) => (
+                    <TouchableOpacity
+                      key={l}
+                      style={[styles.labelChip, label === l && styles.labelChipActive]}
+                      onPress={() => setLabel(l)}
                     >
-                      {l}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <View style={styles.labelHeaderRow}>
-                <Text style={styles.labelTitle}>
-                  Full Name <Text style={styles.requiredStar}>*</Text>
-                </Text>
-                {formErrors.fullName ? (
-                  <Text style={styles.requiredBadge}>Required</Text>
-                ) : null}
-              </View>
-              <TextInput
-                style={[styles.input, Boolean(formErrors.fullName) && styles.inputError]}
-                value={fullName}
-                onChangeText={(v) => {
-                  setFullName(v);
-                  if (formErrors.fullName) setFormErrors((prev) => ({ ...prev, fullName: undefined }));
-                }}
-                placeholder="Receiver name"
-                placeholderTextColor="#94A3B8"
-              />
-              {Boolean(formErrors.fullName) && (
-                <Text style={styles.fieldErrorText}>⚠️ {formErrors.fullName}</Text>
-              )}
-
-              <View style={styles.labelHeaderRow}>
-                <Text style={styles.labelTitle}>
-                  Phone <Text style={styles.requiredStar}>*</Text>
-                </Text>
-                {formErrors.phone ? (
-                  <Text style={styles.requiredBadge}>Required</Text>
-                ) : null}
-              </View>
-              <TextInput
-                style={[styles.input, Boolean(formErrors.phone) && styles.inputError]}
-                value={phone}
-                onChangeText={(v) => {
-                  const cleaned = v.replace(/[^\d+]/g, '');
-                  setPhone(cleaned);
-                  if (formErrors.phone) setFormErrors((prev) => ({ ...prev, phone: undefined }));
-                }}
-                placeholder="10-digit mobile number"
-                placeholderTextColor="#94A3B8"
-                keyboardType="phone-pad"
-                maxLength={13}
-              />
-              {Boolean(formErrors.phone) ? (
-                <Text style={styles.fieldErrorText}>⚠️ {formErrors.phone}</Text>
-              ) : Boolean(phone && !isValidPhoneNumber(phone)) ? (
-                <Text style={styles.fieldErrorText}>
-                  ⚠️ Please enter a valid 10-digit mobile number
-                </Text>
-              ) : null}
-
-              <View style={styles.labelHeaderRow}>
-                <Text style={styles.labelTitle}>
-                  Flat / House / Street Address <Text style={styles.requiredStar}>*</Text>
-                </Text>
-                {formErrors.addressLine1 ? (
-                  <Text style={styles.requiredBadge}>Required</Text>
-                ) : null}
-              </View>
-              <TextInput
-                style={[styles.input, Boolean(formErrors.addressLine1) && styles.inputError]}
-                value={addressLine1}
-                onChangeText={(v) => {
-                  setAddressLine1(v);
-                  if (formErrors.addressLine1) setFormErrors((prev) => ({ ...prev, addressLine1: undefined }));
-                }}
-                placeholder="Detailed street address"
-                placeholderTextColor="#94A3B8"
-              />
-              {Boolean(formErrors.addressLine1) && (
-                <Text style={styles.fieldErrorText}>⚠️ {formErrors.addressLine1}</Text>
-              )}
-
-              <Text style={styles.labelTitle}>Landmark (Optional)</Text>
-              <TextInput
-                style={styles.input}
-                value={landmark}
-                onChangeText={setLandmark}
-                placeholder="e.g. Opposite Metro Station"
-                placeholderTextColor="#94A3B8"
-              />
-
-              <View style={styles.inputRow}>
-                <View style={{ flex: 1 }}>
-                  <View style={styles.labelHeaderRow}>
-                    <Text style={styles.labelTitle}>
-                      City <Text style={styles.requiredStar}>*</Text>
-                    </Text>
-                    {formErrors.city ? <Text style={styles.requiredBadge}>Required</Text> : null}
-                  </View>
-                  <TextInput
-                    style={[styles.input, Boolean(formErrors.city) && styles.inputError]}
-                    value={city}
-                    onChangeText={(v) => {
-                      setCity(v);
-                      if (formErrors.city) setFormErrors((prev) => ({ ...prev, city: undefined }));
-                    }}
-                    placeholder="e.g. Mumbai"
-                    placeholderTextColor="#94A3B8"
-                  />
-                  {Boolean(formErrors.city) && (
-                    <Text style={styles.fieldErrorText}>⚠️ {formErrors.city}</Text>
-                  )}
+                      <Text
+                        style={[styles.labelChipText, label === l && styles.labelChipTextActive]}
+                      >
+                        {l}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
                 </View>
-                <View style={{ flex: 1, marginLeft: 8 }}>
-                  <View style={styles.labelHeaderRow}>
-                    <Text style={styles.labelTitle}>
-                      PIN Code <Text style={styles.requiredStar}>*</Text>
-                    </Text>
-                    {formErrors.postalCode ? <Text style={styles.requiredBadge}>Required</Text> : null}
-                  </View>
-                  <TextInput
-                    style={[styles.input, Boolean(formErrors.postalCode) && styles.inputError]}
-                    value={postalCode}
-                    onChangeText={(v) => {
-                      const cleaned = v.replace(/\D/g, '').slice(0, 6);
-                      setPostalCode(cleaned);
-                      if (formErrors.postalCode) setFormErrors((prev) => ({ ...prev, postalCode: undefined }));
-                    }}
-                    keyboardType="numeric"
-                    maxLength={6}
-                    placeholder="6-digit PIN"
-                    placeholderTextColor="#94A3B8"
-                  />
-                  {Boolean(formErrors.postalCode) && (
-                    <Text style={styles.fieldErrorText}>⚠️ {formErrors.postalCode}</Text>
-                  )}
+
+                <View style={styles.labelHeaderRow}>
+                  <Text style={styles.labelTitle}>
+                    Full Name <Text style={styles.requiredStar}>*</Text>
+                  </Text>
+                  {formErrors.fullName ? (
+                    <Text style={styles.requiredBadge}>Required</Text>
+                  ) : null}
                 </View>
-              </View>
-            </ScrollView>
-
-            <View style={styles.modalFooter}>
-              <TouchableOpacity
-                style={styles.cancelBtn}
-                onPress={() => setModalVisible(false)}
-              >
-                <Text style={styles.cancelBtnText}>Cancel</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.saveBtn}
-                onPress={handleSave}
-                disabled={saving}
-              >
-                {saving ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.saveBtnText}>Save Address</Text>
+                <TextInput
+                  style={[styles.input, Boolean(formErrors.fullName) && styles.inputError]}
+                  value={fullName}
+                  onChangeText={(v) => {
+                    setFullName(v);
+                    if (formErrors.fullName) setFormErrors((prev) => ({ ...prev, fullName: undefined }));
+                  }}
+                  placeholder="Receiver name"
+                  placeholderTextColor="#94A3B8"
+                />
+                {Boolean(formErrors.fullName) && (
+                  <Text style={styles.fieldErrorText}>⚠️ {formErrors.fullName}</Text>
                 )}
-              </TouchableOpacity>
+
+                <View style={styles.labelHeaderRow}>
+                  <Text style={styles.labelTitle}>
+                    Phone <Text style={styles.requiredStar}>*</Text>
+                  </Text>
+                  {formErrors.phone ? (
+                    <Text style={styles.requiredBadge}>Required</Text>
+                  ) : null}
+                </View>
+                <TextInput
+                  style={[styles.input, Boolean(formErrors.phone) && styles.inputError]}
+                  value={phone}
+                  onChangeText={(v) => {
+                    const cleaned = v.replace(/[^\d+]/g, '');
+                    setPhone(cleaned);
+                    if (formErrors.phone) setFormErrors((prev) => ({ ...prev, phone: undefined }));
+                  }}
+                  placeholder="10-digit mobile number"
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="phone-pad"
+                  maxLength={13}
+                />
+                {Boolean(formErrors.phone) ? (
+                  <Text style={styles.fieldErrorText}>⚠️ {formErrors.phone}</Text>
+                ) : Boolean(phone && !isValidPhoneNumber(phone)) ? (
+                  <Text style={styles.fieldErrorText}>
+                    ⚠️ Please enter a valid 10-digit mobile number
+                  </Text>
+                ) : null}
+
+                <View style={styles.labelHeaderRow}>
+                  <Text style={styles.labelTitle}>
+                    Flat / House / Street Address <Text style={styles.requiredStar}>*</Text>
+                  </Text>
+                  {formErrors.addressLine1 ? (
+                    <Text style={styles.requiredBadge}>Required</Text>
+                  ) : null}
+                </View>
+                <TextInput
+                  style={[styles.input, Boolean(formErrors.addressLine1) && styles.inputError]}
+                  value={addressLine1}
+                  onChangeText={(v) => {
+                    setAddressLine1(v);
+                    if (formErrors.addressLine1) setFormErrors((prev) => ({ ...prev, addressLine1: undefined }));
+                  }}
+                  placeholder="Detailed street address"
+                  placeholderTextColor="#94A3B8"
+                />
+                {Boolean(formErrors.addressLine1) && (
+                  <Text style={styles.fieldErrorText}>⚠️ {formErrors.addressLine1}</Text>
+                )}
+
+                <Text style={styles.labelTitle}>Landmark (Optional)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={landmark}
+                  onChangeText={setLandmark}
+                  placeholder="e.g. Opposite Metro Station"
+                  placeholderTextColor="#94A3B8"
+                />
+
+                <View style={styles.inputRow}>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.labelHeaderRow}>
+                      <Text style={styles.labelTitle}>
+                        City <Text style={styles.requiredStar}>*</Text>
+                      </Text>
+                      {formErrors.city ? <Text style={styles.requiredBadge}>Required</Text> : null}
+                    </View>
+                    <TextInput
+                      style={[styles.input, Boolean(formErrors.city) && styles.inputError]}
+                      value={city}
+                      onChangeText={(v) => {
+                        setCity(v);
+                        if (formErrors.city) setFormErrors((prev) => ({ ...prev, city: undefined }));
+                      }}
+                      placeholder="e.g. Mumbai"
+                      placeholderTextColor="#94A3B8"
+                    />
+                    {Boolean(formErrors.city) && (
+                      <Text style={styles.fieldErrorText}>⚠️ {formErrors.city}</Text>
+                    )}
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 8 }}>
+                    <View style={styles.labelHeaderRow}>
+                      <Text style={styles.labelTitle}>
+                        PIN Code <Text style={styles.requiredStar}>*</Text>
+                      </Text>
+                      {formErrors.postalCode ? <Text style={styles.requiredBadge}>Required</Text> : null}
+                    </View>
+                    <TextInput
+                      style={[styles.input, Boolean(formErrors.postalCode) && styles.inputError]}
+                      value={postalCode}
+                      onChangeText={(v) => {
+                        const cleaned = v.replace(/\D/g, '').slice(0, 6);
+                        setPostalCode(cleaned);
+                        if (formErrors.postalCode) setFormErrors((prev) => ({ ...prev, postalCode: undefined }));
+                      }}
+                      keyboardType="numeric"
+                      maxLength={6}
+                      placeholder="6-digit PIN"
+                      placeholderTextColor="#94A3B8"
+                    />
+                    {Boolean(formErrors.postalCode) && (
+                      <Text style={styles.fieldErrorText}>⚠️ {formErrors.postalCode}</Text>
+                    )}
+                  </View>
+                </View>
+              </ScrollView>
+
+              <View style={styles.modalFooter}>
+                <TouchableOpacity
+                  style={styles.cancelBtn}
+                  onPress={() => setModalVisible(false)}
+                >
+                  <Text style={styles.cancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.saveBtn}
+                  onPress={handleSave}
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.saveBtnText}>Save Address</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
     </View>
@@ -815,20 +834,38 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: 16,
+    paddingVertical: Platform.OS === 'web' ? 24 : 12,
+  },
+  keyboardAvoidingView: {
+    width: '100%',
+    maxWidth: 480,
+    maxHeight: '94%',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   modalCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     width: '100%',
-    maxWidth: 480,
+    maxHeight: '100%',
     padding: 20,
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 14,
+    flexShrink: 0,
+  },
+  modalScroll: {
+    flexShrink: 1,
+  },
+  modalScrollContent: {
+    paddingBottom: 10,
   },
   modalTitle: {
     fontSize: 16,
@@ -916,10 +953,11 @@ const styles = StyleSheet.create({
   modalFooter: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 16,
+    marginTop: 12,
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#EEEEEE',
+    flexShrink: 0,
   },
   cancelBtn: {
     flex: 1,

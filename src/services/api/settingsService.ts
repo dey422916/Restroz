@@ -493,9 +493,6 @@ export const settingsService = {
       profileUpdates.is_gst_enabled = targetIsGstEnabled;
       profileUpdates.gst_registered = targetGstRegistered;
       profileUpdates.tax_invoice_enabled = targetTaxInvoiceEnabled;
-      if (settings.gstin !== undefined || updated.gstin !== undefined) profileUpdates.gstin = (settings.gstin ?? updated.gstin ?? '').trim();
-      if (settings.default_tax_rate !== undefined || updated.default_tax_rate !== undefined) profileUpdates.default_tax_rate = Number(settings.default_tax_rate ?? updated.default_tax_rate ?? 5.0);
-      if (settings.tax_rate !== undefined || updated.tax_rate !== undefined) profileUpdates.tax_rate = Number(settings.tax_rate ?? updated.tax_rate ?? 5.0);
 
       if (Object.keys(profileUpdates).length > 0) {
         try {

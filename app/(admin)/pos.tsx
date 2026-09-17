@@ -910,7 +910,7 @@ export default function PosScreen() {
           Select a table to start a new order, or view/add items to an occupied table.
         </Text>
 
-        {/* Row 3: Available & Occupied Status Badges */}
+        {/* Row 3: Available, Occupied Status Badges & Change Order Type Button in ONE LINE */}
         <View style={styles.tableStatsPillRow}>
           <View style={styles.pillAvailable}>
             <Text style={styles.pillAvailableText}>🟢 {tableStats.available} Available</Text>
@@ -918,16 +918,14 @@ export default function PosScreen() {
           <View style={styles.pillOccupied}>
             <Text style={styles.pillOccupiedText}>🔴 {tableStats.occupied} Occupied</Text>
           </View>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => setPosStep('choose_type')}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.backBtnText}>← Change Order Type</Text>
+          </TouchableOpacity>
         </View>
-
-        {/* Row 4: Change Order Type Button */}
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => setPosStep('choose_type')}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.backBtnText}>← Change Order Type</Text>
-        </TouchableOpacity>
       </View>
 
       {/* Search and Section Filters with Proper Spacing */}
@@ -2647,17 +2645,21 @@ const styles = StyleSheet.create({
   },
   tableStatsPillRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 8,
     marginTop: 2,
     marginBottom: 2,
   },
   pillAvailable: {
     backgroundColor: '#dcfce7',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#bbf7d0',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   pillAvailableText: {
     color: '#15803d',
@@ -2666,11 +2668,13 @@ const styles = StyleSheet.create({
   },
   pillOccupied: {
     backgroundColor: '#fee2e2',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#fecdd3',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   pillOccupiedText: {
     color: '#b91c1c',
@@ -2679,13 +2683,13 @@ const styles = StyleSheet.create({
   },
   backBtn: {
     backgroundColor: '#f1f5f9',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#cbd5e1',
-    alignSelf: 'flex-start',
-    marginTop: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   backBtnText: {
     fontSize: 11,

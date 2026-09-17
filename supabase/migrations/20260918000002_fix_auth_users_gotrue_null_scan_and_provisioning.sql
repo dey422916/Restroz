@@ -40,7 +40,7 @@ INSERT INTO auth.identities (
     updated_at
 )
 SELECT 
-    u.id::text,
+    u.id,
     u.id,
     jsonb_build_object('sub', u.id::text, 'email', u.email, 'email_verified', true),
     'email',
@@ -206,7 +206,7 @@ BEGIN
         INSERT INTO auth.identities (
             id, user_id, identity_data, provider, provider_id, last_sign_in_at, created_at, updated_at
         ) VALUES (
-            v_user_id::TEXT, v_user_id,
+            v_user_id, v_user_id,
             jsonb_build_object('sub', v_user_id::TEXT, 'email', v_email, 'email_verified', true),
             'email', v_user_id::TEXT, NOW(), NOW(), NOW()
         );

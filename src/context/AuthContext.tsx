@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Linking } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { UserProfile, UserRole, Restaurant, RestaurantMember, RestaurantMemberPermissions } from '../types';
 import { authService } from '../services/api/authService';
 import { restaurantService } from '../services/api/restaurantService';
@@ -53,7 +54,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loadRestaurantContext = async (currentUser: UserProfile | null, eventName: string = 'MANUAL') => {
     const seq = ++loadContextSeqRef.current;
     const timestamp = new Date().toISOString();
-    const activeRestaurantIdBefore = activeRestaurantIdRef.current;
+
+    let preferredRestaurantId = activeRestaurantIdRef.current;
+    if (!preferredRestaurantId) {
+      try {
+        preferredRestaurantId = (await AsyncStorage.getItem('@active_restaurant_id')) || '';
+      } catch (e) {
+        // Ignored
+      }
+    }
 
     let sessionExists = false;
     let sessionUserId: string | null = null;
@@ -110,7 +119,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       const { restaurantId, membership, restaurant } =
-        await restaurantService.getActiveRestaurantContext(targetUserId, profileRole, seq, eventName);
+        await restaurantService.getActiveRestaurantContext(targetUserId, profileRole, seq, eventName, preferredRestaurantId);
 
       if (seq !== loadContextSeqRef.current) {
         return;
@@ -123,6 +132,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       activeRestaurantIdRef.current = restaurantId;
+      if (restaurantId) {
+        AsyncStorage.setItem('@active_restaurant_id', restaurantId).catch(() => {});
+      }
       setUserMemberships(memberships || []);
       setActiveRestaurantId(restaurantId);
       setActiveRestaurant(restaurant);
@@ -280,6 +292,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (previousRestaurantId) {
         registerReminderService.unregisterMobileDevicePushToken(previousRestaurantId).catch(() => {});
       }
+      activeRestaurantIdRef.current = '';
+      await AsyncStorage.removeItem('@active_restaurant_id').catch(() => {});
       await authService.logout();
       setUser(null);
       setSuperAdminMarketplacePreview(false);
@@ -312,6 +326,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     activeRestaurantIdRef.current = restaurantId;
     setActiveRestaurantId(restaurantId);
     try {
+      if (restaurantId) {
+        await AsyncStorage.setItem('@active_restaurant_id', restaurantId);
+      } else {
+        await AsyncStorage.removeItem('@active_restaurant_id');
+      }
       const rest = await restaurantService.getRestaurantById(restaurantId);
       if (rest) {
         setActiveRestaurant(rest);

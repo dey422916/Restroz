@@ -119,13 +119,14 @@ export const restaurantService = {
   },
 
   /**
-   * Resolve active restaurant context for an authenticated user (Admin/Staff)
+   * Resolve active restaurant context for an authenticated user (Admin/Staff/SuperAdmin)
    */
   async getActiveRestaurantContext(
     userId: string,
     userRole?: string,
     seq?: number,
-    eventName?: string
+    eventName?: string,
+    preferredRestaurantId?: string
   ): Promise<{
     restaurantId: string;
     membership: RestaurantMember | null;
@@ -155,27 +156,65 @@ export const restaurantService = {
       };
     }
 
-    const memberships = await this.getUserMemberships(currentAuthUid, seq, eventName);
-    if (memberships && memberships.length > 0) {
-      const primary = memberships[0];
-      let restaurantObj = primary.restaurant || null;
-      if (!restaurantObj && primary.restaurant_id) {
-        restaurantObj = await this.getRestaurantById(primary.restaurant_id);
-      }
-      return {
-        restaurantId: primary.restaurant_id,
-        membership: primary,
-        restaurant: restaurantObj,
-      };
-    }
-
-    // If user is SUPER_ADMIN without specific restaurant_members binding, allow fallback to first active restaurant
+    // If user is SUPER_ADMIN:
+    // They have platform-wide access and can manage ANY restaurant.
     if (userRole === 'SUPER_ADMIN') {
+      if (preferredRestaurantId) {
+        const preferredRest = await this.getRestaurantById(preferredRestaurantId);
+        if (preferredRest) {
+          return {
+            restaurantId: preferredRest.id,
+            membership: null,
+            restaurant: preferredRest,
+          };
+        }
+      }
+
+      // Check if super admin has a specific membership first
+      const memberships = await this.getUserMemberships(currentAuthUid, seq, eventName);
+      if (memberships && memberships.length > 0) {
+        const primary = memberships[0];
+        let restaurantObj = primary.restaurant || null;
+        if (!restaurantObj && primary.restaurant_id) {
+          restaurantObj = await this.getRestaurantById(primary.restaurant_id);
+        }
+        if (restaurantObj) {
+          return {
+            restaurantId: primary.restaurant_id,
+            membership: primary,
+            restaurant: restaurantObj,
+          };
+        }
+      }
+
+      // Fallback to first active restaurant
       const defaultRest = await this.getDefaultRestaurant();
       return {
         restaurantId: defaultRest?.id || '',
         membership: null,
         restaurant: defaultRest || null,
+      };
+    }
+
+    // For ADMIN and STAFF:
+    const memberships = await this.getUserMemberships(currentAuthUid, seq, eventName);
+    if (memberships && memberships.length > 0) {
+      let selectedMembership = memberships[0];
+      if (preferredRestaurantId) {
+        const matched = memberships.find((m) => m.restaurant_id === preferredRestaurantId);
+        if (matched) {
+          selectedMembership = matched;
+        }
+      }
+
+      let restaurantObj = selectedMembership.restaurant || null;
+      if (!restaurantObj && selectedMembership.restaurant_id) {
+        restaurantObj = await this.getRestaurantById(selectedMembership.restaurant_id);
+      }
+      return {
+        restaurantId: selectedMembership.restaurant_id,
+        membership: selectedMembership,
+        restaurant: restaurantObj,
       };
     }
 

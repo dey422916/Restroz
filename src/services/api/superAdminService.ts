@@ -955,11 +955,40 @@ export const superAdminService = {
 
     const validPaymentMethod = normalizePaymentMethod(payload.payment_method);
 
-    // Upsert subscription directly into restaurant_subscriptions (which holds tenant subscription state)
-    const { data: newSub, error: subErr } = await supabase
+    // Check if an existing subscription exists for this restaurant
+    const { data: existingSub } = await supabase
       .from('restaurant_subscriptions')
-      .upsert(
-        {
+      .select('id')
+      .eq('restaurant_id', payload.restaurant_id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let newSub: any = null;
+    let subErr: any = null;
+
+    if (existingSub?.id) {
+      // Update existing subscription record
+      const res = await supabase
+        .from('restaurant_subscriptions')
+        .update({
+          plan_id: payload.plan_id,
+          status: 'active',
+          start_date: new Date().toISOString(),
+          end_date: endDate,
+          notes: payload.notes || 'Plan assigned by Super Admin',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingSub.id)
+        .select('*, plan:subscription_plans(*), restaurant:restaurants(id, name, slug)')
+        .single();
+      newSub = res.data;
+      subErr = res.error;
+    } else {
+      // Insert new subscription record
+      const res = await supabase
+        .from('restaurant_subscriptions')
+        .insert({
           restaurant_id: payload.restaurant_id,
           plan_id: payload.plan_id,
           status: 'active',
@@ -967,14 +996,15 @@ export const superAdminService = {
           end_date: endDate,
           notes: payload.notes || 'Plan assigned by Super Admin',
           updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'restaurant_id' }
-      )
-      .select('*, plan:subscription_plans(*), restaurant:restaurants(id, name, slug)')
-      .single();
+        })
+        .select('*, plan:subscription_plans(*), restaurant:restaurants(id, name, slug)')
+        .single();
+      newSub = res.data;
+      subErr = res.error;
+    }
 
     if (subErr || !newSub) {
-      console.error('Failed to upsert restaurant_subscription:', subErr);
+      console.error('Failed to save restaurant_subscription:', subErr);
       throw subErr || new Error('Failed to assign subscription.');
     }
 

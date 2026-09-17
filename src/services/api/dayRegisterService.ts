@@ -305,14 +305,21 @@ export const dayRegisterService = {
    * Get all active / unsettled orders for a restaurant.
    * An order is considered settled if:
    * 1. It is cancelled (`status === 'cancelled'`), OR
-   * 2. It is completed or delivered AND marked as paid (`(status === 'completed' || status === 'delivered') && payment_status === 'paid'`)
+   * 2. It is completed, delivered or settled (`status === 'completed' || status === 'delivered' || status === 'settled'`)
+   *
+   * Optionally filtered by registerOpenedAt so only orders from the current open shift are considered.
    */
-  async getUnsettledOrders(restaurantId?: string): Promise<Order[]> {
+  async getUnsettledOrders(restaurantId?: string, registerOpenedAt?: string): Promise<Order[]> {
     const allOrders = await orderService.getOrders(restaurantId);
     return allOrders.filter((ord) => {
       if (ord.status === 'cancelled') return false;
-      if ((ord.status === 'completed' || ord.status === 'delivered') && ord.payment_status === 'paid') {
+      if (ord.status === 'completed' || ord.status === 'delivered' || ord.status === 'settled') {
         return false;
+      }
+      if (registerOpenedAt) {
+        const ordTime = new Date(ord.created_at).getTime();
+        const openTime = new Date(registerOpenedAt).getTime();
+        if (ordTime < openTime) return false;
       }
       return true;
     });
@@ -344,7 +351,7 @@ export const dayRegisterService = {
     }
 
     // Strict restriction: All orders must be settled or cancelled before closing the register
-    const unsettledOrders = await this.getUnsettledOrders(targetRestId);
+    const unsettledOrders = await this.getUnsettledOrders(targetRestId, targetRegister.opened_at);
     if (unsettledOrders.length > 0) {
       const orderListPreview = unsettledOrders
         .slice(0, 5)

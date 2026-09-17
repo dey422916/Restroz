@@ -321,7 +321,7 @@ export default function DashboardScreen() {
       }
 
       const [unsettled, recon] = await Promise.all([
-        dayRegisterService.getUnsettledOrders(activeRestaurantId),
+        dayRegisterService.getUnsettledOrders(activeRestaurantId, reg.opened_at),
         dayRegisterService.calculateRegisterReconciliation(reg, activeRestaurantId),
       ]);
 
@@ -359,7 +359,7 @@ export default function DashboardScreen() {
 
     setSubmittingClose(true);
     try {
-      const unsettled = await dayRegisterService.getUnsettledOrders(activeRestaurantId);
+      const unsettled = await dayRegisterService.getUnsettledOrders(activeRestaurantId, reg.opened_at);
       if (unsettled.length > 0) {
         setUnsettledOrdersForClose(unsettled);
         const orderListPreview = unsettled

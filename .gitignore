@@ -25,3 +25,5 @@ scratch/
 ACCOUNTS_LOCAL*.md
 
 Expo-Go-*.apk
+
+supabase/.temp/

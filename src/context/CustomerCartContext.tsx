@@ -39,6 +39,10 @@ interface CustomerCartContextType {
   updateQuantity: (productId: string, newQty: number) => void;
   removeFromCart: (productId: string) => void;
   clearCart: () => void;
+  populateCart: (
+    restaurant: { id: string; name: string; logo_url?: string },
+    items: CustomerCartItem[]
+  ) => void;
   applyCoupon: (code: string, discountAmount?: number, couponObj?: Coupon | null) => void;
   removeCoupon: () => void;
   resolveConflict: (action: 'clear_and_continue' | 'cancel') => void;
@@ -347,6 +351,19 @@ export const CustomerCartProvider: React.FC<{ children: React.ReactNode }> = ({ 
     setAppliedCouponObj(null);
   };
 
+  const populateCart = (
+    restaurant: { id: string; name: string; logo_url?: string },
+    newItems: CustomerCartItem[]
+  ) => {
+    setRestaurantId(restaurant.id);
+    setRestaurantName(restaurant.name);
+    setRestaurantLogo(restaurant.logo_url || null);
+    setCouponCode(undefined);
+    setCouponDiscount(0);
+    setAppliedCouponObj(null);
+    setItems(newItems);
+  };
+
   const applyCoupon = (code: string, discountAmt: number = 0, couponObj?: Coupon | null) => {
     if (items.length === 0) {
       console.warn('Cannot apply coupon to an empty cart.');
@@ -373,6 +390,7 @@ export const CustomerCartProvider: React.FC<{ children: React.ReactNode }> = ({ 
         updateQuantity,
         removeFromCart,
         clearCart,
+        populateCart,
         applyCoupon,
         removeCoupon,
         resolveConflict,

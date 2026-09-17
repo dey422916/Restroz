@@ -143,6 +143,8 @@ export interface DiningTable {
   qr_code_hash: string;
   status: TableStatus;
   current_order_id?: string;
+  active_order_ids?: string[];
+  active_order_count?: number;
 }
 
 export type OrderType = 'dine_in' | 'takeaway' | 'delivery';
@@ -162,21 +164,29 @@ export type OrderStatus =
 
 export type PaymentStatus = 'unpaid' | 'partially_paid' | 'paid';
 
-export type OrderSource = 'POS' | 'CUSTOMER_QR' | 'CUSTOMER_APP';
+export type OrderSource =
+  | 'POS'
+  | 'STAFF'
+  | 'ADMIN'
+  | 'CUSTOMER_APP'
+  | 'CUSTOMER_QR'
+  | 'AGGREGATOR';
 
 export interface OrderItem {
   id: string;
   order_id: string;
   product_id: string;
   product_name: string;
-  unit_price: number;
   quantity: number;
+  unit_price: number;
+  total_price: number;
   tax_rate: number;
   tax_amount: number;
-  hsn_code?: string;
+  subtotal?: number;
+  total?: number;
   item_notes?: string;
-  subtotal: number;
-  total: number;
+  food_type?: FoodType;
+  product?: Product;
   image_url?: string;
 }
 
@@ -190,6 +200,7 @@ export interface Order {
   order_source?: OrderSource;
   table_id?: string;
   table_number?: string;
+  is_supplementary?: boolean;
   customer_id?: string;
   customer_name?: string;
   customer_phone?: string;

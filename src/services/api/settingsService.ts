@@ -107,7 +107,7 @@ export const settingsService = {
             gallery_urls: (prof as any).gallery_urls || rpcResult.gallery_urls || [],
             phone: (prof as any).phone || rpcResult.phone || '',
             address: (prof as any).address || rpcResult.address || '',
-            online_orders_enabled: (prof as any).marketplace_enabled ?? rpcResult.online_orders_enabled ?? true,
+            online_orders_enabled: ((prof as any).is_open !== false && (prof as any).marketplace_enabled !== false),
             delivery_charge_base: (prof as any).delivery_charge_base !== undefined && (prof as any).delivery_charge_base !== null
               ? Number((prof as any).delivery_charge_base)
               : Number(rpcResult.delivery_charge_base || 0),

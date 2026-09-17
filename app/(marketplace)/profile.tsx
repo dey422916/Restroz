@@ -16,7 +16,8 @@ import { useAuth } from '../../src/context/AuthContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { storageService } from '../../src/services/api/storageService';
 import { customerColors } from '../../src/utils/colors';
-import { isValidPhoneNumber } from '../../src/utils/phone';
+import { isValidPhoneNumber, normalizePhoneNumber } from '../../src/utils/phone';
+import { isValidIndianPhone, normalizeIndianPhone } from '../../src/utils/validation';
 
 export default function CustomerProfileScreen() {
   const router = useRouter();
@@ -73,21 +74,23 @@ export default function CustomerProfileScreen() {
       return;
     }
 
-    if (phone.trim() && !isValidPhoneNumber(phone)) {
-      Alert.alert('Invalid Phone Number', 'Please enter a valid 10-digit mobile number.');
+    if (phone.trim() && !isValidIndianPhone(phone)) {
+      Alert.alert('Invalid Phone Number', 'Enter a valid 10-digit Indian mobile number.');
       return;
     }
+
+    const cleanPhone = phone.trim() ? normalizeIndianPhone(phone.trim()) : undefined;
 
     setSaving(true);
     try {
       await marketplaceService.updateCustomerProfile(user.id, {
         full_name: fullName.trim(),
-        phone: phone.trim() || undefined,
+        phone: cleanPhone,
         avatar_url: avatarUrl || undefined,
       });
       updateUserProfileState({
         full_name: fullName.trim(),
-        phone: phone.trim() || undefined,
+        phone: cleanPhone,
         avatar_url: avatarUrl || undefined,
       });
       setIsEditing(false);
@@ -276,9 +279,9 @@ export default function CustomerProfileScreen() {
                     keyboardType="phone-pad"
                     maxLength={13}
                   />
-                  {Boolean(phone && !isValidPhoneNumber(phone)) && (
+                  {Boolean(phone && !isValidIndianPhone(phone)) && (
                     <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: 3 }}>
-                      ⚠️ Invalid mobile number
+                      ⚠️ Enter a valid 10-digit Indian mobile number
                     </Text>
                   )}
                 </View>

@@ -51,6 +51,9 @@ interface PosContextType {
   appliedCoupon: Coupon | null;
   totals: CalculationResult;
 
+  isSupplementary: boolean;
+  setIsSupplementary: (isSup: boolean) => void;
+
   setOrderType: (type: OrderType) => void;
   setSelectedTable: (table: DiningTable | null) => void;
   setCustomerInfo: (info: Partial<CustomerInfo>) => void;
@@ -110,6 +113,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [cartItems, setCartItems] = useState<OrderItem[]>([]);
   const [orderType, setOrderTypeState] = useState<OrderType>('dine_in');
   const [selectedTable, setSelectedTable] = useState<DiningTable | null>(null);
+  const [isSupplementary, setIsSupplementary] = useState<boolean>(false);
   const [customerInfo, setCustomerInfoState] = useState<CustomerInfo>({ name: '', phone: '' });
   const [orderNotes, setOrderNotes] = useState<string>('');
   const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
@@ -160,7 +164,6 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           (payload) => {
             const rowRestId = (payload.new as any)?.restaurant_id || (payload.old as any)?.restaurant_id;
             if (rowRestId && rowRestId !== activeRestaurantId) return;
-            console.log('Realtime Order Event Received for Tenant:', activeRestaurantId, payload);
             showToastRef.current('info', 'Order Update', 'Live order status updated from cloud');
             playOrderBellRef.current();
             refreshOrdersRef.current();
@@ -229,6 +232,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         product_id: product.id,
         product_name: product.name,
         unit_price: unitPrice,
+        total_price: subtotal,
         quantity,
         tax_rate: taxRate,
         tax_amount: taxAmount,
@@ -318,6 +322,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const clearCart = () => {
     setCartItems([]);
     setSelectedTable(null);
+    setIsSupplementary(false);
     setCustomerInfoState({ name: '', phone: '' });
     setOrderNotes('');
     setDiscountValue(0);
@@ -412,13 +417,11 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const confirmOrder = async (): Promise<Order> => {
-    console.log('>>> [POS] confirmOrder entered! activeRestaurantId:', activeRestaurantId, 'settings.restaurant_id:', settings.restaurant_id, 'cartItems:', cartItems.length);
     const targetRestId = activeRestaurantId || settings.restaurant_id;
     if (!targetRestId) {
       throw new Error('No active restaurant context found. Please ensure you are logged into an authorized restaurant.');
     }
     const isRegOpen = await dayRegisterService.isRegisterOpen(targetRestId);
-    console.log('>>> [POS] isRegisterOpen for', targetRestId, ':', isRegOpen);
       if (!isRegOpen) {
         // Throw a specific error for closed register to allow UI handling without console.error
         throw new RegisterClosedError();
@@ -455,6 +458,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       order_type: orderType,
       table_id: selectedTable?.id,
       table_number: selectedTable?.table_number,
+      is_supplementary: isSupplementary,
       customer_name: customerInfo.name?.trim() || (orderType === 'dine_in' ? 'Dine-in Guest' : orderType === 'takeaway' ? 'Takeaway Guest' : 'Customer'),
       customer_phone: customerInfo.phone?.trim(),
       delivery_address: customerInfo.address?.trim(),
@@ -476,7 +480,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       round_off: totals.roundOff,
       payable_amount: totals.payableAmount,
       items: cartItems,
-      notes: orderNotes ? `[POS] ${orderNotes}` : '[POS]',
+      notes: isSupplementary
+        ? (orderNotes ? `[POS] [SUPPLEMENTARY ORDER] ${orderNotes}` : '[POS] [SUPPLEMENTARY ORDER]')
+        : (orderNotes ? `[POS] ${orderNotes}` : '[POS]'),
     });
 
     // Use the initial KOT generated with the order, or generate if missing
@@ -504,7 +510,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!order) return;
     setCartItems(order.items || []);
     setOrderTypeState(order.order_type);
-    setOrderNotes(order.notes?.replace('[POS]', '').trim() || '');
+    setIsSupplementary(Boolean(order.is_supplementary));
+    setOrderNotes(order.notes?.replace('[POS]', '').replace('[SUPPLEMENTARY ORDER]', '').trim() || '');
     if (order.table_id) {
       const tables = mockStorage.getTables();
       setSelectedTable(tables.find((t) => t.id === order.table_id) || {
@@ -679,6 +686,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         discountValue,
         appliedCoupon,
         totals,
+
+        isSupplementary,
+        setIsSupplementary,
 
         setOrderType,
         setSelectedTable,

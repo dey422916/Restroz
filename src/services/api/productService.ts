@@ -167,7 +167,6 @@ export const productService = {
             throw error;
           }
           if (data) {
-            console.log('✅ Product updated in Supabase:', data.id, 'restaurant_id:', data.restaurant_id);
             clearProductsCache(targetRestId);
             await this.getProducts(targetRestId, true);
             return data as Product;
@@ -184,7 +183,6 @@ export const productService = {
             throw error;
           }
           if (data) {
-            console.log('✅ Product inserted in Supabase:', data.id, 'restaurant_id:', data.restaurant_id);
             clearProductsCache(targetRestId);
             await this.getProducts(targetRestId, true);
             return data as Product;

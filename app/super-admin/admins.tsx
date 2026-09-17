@@ -14,26 +14,38 @@ import {
 import { superAdminService } from '../../src/services/api/superAdminService';
 import { Restaurant, RestaurantMember } from '../../src/types';
 import { colors } from '../../src/utils/colors';
+import {
+  isValidEmail,
+  normalizeEmail,
+  isValidIndianPhone,
+  normalizeIndianPhone,
+  getEmailValidationError,
+  getIndianPhoneValidationError,
+} from '../../src/utils/validation';
 
 export default function RestaurantAdminsScreen() {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
-  const [loading, setLoading] = useState(true);
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
-  const [allAdmins, setAllAdmins] = useState<
-    Array<RestaurantMember & { restaurant?: Restaurant; profile?: any }>
-  >([]);
+  const [allAdmins, setAllAdmins] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Provision Admin Modal State
   const [modalVisible, setModalVisible] = useState(false);
   const [saving, setSaving] = useState(false);
   const [targetRestaurantId, setTargetRestaurantId] = useState('');
+  const [targetDropdownOpen, setTargetDropdownOpen] = useState(false);
   const [formFullName, setFormFullName] = useState('');
   const [formEmail, setFormEmail] = useState('');
   const [formPhone, setFormPhone] = useState('');
   const [formPassword, setFormPassword] = useState('');
   const [showFormPassword, setShowFormPassword] = useState(false);
+  const [formEmailTouched, setFormEmailTouched] = useState(false);
+  const [formPhoneTouched, setFormPhoneTouched] = useState(false);
+  const [formFullNameTouched, setFormFullNameTouched] = useState(false);
+  const [formSubmitted, setFormSubmitted] = useState(false);
 
   // Edit Admin Modal State
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -41,8 +53,11 @@ export default function RestaurantAdminsScreen() {
   const [editFullName, setEditFullName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editRestaurantId, setEditRestaurantId] = useState('');
+  const [editDropdownOpen, setEditDropdownOpen] = useState(false);
   const [editIsActive, setEditIsActive] = useState(true);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [editPhoneTouched, setEditPhoneTouched] = useState(false);
+  const [editSubmitted, setEditSubmitted] = useState(false);
 
   // Change Password Modal State
   const [pwdModalVisible, setPwdModalVisible] = useState(false);
@@ -81,14 +96,45 @@ export default function RestaurantAdminsScreen() {
     loadData();
   }, []);
 
+  const resetProvisionForm = () => {
+    setFormFullName('');
+    setFormEmail('');
+    setFormPhone('');
+    setFormPassword('');
+    setShowFormPassword(false);
+    setFormEmailTouched(false);
+    setFormPhoneTouched(false);
+    setFormFullNameTouched(false);
+    setFormSubmitted(false);
+    setTargetDropdownOpen(false);
+  };
+
   const handleCreateAdmin = async () => {
-    if (!formEmail.trim() || !targetRestaurantId) {
-      Alert.alert('Validation Error', 'Email address and Restaurant selection are required.');
+    setFormSubmitted(true);
+
+    if (!formFullName.trim()) {
+      Alert.alert('Validation Error', 'Admin full name is required.');
       return;
     }
 
-    const cleanEmail = formEmail.trim().toLowerCase();
-    const cleanName = formFullName.trim() || cleanEmail.split('@')[0];
+    if (!targetRestaurantId) {
+      Alert.alert('Validation Error', 'Please select a target restaurant.');
+      return;
+    }
+
+    if (!isValidEmail(formEmail)) {
+      Alert.alert('Validation Error', 'Enter a valid email address.');
+      return;
+    }
+
+    if (formPhone.trim() && !isValidIndianPhone(formPhone)) {
+      Alert.alert('Validation Error', 'Enter a valid 10-digit Indian mobile number.');
+      return;
+    }
+
+    const cleanEmail = normalizeEmail(formEmail);
+    const cleanName = formFullName.trim();
+    const cleanPhone = formPhone.trim() ? normalizeIndianPhone(formPhone) : undefined;
 
     setSaving(true);
     try {
@@ -96,15 +142,13 @@ export default function RestaurantAdminsScreen() {
         restaurant_id: targetRestaurantId,
         full_name: cleanName,
         email: cleanEmail,
-        phone: formPhone.trim() || undefined,
+        phone: cleanPhone,
         password: formPassword.trim() || undefined,
       });
 
       Alert.alert('Success', `Admin account created immediately without OTP/email verification. Login is active.`);
       setModalVisible(false);
-      setFormFullName('');
-      setFormEmail('');
-      setFormPhone('');
+      resetProvisionForm();
       loadData();
     } catch (e: any) {
       Alert.alert('Provisioning Error', e.message || 'Failed to create restaurant admin.');
@@ -118,15 +162,26 @@ export default function RestaurantAdminsScreen() {
     setEditFullName(admin.profile?.full_name || '');
     setEditPhone(admin.profile?.phone || '');
     setEditRestaurantId(admin.restaurant_id || (restaurants[0] ? restaurants[0].id : ''));
+    setEditDropdownOpen(false);
     setEditIsActive(admin.is_active ?? true);
+    setEditPhoneTouched(false);
+    setEditSubmitted(false);
     setEditModalVisible(true);
   };
 
   const handleSaveEdit = async () => {
+    setEditSubmitted(true);
     if (!selectedAdmin || !editFullName.trim() || !editRestaurantId) {
       Alert.alert('Validation Error', 'Full Name and Restaurant assignment are required.');
       return;
     }
+
+    if (editPhone.trim() && !isValidIndianPhone(editPhone)) {
+      Alert.alert('Validation Error', 'Enter a valid 10-digit Indian mobile number.');
+      return;
+    }
+
+    const cleanPhone = editPhone.trim() ? normalizeIndianPhone(editPhone) : undefined;
 
     setSavingEdit(true);
     try {
@@ -135,7 +190,7 @@ export default function RestaurantAdminsScreen() {
         user_id: selectedAdmin.user_id,
         restaurant_id: editRestaurantId,
         full_name: editFullName.trim(),
-        phone: editPhone.trim() || undefined,
+        phone: cleanPhone,
         is_active: editIsActive,
       });
 
@@ -418,58 +473,139 @@ export default function RestaurantAdminsScreen() {
 
             <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
               <Text style={styles.label}>Select Target Restaurant *</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.restSelectScroll}
-              >
-                {restaurants.map((r) => (
-                  <TouchableOpacity
-                    key={r.id}
-                    style={[
-                      styles.restChip,
-                      targetRestaurantId === r.id && styles.restChipActive,
-                    ]}
-                    onPress={() => setTargetRestaurantId(r.id)}
-                  >
+              <View style={styles.dropdownContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.dropdownTrigger,
+                    targetDropdownOpen && styles.dropdownTriggerOpen,
+                  ]}
+                  onPress={() => setTargetDropdownOpen(!targetDropdownOpen)}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.dropdownValueRow}>
+                    <Text style={{ fontSize: 14 }}>🏢</Text>
                     <Text
                       style={[
-                        styles.restChipText,
-                        targetRestaurantId === r.id && styles.restChipTextActive,
+                        styles.dropdownValueText,
+                        !targetRestaurantId && styles.dropdownPlaceholderText,
                       ]}
+                      numberOfLines={1}
                     >
-                      🏢 {r.name}
+                      {restaurants.find((r) => r.id === targetRestaurantId)?.name || 'Select a restaurant...'}
                     </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
+                  </View>
+                  <Text style={styles.dropdownChevron}>
+                    {targetDropdownOpen ? '▲' : '▼'}
+                  </Text>
+                </TouchableOpacity>
+
+                {targetDropdownOpen && (
+                  <View style={styles.dropdownListContainer}>
+                    <ScrollView
+                      style={styles.dropdownScroll}
+                      nestedScrollEnabled
+                      showsVerticalScrollIndicator={true}
+                    >
+                      {restaurants.map((r) => {
+                        const isSelected = targetRestaurantId === r.id;
+                        return (
+                          <TouchableOpacity
+                            key={r.id}
+                            style={[
+                              styles.dropdownItem,
+                              isSelected && styles.dropdownItemSelected,
+                            ]}
+                            onPress={() => {
+                              setTargetRestaurantId(r.id);
+                              setTargetDropdownOpen(false);
+                            }}
+                            activeOpacity={0.7}
+                          >
+                            <View style={styles.dropdownItemContent}>
+                              <Text style={{ fontSize: 13 }}>🏢</Text>
+                              <Text
+                                style={[
+                                  styles.dropdownItemText,
+                                  isSelected && styles.dropdownItemTextSelected,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {r.name}
+                              </Text>
+                            </View>
+                            {isSelected && (
+                              <Text style={styles.dropdownItemCheck}>✓</Text>
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                )}
+              </View>
 
               <Text style={styles.label}>Admin Full Name *</Text>
               <TextInput
-                style={styles.input}
+                style={[
+                  styles.input,
+                  (formFullNameTouched || formSubmitted) && !formFullName.trim() && styles.inputError,
+                ]}
                 placeholder="e.g. John Doe"
                 value={formFullName}
-                onChangeText={setFormFullName}
+                onChangeText={(v) => {
+                  setFormFullName(v);
+                  if (formSubmitted) setFormSubmitted(false);
+                }}
+                onBlur={() => setFormFullNameTouched(true)}
               />
+              {(formFullNameTouched || formSubmitted) && !formFullName.trim() && (
+                <Text style={styles.fieldErrorText}>⚠️ Full Name is required</Text>
+              )}
 
               <Text style={styles.label}>Admin Email *</Text>
               <TextInput
-                style={styles.input}
+                style={[
+                  styles.input,
+                  Boolean((formEmailTouched || formSubmitted) && getEmailValidationError(formEmail, true)) &&
+                    styles.inputError,
+                ]}
                 placeholder="admin@restaurant.com"
                 value={formEmail}
-                onChangeText={setFormEmail}
+                onChangeText={(v) => {
+                  setFormEmail(v);
+                  if (formSubmitted) setFormSubmitted(false);
+                }}
+                onBlur={() => setFormEmailTouched(true)}
                 keyboardType="email-address"
                 autoCapitalize="none"
               />
+              {Boolean((formEmailTouched || formSubmitted) && getEmailValidationError(formEmail, true)) && (
+                <Text style={styles.fieldErrorText}>
+                  ⚠️ {getEmailValidationError(formEmail, true)}
+                </Text>
+              )}
 
               <Text style={styles.label}>Phone Number</Text>
               <TextInput
-                style={styles.input}
+                style={[
+                  styles.input,
+                  Boolean((formPhoneTouched || formSubmitted) && getIndianPhoneValidationError(formPhone, false)) &&
+                    styles.inputError,
+                ]}
                 placeholder="+91 98765 43210"
                 value={formPhone}
-                onChangeText={setFormPhone}
+                onChangeText={(v) => {
+                  setFormPhone(v);
+                  if (formSubmitted) setFormSubmitted(false);
+                }}
+                onBlur={() => setFormPhoneTouched(true)}
                 keyboardType="phone-pad"
               />
+              {Boolean((formPhoneTouched || formSubmitted) && getIndianPhoneValidationError(formPhone, false)) && (
+                <Text style={styles.fieldErrorText}>
+                  ⚠️ {getIndianPhoneValidationError(formPhone, false)}
+                </Text>
+              )}
 
               <Text style={styles.label}>Initial Password</Text>
               <View style={styles.passwordInputContainer}>
@@ -496,15 +632,32 @@ export default function RestaurantAdminsScreen() {
             <View style={styles.modalFooter}>
               <TouchableOpacity
                 style={styles.cancelBtn}
-                onPress={() => setModalVisible(false)}
+                onPress={() => {
+                  setModalVisible(false);
+                  resetProvisionForm();
+                }}
                 disabled={saving}
               >
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.submitBtn}
+                style={[
+                  styles.submitBtn,
+                  (!Boolean(formFullName.trim()) ||
+                    !Boolean(targetRestaurantId) ||
+                    !isValidEmail(formEmail) ||
+                    Boolean(formPhone.trim() && !isValidIndianPhone(formPhone)) ||
+                    saving) &&
+                    styles.submitBtnDisabled,
+                ]}
                 onPress={handleCreateAdmin}
-                disabled={saving}
+                disabled={
+                  !Boolean(formFullName.trim()) ||
+                  !Boolean(targetRestaurantId) ||
+                  !isValidEmail(formEmail) ||
+                  Boolean(formPhone.trim() && !isValidIndianPhone(formPhone)) ||
+                  saving
+                }
               >
                 {saving ? (
                   <ActivityIndicator color="#FFF" size="small" />
@@ -531,47 +684,114 @@ export default function RestaurantAdminsScreen() {
             <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
               <Text style={styles.label}>Admin Full Name *</Text>
               <TextInput
-                style={styles.input}
+                style={[
+                  styles.input,
+                  (editSubmitted) && !editFullName.trim() && styles.inputError,
+                ]}
                 value={editFullName}
-                onChangeText={setEditFullName}
+                onChangeText={(v) => {
+                  setEditFullName(v);
+                  if (editSubmitted) setEditSubmitted(false);
+                }}
                 placeholder="Admin Full Name"
               />
+              {editSubmitted && !editFullName.trim() && (
+                <Text style={styles.fieldErrorText}>⚠️ Full Name is required</Text>
+              )}
 
               <Text style={styles.label}>Phone Number</Text>
               <TextInput
-                style={styles.input}
+                style={[
+                  styles.input,
+                  Boolean((editPhoneTouched || editSubmitted) && getIndianPhoneValidationError(editPhone, false)) &&
+                    styles.inputError,
+                ]}
                 value={editPhone}
-                onChangeText={setEditPhone}
+                onChangeText={(v) => {
+                  setEditPhone(v);
+                  if (editSubmitted) setEditSubmitted(false);
+                }}
+                onBlur={() => setEditPhoneTouched(true)}
                 keyboardType="phone-pad"
                 placeholder="+91 98765 43210"
               />
+              {Boolean((editPhoneTouched || editSubmitted) && getIndianPhoneValidationError(editPhone, false)) && (
+                <Text style={styles.fieldErrorText}>
+                  ⚠️ {getIndianPhoneValidationError(editPhone, false)}
+                </Text>
+              )}
 
               <Text style={styles.label}>Assigned Restaurant *</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.restSelectScroll}
-              >
-                {restaurants.map((r) => (
-                  <TouchableOpacity
-                    key={r.id}
-                    style={[
-                      styles.restChip,
-                      editRestaurantId === r.id && styles.restChipActive,
-                    ]}
-                    onPress={() => setEditRestaurantId(r.id)}
-                  >
+              <View style={styles.dropdownContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.dropdownTrigger,
+                    editDropdownOpen && styles.dropdownTriggerOpen,
+                  ]}
+                  onPress={() => setEditDropdownOpen(!editDropdownOpen)}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.dropdownValueRow}>
+                    <Text style={{ fontSize: 14 }}>🏢</Text>
                     <Text
                       style={[
-                        styles.restChipText,
-                        editRestaurantId === r.id && styles.restChipTextActive,
+                        styles.dropdownValueText,
+                        !editRestaurantId && styles.dropdownPlaceholderText,
                       ]}
+                      numberOfLines={1}
                     >
-                      🏢 {r.name}
+                      {restaurants.find((r) => r.id === editRestaurantId)?.name || 'Select a restaurant...'}
                     </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
+                  </View>
+                  <Text style={styles.dropdownChevron}>
+                    {editDropdownOpen ? '▲' : '▼'}
+                  </Text>
+                </TouchableOpacity>
+
+                {editDropdownOpen && (
+                  <View style={styles.dropdownListContainer}>
+                    <ScrollView
+                      style={styles.dropdownScroll}
+                      nestedScrollEnabled
+                      showsVerticalScrollIndicator={true}
+                    >
+                      {restaurants.map((r) => {
+                        const isSelected = editRestaurantId === r.id;
+                        return (
+                          <TouchableOpacity
+                            key={r.id}
+                            style={[
+                              styles.dropdownItem,
+                              isSelected && styles.dropdownItemSelected,
+                            ]}
+                            onPress={() => {
+                              setEditRestaurantId(r.id);
+                              setEditDropdownOpen(false);
+                            }}
+                            activeOpacity={0.7}
+                          >
+                            <View style={styles.dropdownItemContent}>
+                              <Text style={{ fontSize: 13 }}>🏢</Text>
+                              <Text
+                                style={[
+                                  styles.dropdownItemText,
+                                  isSelected && styles.dropdownItemTextSelected,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {r.name}
+                              </Text>
+                            </View>
+                            {isSelected && (
+                              <Text style={styles.dropdownItemCheck}>✓</Text>
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                )}
+              </View>
 
               <Text style={styles.label}>Membership Status</Text>
               <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
@@ -620,9 +840,21 @@ export default function RestaurantAdminsScreen() {
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.submitBtn}
+                style={[
+                  styles.submitBtn,
+                  (!Boolean(editFullName.trim()) ||
+                    !Boolean(editRestaurantId) ||
+                    Boolean(editPhone.trim() && !isValidIndianPhone(editPhone)) ||
+                    savingEdit) &&
+                    styles.submitBtnDisabled,
+                ]}
                 onPress={handleSaveEdit}
-                disabled={savingEdit}
+                disabled={
+                  !Boolean(editFullName.trim()) ||
+                  !Boolean(editRestaurantId) ||
+                  Boolean(editPhone.trim() && !isValidIndianPhone(editPhone)) ||
+                  savingEdit
+                }
               >
                 {savingEdit ? (
                   <ActivityIndicator color="#FFF" size="small" />
@@ -1021,6 +1253,99 @@ const styles = StyleSheet.create({
   eyeIcon: {
     fontSize: 16,
   },
+  dropdownContainer: {
+    width: '100%',
+    marginBottom: 12,
+  },
+  dropdownTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minHeight: 44,
+  },
+  dropdownTriggerOpen: {
+    borderColor: colors.primary,
+    borderBottomLeftRadius: 4,
+    borderBottomRightRadius: 4,
+  },
+  dropdownValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+    minWidth: 0,
+  },
+  dropdownValueText: {
+    fontSize: 13.5,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  dropdownPlaceholderText: {
+    color: '#94A3B8',
+    fontWeight: '400',
+  },
+  dropdownChevron: {
+    fontSize: 11,
+    color: '#64748B',
+    marginLeft: 8,
+    fontWeight: '700',
+  },
+  dropdownListContainer: {
+    marginTop: 4,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 5,
+    elevation: 4,
+    maxHeight: 180,
+  },
+  dropdownScroll: {
+    maxHeight: 180,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  dropdownItemSelected: {
+    backgroundColor: '#F0F9FF',
+  },
+  dropdownItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+    minWidth: 0,
+  },
+  dropdownItemText: {
+    fontSize: 13,
+    color: '#334155',
+    fontWeight: '500',
+  },
+  dropdownItemTextSelected: {
+    color: colors.primary,
+    fontWeight: '700',
+  },
+  dropdownItemCheck: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.primary,
+  },
   restSelectScroll: {
     flexDirection: 'row',
     marginBottom: 6,
@@ -1091,8 +1416,23 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: colors.primary,
   },
+  submitBtnDisabled: {
+    opacity: 0.5,
+    backgroundColor: '#94A3B8',
+  },
   submitBtnText: {
     color: '#FFFFFF',
     fontWeight: '600',
+  },
+  inputError: {
+    borderColor: '#DC2626',
+    borderWidth: 1.5,
+  },
+  fieldErrorText: {
+    fontSize: 11,
+    color: '#DC2626',
+    fontWeight: '600',
+    marginTop: 3,
+    marginBottom: 6,
   },
 });

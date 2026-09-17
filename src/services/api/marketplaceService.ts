@@ -330,12 +330,13 @@ export const marketplaceService = {
           .from('restaurant_public_profiles')
           .update({
             is_open: isOnline,
+            marketplace_enabled: isOnline,
             updated_at: new Date().toISOString(),
           })
           .eq('restaurant_id', restaurantId);
 
         if (updateErr) {
-          console.warn('Error updating restaurant_public_profiles is_open:', updateErr);
+          console.warn('Error updating restaurant_public_profiles is_open & marketplace_enabled:', updateErr);
           throw new Error(updateErr.message || 'Failed to update online ordering status');
         }
       } else {
@@ -345,7 +346,7 @@ export const marketplaceService = {
           .insert({
             restaurant_id: restaurantId,
             is_open: isOnline,
-            marketplace_enabled: true,
+            marketplace_enabled: isOnline,
             accepts_delivery: true,
             accepts_takeaway: true,
           });
@@ -543,7 +544,6 @@ export const marketplaceService = {
     const userId = await this.getAuthUserId();
     if (!userId) throw new Error('Not authenticated.');
 
-    console.log('[DEV_LOG] deleteCustomerAddress called with id:', id, 'userId:', userId);
     const { error } = await supabase
       .from('customer_addresses')
       .delete()
@@ -551,10 +551,9 @@ export const marketplaceService = {
       .eq('user_id', userId);
 
     if (error) {
-      console.error('[DEV_LOG] Supabase deleteCustomerAddress error:', error);
+      console.error('Supabase deleteCustomerAddress error:', error);
       throw error;
     }
-    console.log('[DEV_LOG] Supabase response: deleteCustomerAddress succeeded for id:', id);
   },
 
   // 5. Create Customer Delivery Order via Server-Side Atomic RPC & Resilient Execution
@@ -588,7 +587,6 @@ export const marketplaceService = {
             (Date.now() - new Date(candidate.created_at).getTime() < 12000);
 
           if (isSameIdem || isSameCouponAndRecent) {
-            console.log('Idempotent order detected. Returning existing order:', candidate.order_number);
             return candidate as Order;
           }
         }
@@ -1380,66 +1378,109 @@ export const marketplaceService = {
 
   // 12. Prepare Reorder (Validates current prices and product availability)
   async prepareReorder(orderId: string): Promise<ReorderResult> {
-    const userId = await this.getAuthUserId();
-    if (!userId) throw new Error('Authentication required.');
+    // 1. Fetch original order with fallback
+    let order: any = null;
+    let orderItems: any[] = [];
+    let rest: any = null;
 
-    // Fetch original order with items
-    const { data: order, error: orderErr } = await supabase
+    const { data: orderWithRelations } = await supabase
       .from('orders')
       .select(`
-        id, restaurant_id,
-        restaurant:restaurants(id, name, status),
+        id, restaurant_id, customer_id,
+        restaurant:restaurants(id, name, status, logo_url),
         items:order_items(*)
       `)
       .eq('id', orderId)
-      .eq('customer_id', userId)
       .maybeSingle();
 
-    if (orderErr || !order) {
+    if (orderWithRelations) {
+      order = orderWithRelations;
+      orderItems = orderWithRelations.items || [];
+      rest = orderWithRelations.restaurant;
+    } else {
+      const { data: rawOrder, error: rawErr } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('id', orderId)
+        .maybeSingle();
+
+      if (rawErr || !rawOrder) {
+        throw new Error('Order not found for reorder.');
+      }
+      order = rawOrder;
+
+      const { data: rawItems } = await supabase
+        .from('order_items')
+        .select('*')
+        .eq('order_id', orderId);
+      orderItems = rawItems || [];
+    }
+
+    if (!order) {
       throw new Error('Order not found for reorder.');
     }
 
-    const rest = order.restaurant as any;
-    if (rest?.status !== 'ACTIVE') {
+    if (!rest && order.restaurant_id) {
+      const { data: rawRest } = await supabase
+        .from('restaurants')
+        .select('id, name, status, logo_url')
+        .eq('id', order.restaurant_id)
+        .maybeSingle();
+      rest = rawRest;
+    }
+
+    if (rest?.status === 'SUSPENDED' || rest?.status === 'INACTIVE') {
       throw new Error('This restaurant is currently inactive or unavailable.');
     }
 
-    const itemIds = (order.items || []).map((i: any) => i.product_id).filter(Boolean);
+    const itemIds = orderItems.map((i: any) => i.product_id).filter(Boolean);
 
     // Fetch current live products
-    const { data: liveProducts } = await supabase
-      .from('products')
-      .select('*')
-      .in('id', itemIds)
-      .eq('restaurant_id', order.restaurant_id)
-      .eq('is_active', true);
+    let liveProducts: any[] = [];
+    if (itemIds.length > 0) {
+      const { data: prods } = await supabase
+        .from('products')
+        .select('*')
+        .in('id', itemIds)
+        .eq('restaurant_id', order.restaurant_id)
+        .eq('is_active', true);
+      liveProducts = prods || [];
+    }
 
     const liveProdMap = new Map((liveProducts || []).map((p) => [p.id, p]));
 
     const addedItems: CustomerCartItem[] = [];
     const unavailableItems: ReorderItemResult[] = [];
 
-    for (const oldItem of order.items || []) {
+    for (const oldItem of orderItems) {
       const live = liveProdMap.get(oldItem.product_id);
-      if (live && live.is_available !== false && (live.stock_quantity === null || live.stock_quantity >= oldItem.quantity)) {
+      if (
+        live &&
+        live.is_available !== false &&
+        (live.stock_quantity === null || live.stock_quantity === undefined || live.stock_quantity >= (oldItem.quantity || 1))
+      ) {
         addedItems.push({
           product_id: live.id,
           name: live.name,
-          price: live.price,
-          tax_rate: live.tax_rate || 5,
+          price: Number(live.discounted_price || live.price || oldItem.unit_price || 0),
+          tax_rate: Number(live.tax_rate || 5),
           food_type: live.food_type || 'VEG',
-          image_url: live.image_url,
-          quantity: oldItem.quantity,
+          image_url: live.image_url || oldItem.image_url,
+          quantity: Number(oldItem.quantity || 1),
           notes: oldItem.item_notes,
         });
       } else {
         unavailableItems.push({
-          product_id: oldItem.product_id,
-          name: oldItem.product_name,
-          price: oldItem.unit_price,
+          product_id: oldItem.product_id || `unavail-${Math.random().toString(36).slice(2, 6)}`,
+          name: oldItem.product_name || oldItem.name || 'Item',
+          price: Number(oldItem.unit_price || oldItem.price || 0),
           available: false,
-          quantity: oldItem.quantity,
-          reason: !live ? 'Product discontinued' : (live.is_available === false ? 'Temporarily unavailable' : 'Out of stock'),
+          quantity: Number(oldItem.quantity || 1),
+          reason: !live
+            ? 'Product discontinued'
+            : live.is_available === false
+            ? 'Temporarily unavailable'
+            : 'Out of stock',
         });
       }
     }
@@ -1447,6 +1488,7 @@ export const marketplaceService = {
     return {
       restaurantId: order.restaurant_id,
       restaurantName: rest?.name || 'Restaurant',
+      restaurantLogo: rest?.logo_url || undefined,
       addedItems,
       unavailableItems,
     };

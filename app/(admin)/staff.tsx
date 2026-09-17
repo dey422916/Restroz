@@ -24,6 +24,14 @@ import {
   PERMISSION_PRESETS,
   RestaurantPlanUsage,
 } from '../../src/types';
+import {
+  isValidEmail,
+  normalizeEmail,
+  isValidIndianPhone,
+  normalizeIndianPhone,
+  getEmailValidationError,
+  getIndianPhoneValidationError,
+} from '../../src/utils/validation';
 
 const PERMISSION_CONFIG_ITEMS: {
   key: keyof RestaurantMemberPermissions;
@@ -164,6 +172,9 @@ export default function StaffManagementScreen() {
   const [newMemberRole, setNewMemberRole] = useState<'ADMIN' | 'STAFF'>('STAFF');
   const [selectedPreset, setSelectedPreset] = useState<StaffPermissionPreset>('CASHIER');
   const [submitting, setSubmitting] = useState(false);
+  const [emailTouched, setEmailTouched] = useState(false);
+  const [phoneTouched, setPhoneTouched] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
   // Edit Permissions Modal
   const [editPermsModalVisible, setEditPermsModalVisible] = useState(false);
@@ -232,12 +243,25 @@ export default function StaffManagementScreen() {
   };
 
   const handleAddStaff = async () => {
+    setSubmitted(true);
+
     if (!email.trim()) {
       Alert.alert('Validation Error', 'Email address is required.');
       return;
     }
 
-    const cleanEmail = email.trim().toLowerCase();
+    if (!isValidEmail(email)) {
+      Alert.alert('Validation Error', 'Enter a valid email address.');
+      return;
+    }
+
+    if (phone.trim() && !isValidIndianPhone(phone)) {
+      Alert.alert('Validation Error', 'Enter a valid 10-digit Indian mobile number.');
+      return;
+    }
+
+    const cleanEmail = normalizeEmail(email);
+    const cleanPhone = phone.trim() ? normalizeIndianPhone(phone) : undefined;
     const cleanName = fullName.trim() || cleanEmail.split('@')[0];
 
     // Role Enforcement: Restaurant Admin can only create STAFF
@@ -248,7 +272,7 @@ export default function StaffManagementScreen() {
       await staffService.provisionStaff(activeRestaurantId, {
         full_name: cleanName,
         email: cleanEmail,
-        phone: phone.trim() || undefined,
+        phone: cleanPhone,
         password: password.trim() || 'Staff12345!',
         role: assignedRole,
         preset: assignedRole === 'STAFF' ? selectedPreset : undefined,
@@ -262,6 +286,9 @@ export default function StaffManagementScreen() {
       setPassword('');
       setNewMemberRole('STAFF');
       setSelectedPreset('CASHIER');
+      setEmailTouched(false);
+      setPhoneTouched(false);
+      setSubmitted(false);
       loadData();
     } catch (e: any) {
       Alert.alert('Provisioning Error', e.message || 'Failed to add team member.');
@@ -717,14 +744,26 @@ export default function StaffManagementScreen() {
 
               <Text style={styles.inputLabel}>Email Address *</Text>
               <TextInput
-                style={styles.input}
+                style={[
+                  styles.input,
+                  Boolean((emailTouched || submitted) && getEmailValidationError(email, true)) && styles.inputError,
+                ]}
                 placeholder="staff@example.com"
                 placeholderTextColor="#64748b"
                 keyboardType="email-address"
                 autoCapitalize="none"
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(v) => {
+                  setEmail(v);
+                  if (submitted) setSubmitted(false);
+                }}
+                onBlur={() => setEmailTouched(true)}
               />
+              {Boolean((emailTouched || submitted) && getEmailValidationError(email, true)) && (
+                <Text style={styles.fieldErrorText}>
+                  ⚠️ {getEmailValidationError(email, true)}
+                </Text>
+              )}
 
               <Text style={styles.inputLabel}>Initial Password (Optional)</Text>
               <View style={styles.passwordInputContainer}>
@@ -758,13 +797,25 @@ export default function StaffManagementScreen() {
 
               <Text style={styles.inputLabel}>Phone (Optional)</Text>
               <TextInput
-                style={styles.input}
+                style={[
+                  styles.input,
+                  Boolean((phoneTouched || submitted) && getIndianPhoneValidationError(phone, false)) && styles.inputError,
+                ]}
                 placeholder="+91 98765 43210"
                 placeholderTextColor="#64748b"
                 keyboardType="phone-pad"
                 value={phone}
-                onChangeText={setPhone}
+                onChangeText={(v) => {
+                  setPhone(v);
+                  if (submitted) setSubmitted(false);
+                }}
+                onBlur={() => setPhoneTouched(true)}
               />
+              {Boolean((phoneTouched || submitted) && getIndianPhoneValidationError(phone, false)) && (
+                <Text style={styles.fieldErrorText}>
+                  ⚠️ {getIndianPhoneValidationError(phone, false)}
+                </Text>
+              )}
 
               {newMemberRole === 'STAFF' ? (
                 <>
@@ -798,15 +849,30 @@ export default function StaffManagementScreen() {
             <View style={styles.modalBtnRow}>
               <TouchableOpacity
                 style={styles.modalCancelBtn}
-                onPress={() => setAddModalVisible(false)}
+                onPress={() => {
+                  setAddModalVisible(false);
+                  setEmailTouched(false);
+                  setPhoneTouched(false);
+                  setSubmitted(false);
+                }}
                 disabled={submitting}
               >
                 <Text style={styles.modalCancelBtnText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.modalSubmitBtn}
+                style={[
+                  styles.modalSubmitBtn,
+                  (!isValidEmail(email) ||
+                    Boolean(phone.trim() && !isValidIndianPhone(phone)) ||
+                    submitting) &&
+                    styles.modalSubmitBtnDisabled,
+                ]}
                 onPress={handleAddStaff}
-                disabled={submitting}
+                disabled={
+                  !isValidEmail(email) ||
+                  Boolean(phone.trim() && !isValidIndianPhone(phone)) ||
+                  submitting
+                }
               >
                 {submitting ? (
                   <ActivityIndicator color="#fff" />
@@ -1532,5 +1598,20 @@ const styles = StyleSheet.create({
   },
   btnDisabled: {
     opacity: 0.6,
+  },
+  inputError: {
+    borderColor: '#dc2626',
+    borderWidth: 1.5,
+    backgroundColor: '#fff1f2',
+  },
+  fieldErrorText: {
+    fontSize: 12,
+    color: '#dc2626',
+    fontWeight: '600',
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  modalSubmitBtnDisabled: {
+    opacity: 0.45,
   },
 });

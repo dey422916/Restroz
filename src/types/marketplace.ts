@@ -147,6 +147,7 @@ export interface ReorderItemResult {
 export interface ReorderResult {
   restaurantId: string;
   restaurantName: string;
+  restaurantLogo?: string;
   addedItems: CustomerCartItem[];
   unavailableItems: ReorderItemResult[];
 }

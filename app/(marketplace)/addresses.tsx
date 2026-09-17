@@ -18,7 +18,8 @@ import { useAuth } from '../../src/context/AuthContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { CustomerAddress } from '../../src/types';
 import { customerColors } from '../../src/utils/colors';
-import { isValidPhoneNumber } from '../../src/utils/phone';
+import { isValidPhoneNumber, normalizePhoneNumber } from '../../src/utils/phone';
+import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError } from '../../src/utils/validation';
 
 export default function CustomerAddressesScreen() {
   const router = useRouter();
@@ -116,8 +117,8 @@ export default function CustomerAddressesScreen() {
 
     if (!phone.trim()) {
       errors.phone = 'Phone number is required';
-    } else if (!isValidPhoneNumber(phone.trim())) {
-      errors.phone = 'Please enter a valid 10-digit mobile number';
+    } else if (!isValidIndianPhone(phone.trim())) {
+      errors.phone = 'Enter a valid 10-digit Indian mobile number';
     }
 
     if (!addressLine1.trim()) {
@@ -168,7 +169,7 @@ export default function CustomerAddressesScreen() {
         const updated = await marketplaceService.updateCustomerAddress(editingId, {
           label,
           full_name: fullName.trim(),
-          phone: phone.trim(),
+          phone: normalizeIndianPhone(phone.trim()),
           address_line1: addressLine1.trim(),
           landmark: landmark.trim() || undefined,
           city: city.trim(),
@@ -183,7 +184,7 @@ export default function CustomerAddressesScreen() {
         const created = await marketplaceService.createCustomerAddress({
           label,
           full_name: fullName.trim(),
-          phone: phone.trim(),
+          phone: normalizeIndianPhone(phone.trim()),
           address_line1: addressLine1.trim(),
           landmark: landmark.trim() || undefined,
           city: city.trim(),
@@ -203,18 +204,13 @@ export default function CustomerAddressesScreen() {
   };
 
   const handleDelete = (id: string) => {
-    console.log('[DEV_LOG] Delete clicked for address ID:', id);
-
     const executeDelete = async () => {
-      console.log('[DEV_LOG] Confirmation accepted for address ID:', id);
       // Optimistic remove
       setAddresses((prev) => prev.filter((a) => a.id !== id));
       try {
-        console.log('[DEV_LOG] deleteAddress called for address ID:', id);
         await marketplaceService.deleteCustomerAddress(id);
-        console.log('[DEV_LOG] Supabase response received successfully for address ID:', id);
       } catch (e: any) {
-        console.error('[DEV_LOG] Error deleting address:', e);
+        console.error('Error deleting address:', e);
         Alert.alert('Error', e.message || 'Failed to remove address.');
         loadAddresses();
       }
@@ -225,8 +221,6 @@ export default function CustomerAddressesScreen() {
         const confirmed = window.confirm('Are you sure you want to remove this delivery address?');
         if (confirmed) {
           executeDelete();
-        } else {
-          console.log('[DEV_LOG] Delete cancelled by user on Web');
         }
       } else {
         executeDelete();
@@ -236,7 +230,6 @@ export default function CustomerAddressesScreen() {
         {
           text: 'Cancel',
           style: 'cancel',
-          onPress: () => console.log('[DEV_LOG] Delete cancelled by user on Mobile'),
         },
         {
           text: 'Delete',
@@ -459,9 +452,9 @@ export default function CustomerAddressesScreen() {
                 />
                 {Boolean(formErrors.phone) ? (
                   <Text style={styles.fieldErrorText}>⚠️ {formErrors.phone}</Text>
-                ) : Boolean(phone && !isValidPhoneNumber(phone)) ? (
+                ) : Boolean(phone && !isValidIndianPhone(phone)) ? (
                   <Text style={styles.fieldErrorText}>
-                    ⚠️ Please enter a valid 10-digit mobile number
+                    ⚠️ Enter a valid 10-digit Indian mobile number
                   </Text>
                 ) : null}
 

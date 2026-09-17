@@ -36,7 +36,7 @@ export default function CustomerOrderDetailsScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 860;
   const { user } = useAuth();
-  const { clearCart, addToCart } = useCustomerCart();
+  const { clearCart, addToCart, populateCart } = useCustomerCart();
 
   const [order, setOrder] = useState<Order | null>(null);
   const [events, setEvents] = useState<OrderStatusEvent[]>([]);
@@ -141,37 +141,25 @@ export default function CustomerOrderDetailsScreen() {
         return;
       }
 
-      // Add available items to cart
-      clearCart();
-      for (const item of result.addedItems) {
-        addToCart(
-          { id: result.restaurantId, name: result.restaurantName },
-          {
-            id: item.product_id,
-            restaurant_id: result.restaurantId,
-            category_id: 'cat-general',
-            name: item.name,
-            price: item.price,
-            tax_rate: item.tax_rate,
-            food_type: item.food_type,
-            image_url: item.image_url,
-            is_active: true,
-            is_available: true,
-            created_at: new Date().toISOString(),
-          } as any,
-          item.quantity
-        );
-      }
+      // Atomically populate cart with available items
+      populateCart(
+        {
+          id: result.restaurantId,
+          name: result.restaurantName,
+          logo_url: result.restaurantLogo,
+        },
+        result.addedItems
+      );
 
       if (result.unavailableItems.length > 0) {
         const unavailNames = result.unavailableItems.map((u: any) => u.name).join(', ');
         Alert.alert(
           'Some Items Skipped',
           `The following items are currently unavailable and were not added: ${unavailNames}`,
-          [{ text: 'View Cart', onPress: () => router.push('/(marketplace)/cart') }]
+          [{ text: 'View Cart', onPress: () => router.push('/cart' as any) }]
         );
       } else {
-        router.push('/(marketplace)/cart');
+        router.push('/cart' as any);
       }
     } catch (e: any) {
       Alert.alert('Reorder Error', e.message || 'Failed to prepare reorder.');

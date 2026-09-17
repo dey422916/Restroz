@@ -14,6 +14,14 @@ import {
   extractBannerPosY,
   formatBannerWithPosY,
 } from '../../src/utils/mediaUtils';
+import {
+  isValidEmail,
+  normalizeEmail,
+  isValidIndianPhone,
+  normalizeIndianPhone,
+  getEmailValidationError,
+  getIndianPhoneValidationError,
+} from '../../src/utils/validation';
 
 export default function SettingsScreen() {
   const { width: windowWidth } = useWindowDimensions();
@@ -574,6 +582,21 @@ export default function SettingsScreen() {
       return;
     }
 
+    if (email.trim() && !isValidEmail(email)) {
+      showToast('error', 'Validation Error', 'Enter a valid email address.');
+      Alert.alert('Validation Error', 'Enter a valid email address.');
+      return;
+    }
+
+    if (phone.trim() && !isValidIndianPhone(phone)) {
+      showToast('error', 'Validation Error', 'Enter a valid 10-digit Indian mobile number.');
+      Alert.alert('Validation Error', 'Enter a valid 10-digit Indian mobile number.');
+      return;
+    }
+
+    const cleanPhone = phone.trim() ? normalizeIndianPhone(phone) : '';
+    const cleanEmail = email.trim() ? normalizeEmail(email) : '';
+
     try {
       setIsSaving(true);
       const bannerPayload = bannerUrls.length > 0 ? JSON.stringify(bannerUrls) : '';
@@ -582,8 +605,8 @@ export default function SettingsScreen() {
         name: name.trim(),
         legal_name: legalName.trim(),
         address: address.trim(),
-        phone: phone.trim(),
-        email: email.trim(),
+        phone: cleanPhone,
+        email: cleanEmail,
         logo_url: logoUrl,
         banner_url: bannerPayload,
         banner_urls: bannerUrls,
@@ -596,8 +619,8 @@ export default function SettingsScreen() {
             name: name.trim(),
             legal_name: legalName.trim(),
             address: address.trim(),
-            phone: phone.trim(),
-            email: email.trim(),
+            phone: cleanPhone,
+            email: cleanEmail,
             logo_url: logoUrl || null,
             banner_url: bannerPayload || null,
           }).eq('id', activeRestaurantId),
@@ -701,20 +724,35 @@ export default function SettingsScreen() {
       return;
     }
 
+    if (!isValidEmail(accountEmail)) {
+      showToast('error', 'Invalid Email', 'Enter a valid email address.');
+      Alert.alert('Invalid Email', 'Enter a valid email address.');
+      return;
+    }
+
+    if (accountPhone.trim() && !isValidIndianPhone(accountPhone)) {
+      showToast('error', 'Invalid Phone', 'Enter a valid 10-digit Indian mobile number.');
+      Alert.alert('Invalid Phone', 'Enter a valid 10-digit Indian mobile number.');
+      return;
+    }
+
     if (accountPassword.length < 6) {
       showToast('error', 'Weak Password', 'Password must be at least 6 characters long.');
       Alert.alert('Weak Password', 'Password must be at least 6 characters long.');
       return;
     }
 
+    const cleanAccountEmail = normalizeEmail(accountEmail);
+    const cleanAccountPhone = accountPhone.trim() ? normalizeIndianPhone(accountPhone) : undefined;
+
     try {
       setIsCreatingAccount(true);
       const targetRestId = activeRestaurantId || settings.restaurant_id || settings.id;
       const newUser = await authService.createAdminUser(
-        accountEmail,
+        cleanAccountEmail,
         accountPassword,
-        accountName,
-        accountPhone,
+        accountName.trim(),
+        cleanAccountPhone,
         accountRole,
         targetRestId
       );
@@ -768,43 +806,55 @@ export default function SettingsScreen() {
                 <View style={[styles.brandingRow, isDesktop ? styles.brandingRowDesktop : styles.brandingRowMobile]}>
                   {/* Logo Box */}
                   <View style={[styles.logoBox, isDesktop ? styles.logoBoxDesktop : styles.logoBoxMobile]}>
-                    {logoUrl ? (
-                      <Image source={{ uri: logoUrl }} style={styles.logoPreview} resizeMode="contain" />
-                    ) : (
-                      <View style={styles.logoPlaceholder}>
-                        <Text style={{ fontSize: 18 }}>🍽️</Text>
-                        <Text style={{ fontSize: 8, color: '#94a3b8', fontWeight: '700', marginTop: 1 }}>NO LOGO</Text>
-                      </View>
-                    )}
+                    <View style={styles.logoHeaderRow}>
+                      <Text style={styles.logoHeaderTitle}>Brand Logo</Text>
+                      <Text style={styles.logoHeaderHint}>Square 1:1</Text>
+                    </View>
 
-                    <View style={{ gap: 4, flexShrink: 1 }}>
-                      <TouchableOpacity
-                        style={[styles.logoBtn, isUploadingLogo && { opacity: 0.6 }]}
-                        onPress={handleUploadLogo}
-                        disabled={isUploadingLogo || !canManage}
-                      >
-                        {isUploadingLogo ? (
-                          <ActivityIndicator size="small" color="#2563eb" />
-                        ) : (
-                          <Text style={styles.logoBtnText}>📷 {logoUrl ? 'Change' : 'Upload'}</Text>
-                        )}
-                      </TouchableOpacity>
+                    <View style={styles.logoContentRow}>
+                      {logoUrl ? (
+                        <Image source={{ uri: logoUrl }} style={styles.logoPreview} resizeMode="contain" />
+                      ) : (
+                        <View style={styles.logoPlaceholder}>
+                          <Text style={{ fontSize: 20 }}>🍽️</Text>
+                          <Text style={{ fontSize: 8, color: '#94a3b8', fontWeight: '700', marginTop: 2 }}>NO LOGO</Text>
+                        </View>
+                      )}
 
-                      {logoUrl && canManage ? (
+                      <View style={{ gap: 4, flex: 1 }}>
                         <TouchableOpacity
-                          style={styles.logoRemoveBtn}
-                          onPress={handleRemoveLogo}
+                          style={[styles.logoBtn, isUploadingLogo && { opacity: 0.6 }]}
+                          onPress={handleUploadLogo}
+                          disabled={isUploadingLogo || !canManage}
                         >
-                          <Text style={styles.logoRemoveBtnText}>✕ Remove</Text>
+                          {isUploadingLogo ? (
+                            <ActivityIndicator size="small" color="#2563eb" />
+                          ) : (
+                            <Text style={styles.logoBtnText}>📷 {logoUrl ? 'Change Logo' : 'Upload Logo'}</Text>
+                          )}
                         </TouchableOpacity>
-                      ) : null}
+
+                        {logoUrl && canManage ? (
+                          <TouchableOpacity
+                            style={styles.logoRemoveBtn}
+                            onPress={handleRemoveLogo}
+                          >
+                            <Text style={styles.logoRemoveBtnText}>✕ Remove</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
                     </View>
                   </View>
 
                   {/* Banner Add Box */}
                   <View style={[styles.bannerBox, isDesktop ? styles.bannerBoxDesktop : styles.bannerBoxMobile]}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                      <Text style={[styles.label, { marginTop: 0, marginBottom: 0 }]}>Showcase Banners</Text>
+                    <View style={styles.bannerHeaderRow}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={styles.bannerHeaderTitle}>Showcase Banners</Text>
+                        <View style={styles.bannerCountBadge}>
+                          <Text style={styles.bannerCountBadgeText}>{bannerUrls.length}</Text>
+                        </View>
+                      </View>
                       <View style={{ flexDirection: 'row', gap: 6 }}>
                         <TouchableOpacity
                           style={[styles.bannerAddBtn, isUploadingBanner && { opacity: 0.6 }]}
@@ -851,7 +901,7 @@ export default function SettingsScreen() {
                     {/* Banner Previews */}
                     {bannerUrls.length > 0 ? (
                       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 2 }}>
-                        <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
                           {bannerUrls.map((url, idx) => {
                             const isSelected = idx === selectedBannerIdx;
                             return (
@@ -899,11 +949,113 @@ export default function SettingsScreen() {
                     ) : (
                       <View style={styles.bannerEmptyBox}>
                         <Text style={{ fontSize: 13 }}>🖼️</Text>
-                        <Text style={styles.bannerEmptyText}>No showcase banners uploaded.</Text>
+                        <Text style={styles.bannerEmptyText}>No showcase banners uploaded. Tap Photo or URL to add.</Text>
                       </View>
                     )}
                   </View>
                 </View>
+
+                {/* Form Fields */}
+                <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>Restaurant Name *</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={name}
+                      onChangeText={(v) => {
+                        setName(v);
+                        setIsDirty(true);
+                      }}
+                      placeholder="Ratnadeep Restaurant"
+                      placeholderTextColor="#94a3b8"
+                    />
+                  </View>
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>Legal Entity Name</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={legalName}
+                      onChangeText={(v) => {
+                        setLegalName(v);
+                        setIsDirty(true);
+                      }}
+                      placeholder="e.g. Ratnadeep Foods Pvt Ltd"
+                      placeholderTextColor="#94a3b8"
+                    />
+                  </View>
+                </View>
+
+                <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>Phone Number</Text>
+                    <TextInput
+                      style={[styles.input, Boolean(phone && !isValidIndianPhone(phone)) && { borderColor: '#dc2626' }]}
+                      value={phone}
+                      onChangeText={(v) => {
+                        setPhone(v);
+                        setIsDirty(true);
+                      }}
+                      placeholder="+91 98765 43210"
+                      placeholderTextColor="#94a3b8"
+                      keyboardType="phone-pad"
+                    />
+                    {Boolean(phone && !isValidIndianPhone(phone)) && (
+                      <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '600', marginTop: 3 }}>
+                        ⚠️ Enter a valid 10-digit Indian mobile number
+                      </Text>
+                    )}
+                  </View>
+                  <View style={styles.formCol}>
+                    <Text style={styles.label}>Email Address</Text>
+                    <TextInput
+                      style={[styles.input, Boolean(email && !isValidEmail(email)) && { borderColor: '#dc2626' }]}
+                      value={email}
+                      onChangeText={(v) => {
+                        setEmail(v);
+                        setIsDirty(true);
+                      }}
+                      placeholder="contact@restaurant.com"
+                      placeholderTextColor="#94a3b8"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                    />
+                    {Boolean(email && !isValidEmail(email)) && (
+                      <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '600', marginTop: 3 }}>
+                        ⚠️ Enter a valid email address
+                      </Text>
+                    )}
+                  </View>
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Address</Text>
+                  <TextInput
+                    style={[styles.input, { minHeight: 48, paddingVertical: 8 }]}
+                    value={address}
+                    onChangeText={(v) => {
+                      setAddress(v);
+                      setIsDirty(true);
+                    }}
+                    multiline
+                    placeholder="Restaurant physical address, street, area, city"
+                    placeholderTextColor="#94a3b8"
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.saveBtn, (isSaving || !canManage) && { opacity: 0.6 }]}
+                  onPress={handleSaveProfileInfo}
+                  disabled={isSaving || !canManage}
+                >
+                  {isSaving ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <ActivityIndicator color="#ffffff" size="small" />
+                      <Text style={styles.saveBtnText}>Saving Profile...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.saveBtnText}>Save Profile Info</Text>
+                  )}
+                </TouchableOpacity>
 
                 {/* Interactive Banner Drag & Focal Adjuster with Exact Customer Storefront Preview */}
                 {bannerUrls.length > 0 && (
@@ -1054,9 +1206,11 @@ export default function SettingsScreen() {
                         {showOverlaysInPreview && (
                           <View style={styles.customerOverlayMockup} pointerEvents="none">
                             {/* Top row with status */}
-                            <View style={styles.mockupStatusPill}>
-                              <View style={styles.mockupStatusDot} />
-                              <Text style={styles.mockupStatusText}>Open</Text>
+                            <View style={[styles.mockupStatusPill, !isOnlineOrdersEnabled && styles.mockupStatusPillClosed]}>
+                              <View style={[styles.mockupStatusDot, !isOnlineOrdersEnabled && styles.mockupStatusDotClosed]} />
+                              <Text style={[styles.mockupStatusText, !isOnlineOrdersEnabled && styles.mockupStatusTextClosed]}>
+                                {isOnlineOrdersEnabled ? 'Open' : 'Closed'}
+                              </Text>
                             </View>
 
                             {/* Bottom info section */}
@@ -1231,98 +1385,6 @@ export default function SettingsScreen() {
                     </View>
                   </View>
                 )}
-
-                {/* Form Fields */}
-                <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
-                  <View style={styles.formCol}>
-                    <Text style={styles.label}>Restaurant Name *</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={name}
-                      onChangeText={(v) => {
-                        setName(v);
-                        setIsDirty(true);
-                      }}
-                      placeholder="Ratnadeep Restaurant"
-                      placeholderTextColor="#94a3b8"
-                    />
-                  </View>
-                  <View style={styles.formCol}>
-                    <Text style={styles.label}>Legal Entity Name</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={legalName}
-                      onChangeText={(v) => {
-                        setLegalName(v);
-                        setIsDirty(true);
-                      }}
-                      placeholder="e.g. Ratnadeep Foods Pvt Ltd"
-                      placeholderTextColor="#94a3b8"
-                    />
-                  </View>
-                </View>
-
-                <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
-                  <View style={styles.formCol}>
-                    <Text style={styles.label}>Phone Number</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={phone}
-                      onChangeText={(v) => {
-                        setPhone(v);
-                        setIsDirty(true);
-                      }}
-                      placeholder="+91 98765 43210"
-                      placeholderTextColor="#94a3b8"
-                      keyboardType="phone-pad"
-                    />
-                  </View>
-                  <View style={styles.formCol}>
-                    <Text style={styles.label}>Email Address</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={email}
-                      onChangeText={(v) => {
-                        setEmail(v);
-                        setIsDirty(true);
-                      }}
-                      placeholder="contact@restaurant.com"
-                      placeholderTextColor="#94a3b8"
-                      keyboardType="email-address"
-                      autoCapitalize="none"
-                    />
-                  </View>
-                </View>
-
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Address</Text>
-                  <TextInput
-                    style={[styles.input, { minHeight: 38 }]}
-                    value={address}
-                    onChangeText={(v) => {
-                      setAddress(v);
-                      setIsDirty(true);
-                    }}
-                    multiline
-                    placeholder="Restaurant physical address"
-                    placeholderTextColor="#94a3b8"
-                  />
-                </View>
-
-                <TouchableOpacity
-                  style={[styles.saveBtn, (isSaving || !canManage) && { opacity: 0.6 }]}
-                  onPress={handleSaveProfileInfo}
-                  disabled={isSaving || !canManage}
-                >
-                  {isSaving ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <ActivityIndicator color="#ffffff" size="small" />
-                      <Text style={styles.saveBtnText}>Saving...</Text>
-                    </View>
-                  ) : (
-                    <Text style={styles.saveBtnText}>Save Profile Info</Text>
-                  )}
-                </TouchableOpacity>
               </View>
 
               {/* 3. Marketplace Online Ordering */}
@@ -2153,26 +2215,24 @@ const styles = StyleSheet.create({
   },
   brandingRow: {
     width: '100%',
-    marginBottom: 10,
+    marginBottom: 14,
   },
   brandingRowDesktop: {
     flexDirection: 'row',
     gap: 12,
-    alignItems: 'flex-start',
+    alignItems: 'stretch',
   },
   brandingRowMobile: {
     flexDirection: 'column',
-    gap: 10,
+    gap: 12,
   },
   logoBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    padding: 8,
+    padding: 12,
     backgroundColor: '#F8FAFC',
-    borderRadius: 8,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    justifyContent: 'space-between',
   },
   logoBoxDesktop: {
     flex: 1,
@@ -2180,21 +2240,48 @@ const styles = StyleSheet.create({
   logoBoxMobile: {
     width: '100%',
   },
+  logoHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  logoHeaderTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#334155',
+  },
+  logoHeaderHint: {
+    fontSize: 10,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  logoContentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
   logoPreview: {
-    width: 48,
-    height: 48,
-    borderRadius: 6,
+    width: 52,
+    height: 52,
+    borderRadius: 8,
     backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 2,
+    elevation: 1,
   },
   logoPlaceholder: {
-    width: 48,
-    height: 48,
-    borderRadius: 6,
+    width: 52,
+    height: 52,
+    borderRadius: 8,
     backgroundColor: '#FFFFFF',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#CBD5E1',
+    borderStyle: 'dashed',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -2206,6 +2293,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderRadius: 6,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   logoBtnText: {
     color: '#1D4ED8',
@@ -2219,17 +2307,44 @@ const styles = StyleSheet.create({
   },
   logoRemoveBtnText: {
     color: '#E11D48',
-    fontSize: 10,
+    fontSize: 10.5,
     fontWeight: '700',
   },
   bannerBox: {
-    width: '100%',
+    padding: 12,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    justifyContent: 'space-between',
   },
   bannerBoxDesktop: {
-    flex: 1.3,
+    flex: 1.4,
   },
   bannerBoxMobile: {
     width: '100%',
+  },
+  bannerHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  bannerHeaderTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#334155',
+  },
+  bannerCountBadge: {
+    backgroundColor: '#E2E8F0',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 10,
+  },
+  bannerCountBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
   },
   bannerAddBtn: {
     backgroundColor: '#0F172A',
@@ -2243,7 +2358,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   urlInputBox: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     padding: 8,
     borderRadius: 6,
     borderWidth: 1,
@@ -2253,7 +2368,7 @@ const styles = StyleSheet.create({
   },
   bannerEmptyBox: {
     padding: 10,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     borderRadius: 6,
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -2496,16 +2611,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(74, 222, 128, 0.5)',
   },
+  mockupStatusPillClosed: {
+    backgroundColor: 'rgba(185, 28, 28, 0.9)',
+    borderColor: 'rgba(248, 113, 113, 0.5)',
+  },
   mockupStatusDot: {
     width: 4.5,
     height: 4.5,
     borderRadius: 2.25,
     backgroundColor: '#4ADE80',
   },
+  mockupStatusDotClosed: {
+    backgroundColor: '#F87171',
+  },
   mockupStatusText: {
     fontSize: 8.5,
     fontWeight: '800',
     color: '#DCFCE7',
+  },
+  mockupStatusTextClosed: {
+    color: '#FEE2E2',
   },
   mockupBottomInfo: {
     gap: 2,

@@ -51,7 +51,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const playOrderBell = useCallback(() => {
     try {
-      console.log('Order notification sound alert triggered');
+      // Audio trigger
     } catch (e) {
       // Audio fallback
     }

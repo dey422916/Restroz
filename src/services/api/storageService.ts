@@ -1084,4 +1084,138 @@ export const storageService = {
       throw new Error(err.message || 'Failed to upload payment screenshot.');
     }
   },
+
+  /**
+   * Recursively lists all file paths under a specific prefix in a Supabase Storage bucket.
+   */
+  async listAllFilesRecursively(
+    bucket: 'product-images' | 'restaurant-assets',
+    prefix: string
+  ): Promise<string[]> {
+    if (!isSupabaseConfigured) return [];
+    const filePaths: string[] = [];
+    const queue: string[] = [prefix.replace(/\/$/, '')];
+
+    while (queue.length > 0) {
+      const currentFolder = queue.shift()!;
+      let offset = 0;
+      const limit = 100;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await supabase.storage.from(bucket).list(currentFolder, {
+          limit,
+          offset,
+          sortBy: { column: 'name', order: 'asc' },
+        });
+
+        if (error || !data || data.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        for (const item of data) {
+          const itemPath = currentFolder ? `${currentFolder}/${item.name}` : item.name;
+          // Sub-folders have null id or no metadata in Supabase storage list
+          if (!item.id || (item as any).metadata === null) {
+            queue.push(itemPath);
+          } else {
+            filePaths.push(itemPath);
+          }
+        }
+
+        if (data.length < limit) {
+          hasMore = false;
+        } else {
+          offset += limit;
+        }
+      }
+    }
+
+    return filePaths;
+  },
+
+  /**
+   * Previews all storage files owned by a specific restaurant.
+   */
+  async previewRestaurantStorageAssets(restaurantId: string): Promise<{
+    productImages: string[];
+    restaurantAssets: string[];
+    paymentProofs: string[];
+    totalCount: number;
+  }> {
+    if (!restaurantId || !isSupabaseConfigured) {
+      return { productImages: [], restaurantAssets: [], paymentProofs: [], totalCount: 0 };
+    }
+
+    const [productImages, restaurantAssets, paymentProofs] = await Promise.all([
+      this.listAllFilesRecursively('product-images', `restaurants/${restaurantId}`),
+      this.listAllFilesRecursively('restaurant-assets', `restaurants/${restaurantId}`),
+      this.listAllFilesRecursively('restaurant-assets', `orders/payment-proofs/${restaurantId}`),
+    ]);
+
+    return {
+      productImages,
+      restaurantAssets,
+      paymentProofs,
+      totalCount: productImages.length + restaurantAssets.length + paymentProofs.length,
+    };
+  },
+
+  /**
+   * Permanently deletes all Supabase Storage files associated with a specific restaurant.
+   */
+  async deleteRestaurantStorageAssets(restaurantId: string): Promise<{
+    success: boolean;
+    deletedCount: number;
+    remainingCount: number;
+    error?: string;
+  }> {
+    if (!restaurantId || !isSupabaseConfigured) {
+      return { success: true, deletedCount: 0, remainingCount: 0 };
+    }
+
+    try {
+      const preview = await this.previewRestaurantStorageAssets(restaurantId);
+      let deleted = 0;
+
+      // Delete from product-images
+      if (preview.productImages.length > 0) {
+        for (let i = 0; i < preview.productImages.length; i += 50) {
+          const chunk = preview.productImages.slice(i, i + 50);
+          const { error } = await supabase.storage.from('product-images').remove(chunk);
+          if (error) console.warn('Failed to remove product-images chunk:', error);
+          else deleted += chunk.length;
+        }
+      }
+
+      // Delete from restaurant-assets (both restaurants/ and orders/payment-proofs/)
+      const allRestaurantAssets = [...preview.restaurantAssets, ...preview.paymentProofs];
+      if (allRestaurantAssets.length > 0) {
+        for (let i = 0; i < allRestaurantAssets.length; i += 50) {
+          const chunk = allRestaurantAssets.slice(i, i + 50);
+          const { error } = await supabase.storage.from('restaurant-assets').remove(chunk);
+          if (error) console.warn('Failed to remove restaurant-assets chunk:', error);
+          else deleted += chunk.length;
+        }
+      }
+
+      // Verify remaining files
+      const afterCheck = await this.previewRestaurantStorageAssets(restaurantId);
+
+      return {
+        success: afterCheck.totalCount === 0,
+        deletedCount: deleted,
+        remainingCount: afterCheck.totalCount,
+      };
+    } catch (err: any) {
+      console.error('deleteRestaurantStorageAssets error:', err);
+      return {
+        success: false,
+        deletedCount: 0,
+        remainingCount: -1,
+        error: err?.message || 'Storage cleanup failed.',
+      };
+    }
+  },
 };

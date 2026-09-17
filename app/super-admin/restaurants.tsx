@@ -24,29 +24,35 @@ import { locationSearchService, PlaceSuggestion } from '../../src/services/api/l
 import { Restaurant, RestaurantSubscription } from '../../src/types';
 import { colors } from '../../src/utils/colors';
 
+import {
+  isValidEmail,
+  normalizeEmail,
+  isValidIndianPhone,
+  normalizeIndianPhone,
+  getEmailValidationError,
+  getIndianPhoneValidationError,
+} from '../../src/utils/validation';
+
 export default function SuperAdminRestaurantsScreen() {
   const router = useRouter();
+  const { user, setActiveRestaurantId } = useAuth();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
-  const { setActiveRestaurantId } = useAuth();
 
-  const [loading, setLoading] = useState(true);
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [subscriptions, setSubscriptions] = useState<Record<string, RestaurantSubscription>>({});
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('ALL');
-
-  // Modal State
-  const [modalVisible, setModalVisible] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [uploadingBanner, setUploadingBanner] = useState(false);
-  const [uploadingLogo, setUploadingLogo] = useState(false);
-  const [fetchingLocation, setFetchingLocation] = useState(false);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'SUSPENDED' | 'ACTIVE_SUB' | 'EXPIRED_SUB'>('ALL');
+
+  // New Restaurant Form State
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
   const [mapSearchQuery, setMapSearchQuery] = useState('');
-  const [placeSuggestions, setPlaceSuggestions] = useState<PlaceSuggestion[]>([]);
+  const [placeSuggestions, setPlaceSuggestions] = useState<any[]>([]);
   const [searchingPlaces, setSearchingPlaces] = useState(false);
-  const [selectedPlaceInfo, setSelectedPlaceInfo] = useState<string | null>(null);
+  const [selectedPlaceInfo, setSelectedPlaceInfo] = useState<any | null>(null);
   const searchTimeoutRef = React.useRef<any>(null);
   const [formName, setFormName] = useState('');
   const [formSlug, setFormSlug] = useState('');
@@ -61,6 +67,12 @@ export default function SuperAdminRestaurantsScreen() {
   const [formLogoUrl, setFormLogoUrl] = useState('');
   const [formLat, setFormLat] = useState('');
   const [formLng, setFormLng] = useState('');
+  const [formPhoneTouched, setFormPhoneTouched] = useState(false);
+  const [formEmailTouched, setFormEmailTouched] = useState(false);
+  const [formSubmitted, setFormSubmitted] = useState(false);
+  const [uploadingBanner, setUploadingBanner] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [fetchingLocation, setFetchingLocation] = useState(false);
 
   const loadData = async () => {
     try {
@@ -146,14 +158,27 @@ export default function SuperAdminRestaurantsScreen() {
       return;
     }
 
+    if (formEmail.trim() && !isValidEmail(formEmail)) {
+      Alert.alert('Validation Error', 'Enter a valid email address.');
+      return;
+    }
+
+    if (formPhone.trim() && !isValidIndianPhone(formPhone)) {
+      Alert.alert('Validation Error', 'Enter a valid 10-digit Indian mobile number.');
+      return;
+    }
+
+    const cleanPhone = formPhone.trim() ? normalizeIndianPhone(formPhone) : undefined;
+    const cleanEmail = formEmail.trim() ? normalizeEmail(formEmail) : undefined;
+
     setSaving(true);
     try {
       const newRest = await superAdminService.createRestaurant({
         name: trimmedName,
         slug: trimmedSlug,
         legal_name: formLegalName.trim() || trimmedName,
-        phone: formPhone.trim() || undefined,
-        email: formEmail.trim() || undefined,
+        phone: cleanPhone,
+        email: cleanEmail,
         address: formAddress.trim(),
         city: formCity.trim(),
         state: formState.trim(),
@@ -259,6 +284,9 @@ export default function SuperAdminRestaurantsScreen() {
     setMapSearchQuery('');
     setPlaceSuggestions([]);
     setSelectedPlaceInfo(null);
+    setFormPhoneTouched(false);
+    setFormEmailTouched(false);
+    setFormSubmitted(false);
   };
 
   const handlePickBanner = async () => {
@@ -406,7 +434,7 @@ export default function SuperAdminRestaurantsScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filterPillsScroll}
         >
-          {['ALL', 'ACTIVE', 'SUSPENDED', 'ACTIVE_SUB', 'EXPIRED_SUB'].map((f) => (
+          {(['ALL', 'ACTIVE', 'SUSPENDED', 'ACTIVE_SUB', 'EXPIRED_SUB'] as const).map((f) => (
             <TouchableOpacity
               key={f}
               style={[styles.filterPill, statusFilter === f && styles.filterPillActive]}
@@ -733,23 +761,49 @@ export default function SuperAdminRestaurantsScreen() {
                 <View style={[{ flex: 1 }, !isMobile && { marginRight: 8 }]}>
                   <Text style={styles.label}>Phone Number</Text>
                   <TextInput
-                    style={styles.input}
+                    style={[
+                      styles.input,
+                      Boolean((formPhoneTouched || formSubmitted) && getIndianPhoneValidationError(formPhone, false)) &&
+                        styles.inputError,
+                    ]}
                     placeholder="+91 9876543210"
                     value={formPhone}
-                    onChangeText={setFormPhone}
+                    onChangeText={(v) => {
+                      setFormPhone(v);
+                      if (formSubmitted) setFormSubmitted(false);
+                    }}
+                    onBlur={() => setFormPhoneTouched(true)}
                     keyboardType="phone-pad"
                   />
+                  {Boolean((formPhoneTouched || formSubmitted) && getIndianPhoneValidationError(formPhone, false)) && (
+                    <Text style={styles.fieldErrorText}>
+                      ⚠️ {getIndianPhoneValidationError(formPhone, false)}
+                    </Text>
+                  )}
                 </View>
                 <View style={[{ flex: 1 }, !isMobile && { marginLeft: 8 }]}>
                   <Text style={styles.label}>Email Address</Text>
                   <TextInput
-                    style={styles.input}
+                    style={[
+                      styles.input,
+                      Boolean((formEmailTouched || formSubmitted) && getEmailValidationError(formEmail, false)) &&
+                        styles.inputError,
+                    ]}
                     placeholder="admin@royalspice.com"
                     value={formEmail}
-                    onChangeText={setFormEmail}
+                    onChangeText={(v) => {
+                      setFormEmail(v);
+                      if (formSubmitted) setFormSubmitted(false);
+                    }}
+                    onBlur={() => setFormEmailTouched(true)}
                     keyboardType="email-address"
                     autoCapitalize="none"
                   />
+                  {Boolean((formEmailTouched || formSubmitted) && getEmailValidationError(formEmail, false)) && (
+                    <Text style={styles.fieldErrorText}>
+                      ⚠️ {getEmailValidationError(formEmail, false)}
+                    </Text>
+                  )}
                 </View>
               </View>
 
@@ -1661,5 +1715,16 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '600',
     fontSize: 14,
+  },
+  inputError: {
+    borderColor: '#DC2626',
+    borderWidth: 1.5,
+  },
+  fieldErrorText: {
+    fontSize: 11,
+    color: '#DC2626',
+    fontWeight: '600',
+    marginTop: 3,
+    marginBottom: 4,
   },
 });

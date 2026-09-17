@@ -30,7 +30,8 @@ import { useAuth } from '../../src/context/AuthContext';
 import { useSettings } from '../../src/context/SettingsContext';
 import { printedKotTracker } from '../../src/utils/printedKotTracker';
 import { cleanCustomerOrderNotes } from '../../src/utils/orderNotes';
-import { isValidPhoneNumber } from '../../src/utils/phone';
+import { isValidPhoneNumber, normalizePhoneNumber } from '../../src/utils/phone';
+import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError } from '../../src/utils/validation';
 import { validateGSTIN } from '../../src/utils/validators';
 import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
 import { useNotification } from '../../src/context/NotificationContext';
@@ -412,6 +413,7 @@ export default function OrdersScreen() {
         product_id: prod.id,
         product_name: prod.name,
         unit_price: prodPrice,
+        total_price: prodPrice,
         quantity: 1,
         tax_rate: Number(prod.tax_rate) || 5,
         tax_amount: (prodPrice * (Number(prod.tax_rate) || 5)) / 100,
@@ -519,8 +521,8 @@ export default function OrdersScreen() {
     }
 
     if (editCustomerPhone.trim()) {
-      if (!isValidPhoneNumber(editCustomerPhone)) {
-        Alert.alert('Invalid Phone Number', 'Please enter a valid 10-digit mobile number for the customer.');
+      if (!isValidIndianPhone(editCustomerPhone)) {
+        Alert.alert('Invalid Phone Number', 'Enter a valid 10-digit Indian mobile number.');
         return;
       }
     } else if (editOrderModal.order_type === 'delivery') {
@@ -543,7 +545,7 @@ export default function OrdersScreen() {
         orderId: editOrderModal.id,
         updatedItems: editItems,
         customerName: editCustomerName.trim(),
-        customerPhone: editCustomerPhone.trim(),
+        customerPhone: editCustomerPhone.trim() ? normalizeIndianPhone(editCustomerPhone.trim()) : undefined,
         deliveryAddress: editDeliveryAddress.trim(),
         tableId: editTableId || undefined,
         tableNumber: selectedTbl?.table_number || editOrderModal.table_number,
@@ -833,6 +835,10 @@ export default function OrdersScreen() {
 
   const handleMarkPaymentVerified = async (order: Order) => {
     if (!order || !order.id) return;
+    if (order.status === 'cancelled') {
+      Alert.alert('Action Not Allowed', 'Cannot verify payment for a cancelled order.');
+      return;
+    }
     if (user?.role !== 'SUPER_ADMIN' && user?.role !== 'ADMIN') {
       Alert.alert('Permission Denied', 'Only Restaurant Admins and Super Admins can verify online payments.');
       return;
@@ -1286,6 +1292,11 @@ export default function OrdersScreen() {
                 <View style={styles.cardHeader}>
                   <View style={styles.cardHeaderLeft}>
                     <Text style={styles.orderNum}>#{order.order_number}</Text>
+                    {Boolean(order.is_supplementary) && (
+                      <View style={{ backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#94a3b8', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}>
+                        <Text style={{ fontSize: 10, fontWeight: '900', color: '#334155' }}>🏷️ SUP</Text>
+                      </View>
+                    )}
                     <View style={[styles.typeBadge, typeBadgeStyle]}>
                       <Text style={[styles.typeBadgeText, typeBadgeTextStyle]}>{typeBadgeLabel}</Text>
                     </View>
@@ -1449,33 +1460,34 @@ export default function OrdersScreen() {
                         marginBottom: 10,
                         shadowColor: '#000',
                         shadowOffset: { width: 0, height: 1 },
-                        shadowOpacity: 0.05,
+                        shadowOpacity: 0.04,
                         shadowRadius: 2,
                         elevation: 1,
                       }}
                     >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
                         <TouchableOpacity
                           activeOpacity={0.7}
                           onPress={() => {
                             markAsSeen(order.id);
                             setViewOrderModal(order);
                           }}
-                          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}
+                          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 160 }}
                         >
                           <View
                             style={{
-                              width: 34,
-                              height: 34,
-                              borderRadius: 17,
+                              width: 32,
+                              height: 32,
+                              borderRadius: 16,
                               backgroundColor: order.payment_status === 'paid' ? '#dcfce7' : '#dbeafe',
                               alignItems: 'center',
                               justifyContent: 'center',
                               borderWidth: 1,
                               borderColor: order.payment_status === 'paid' ? '#bbf7d0' : '#bfdbfe',
+                              flexShrink: 0,
                             }}
                           >
-                            <Text style={{ fontSize: 16 }}>📷</Text>
+                            <Text style={{ fontSize: 14 }}>{order.payment_status === 'paid' ? '✓' : '📷'}</Text>
                           </View>
                           <View style={{ flex: 1, minWidth: 0 }}>
                             <Text
@@ -1486,7 +1498,7 @@ export default function OrdersScreen() {
                               }}
                               numberOfLines={1}
                             >
-                              {order.payment_status === 'paid' ? 'Payment Proof Verified' : 'Payment Proof Attached'}
+                              {order.payment_status === 'paid' ? 'Payment Verified & Confirmed' : 'Payment Proof Attached'}
                             </Text>
                             <Text
                               style={{
@@ -1497,7 +1509,7 @@ export default function OrdersScreen() {
                               numberOfLines={1}
                             >
                               {order.payment_status === 'paid'
-                                ? (order.payment_verified_at ? `Verified at ${formatOrderDateTime(order.payment_verified_at)}` : 'Payment Verified & Confirmed')
+                                ? (order.payment_verified_at ? `Verified at ${formatOrderDateTime(order.payment_verified_at)}` : 'Verified by Admin')
                                 : 'Online Payment Screenshot'}
                             </Text>
                           </View>
@@ -1510,26 +1522,28 @@ export default function OrdersScreen() {
                             setViewOrderModal(order);
                           }}
                           style={{
-                            backgroundColor: order.payment_status === 'paid' ? '#15803d' : '#2563eb',
-                            height: 34,
-                            paddingHorizontal: 10,
+                            backgroundColor: order.payment_status === 'paid' ? '#ffffff' : '#2563eb',
+                            borderWidth: order.payment_status === 'paid' ? 1.5 : 0,
+                            borderColor: order.payment_status === 'paid' ? '#86efac' : 'transparent',
+                            height: 32,
+                            paddingHorizontal: 12,
                             borderRadius: 7,
                             flexDirection: 'row',
                             alignItems: 'center',
                             justifyContent: 'center',
                             gap: 4,
-                            flexShrink: 0,
-                            shadowColor: order.payment_status === 'paid' ? '#15803d' : '#2563eb',
+                            alignSelf: 'center',
+                            shadowColor: '#000',
                             shadowOffset: { width: 0, height: 1 },
-                            shadowOpacity: 0.2,
+                            shadowOpacity: order.payment_status === 'paid' ? 0.05 : 0.2,
                             shadowRadius: 2,
-                            elevation: 2,
+                            elevation: 1,
                           }}
                         >
                           <Text
                             style={{
-                              color: '#ffffff',
-                              fontSize: 12,
+                              color: order.payment_status === 'paid' ? '#15803d' : '#ffffff',
+                              fontSize: 11.5,
                               fontWeight: '800',
                             }}
                             numberOfLines={1}
@@ -1540,35 +1554,57 @@ export default function OrdersScreen() {
                       </View>
 
                       {/* Immediate Verify Button on card for unverified online orders */}
-                      {order.payment_status !== 'paid' && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
-                        <TouchableOpacity
+                      {order.status === 'cancelled' ? (
+                        <View
                           style={{
-                            backgroundColor: '#16a34a',
-                            paddingVertical: 8,
-                            paddingHorizontal: 12,
+                            backgroundColor: '#fee2e2',
+                            paddingVertical: 7,
+                            paddingHorizontal: 10,
                             borderRadius: 7,
                             marginTop: 8,
                             alignItems: 'center',
                             flexDirection: 'row',
                             justifyContent: 'center',
                             gap: 5,
-                            shadowColor: '#16a34a',
-                            shadowOffset: { width: 0, height: 1 },
-                            shadowOpacity: 0.2,
-                            shadowRadius: 2,
-                            elevation: 2,
+                            borderWidth: 1,
+                            borderColor: '#fca5a5',
                           }}
-                          onPress={() => handleMarkPaymentVerified(order)}
-                          disabled={verifyingPaymentOrderId === order.id}
                         >
-                          {verifyingPaymentOrderId === order.id ? (
-                            <ActivityIndicator size="small" color="#ffffff" />
-                          ) : (
-                            <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '900' }}>
-                              ✓ Mark Payment Verified
-                            </Text>
-                          )}
-                        </TouchableOpacity>
+                          <Text style={{ color: '#991b1b', fontSize: 11.5, fontWeight: '800' }}>
+                            🚫 Cancelled Order • Verification Disabled
+                          </Text>
+                        </View>
+                      ) : (
+                        order.payment_status !== 'paid' && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
+                          <TouchableOpacity
+                            style={{
+                              backgroundColor: '#16a34a',
+                              paddingVertical: 8,
+                              paddingHorizontal: 12,
+                              borderRadius: 7,
+                              marginTop: 8,
+                              alignItems: 'center',
+                              flexDirection: 'row',
+                              justifyContent: 'center',
+                              gap: 5,
+                              shadowColor: '#16a34a',
+                              shadowOffset: { width: 0, height: 1 },
+                              shadowOpacity: 0.2,
+                              shadowRadius: 2,
+                              elevation: 2,
+                            }}
+                            onPress={() => handleMarkPaymentVerified(order)}
+                            disabled={verifyingPaymentOrderId === order.id}
+                          >
+                            {verifyingPaymentOrderId === order.id ? (
+                              <ActivityIndicator size="small" color="#ffffff" />
+                            ) : (
+                              <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '900' }}>
+                                ✓ Mark Payment Verified
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                        )
                       )}
                     </View>
                   )}
@@ -1613,7 +1649,11 @@ export default function OrdersScreen() {
                         else if (isSplitPay) badgeLabel = '✓ PAID (SPLIT)';
                         else badgeLabel = `✓ PAID (${(order.payment_method || 'PAID').toUpperCase()})`;
                       } else {
-                        if (isOnlinePay) {
+                        if (order.status === 'cancelled') {
+                          badgeContainerStyle = { backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fca5a5' } as any;
+                          badgeTextStyle = { color: '#991b1b' } as any;
+                          badgeLabel = '🚫 CANCELLED (UNPAID)';
+                        } else if (isOnlinePay) {
                           badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
                           badgeTextStyle = { color: '#1d4ed8' } as any;
                           badgeLabel = Boolean(order.payment_proof_url)
@@ -2034,9 +2074,9 @@ export default function OrdersScreen() {
                       maxLength={13}
                       onChangeText={(v) => setEditCustomerPhone(v.replace(/[^\d+]/g, ''))}
                     />
-                    {Boolean(editCustomerPhone && !isValidPhoneNumber(editCustomerPhone)) && (
+                    {Boolean(editCustomerPhone && !isValidIndianPhone(editCustomerPhone)) && (
                       <Text style={{ fontSize: 10, color: '#dc2626', fontWeight: '700', marginTop: 2 }}>
-                        ⚠️ Enter a valid 10-digit mobile number
+                        ⚠️ Enter a valid 10-digit Indian mobile number
                       </Text>
                     )}
                   </View>
@@ -2737,27 +2777,27 @@ export default function OrdersScreen() {
                         }}
                       >
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                          <Text style={{ fontSize: 12, fontWeight: '800', color: viewOrderModal.payment_status === 'paid' ? '#166534' : '#1e40af' }}>
+                          <Text style={{ fontSize: 12, fontWeight: '800', color: viewOrderModal.payment_status === 'paid' ? '#166534' : (viewOrderModal.status === 'cancelled' ? '#991b1b' : '#1e40af') }}>
                             📷 Payment Screenshot:
                           </Text>
                           <View
                             style={{
-                              backgroundColor: viewOrderModal.payment_status === 'paid' ? '#dcfce7' : '#fee2e2',
+                              backgroundColor: viewOrderModal.payment_status === 'paid' ? '#dcfce7' : (viewOrderModal.status === 'cancelled' ? '#fee2e2' : '#eff6ff'),
                               paddingHorizontal: 8,
                               paddingVertical: 4,
                               borderRadius: 6,
                               borderWidth: 1,
-                              borderColor: viewOrderModal.payment_status === 'paid' ? '#bbf7d0' : '#fecaca',
+                              borderColor: viewOrderModal.payment_status === 'paid' ? '#bbf7d0' : (viewOrderModal.status === 'cancelled' ? '#fecaca' : '#bfdbfe'),
                             }}
                           >
                             <Text
                               style={{
                                 fontSize: 10,
                                 fontWeight: '900',
-                                color: viewOrderModal.payment_status === 'paid' ? '#15803d' : '#dc2626',
+                                color: viewOrderModal.payment_status === 'paid' ? '#15803d' : (viewOrderModal.status === 'cancelled' ? '#dc2626' : '#2563eb'),
                               }}
                             >
-                              {viewOrderModal.payment_status === 'paid' ? '✓ VERIFIED & PAID' : '⚠️ PENDING VERIFICATION'}
+                              {viewOrderModal.payment_status === 'paid' ? '✓ VERIFIED & PAID' : (viewOrderModal.status === 'cancelled' ? '🚫 ORDER CANCELLED' : '⚠️ PENDING VERIFICATION')}
                             </Text>
                           </View>
                         </View>
@@ -2768,27 +2808,47 @@ export default function OrdersScreen() {
                           resizeMode="contain"
                         />
 
-                        {viewOrderModal.payment_status !== 'paid' && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
-                          <TouchableOpacity
+                        {viewOrderModal.status === 'cancelled' ? (
+                          <View
                             style={{
-                              backgroundColor: '#16a34a',
-                              paddingVertical: 10,
+                              backgroundColor: '#fee2e2',
+                              paddingVertical: 9,
+                              paddingHorizontal: 12,
                               borderRadius: 8,
                               marginTop: 10,
                               alignItems: 'center',
                               justifyContent: 'center',
+                              borderWidth: 1,
+                              borderColor: '#fca5a5',
                             }}
-                            onPress={() => handleMarkPaymentVerified(viewOrderModal)}
-                            disabled={verifyingPaymentOrderId === viewOrderModal.id}
                           >
-                            {verifyingPaymentOrderId === viewOrderModal.id ? (
-                              <ActivityIndicator size="small" color="#ffffff" />
-                            ) : (
-                              <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '900' }}>
-                                ✓ Mark Payment Verified
-                              </Text>
-                            )}
-                          </TouchableOpacity>
+                            <Text style={{ color: '#991b1b', fontSize: 12, fontWeight: '800' }}>
+                              🚫 Cancelled Order • Payment Verification Disabled
+                            </Text>
+                          </View>
+                        ) : (
+                          viewOrderModal.payment_status !== 'paid' && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
+                            <TouchableOpacity
+                              style={{
+                                backgroundColor: '#16a34a',
+                                paddingVertical: 10,
+                                borderRadius: 8,
+                                marginTop: 10,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                              onPress={() => handleMarkPaymentVerified(viewOrderModal)}
+                              disabled={verifyingPaymentOrderId === viewOrderModal.id}
+                            >
+                              {verifyingPaymentOrderId === viewOrderModal.id ? (
+                                <ActivityIndicator size="small" color="#ffffff" />
+                              ) : (
+                                <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '900' }}>
+                                  ✓ Mark Payment Verified
+                                </Text>
+                              )}
+                            </TouchableOpacity>
+                          )
                         )}
 
                         {viewOrderModal.payment_status === 'paid' && viewOrderModal.payment_verified_at && (

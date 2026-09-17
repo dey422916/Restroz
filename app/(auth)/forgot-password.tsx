@@ -13,6 +13,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
+import { isValidEmail, normalizeEmail } from '../../src/utils/validation';
 
 export default function ForgotPasswordScreen() {
   const insets = useSafeAreaInsets();
@@ -24,15 +25,14 @@ export default function ForgotPasswordScreen() {
   const [cooldown, setCooldown] = useState<number>(0);
 
   const handleSendReset = async () => {
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail) {
+    const cleanEmail = normalizeEmail(email);
+    if (!cleanEmail) {
       Alert.alert('Missing Email', 'Please enter your account email address.');
       return;
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(trimmedEmail)) {
-      Alert.alert('Invalid Email', 'Please enter a valid email address format.');
+    if (!isValidEmail(cleanEmail)) {
+      Alert.alert('Invalid Email', 'Enter a valid email address.');
       return;
     }
 
@@ -40,7 +40,7 @@ export default function ForgotPasswordScreen() {
 
     setLoading(true);
     try {
-      await resetPassword(trimmedEmail);
+      await resetPassword(cleanEmail);
       setSentSuccess(true);
 
       // Start 60 second cooldown
@@ -57,7 +57,7 @@ export default function ForgotPasswordScreen() {
 
       Alert.alert(
         'Request Sent',
-        `If an account with ${trimmedEmail} exists in RestroZ, you will receive password reset instructions shortly.`
+        `If an account with ${cleanEmail} exists in RestroZ, you will receive password reset instructions shortly.`
       );
     } catch (err: any) {
       Alert.alert('Request Failed', err.message || 'Could not send reset password email.');

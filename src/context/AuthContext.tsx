@@ -4,6 +4,7 @@ import { UserProfile, UserRole, Restaurant, RestaurantMember, RestaurantMemberPe
 import { authService } from '../services/api/authService';
 import { restaurantService } from '../services/api/restaurantService';
 import { staffService } from '../services/api/staffService';
+import { registerReminderService } from '../services/api/registerReminderService';
 import { supabase, isSupabaseConfigured } from '../services/supabase';
 import { pendingRedirectUtil } from '../utils/pendingRedirect';
 
@@ -68,30 +69,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           sessionUserEmail = currentSession.user.email || null;
         }
       } catch (sessErr) {
-        if (__DEV__) console.log(`[AUTHCTX] [${timestamp}] [seq:${seq}] [event:${eventName}] getSession check error:`, sessErr);
+        // Ignored
       }
     }
 
     const profileRole = (currentUser?.role || '').toUpperCase() || 'NONE';
 
-    if (__DEV__) {
-      console.log(
-        `[AUTHCTX] [${timestamp}] [seq:${seq}] [event:${eventName}] loadRestaurantContext START | ` +
-        `session exists: ${sessionExists ? 'YES' : 'NO'} | ` +
-        `session.user.id: ${sessionUserId || 'null'} | ` +
-        `session.user.email: ${sessionUserEmail || 'null'} | ` +
-        `profile role: ${profileRole} | ` +
-        `activeRestaurantId before: "${activeRestaurantIdBefore}"`
-      );
-    }
-
     // If no session exists yet (e.g. startup / restoring / signed-out)
     if (!sessionExists || !sessionUserId) {
       if (eventName === 'SIGNED_OUT' || eventName === 'LOGOUT_ACTION' || currentUser === null) {
         if (seq !== loadContextSeqRef.current) {
-          if (__DEV__) {
-            console.log(`[AUTHCTX] [${new Date().toISOString()}] [seq:${seq}] [event:${eventName}] Result ignored as stale (current seq: ${loadContextSeqRef.current})`);
-          }
           return;
         }
         activeRestaurantIdRef.current = '';
@@ -99,22 +86,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setActiveRestaurant(null);
         setUserMemberships([]);
         setMemberPermissions(null);
-        if (__DEV__) {
-          console.log(
-            `[AUTHCTX] [${new Date().toISOString()}] [seq:${seq}] [event:${eventName}] loadRestaurantContext END (cleared for signed-out) | ` +
-            `activeRestaurantId after: ""`
-          );
-        }
         return;
       }
 
       // Startup / unauthenticated loading state: DO NOT throw false error or clear valid restaurant state
-      if (__DEV__) {
-        console.log(
-          `[AUTHCTX] [${new Date().toISOString()}] [seq:${seq}] [event:${eventName}] loadRestaurantContext END (session not ready yet, skipping membership query) | ` +
-          `activeRestaurantId after: "${activeRestaurantIdRef.current}"`
-        );
-      }
       return;
     }
 
@@ -123,9 +98,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // For CUSTOMER role, bypass membership query
     if (profileRole === 'CUSTOMER') {
       if (seq !== loadContextSeqRef.current) {
-        if (__DEV__) {
-          console.log(`[AUTHCTX] [${new Date().toISOString()}] [seq:${seq}] [event:${eventName}] Result ignored as stale (current seq: ${loadContextSeqRef.current})`);
-        }
         return;
       }
       activeRestaurantIdRef.current = '';
@@ -133,12 +105,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setActiveRestaurant(null);
       setUserMemberships([]);
       setMemberPermissions(null);
-      if (__DEV__) {
-        console.log(
-          `[AUTHCTX] [${new Date().toISOString()}] [seq:${seq}] [event:${eventName}] loadRestaurantContext END (CUSTOMER user, no restaurant membership required) | ` +
-          `activeRestaurantId after: ""`
-        );
-      }
       return;
     }
 
@@ -147,18 +113,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await restaurantService.getActiveRestaurantContext(targetUserId, profileRole, seq, eventName);
 
       if (seq !== loadContextSeqRef.current) {
-        if (__DEV__) {
-          console.log(`[AUTHCTX] [${new Date().toISOString()}] [seq:${seq}] [event:${eventName}] Result ignored as stale (current seq: ${loadContextSeqRef.current})`);
-        }
         return;
       }
 
       const memberships = await restaurantService.getUserMemberships(targetUserId, seq, eventName);
 
       if (seq !== loadContextSeqRef.current) {
-        if (__DEV__) {
-          console.log(`[AUTHCTX] [${new Date().toISOString()}] [seq:${seq}] [event:${eventName}] Result ignored as stale (current seq: ${loadContextSeqRef.current})`);
-        }
         return;
       }
 
@@ -173,17 +133,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setMemberPermissions(perms);
       }
 
-      if (__DEV__) {
-        console.log(
-          `[AUTHCTX] [${new Date().toISOString()}] [seq:${seq}] [event:${eventName}] loadRestaurantContext END (SUCCESS) | ` +
-          `activeRestaurantId after: "${restaurantId}"`
-        );
+      // Automatically register Expo push token on mobile for active ADMIN / STAFF
+      if (restaurantId && (profileRole === 'ADMIN' || profileRole === 'STAFF' || profileRole === 'SUPER_ADMIN')) {
+        console.log('[AUTH] Triggering mobile push token registration for role:', profileRole);
+        registerReminderService.registerMobileDevicePushToken(restaurantId, profileRole).catch((err) => {
+          console.warn('[AUTH] Push registration error caught:', err?.message || err);
+        });
       }
     } catch (e: any) {
       if (seq !== loadContextSeqRef.current) {
-        if (__DEV__) {
-          console.log(`[AUTHCTX] [${new Date().toISOString()}] [seq:${seq}] [event:${eventName}] Error ignored as stale (current seq: ${loadContextSeqRef.current}):`, e.message || e);
-        }
         return;
       }
 
@@ -194,13 +152,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setActiveRestaurant(null);
       setUserMemberships([]);
       setMemberPermissions(null);
-
-      if (__DEV__) {
-        console.log(
-          `[AUTHCTX] [${new Date().toISOString()}] [seq:${seq}] [event:${eventName}] loadRestaurantContext END (ERROR) | ` +
-          `activeRestaurantId after: ""`
-        );
-      }
 
       // For ADMIN and STAFF users, propagate the membership error
       if (profileRole === 'ADMIN' || profileRole === 'STAFF') {
@@ -324,7 +275,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     setLoading(true);
+    const previousRestaurantId = activeRestaurantIdRef.current;
     try {
+      if (previousRestaurantId) {
+        registerReminderService.unregisterMobileDevicePushToken(previousRestaurantId).catch(() => {});
+      }
       await authService.logout();
       setUser(null);
       setSuperAdminMarketplacePreview(false);

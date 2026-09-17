@@ -8,10 +8,12 @@ import {
   ActivityIndicator,
   RefreshControl,
   Image,
+  Alert,
   useWindowDimensions,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
+import { useCustomerCart } from '../../src/context/CustomerCartContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { supabase } from '../../src/services/supabase';
 import { Order } from '../../src/types';
@@ -24,6 +26,7 @@ export default function CustomerOrdersScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
   const { user, loading: authLoading } = useAuth();
+  const { populateCart } = useCustomerCart();
 
   const [activeTab, setActiveTab] = useState<'live' | 'history'>('live');
   const [liveOrders, setLiveOrders] = useState<Order[]>([]);
@@ -31,6 +34,7 @@ export default function CustomerOrdersScreen() {
   const [historyPage, setHistoryPage] = useState<number>(1);
   const [historyHasMore, setHistoryHasMore] = useState<boolean>(false);
   const [loadingMoreHistory, setLoadingMoreHistory] = useState<boolean>(false);
+  const [reorderingOrderId, setReorderingOrderId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -124,6 +128,46 @@ export default function CustomerOrdersScreen() {
       setLoading(false);
     }
   }, [user]);
+
+  const handleReorderOrder = async (orderId: string) => {
+    setReorderingOrderId(orderId);
+    try {
+      const result = await marketplaceService.prepareReorder(orderId);
+
+      if (result.addedItems.length === 0) {
+        Alert.alert(
+          'Items Unavailable',
+          'None of the items from this historical order are currently available for purchase.'
+        );
+        return;
+      }
+
+      // Populate cart with available items
+      populateCart(
+        {
+          id: result.restaurantId,
+          name: result.restaurantName,
+          logo_url: result.restaurantLogo,
+        },
+        result.addedItems
+      );
+
+      if (result.unavailableItems.length > 0) {
+        const unavailNames = result.unavailableItems.map((u: any) => u.name).join(', ');
+        Alert.alert(
+          'Some Items Skipped',
+          `The following items are currently unavailable and were not added: ${unavailNames}`,
+          [{ text: 'View Cart', onPress: () => router.push('/cart' as any) }]
+        );
+      } else {
+        router.push('/cart' as any);
+      }
+    } catch (e: any) {
+      Alert.alert('Reorder Error', e.message || 'Failed to prepare reorder.');
+    } finally {
+      setReorderingOrderId(null);
+    }
+  };
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -362,11 +406,19 @@ export default function CustomerOrdersScreen() {
 
                     {['completed', 'delivered'].includes(order.status) && (
                       <TouchableOpacity
-                        style={styles.reorderCardBtn}
-                        onPress={() => router.push(`/order/${order.id}` as any)}
+                        style={[styles.reorderCardBtn, reorderingOrderId === order.id && { opacity: 0.7 }]}
+                        onPress={() => handleReorderOrder(order.id)}
+                        disabled={reorderingOrderId === order.id}
                         activeOpacity={0.8}
                       >
-                        <Text style={styles.reorderCardBtnText}>🔄 Reorder</Text>
+                        {reorderingOrderId === order.id ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                            <Text style={styles.reorderCardBtnText}>Reordering...</Text>
+                          </View>
+                        ) : (
+                          <Text style={styles.reorderCardBtnText}>🔄 Reorder</Text>
+                        )}
                       </TouchableOpacity>
                     )}
                   </View>

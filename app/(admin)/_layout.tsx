@@ -7,6 +7,7 @@ import { usePos } from '../../src/context/PosContext';
 import { useSettings } from '../../src/context/SettingsContext';
 import { subscriptionService, SubscriptionAccessStatus } from '../../src/services/api/subscriptionService';
 import { SubscriptionLockOverlay } from '../../src/components/common/SubscriptionLockOverlay';
+import { RegisterCloseReminderModal } from '../../src/components/common/RegisterCloseReminderModal';
 import { useNewOrderTracker } from '../../src/hooks/useNewOrderTracker';
 
 export default function AdminLayout() {
@@ -215,36 +216,40 @@ export default function AdminLayout() {
               </TouchableOpacity>
             ) : null}
 
-            <TouchableOpacity
-              style={styles.logoutBtn}
-              onPress={async () => {
-                if (Platform.OS === 'web') {
-                  const confirmed = typeof window !== 'undefined' ? window.confirm('Are you sure you want to sign out?') : true;
-                  if (!confirmed) return;
-                  await logout();
-                  if (typeof window !== 'undefined') {
-                    window.location.href = '/login';
-                  } else {
-                    router.replace('/(auth)/login' as any);
-                  }
-                  return;
-                }
-
-                Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-                  { text: 'Cancel', style: 'cancel' },
-                  {
-                    text: 'Sign Out',
-                    style: 'destructive',
-                    onPress: async () => {
-                      await logout();
+            {!isSuperAdmin && (
+              <TouchableOpacity
+                style={styles.logoutBtn}
+                onPress={async () => {
+                  if (Platform.OS === 'web') {
+                    const confirmed = typeof window !== 'undefined' ? window.confirm('Are you sure you want to sign out?') : true;
+                    if (!confirmed) return;
+                    await logout();
+                    if (typeof window !== 'undefined') {
+                      window.location.href = '/login';
+                    } else {
                       router.replace('/(auth)/login' as any);
+                    }
+                    return;
+                  }
+
+                  Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Sign Out',
+                      style: 'destructive',
+                      onPress: async () => {
+                        await logout();
+                        router.replace('/(auth)/login' as any);
+                      },
                     },
-                  },
-                ]);
-              }}
-            >
-              <Text style={styles.logoutBtnText}>🚪 Sign Out</Text>
-            </TouchableOpacity>
+                  ]);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Sign out of system"
+              >
+                <Text style={styles.logoutBtnText}>🚪 Sign Out</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </View>
@@ -291,6 +296,9 @@ export default function AdminLayout() {
       <View style={styles.screenBody}>
         <Stack screenOptions={{ headerShown: false }} />
       </View>
+
+      {/* Overdue Nightly Day Register Close Reminder (Web Popup & Native Browser/Push Notification) */}
+      <RegisterCloseReminderModal />
 
       {/* Non-destructive subscription lock overlay if expired/suspended */}
       {isLocked && subAccess && (

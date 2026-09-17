@@ -53,12 +53,50 @@ export const tableService = {
         }
       }
 
+      // Authoritative Active Orders Check for resolved table via safe public RPC
+      if (resolved && resolved.id && resolved.restaurant_id) {
+        try {
+          const { data: occData, error: occErr } = await supabase.rpc('get_public_table_occupancy', {
+            p_restaurant_id: resolved.restaurant_id,
+            p_table_id: resolved.id,
+          });
+
+          if (!occErr && occData) {
+            const isOccupied = Boolean(occData.occupied);
+            resolved.status = isOccupied ? 'occupied' : (resolved.status === 'reserved' ? 'reserved' : 'available');
+            resolved.active_order_count = Number(occData.active_order_count) || (isOccupied ? 1 : 0);
+          }
+        } catch (actErr) {
+          console.warn('Active orders occupancy check failed:', actErr);
+        }
+      }
+
       return resolved;
     }
 
     // Fallback to local cache for offline/mock
     const all = mockStorage.getTables();
     return all.find(t => t.id === identifier || t.qr_code_hash === identifier || t.table_number.toLowerCase() === identifier.toLowerCase()) || null;
+  },
+
+  async isTableOccupied(tableId: string, restaurantId?: string): Promise<boolean> {
+    if (!tableId || tableId === 'general') return false;
+    if (isSupabaseConfigured && restaurantId) {
+      try {
+        const { data: occData, error: occErr } = await supabase.rpc('get_public_table_occupancy', {
+          p_restaurant_id: restaurantId,
+          p_table_id: tableId,
+        });
+
+        if (!occErr && occData && typeof occData.occupied === 'boolean') {
+          return occData.occupied;
+        }
+      } catch (err) {
+        console.warn('isTableOccupied RPC check failed:', err);
+      }
+    }
+    const t = await this.resolveTable(tableId);
+    return t?.status === 'occupied';
   },
 
   async getTables(restaurantId?: string): Promise<DiningTable[]> {
@@ -86,15 +124,25 @@ export const tableService = {
         ]);
 
         if (!tableError && tableData) {
-          const activeOrderMap = new Map<string, string>();
+          const activeOrdersByTable = new Map<string, string[]>();
           (activeOrders || []).forEach((o) => {
-            if (o.table_id) activeOrderMap.set(o.table_id, o.id);
-            if (o.table_number) activeOrderMap.set(o.table_number.toLowerCase().trim(), o.id);
+            if (o.table_id) {
+              const list = activeOrdersByTable.get(o.table_id) || [];
+              list.push(o.id);
+              activeOrdersByTable.set(o.table_id, list);
+            }
+            if (o.table_number) {
+              const key = o.table_number.toLowerCase().trim();
+              const list = activeOrdersByTable.get(key) || [];
+              list.push(o.id);
+              activeOrdersByTable.set(key, list);
+            }
           });
 
           const list: DiningTable[] = (tableData as DiningTable[]).map((t) => {
-            const currentOrderId = activeOrderMap.get(t.id) || activeOrderMap.get(t.table_number.toLowerCase().trim());
-            const status: 'available' | 'occupied' | 'reserved' = currentOrderId
+            const activeOrderIds = activeOrdersByTable.get(t.id) || activeOrdersByTable.get(t.table_number.toLowerCase().trim()) || [];
+            const isOccupied = activeOrderIds.length > 0;
+            const status: 'available' | 'occupied' | 'reserved' = isOccupied
               ? 'occupied'
               : t.status === 'reserved'
               ? 'reserved'
@@ -104,7 +152,9 @@ export const tableService = {
               ...t,
               restaurant_id: t.restaurant_id || restaurantId,
               status,
-              current_order_id: currentOrderId,
+              current_order_id: activeOrderIds[0],
+              active_order_ids: activeOrderIds,
+              active_order_count: activeOrderIds.length,
             };
           });
 
@@ -229,12 +279,26 @@ export const tableService = {
     mockStorage.deleteTable(id);
   },
 
-  async updateTableStatus(id: string, status: 'available' | 'occupied' | 'reserved'): Promise<DiningTable> {
+  async updateTableStatus(id: string, status: 'available' | 'occupied' | 'reserved', force: boolean = false): Promise<DiningTable | null> {
     if (isSupabaseConfigured) {
       try {
+        if (status === 'available' && !force) {
+          // Verify if there are ANY remaining active unpaid orders on this table
+          const { count, error: countErr } = await supabase
+            .from('orders')
+            .select('id', { count: 'exact', head: true })
+            .eq('table_id', id)
+            .not('status', 'in', '("completed","cancelled")')
+            .neq('payment_status', 'paid');
+
+          if (!countErr && typeof count === 'number' && count > 0) {
+            return null;
+          }
+        }
+
         const { data, error } = await supabase
           .from('tables')
-          .update({ status })
+          .update({ status, updated_at: new Date().toISOString() })
           .eq('id', id)
           .select()
           .maybeSingle();

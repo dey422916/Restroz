@@ -21,7 +21,8 @@ import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { storageService } from '../../src/services/api/storageService';
 import { CustomerAddress } from '../../src/types';
 import { customerColors } from '../../src/utils/colors';
-import { isValidPhoneNumber } from '../../src/utils/phone';
+import { isValidPhoneNumber, normalizePhoneNumber } from '../../src/utils/phone';
+import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError } from '../../src/utils/validation';
 import { formatPrice } from '../../src/utils/currency';
 
 export default function DeliveryCheckoutScreen() {
@@ -162,8 +163,8 @@ export default function DeliveryCheckoutScreen() {
 
     if (!newPhone.trim()) {
       errors.phone = 'Phone number is required';
-    } else if (!isValidPhoneNumber(newPhone.trim())) {
-      errors.phone = 'Please enter a valid 10-digit mobile number';
+    } else if (!isValidIndianPhone(newPhone.trim())) {
+      errors.phone = 'Enter a valid 10-digit Indian mobile number';
     }
 
     if (!newLine1.trim()) {
@@ -226,7 +227,7 @@ export default function DeliveryCheckoutScreen() {
       const created = await marketplaceService.createCustomerAddress({
         label: newLabel,
         full_name: newFullName.trim(),
-        phone: newPhone.trim(),
+        phone: normalizeIndianPhone(newPhone.trim()),
         address_line1: newLine1.trim(),
         landmark: newLandmark.trim() || undefined,
         city: newCity.trim(),
@@ -280,13 +281,14 @@ export default function DeliveryCheckoutScreen() {
       return;
     }
 
-    const targetPhone = customerPhone.trim() || selectedAddr.phone;
-    if (!targetPhone || !isValidPhoneNumber(targetPhone)) {
+    const rawTargetPhone = customerPhone.trim() || selectedAddr.phone;
+    if (!rawTargetPhone || !isValidIndianPhone(rawTargetPhone)) {
       isSubmittingRef.current = false;
       setPlacingOrder(false);
-      Alert.alert('Invalid Phone Number', 'Please provide a valid 10-digit mobile number for order delivery updates.');
+      Alert.alert('Invalid Phone Number', 'Please provide a valid 10-digit Indian mobile number for order delivery updates.');
       return;
     }
+    const cleanTargetPhone = normalizeIndianPhone(rawTargetPhone);
 
     // Verify minimum order value requirement
     if (minOrderValue > 0 && cart.subtotal < minOrderValue) {
@@ -339,7 +341,7 @@ export default function DeliveryCheckoutScreen() {
         })),
         delivery_address: selectedAddr,
         customer_name: customerName.trim() || user.full_name || 'Customer',
-        customer_phone: customerPhone.trim() || selectedAddr.phone,
+        customer_phone: cleanTargetPhone,
         payment_method: paymentMethod,
         payment_proof_url: paymentMethod === 'online' ? (paymentProofUrl || undefined) : undefined,
         coupon_code: cart.couponCode,
@@ -495,9 +497,9 @@ export default function DeliveryCheckoutScreen() {
                   keyboardType="phone-pad"
                   maxLength={13}
                 />
-                {Boolean(customerPhone && !isValidPhoneNumber(customerPhone)) && (
+                {Boolean(customerPhone && !isValidIndianPhone(customerPhone)) && (
                   <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: 3 }}>
-                    ⚠️ Invalid mobile number
+                    ⚠️ Enter a valid 10-digit Indian mobile number
                   </Text>
                 )}
               </View>
@@ -945,9 +947,9 @@ export default function DeliveryCheckoutScreen() {
                 />
                 {Boolean(newAddrErrors.phone) ? (
                   <Text style={styles.fieldErrorText}>⚠️ {newAddrErrors.phone}</Text>
-                ) : Boolean(newPhone && !isValidPhoneNumber(newPhone)) ? (
+                ) : Boolean(newPhone && !isValidIndianPhone(newPhone)) ? (
                   <Text style={styles.fieldErrorText}>
-                    ⚠️ Please enter a valid 10-digit mobile number
+                    ⚠️ Enter a valid 10-digit Indian mobile number
                   </Text>
                 ) : null}
 

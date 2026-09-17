@@ -867,6 +867,7 @@ export const orderService = {
       payment_method: (orderData.payment_method as any) || paymentMethod || 'cash',
       payment_proof_url: orderData.payment_proof_url || undefined,
       payment_status: isPaid ? 'paid' : 'unpaid',
+      is_supplementary: orderData.is_supplementary ?? false,
       notes: finalNotesWithDiscAndGstin,
       items: orderData.items || [],
       payments: orderData.payments || [],
@@ -878,6 +879,14 @@ export const orderService = {
 
     if (isSupabaseConfigured) {
       try {
+        // Service-level guard: Reject CUSTOMER_QR orders if physical table is currently occupied
+        if (resolvedSource === 'CUSTOMER_QR' && resolvedTableId) {
+          const isOccupied = await tableService.isTableOccupied(resolvedTableId, targetRestaurantId);
+          if (isOccupied) {
+            throw new Error('This table currently has an active order. New Digital QR orders are not allowed while the table is occupied.');
+          }
+        }
+
         // For unauthenticated Guest QR orders, execute via the atomic server-side RPC
         if (resolvedSource === 'CUSTOMER_QR' && !validCustomerId && resolvedTableId) {
           try {
@@ -907,6 +916,7 @@ export const orderService = {
                 payment_method: rpcData.payment_method || newOrder.payment_method || 'cash',
                 payment_proof_url: rpcData.payment_proof_url || newOrder.payment_proof_url || null,
                 payment_status: (rpcData.payment_status as PaymentStatus) || newOrder.payment_status || 'unpaid',
+                is_supplementary: false,
               };
               const localOrders = mockStorage.getOrders(targetRestaurantId);
               mockStorage.saveOrders([parsedOrder, ...localOrders.filter((o) => o.id !== parsedOrder.id)], targetRestaurantId);
@@ -923,10 +933,11 @@ export const orderService = {
         }
 
         const { items, payments, kots, order_source, discount_type, discount_value, taxable_amount, customer_gstin, invoice_number, ...orderRecord } = newOrder;
-        let dbPayload = {
+        let dbPayload: any = {
           ...orderRecord,
           restaurant_id: targetRestaurantId,
           table_id: resolvedTableId,
+          is_supplementary: newOrder.is_supplementary ?? false,
           customer_id: validCustomerId,
         };
 
@@ -935,6 +946,18 @@ export const orderService = {
           .insert([dbPayload])
           .select()
           .single();
+
+        // If column does not exist in DB (e.g. 42703 on older schema), retry without is_supplementary
+        if (orderError && (orderError.code === '42703' || orderError.message?.includes('is_supplementary'))) {
+          delete dbPayload.is_supplementary;
+          const retryRes = await supabase
+            .from('orders')
+            .insert([dbPayload])
+            .select()
+            .single();
+          createdDbOrder = retryRes.data;
+          orderError = retryRes.error;
+        }
 
         // If duplicate order number detected, retry with atomic database sequence
         if (orderError && (orderError.code === '23505' || orderError.message?.includes('duplicate key'))) {
@@ -1664,6 +1687,9 @@ export const orderService = {
   }> {
     const targetOrder = await this.getOrderById(orderId, restaurantId);
     if (!targetOrder) throw new Error('Order not found');
+    if (targetOrder.status === 'cancelled') {
+      throw new Error('Cannot verify payment for a cancelled order.');
+    }
     const restId = restaurantId || targetOrder.restaurant_id;
 
     if (isSupabaseConfigured) {
@@ -1708,6 +1734,9 @@ export const orderService = {
     const localOrders = mockStorage.getOrders(restId);
     const idx = localOrders.findIndex((o) => o.id === orderId);
     if (idx === -1) throw new Error('Order not found');
+    if (localOrders[idx].status === 'cancelled') {
+      throw new Error('Cannot verify payment for a cancelled order.');
+    }
 
     const alreadyVerified = localOrders[idx].payment_status === 'paid';
     const nowIso = new Date().toISOString();

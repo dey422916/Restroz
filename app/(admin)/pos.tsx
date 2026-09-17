@@ -38,7 +38,8 @@ import { TableSelectorModal } from '../../src/components/pos/TableSelectorModal'
 import { SplitBillModal } from '../../src/components/pos/SplitBillModal';
 import { HoldOrdersModal } from '../../src/components/pos/HoldOrdersModal';
 import { PaymentModal } from '../../src/components/pos/PaymentModal';
-import { isValidPhoneNumber } from '../../src/utils/phone';
+import { isValidPhoneNumber, normalizePhoneNumber } from '../../src/utils/phone';
+import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError } from '../../src/utils/validation';
 import { naturalTableCompare } from '../../src/utils/sortUtils';
 
 export default function PosScreen() {
@@ -77,6 +78,8 @@ export default function PosScreen() {
     loadOrderIntoCart,
     activeOrders,
     refreshOrders,
+    isSupplementary,
+    setIsSupplementary,
   } = usePos();
 
   // POS Workflow Step:
@@ -111,6 +114,7 @@ export default function PosScreen() {
 
   // Table "View Current Order" modal
   const [viewTableModalData, setViewTableModalData] = useState<{ table: DiningTable; order: Order | null } | null>(null);
+  const [occupiedActionModalData, setOccupiedActionModalData] = useState<{ table: DiningTable; activeOrders: Order[] } | null>(null);
 
   // Cart / KOT / Discount state tracking
   const [couponCodeInput, setCouponCodeInput] = useState<string>('');
@@ -327,28 +331,61 @@ export default function PosScreen() {
   };
 
   const handleSelectTableAction = (table: DiningTable) => {
-    setSelectedTable(table);
-    const existingActiveOrder =
-      tableOrderMap.get(table.id) ||
-      tableOrderMap.get(table.table_number.toLowerCase().trim());
+    const activeOrdersForTable = (activeOrders || []).filter(
+      (o) =>
+        (o.table_id === table.id || (o.table_number && o.table_number.toLowerCase().trim() === table.table_number.toLowerCase().trim())) &&
+        !['completed', 'cancelled'].includes(o.status) &&
+        o.payment_status !== 'paid'
+    );
 
-    if (existingActiveOrder) {
-      loadOrderIntoCart(existingActiveOrder);
-      setCreatedOrder(existingActiveOrder);
-      setIsKotDispatched(true);
-      setHasUnsentItems(false);
-    } else {
-      clearCart();
-      setSelectedTable(table);
-      setCreatedOrder(null);
-      setIsKotDispatched(false);
-      setHasUnsentItems(false);
+    if (activeOrdersForTable.length > 0) {
+      setOccupiedActionModalData({ table, activeOrders: activeOrdersForTable });
+      return;
     }
+
+    clearCart();
+    setSelectedTable(table);
+    setIsSupplementary(false);
+    setCreatedOrder(null);
+    setIsKotDispatched(false);
+    setHasUnsentItems(false);
     setPosStep('catalog');
   };
 
+  const handleManageExistingOrder = (table: DiningTable, order: Order) => {
+    setSelectedTable(table);
+    loadOrderIntoCart(order);
+    setCreatedOrder(order);
+    setIsKotDispatched(true);
+    setHasUnsentItems(false);
+    setOccupiedActionModalData(null);
+    setViewTableModalData(null);
+    setPosStep('catalog');
+    showToast('info', 'Managing Order', `Loaded Order #${order.order_number} for ${table.table_number}`);
+  };
+
+  const handleStartSupplementaryOrder = (table: DiningTable) => {
+    clearCart();
+    setSelectedTable(table);
+    setIsSupplementary(true);
+    setCreatedOrder(null);
+    setIsKotDispatched(false);
+    setHasUnsentItems(false);
+    setOccupiedActionModalData(null);
+    setViewTableModalData(null);
+    setPosStep('catalog');
+    showToast('success', 'Supplementary Order (SUP)', `Started SUP order for ${table.table_number}.`);
+  };
+
   const handleViewCurrentOrderAction = (table: DiningTable) => {
-    const existingActiveOrder =
+    const activeOrdersForTable = (activeOrders || []).filter(
+      (o) =>
+        (o.table_id === table.id || (o.table_number && o.table_number.toLowerCase().trim() === table.table_number.toLowerCase().trim())) &&
+        !['completed', 'cancelled'].includes(o.status) &&
+        o.payment_status !== 'paid'
+    );
+
+    const existingActiveOrder = activeOrdersForTable[0] ||
       tableOrderMap.get(table.id) ||
       tableOrderMap.get(table.table_number.toLowerCase().trim()) ||
       null;
@@ -444,7 +481,6 @@ export default function PosScreen() {
   };
 
   const handleSendKotAction = async () => {
-    console.log('>>> [POS] handleSendKotAction called! createdOrder:', createdOrder?.id, 'cartItems:', cartItems.length, 'orderType:', orderType, 'table:', selectedTable?.table_number);
     try {
       setIsSendingKot(true);
       let ord: Order;
@@ -1085,14 +1121,14 @@ export default function PosScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.cartActiveOrderType}>
               {orderType === 'dine_in'
-                ? `🍽️ DINE IN — ${selectedTable ? `${selectedTable.table_number} (${selectedTable.section})` : 'No Table'}`
+                ? `🍽️ DINE IN — ${selectedTable ? `${selectedTable.table_number}${isSupplementary ? ' SUP' : ''} (${selectedTable.section})` : 'No Table'}`
                 : orderType === 'takeaway'
                 ? '🥡 TAKEAWAY ORDER'
                 : '🛵 HOME DELIVERY ORDER'}
             </Text>
             {createdOrder && (
               <Text style={styles.cartActiveOrderNum}>
-                Order #{createdOrder.order_number} ({createdOrder.status.toUpperCase()}) • 🕒 {formatOrderDateTime(createdOrder.created_at)}
+                Order #{createdOrder.order_number} {createdOrder.is_supplementary ? '🏷️ (SUP)' : ''} ({createdOrder.status.toUpperCase()}) • 🕒 {formatOrderDateTime(createdOrder.created_at)}
               </Text>
             )}
           </View>
@@ -1127,9 +1163,9 @@ export default function PosScreen() {
                 setCustomerInfo({ phone: cleaned });
               }}
             />
-            {Boolean(customerInfo.phone && !isValidPhoneNumber(customerInfo.phone)) && (
+            {Boolean(customerInfo.phone && !isValidIndianPhone(customerInfo.phone)) && (
               <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: -2, marginBottom: 2 }}>
-                ⚠️ Enter a valid 10-digit mobile number
+                ⚠️ Enter a valid 10-digit Indian mobile number
               </Text>
             )}
             {orderType === 'delivery' && (
@@ -1804,6 +1840,87 @@ export default function PosScreen() {
         }}
       />
 
+      {/* Occupied Table Action Modal */}
+      {occupiedActionModalData && (
+        <Modal visible={Boolean(occupiedActionModalData)} transparent animationType="fade">
+          <View style={styles.modalOverlay}>
+            <View style={[styles.viewOrderModalContent, { maxHeight: Dimensions.get('window').height * 0.85 }]}>
+              {/* Header */}
+              <View style={styles.viewOrderModalHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.viewOrderModalTitle}>
+                    🪑 {occupiedActionModalData.table.table_number} ({occupiedActionModalData.table.section})
+                  </Text>
+                  <Text style={styles.viewOrderModalSub}>
+                    🔴 Table is currently occupied with {occupiedActionModalData.activeOrders.length} active order(s).
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.modalCloseBtn}
+                  onPress={() => setOccupiedActionModalData(null)}
+                >
+                  <Text style={styles.modalCloseText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView showsVerticalScrollIndicator={true} style={{ marginVertical: 8 }}>
+                {/* Active Orders List */}
+                <Text style={{ fontSize: 12, fontWeight: '800', color: '#64748b', marginBottom: 8 }}>
+                  ACTIVE ORDERS ON THIS TABLE:
+                </Text>
+                {occupiedActionModalData.activeOrders.map((ord) => (
+                  <View key={ord.id} style={{ backgroundColor: '#f8fafc', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 10 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '900', color: '#0f172a' }}>
+                        #{ord.order_number} {ord.is_supplementary ? '🏷️ (SUP)' : '🍽️ (BASE)'}
+                      </Text>
+                      <View style={{ backgroundColor: '#dbeafe', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 }}>
+                        <Text style={{ fontSize: 10, fontWeight: '800', color: '#1d4ed8' }}>
+                          {ord.status.toUpperCase()}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={{ fontSize: 12, color: '#475569', marginBottom: 4 }}>
+                      👤 {ord.customer_name || 'Dine-in Guest'} • 🕒 {formatOrderDateTime(ord.created_at)}
+                    </Text>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#16a34a', marginBottom: 10 }}>
+                      Grand Total: {formatCurrency(ord.payable_amount)} • {ord.items?.length || 0} item(s)
+                    </Text>
+
+                    <TouchableOpacity
+                      style={{ backgroundColor: '#2563eb', paddingVertical: 8, borderRadius: 8, alignItems: 'center' }}
+                      onPress={() => handleManageExistingOrder(occupiedActionModalData.table, ord)}
+                    >
+                      <Text style={{ color: '#ffffff', fontWeight: '800', fontSize: 12 }}>
+                        👁️ Manage & Add Items to #{ord.order_number}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+
+                {/* Supplementary Order Option */}
+                <View style={{ marginTop: 6, padding: 14, backgroundColor: '#eff6ff', borderRadius: 12, borderWidth: 1.5, borderColor: '#bfdbfe' }}>
+                  <Text style={{ fontSize: 13, fontWeight: '900', color: '#1e40af', marginBottom: 2 }}>
+                    ➕ Start Supplementary Order (SUP)
+                  </Text>
+                  <Text style={{ fontSize: 11, color: '#3b82f6', marginBottom: 10, lineHeight: 16 }}>
+                    Create a new independent order for this physical table with separate KOT dispatch and separate billing settlement.
+                  </Text>
+                  <TouchableOpacity
+                    style={{ backgroundColor: '#0f172a', paddingVertical: 10, borderRadius: 8, alignItems: 'center' }}
+                    onPress={() => handleStartSupplementaryOrder(occupiedActionModalData.table)}
+                  >
+                    <Text style={{ color: '#ffffff', fontWeight: '900', fontSize: 12 }}>
+                      START NEW SUP ORDER (CLEAN CART) →
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+      )}
+
       {/* View Table Current Order Modal */}
       {viewTableModalData && (
         <Modal visible={Boolean(viewTableModalData)} transparent animationType="slide">
@@ -1934,11 +2051,23 @@ export default function PosScreen() {
                           const ord = viewTableModalData.order;
                           setViewTableModalData(null);
                           if (ord && tbl) {
-                            handleSelectTableAction(tbl);
+                            handleManageExistingOrder(tbl, ord);
                           }
                         }}
                       >
                         <Text style={styles.modalActionAddBtnText}>➕ Add Items to Order</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.modalActionAddBtn, { backgroundColor: '#475569' }]}
+                        onPress={() => {
+                          const tbl = viewTableModalData.table;
+                          if (tbl) {
+                            handleStartSupplementaryOrder(tbl);
+                          }
+                        }}
+                      >
+                        <Text style={styles.modalActionAddBtnText}>🏷️ Start SUP Order</Text>
                       </TouchableOpacity>
 
                       <TouchableOpacity

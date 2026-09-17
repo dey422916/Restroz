@@ -15,6 +15,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../src/context/AuthContext';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { isValidEmail, normalizeEmail } from '../../src/utils/validation';
 
 const REMEMBER_EMAIL_KEY = 'ratnadeep_remember_email';
 
@@ -46,14 +47,13 @@ export default function LoginScreen() {
 
     setErrorMessage('');
 
-    const targetEmail = email.trim();
+    const targetEmail = normalizeEmail(email);
     if (!targetEmail) {
       setErrorMessage('Email is required.');
       return;
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(targetEmail)) {
+    if (!isValidEmail(targetEmail)) {
       setErrorMessage('Enter a valid email address.');
       return;
     }

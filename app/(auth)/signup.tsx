@@ -14,6 +14,12 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../src/context/AuthContext';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import {
+  isValidEmail,
+  normalizeEmail,
+  isValidIndianPhone,
+  normalizeIndianPhone,
+} from '../../src/utils/validation';
 
 export default function SignupScreen() {
   const insets = useSafeAreaInsets();
@@ -29,17 +35,22 @@ export default function SignupScreen() {
   const [loading, setLoading] = useState<boolean>(false);
 
   const handleSignup = async () => {
-    const trimmedEmail = email.trim();
+    const cleanEmail = normalizeEmail(email);
     const trimmedName = fullName.trim();
+    const cleanPhone = phone.trim() ? normalizeIndianPhone(phone) : undefined;
 
-    if (!trimmedName || !trimmedEmail || !password || !confirmPassword) {
+    if (!trimmedName || !cleanEmail || !password || !confirmPassword) {
       Alert.alert('Missing Fields', 'Please fill in all required fields (Full Name, Email, Password, Confirm Password).');
       return;
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(trimmedEmail)) {
-      Alert.alert('Invalid Email', 'Please enter a valid email address format.');
+    if (!isValidEmail(cleanEmail)) {
+      Alert.alert('Invalid Email', 'Enter a valid email address.');
+      return;
+    }
+
+    if (phone.trim() && !isValidIndianPhone(phone)) {
+      Alert.alert('Invalid Phone', 'Enter a valid 10-digit Indian mobile number.');
       return;
     }
 
@@ -58,11 +69,11 @@ export default function SignupScreen() {
       if (params.redirectTableId) {
         await setPendingTableId(params.redirectTableId);
       }
-      await signUp(trimmedEmail, password, trimmedName, phone);
+      await signUp(cleanEmail, password, trimmedName, cleanPhone);
       Alert.alert('Account Created', 'A verification email has been sent to your email address.');
       router.replace({
         pathname: '/(auth)/verify-email',
-        params: { email: trimmedEmail, redirectTableId: params.redirectTableId },
+        params: { email: cleanEmail, redirectTableId: params.redirectTableId },
       });
     } catch (err: any) {
       Alert.alert('Registration Failed', err.message || 'Could not register customer account.');

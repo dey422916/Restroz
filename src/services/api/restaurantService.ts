@@ -86,17 +86,10 @@ export const restaurantService = {
       const sessionExists = Boolean(currentSession?.user);
 
       if (!sessionExists || !currentAuthUid) {
-        if (__DEV__) {
-          console.log(`[AUTHCTX] [${timestamp}] ${seqStr} ${eventStr} getUserMemberships - session exists: NO | query UID: ${userId} -> Skipping query to avoid unauthenticated RLS empty result.`);
-        }
         return [];
       }
 
       const queryUid = currentAuthUid;
-
-      if (__DEV__) {
-        console.log(`[AUTHCTX] [${timestamp}] ${seqStr} ${eventStr} getUserMemberships - session exists: YES | session.user.id: ${currentAuthUid} | session.user.email: ${currentSession?.user?.email} | membership query UID: ${queryUid}`);
-      }
 
       // Query restaurant_members exactly with user_id = current authenticated user id and is_active = true
       const { data, error } = await supabase
@@ -105,12 +98,6 @@ export const restaurantService = {
         .eq('user_id', queryUid)
         .eq('is_active', true);
 
-      const resultCount = Array.isArray(data) ? data.length : data ? 1 : 0;
-
-      if (__DEV__) {
-        console.log(`[AUTHCTX] [${timestamp}] ${seqStr} ${eventStr} getUserMemberships - membership result count: ${resultCount} | membership query error: ${error ? error.message : 'null'}`);
-      }
-
       if (error) {
         console.warn(`[AUTHCTX] ${seqStr} ${eventStr} getUserMemberships relational join error, trying plain select:`, error.message);
         const { data: fallbackData, error: fallbackError } = await supabase
@@ -118,11 +105,6 @@ export const restaurantService = {
           .select('*')
           .eq('user_id', queryUid)
           .eq('is_active', true);
-
-        const fallbackCount = Array.isArray(fallbackData) ? fallbackData.length : fallbackData ? 1 : 0;
-        if (__DEV__) {
-          console.log(`[AUTHCTX] [${timestamp}] ${seqStr} ${eventStr} getUserMemberships fallback - count: ${fallbackCount} | error: ${fallbackError ? fallbackError.message : 'null'}`);
-        }
 
         if (!fallbackError && fallbackData) {
           return (Array.isArray(fallbackData) ? fallbackData : [fallbackData]) as RestaurantMember[];
@@ -149,25 +131,14 @@ export const restaurantService = {
     membership: RestaurantMember | null;
     restaurant: Restaurant | null;
   }> {
-    const timestamp = new Date().toISOString();
-    const seqStr = seq !== undefined ? `[seq:${seq}]` : '';
-    const eventStr = eventName ? `[event:${eventName}]` : '';
-
     // 1. Obtain current Supabase session first
     const { data: sessionData } = await supabase.auth.getSession();
     const currentSession = sessionData?.session;
     const currentAuthUid = currentSession?.user?.id;
     const sessionExists = Boolean(currentSession?.user);
 
-    if (__DEV__) {
-      console.log(`[AUTHCTX] [${timestamp}] ${seqStr} ${eventStr} getActiveRestaurantContext - session exists: ${sessionExists ? 'YES' : 'NO'} | session.user.id: ${currentAuthUid || 'null'} | session.user.email: ${currentSession?.user?.email || 'null'} | profile role: ${userRole || 'NONE'}`);
-    }
-
     // If no active session exists yet (e.g. startup / restoring), do not throw false membership error
     if (!sessionExists || !currentAuthUid) {
-      if (__DEV__) {
-        console.log(`[AUTHCTX] [${timestamp}] ${seqStr} ${eventStr} getActiveRestaurantContext - No active session ready yet. Returning unauthenticated empty context.`);
-      }
       return {
         restaurantId: '',
         membership: null,
@@ -177,9 +148,6 @@ export const restaurantService = {
 
     // For CUSTOMER role, restaurant membership is not applicable
     if (userRole === 'CUSTOMER') {
-      if (__DEV__) {
-        console.log(`[AUTHCTX] [${timestamp}] ${seqStr} ${eventStr} getActiveRestaurantContext - CUSTOMER user role, bypassing membership requirement.`);
-      }
       return {
         restaurantId: '',
         membership: null,

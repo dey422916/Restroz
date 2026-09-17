@@ -36,6 +36,15 @@ import {
 } from '../../../src/types';
 import { colors } from '../../../src/utils/colors';
 
+import {
+  isValidEmail,
+  normalizeEmail,
+  isValidIndianPhone,
+  normalizeIndianPhone,
+  getEmailValidationError,
+  getIndianPhoneValidationError,
+} from '../../../src/utils/validation';
+
 const getStaffDisplayRole = (m: any): { label: string; bg: string; color: string } => {
   if (m.role === 'ADMIN') {
     return { label: 'ADMIN', bg: '#fef08a', color: '#854d0e' };
@@ -88,6 +97,9 @@ export default function SuperAdminRestaurantDetailScreen() {
   const [newMemberRole, setNewMemberRole] = useState<'ADMIN' | 'STAFF'>('STAFF');
   const [newMemberPreset, setNewMemberPreset] = useState<StaffPermissionPreset>('CASHIER');
   const [savingMember, setSavingMember] = useState(false);
+  const [newMemberEmailTouched, setNewMemberEmailTouched] = useState(false);
+  const [newMemberPhoneTouched, setNewMemberPhoneTouched] = useState(false);
+  const [newMemberSubmitted, setNewMemberSubmitted] = useState(false);
 
   // Edit Permissions Modal State
   const [editPermsModalVisible, setEditPermsModalVisible] = useState(false);
@@ -127,6 +139,20 @@ export default function SuperAdminRestaurantDetailScreen() {
   const [editLat, setEditLat] = useState('');
   const [editLng, setEditLng] = useState('');
   const [editStatus, setEditStatus] = useState<'ACTIVE' | 'SUSPENDED'>('ACTIVE');
+  const [editPhoneTouched, setEditPhoneTouched] = useState(false);
+  const [editEmailTouched, setEditEmailTouched] = useState(false);
+  const [editSubmitted, setEditSubmitted] = useState(false);
+
+  // Restaurant Delete / Purge Modal State
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [previewData, setPreviewData] = useState<any>(null);
+  const [storagePreview, setStoragePreview] = useState<any>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [confirmRestaurantName, setConfirmRestaurantName] = useState('');
+  const [deletingRestaurant, setDeletingRestaurant] = useState(false);
+  const [storageCleanupFailed, setStorageCleanupFailed] = useState(false);
+  const [lastDeletedId, setLastDeletedId] = useState<string | null>(null);
+  const [archivingRestaurant, setArchivingRestaurant] = useState(false);
 
   // Assign Plan Modal State
   const [assignModalVisible, setAssignModalVisible] = useState(false);
@@ -247,6 +273,100 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
     }
   };
 
+  const handleArchiveToggle = async () => {
+    if (!restaurant) return;
+    setArchivingRestaurant(true);
+    try {
+      if (restaurant.status === 'ACTIVE') {
+        await superAdminService.archiveRestaurant(restaurant.id);
+        setRestaurant({ ...restaurant, status: 'SUSPENDED' });
+        setEditStatus('SUSPENDED');
+        Alert.alert('Restaurant Archived', 'Restaurant has been suspended and hidden from marketplace.');
+      } else {
+        await superAdminService.updateRestaurantStatus(restaurant.id, 'ACTIVE');
+        setRestaurant({ ...restaurant, status: 'ACTIVE' });
+        setEditStatus('ACTIVE');
+        Alert.alert('Restaurant Reactivated', 'Restaurant status is now ACTIVE.');
+      }
+      loadData();
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to update restaurant status.');
+    } finally {
+      setArchivingRestaurant(false);
+    }
+  };
+
+  const handleOpenDeleteModal = async () => {
+    if (!restaurant) return;
+    setDeleteModalVisible(true);
+    setConfirmRestaurantName('');
+    setLoadingPreview(true);
+    setStorageCleanupFailed(false);
+    try {
+      const [dbCounts, stCounts] = await Promise.all([
+        superAdminService.previewRestaurantDeletion(restaurant.id),
+        superAdminService.previewRestaurantStorage(restaurant.id),
+      ]);
+      setPreviewData(dbCounts);
+      setStoragePreview(stCounts);
+    } catch (err: any) {
+      console.warn('Failed to load deletion preview:', err);
+      Alert.alert('Preview Error', err?.message || 'Failed to fetch preview counts.');
+    } finally {
+      setLoadingPreview(false);
+    }
+  };
+
+  const handleConfirmPermanentDelete = async () => {
+    if (!restaurant) return;
+    if (confirmRestaurantName.trim().toLowerCase() !== restaurant.name.trim().toLowerCase()) {
+      Alert.alert('Name Mismatch', 'Please enter the exact restaurant name to confirm deletion.');
+      return;
+    }
+
+    setDeletingRestaurant(true);
+    try {
+      const result = await superAdminService.deleteRestaurantCompletely(restaurant.id, confirmRestaurantName);
+
+      if (result.storageCleanup && !result.storageCleanup.success) {
+        setStorageCleanupFailed(true);
+        setLastDeletedId(restaurant.id);
+        Alert.alert(
+          'Partial Purge Complete',
+          'Database records were deleted, but some cloud storage files could not be removed. You can click "Retry Storage Cleanup" below.'
+        );
+      } else {
+        setDeleteModalVisible(false);
+        Alert.alert(
+          'Restaurant Permanently Deleted',
+          `"${restaurant.name}" and all associated database records and storage files have been permanently erased.`
+        );
+        router.replace('/super-admin/restaurants');
+      }
+    } catch (err: any) {
+      Alert.alert('Deletion Failed', err?.message || 'Failed to permanently delete restaurant.');
+    } finally {
+      setDeletingRestaurant(false);
+    }
+  };
+
+  const handleRetryStorageCleanup = async () => {
+    const targetId = lastDeletedId || restaurant?.id;
+    if (!targetId) return;
+    try {
+      const res = await superAdminService.retryRestaurantStorageCleanup(targetId);
+      if (res.success) {
+        Alert.alert('Success', 'Storage files cleaned up successfully.');
+        setDeleteModalVisible(false);
+        router.replace('/super-admin/restaurants');
+      } else {
+        Alert.alert('Warning', `Cleanup finished with ${res.remainingCount} files remaining.`);
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to clean storage.');
+    }
+  };
+
   const handleSaveRestaurantDetails = async () => {
     if (!restaurant || !editName.trim() || !editSlug.trim()) {
       Alert.alert('Validation Error', 'Restaurant name and slug are required.');
@@ -270,14 +390,27 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
       return;
     }
 
+    if (editEmail.trim() && !isValidEmail(editEmail)) {
+      Alert.alert('Validation Error', 'Enter a valid email address.');
+      return;
+    }
+
+    if (editPhone.trim() && !isValidIndianPhone(editPhone)) {
+      Alert.alert('Validation Error', 'Enter a valid 10-digit Indian mobile number.');
+      return;
+    }
+
+    const cleanPhone = editPhone.trim() ? normalizeIndianPhone(editPhone) : undefined;
+    const cleanEmail = editEmail.trim() ? normalizeEmail(editEmail) : undefined;
+
     setSavingEdit(true);
     try {
       const updated = await superAdminService.updateRestaurant(restaurant.id, {
         name: editName.trim(),
         slug: editSlug.trim().toLowerCase(),
         legal_name: editLegalName.trim() || editName.trim(),
-        phone: editPhone.trim() || undefined,
-        email: editEmail.trim() || undefined,
+        phone: cleanPhone,
+        email: cleanEmail,
         address: editAddress.trim(),
         city: editCity.trim(),
         state: editState.trim(),
@@ -296,8 +429,8 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
           restaurant_id: restaurant.id,
           name: editName.trim(),
           legal_name: editLegalName.trim() || editName.trim(),
-          phone: editPhone.trim() || undefined,
-          email: editEmail.trim() || undefined,
+          phone: cleanPhone,
+          email: cleanEmail,
           address: editAddress.trim(),
           state: editState.trim(),
           logo_url: editLogoUrl.trim() || undefined,
@@ -510,12 +643,25 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
   };
 
   const handleCreateMember = async () => {
+    setNewMemberSubmitted(true);
+
     if (!restaurant || !newMemberEmail.trim()) {
       Alert.alert('Validation Error', 'Email address is required.');
       return;
     }
 
-    const cleanEmail = newMemberEmail.trim().toLowerCase();
+    if (!isValidEmail(newMemberEmail)) {
+      Alert.alert('Validation Error', 'Enter a valid email address.');
+      return;
+    }
+
+    if (newMemberPhone.trim() && !isValidIndianPhone(newMemberPhone)) {
+      Alert.alert('Validation Error', 'Enter a valid 10-digit Indian mobile number.');
+      return;
+    }
+
+    const cleanEmail = normalizeEmail(newMemberEmail);
+    const cleanPhone = newMemberPhone.trim() ? normalizeIndianPhone(newMemberPhone) : undefined;
     const cleanName = newMemberName.trim() || cleanEmail.split('@')[0];
 
     setSavingMember(true);
@@ -523,7 +669,7 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
       await staffService.provisionStaff(restaurant.id, {
         full_name: cleanName,
         email: cleanEmail,
-        phone: newMemberPhone.trim() || undefined,
+        phone: cleanPhone,
         password: newMemberPassword.trim() || undefined,
         role: newMemberRole,
         preset: newMemberRole === 'STAFF' ? newMemberPreset : undefined,
@@ -537,6 +683,9 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
       setNewMemberPassword('');
       setNewMemberRole('STAFF');
       setNewMemberPreset('CASHIER');
+      setNewMemberEmailTouched(false);
+      setNewMemberPhoneTouched(false);
+      setNewMemberSubmitted(false);
       loadData();
     } catch (err: any) {
       Alert.alert('Provisioning Error', err.message || 'Failed to add member.');
@@ -1126,6 +1275,71 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
         </View>
       </View>
 
+      {/* Danger Zone Panel */}
+      <View style={[styles.panel, styles.dangerZonePanel]}>
+        <View style={styles.panelHeader}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={{ fontSize: 20 }}>⚠️</Text>
+            <View>
+              <Text style={[styles.panelTitle, { color: '#991B1B' }]}>Danger Zone</Text>
+              <Text style={{ fontSize: 12, color: '#7F1D1D', marginTop: 2 }}>
+                Tenant lifecycle management, deactivation, and permanent database & storage purging
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={{ gap: 14, marginTop: 12 }}>
+          {/* Action 1: Archive / Suspend */}
+          <View style={styles.dangerActionRow}>
+            <View style={{ flex: 1, marginRight: 16 }}>
+              <Text style={styles.dangerActionTitle}>
+                {restaurant?.status === 'ACTIVE' ? 'Archive / Suspend Restaurant' : 'Reactivate Restaurant'}
+              </Text>
+              <Text style={styles.dangerActionDesc}>
+                {restaurant?.status === 'ACTIVE'
+                  ? 'Temporarily hides the restaurant from customer discovery and disables POS access while preserving all sales, menus, tables, and accounting records.'
+                  : 'Re-enables POS access and marketplace ordering for this restaurant.'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[
+                styles.btnArchive,
+                restaurant?.status === 'ACTIVE' ? styles.btnArchiveActive : styles.btnArchiveReactivate,
+              ]}
+              onPress={handleArchiveToggle}
+              disabled={archivingRestaurant}
+            >
+              {archivingRestaurant ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.btnArchiveText}>
+                  {restaurant?.status === 'ACTIVE' ? '📦 Archive / Suspend' : '✅ Reactivate'}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* Action 2: Permanently Delete */}
+          <View style={[styles.dangerActionRow, { borderTopWidth: 1, borderTopColor: '#FEE2E2', paddingTop: 14 }]}>
+            <View style={{ flex: 1, marginRight: 16 }}>
+              <Text style={[styles.dangerActionTitle, { color: '#DC2626' }]}>
+                Permanently Delete Restaurant & All Data
+              </Text>
+              <Text style={styles.dangerActionDesc}>
+                Completely purges this restaurant, its menu, tables, orders, KOTs, payments, settings, and uploaded files from both the database and cloud storage. User accounts will be preserved.
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.btnPermanentDelete}
+              onPress={handleOpenDeleteModal}
+            >
+              <Text style={styles.btnPermanentDeleteText}>🗑️ Permanently Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+
       {/* Edit Restaurant Details Modal */}
       <Modal visible={editModalVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
@@ -1167,23 +1381,49 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.label}>Phone Number</Text>
                   <TextInput
-                    style={styles.input}
+                    style={[
+                      styles.input,
+                      Boolean((editPhoneTouched || editSubmitted) && getIndianPhoneValidationError(editPhone, false)) &&
+                        styles.inputError,
+                    ]}
                     value={editPhone}
-                    onChangeText={setEditPhone}
+                    onChangeText={(v) => {
+                      setEditPhone(v);
+                      if (editSubmitted) setEditSubmitted(false);
+                    }}
+                    onBlur={() => setEditPhoneTouched(true)}
                     keyboardType="phone-pad"
                     placeholder="+91 9876543210"
                   />
+                  {Boolean((editPhoneTouched || editSubmitted) && getIndianPhoneValidationError(editPhone, false)) && (
+                    <Text style={styles.fieldErrorText}>
+                      ⚠️ {getIndianPhoneValidationError(editPhone, false)}
+                    </Text>
+                  )}
                 </View>
                 <View style={[{ flex: 1, marginLeft: isMobile ? 0 : 12 }]}>
                   <Text style={styles.label}>Email Address</Text>
                   <TextInput
-                    style={styles.input}
+                    style={[
+                      styles.input,
+                      Boolean((editEmailTouched || editSubmitted) && getEmailValidationError(editEmail, false)) &&
+                        styles.inputError,
+                    ]}
                     value={editEmail}
-                    onChangeText={setEditEmail}
+                    onChangeText={(v) => {
+                      setEditEmail(v);
+                      if (editSubmitted) setEditSubmitted(false);
+                    }}
+                    onBlur={() => setEditEmailTouched(true)}
                     keyboardType="email-address"
                     autoCapitalize="none"
                     placeholder="info@restaurant.com"
                   />
+                  {Boolean((editEmailTouched || editSubmitted) && getEmailValidationError(editEmail, false)) && (
+                    <Text style={styles.fieldErrorText}>
+                      ⚠️ {getEmailValidationError(editEmail, false)}
+                    </Text>
+                  )}
                 </View>
               </View>
 
@@ -1821,13 +2061,26 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
 
               <Text style={styles.label}>Email Address *</Text>
               <TextInput
-                style={styles.input}
+                style={[
+                  styles.input,
+                  Boolean((newMemberEmailTouched || newMemberSubmitted) && getEmailValidationError(newMemberEmail, true)) &&
+                    styles.inputError,
+                ]}
                 placeholder="user@example.com"
                 keyboardType="email-address"
                 autoCapitalize="none"
                 value={newMemberEmail}
-                onChangeText={setNewMemberEmail}
+                onChangeText={(v) => {
+                  setNewMemberEmail(v);
+                  if (newMemberSubmitted) setNewMemberSubmitted(false);
+                }}
+                onBlur={() => setNewMemberEmailTouched(true)}
               />
+              {Boolean((newMemberEmailTouched || newMemberSubmitted) && getEmailValidationError(newMemberEmail, true)) && (
+                <Text style={styles.fieldErrorText}>
+                  ⚠️ {getEmailValidationError(newMemberEmail, true)}
+                </Text>
+              )}
 
               <Text style={styles.label}>Initial Password (Optional)</Text>
               <View style={styles.passwordInputContainer}>
@@ -1860,12 +2113,25 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
 
               <Text style={styles.label}>Phone Number (Optional)</Text>
               <TextInput
-                style={styles.input}
+                style={[
+                  styles.input,
+                  Boolean((newMemberPhoneTouched || newMemberSubmitted) && getIndianPhoneValidationError(newMemberPhone, false)) &&
+                    styles.inputError,
+                ]}
                 placeholder="+91 98765 43210"
                 keyboardType="phone-pad"
                 value={newMemberPhone}
-                onChangeText={setNewMemberPhone}
+                onChangeText={(v) => {
+                  setNewMemberPhone(v);
+                  if (newMemberSubmitted) setNewMemberSubmitted(false);
+                }}
+                onBlur={() => setNewMemberPhoneTouched(true)}
               />
+              {Boolean((newMemberPhoneTouched || newMemberSubmitted) && getIndianPhoneValidationError(newMemberPhone, false)) && (
+                <Text style={styles.fieldErrorText}>
+                  ⚠️ {getIndianPhoneValidationError(newMemberPhone, false)}
+                </Text>
+              )}
 
               {newMemberRole === 'STAFF' ? (
                 <>
@@ -1899,15 +2165,34 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
             <View style={styles.modalFooter}>
               <TouchableOpacity
                 style={styles.cancelBtn}
-                onPress={() => setAddMemberModalVisible(false)}
+                onPress={() => {
+                  setAddMemberModalVisible(false);
+                  setNewMemberName('');
+                  setNewMemberEmail('');
+                  setNewMemberPhone('');
+                  setNewMemberPassword('');
+                  setNewMemberEmailTouched(false);
+                  setNewMemberPhoneTouched(false);
+                  setNewMemberSubmitted(false);
+                }}
                 disabled={savingMember}
               >
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.submitBtn}
+                style={[
+                  styles.submitBtn,
+                  (!isValidEmail(newMemberEmail) ||
+                    Boolean(newMemberPhone.trim() && !isValidIndianPhone(newMemberPhone)) ||
+                    savingMember) &&
+                    styles.submitBtnDisabled,
+                ]}
                 onPress={handleCreateMember}
-                disabled={savingMember}
+                disabled={
+                  !isValidEmail(newMemberEmail) ||
+                  Boolean(newMemberPhone.trim() && !isValidIndianPhone(newMemberPhone)) ||
+                  savingMember
+                }
               >
                 {savingMember ? (
                   <ActivityIndicator color="#FFF" size="small" />
@@ -2135,6 +2420,152 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
                   <Text style={styles.submitBtnText}>Update Password</Text>
                 )}
               </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Permanent Delete Confirmation Modal */}
+      <Modal visible={deleteModalVisible} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { width: isMobile ? '94%' : 540, maxHeight: '90%', padding: 0, overflow: 'hidden' }]}>
+            <View style={{ backgroundColor: '#FEF2F2', borderBottomWidth: 1, borderBottomColor: '#FEE2E2', padding: 20 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Text style={{ fontSize: 24 }}>🚨</Text>
+                  <Text style={{ fontSize: 18, fontWeight: '800', color: '#991B1B' }}>Permanently Delete Restaurant</Text>
+                </View>
+                {!deletingRestaurant && (
+                  <TouchableOpacity onPress={() => setDeleteModalVisible(false)}>
+                    <Text style={{ fontSize: 18, color: '#991B1B', fontWeight: '700' }}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <Text style={{ fontSize: 13, color: '#B91C1C', marginTop: 8, lineHeight: 18 }}>
+                This action <Text style={{ fontWeight: '800' }}>CANNOT</Text> be undone. It will permanently delete{' '}
+                <Text style={{ fontWeight: '800', textDecorationLine: 'underline' }}>{restaurant?.name}</Text> and all its related database records and cloud storage assets.
+              </Text>
+            </View>
+
+            <ScrollView style={{ padding: 20, maxHeight: 400 }}>
+              {loadingPreview ? (
+                <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color="#DC2626" />
+                  <Text style={{ fontSize: 13, color: '#64748B', marginTop: 10 }}>Calculating affected database and storage records...</Text>
+                </View>
+              ) : (
+                <View style={{ gap: 14 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#1E293B' }}>
+                    📊 Records to be permanently erased:
+                  </Text>
+                  <View style={styles.previewGrid}>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{previewData?.orders || 0}</Text>
+                      <Text style={styles.previewLabel}>Orders</Text>
+                    </View>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{previewData?.products || 0}</Text>
+                      <Text style={styles.previewLabel}>Products</Text>
+                    </View>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{previewData?.categories || 0}</Text>
+                      <Text style={styles.previewLabel}>Categories</Text>
+                    </View>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{previewData?.tables || 0}</Text>
+                      <Text style={styles.previewLabel}>Tables</Text>
+                    </View>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{previewData?.kots || 0}</Text>
+                      <Text style={styles.previewLabel}>KOTs</Text>
+                    </View>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{previewData?.payments || 0}</Text>
+                      <Text style={styles.previewLabel}>Payments</Text>
+                    </View>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{previewData?.members || 0}</Text>
+                      <Text style={styles.previewLabel}>Members</Text>
+                    </View>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{storagePreview?.totalCount || 0}</Text>
+                      <Text style={styles.previewLabel}>Files</Text>
+                    </View>
+                  </View>
+
+                  <View style={{ backgroundColor: '#F8FAFC', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                    <Text style={{ fontSize: 12, color: '#475569', lineHeight: 16 }}>
+                      ℹ️ <Text style={{ fontWeight: '700' }}>Safety Guarantee:</Text> Global User Accounts in Auth and Profiles will remain intact. Only restaurant-specific memberships and data are deleted.
+                    </Text>
+                  </View>
+
+                  {storageCleanupFailed && (
+                    <View style={{ backgroundColor: '#FEF3C7', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#FDE68A' }}>
+                      <Text style={{ fontSize: 12, color: '#92400E', fontWeight: '700' }}>
+                        ⚠️ Database records deleted, but some storage files remained.
+                      </Text>
+                      <TouchableOpacity
+                        style={{ backgroundColor: '#D97706', padding: 8, borderRadius: 6, alignItems: 'center', marginTop: 8 }}
+                        onPress={handleRetryStorageCleanup}
+                      >
+                        <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 12 }}>🔄 Retry Storage Cleanup</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {!storageCleanupFailed && (
+                    <View style={{ marginTop: 6 }}>
+                      <Text style={{ fontSize: 13, color: '#334155', fontWeight: '600', marginBottom: 6 }}>
+                        To confirm, type <Text style={{ fontWeight: '800', color: '#991B1B' }}>{restaurant?.name}</Text> below:
+                      </Text>
+                      <TextInput
+                        style={[
+                          styles.input,
+                          {
+                            borderColor: confirmRestaurantName.trim().toLowerCase() === restaurant?.name.trim().toLowerCase() ? '#DC2626' : '#CBD5E1',
+                            backgroundColor: '#FFFFFF',
+                          }
+                        ]}
+                        placeholder={`Type "${restaurant?.name}" here`}
+                        value={confirmRestaurantName}
+                        onChangeText={setConfirmRestaurantName}
+                        autoCapitalize="none"
+                        editable={!deletingRestaurant}
+                      />
+                    </View>
+                  )}
+                </View>
+              )}
+            </ScrollView>
+
+            <View style={{ padding: 16, backgroundColor: '#F8FAFC', borderTopWidth: 1, borderTopColor: '#E2E8F0', flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+              <TouchableOpacity
+                style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, backgroundColor: '#E2E8F0' }}
+                onPress={() => setDeleteModalVisible(false)}
+                disabled={deletingRestaurant}
+              >
+                <Text style={{ color: '#475569', fontWeight: '700' }}>Cancel</Text>
+              </TouchableOpacity>
+
+              {!storageCleanupFailed && (
+                <TouchableOpacity
+                  style={[
+                    styles.btnConfirmPurge,
+                    (confirmRestaurantName.trim().toLowerCase() !== restaurant?.name.trim().toLowerCase() || deletingRestaurant || loadingPreview) && styles.btnConfirmPurgeDisabled,
+                  ]}
+                  onPress={handleConfirmPermanentDelete}
+                  disabled={confirmRestaurantName.trim().toLowerCase() !== restaurant?.name.trim().toLowerCase() || deletingRestaurant || loadingPreview}
+                >
+                  {deletingRestaurant ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                      <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>Purging...</Text>
+                    </View>
+                  ) : (
+                    <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>I Understand, Permanently Delete</Text>
+                  )}
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         </View>
@@ -3322,5 +3753,107 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#1E293B',
+  },
+  dangerZonePanel: {
+    borderColor: '#FECACA',
+    backgroundColor: '#FFF5F5',
+    marginTop: 16,
+  },
+  dangerActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  dangerActionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginBottom: 4,
+  },
+  dangerActionDesc: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 16,
+  },
+  btnArchive: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnArchiveActive: {
+    backgroundColor: '#D97706',
+  },
+  btnArchiveReactivate: {
+    backgroundColor: '#16A34A',
+  },
+  btnArchiveText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  btnPermanentDelete: {
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnPermanentDeleteText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  previewGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 6,
+  },
+  previewItem: {
+    width: '23%',
+    backgroundColor: '#F8FAFC',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+  },
+  previewCount: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  previewLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  btnConfirmPurge: {
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  btnConfirmPurgeDisabled: {
+    backgroundColor: '#FCA5A5',
+    opacity: 0.7,
+  },
+  submitBtnDisabled: {
+    opacity: 0.5,
+    backgroundColor: '#94A3B8',
+  },
+  inputError: {
+    borderColor: '#DC2626',
+    borderWidth: 1.5,
+  },
+  fieldErrorText: {
+    fontSize: 11,
+    color: '#DC2626',
+    fontWeight: '600',
+    marginTop: 3,
+    marginBottom: 4,
   },
 });

@@ -213,13 +213,6 @@ export default function ProductsScreen() {
     const targetRestId = activeRestaurantId;
 
     try {
-      console.log('Submitting product to Supabase for restaurant:', targetRestId, {
-        name: trimmedName,
-        sku: trimmedSku,
-        categoryId: formCatId,
-        price: priceNum,
-      });
-
       const saved = await productService.saveProduct({
         id: editingProduct?.id,
         restaurant_id: targetRestId,
@@ -242,8 +235,6 @@ export default function ProductsScreen() {
         is_active: formIsActive,
         is_available: formIsAvailable && stockNum > 0,
       }, targetRestId);
-
-      console.log('✅ Product saved in Supabase successfully:', saved.id, saved.name, saved.restaurant_id);
 
       // Immediately reflect the updated product in the local state without waiting for network re-fetch
       setProducts((prev) => {

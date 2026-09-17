@@ -1,5 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured, SUPABASE_URL, SUPABASE_ANON_KEY } from '../supabase';
+import { storageService } from './storageService';
+import { clearMarketplaceRestaurantCache, clearRestaurantMenuCache } from './sharedRestaurantUtils';
 import {
   Restaurant,
   RestaurantMember,
@@ -1107,5 +1109,167 @@ export const superAdminService = {
       return [];
     }
     return data || [];
+  },
+
+  // --------------------------------------------------------------------------
+  // 9. RESTAURANT ARCHIVE & PERMANENT PURGE (SUPER_ADMIN ONLY)
+  // --------------------------------------------------------------------------
+  /**
+   * Reads exact database entity counts that would be affected if the restaurant is deleted.
+   */
+  async previewRestaurantDeletion(restaurantId: string): Promise<any> {
+    if (!isSupabaseConfigured) {
+      return {
+        restaurant_id: restaurantId,
+        restaurant_name: 'Demo Restaurant',
+        members: 1,
+        products: 10,
+        categories: 3,
+        tables: 4,
+        orders: 0,
+        kots: 0,
+        payments: 0,
+        settings: 1,
+      };
+    }
+
+    const { data, error } = await supabase.rpc('preview_restaurant_deletion', {
+      p_restaurant_id: restaurantId,
+    });
+
+    if (error) throw error;
+    return data;
+  },
+
+  /**
+   * Previews storage files associated with this restaurant across all buckets.
+   */
+  async previewRestaurantStorage(restaurantId: string): Promise<{
+    productImages: string[];
+    restaurantAssets: string[];
+    paymentProofs: string[];
+    totalCount: number;
+  }> {
+    return await storageService.previewRestaurantStorageAssets(restaurantId);
+  },
+
+  /**
+   * Archives / Suspends a restaurant without deleting any records.
+   */
+  async archiveRestaurant(restaurantId: string): Promise<void> {
+    if (!isSupabaseConfigured) return;
+
+    // 1. Update status to SUSPENDED
+    const { error: restErr } = await supabase
+      .from('restaurants')
+      .update({ status: 'SUSPENDED', updated_at: new Date().toISOString() })
+      .eq('id', restaurantId);
+
+    if (restErr) throw restErr;
+
+    // 2. Hide from marketplace and close restaurant
+    await supabase
+      .from('restaurant_public_profiles')
+      .update({ marketplace_enabled: false, is_open: false, updated_at: new Date().toISOString() })
+      .eq('restaurant_id', restaurantId);
+
+    // 3. Clear memory caches
+    clearMarketplaceRestaurantCache();
+    clearRestaurantMenuCache(restaurantId);
+  },
+
+  /**
+   * Cleans up all storage objects belonging to a restaurant.
+   */
+  async deleteRestaurantStorageAssets(restaurantId: string): Promise<{
+    success: boolean;
+    deletedCount: number;
+    remainingCount: number;
+    error?: string;
+  }> {
+    return await storageService.deleteRestaurantStorageAssets(restaurantId);
+  },
+
+  /**
+   * Retries storage cleanup for an already deleted restaurant.
+   */
+  async retryRestaurantStorageCleanup(restaurantId: string): Promise<{
+    success: boolean;
+    deletedCount: number;
+    remainingCount: number;
+    error?: string;
+  }> {
+    return await storageService.deleteRestaurantStorageAssets(restaurantId);
+  },
+
+  /**
+   * Permanently purges all restaurant data from PostgreSQL and Supabase Storage.
+   * Requires exact restaurant name confirmation and SUPER_ADMIN privileges.
+   */
+  async deleteRestaurantCompletely(
+    restaurantId: string,
+    confirmationName: string
+  ): Promise<{
+    success: boolean;
+    deletedRestaurantId: string;
+    deletedRestaurantName: string;
+    deletedCounts: any;
+    storageCleanup: {
+      success: boolean;
+      deletedCount: number;
+      remainingCount: number;
+      error?: string;
+    };
+  }> {
+    if (!isSupabaseConfigured) {
+      return {
+        success: true,
+        deletedRestaurantId: restaurantId,
+        deletedRestaurantName: confirmationName,
+        deletedCounts: {},
+        storageCleanup: { success: true, deletedCount: 0, remainingCount: 0 },
+      };
+    }
+
+    // 1. Atomic PostgreSQL Database Purge via RPC
+    const { data: dbResult, error: dbError } = await supabase.rpc('delete_restaurant_completely', {
+      p_restaurant_id: restaurantId,
+      p_confirmation_name: confirmationName.trim(),
+    });
+
+    if (dbError) {
+      throw new Error(dbError.message || 'Database deletion failed.');
+    }
+
+    // 2. Storage Asset Cleanup Phase
+    let storageCleanupResult: {
+      success: boolean;
+      deletedCount: number;
+      remainingCount: number;
+      error?: string;
+    } = { success: true, deletedCount: 0, remainingCount: 0 };
+    try {
+      storageCleanupResult = await storageService.deleteRestaurantStorageAssets(restaurantId);
+    } catch (stErr: any) {
+      console.warn('Storage cleanup warning after DB delete:', stErr);
+      storageCleanupResult = {
+        success: false,
+        deletedCount: 0,
+        remainingCount: -1,
+        error: stErr?.message || 'Storage cleanup encountered an error.',
+      };
+    }
+
+    // 3. Clear all runtime and menu memory caches
+    clearMarketplaceRestaurantCache();
+    clearRestaurantMenuCache(restaurantId);
+
+    return {
+      success: true,
+      deletedRestaurantId: dbResult?.deleted_restaurant_id || restaurantId,
+      deletedRestaurantName: dbResult?.deleted_restaurant_name || confirmationName,
+      deletedCounts: dbResult?.deleted_counts || {},
+      storageCleanup: storageCleanupResult,
+    };
   },
 };

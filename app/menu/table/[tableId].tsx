@@ -31,6 +31,7 @@ import { calculateOrderTotals, getOrderSubtotal } from '../../../src/utils/gst';
 import { formatOrderDateTime } from '../../../src/utils/dateUtils';
 import { findMatchingTable } from '../../../src/utils/qr';
 import { cleanCustomerOrderNotes } from '../../../src/utils/orderNotes';
+import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError } from '../../../src/utils/validation';
 import { RealtimeOrderStatus } from '../../../src/components/customer/RealtimeOrderStatus';
 import { useAuth } from '../../../src/context/AuthContext';
 import { useSettings } from '../../../src/context/SettingsContext';
@@ -261,7 +262,19 @@ export default function CustomerDigitalMenuScreen() {
     (o) => ['delivered', 'completed', 'cancelled', 'settled'].includes(o.status)
   );
 
+  const isTableQrOrder = Boolean(tableId && tableId !== 'general');
+  const isTableOccupied = Boolean(isTableQrOrder && table && table.status === 'occupied');
+
   const addToCart = (product: Product) => {
+    if (isTableOccupied) {
+      const msg = `Table ${table?.table_number || ''} currently has an active ongoing order. New Digital QR orders cannot be placed while the table is occupied. Please ask restaurant staff.`;
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`🚫 Table Occupied: ${msg}`);
+      } else {
+        Alert.alert('🚫 Table Occupied', msg);
+      }
+      return;
+    }
     setCartItems((prev) => {
       const idx = prev.findIndex((i) => i.product_id === product.id);
       if (idx !== -1) {
@@ -284,6 +297,7 @@ export default function CustomerDigitalMenuScreen() {
           tax_rate: product.tax_rate,
           tax_amount: (unitPrice * product.tax_rate) / 100,
           subtotal: unitPrice,
+          total_price: unitPrice,
           total: unitPrice * (1 + product.tax_rate / 100),
           image_url: product.image_url,
         },
@@ -292,6 +306,15 @@ export default function CustomerDigitalMenuScreen() {
   };
 
   const updateQuantity = (productId: string, quantity: number) => {
+    if (isTableOccupied && quantity > 0) {
+      const msg = `Table ${table?.table_number || ''} currently has an active ongoing order. Modifying items is locked for occupied tables.`;
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`🚫 Table Occupied: ${msg}`);
+      } else {
+        Alert.alert('🚫 Table Occupied', msg);
+      }
+      return;
+    }
     if (quantity <= 0) {
       setCartItems((prev) => prev.filter((i) => i.product_id !== productId));
       return;
@@ -304,7 +327,7 @@ export default function CustomerDigitalMenuScreen() {
   const handleApplyCoupon = async () => {
     if (!couponInput) return;
     try {
-      const subtotal = cartItems.reduce((sum, i) => sum + i.subtotal, 0);
+      const subtotal = cartItems.reduce((sum, i) => sum + (i.subtotal ?? (i.unit_price * i.quantity)), 0);
       const res = await couponService.validateCouponCode(couponInput, subtotal);
       if (res.isValid && res.coupon) {
         setAppliedCoupon(res.coupon);
@@ -441,6 +464,23 @@ export default function CustomerDigitalMenuScreen() {
 
     const isTableQrOrder = Boolean(tableId && tableId !== 'general');
 
+    // Authoritative check: Prevent placing QR order if physical table is currently occupied
+    if (isTableQrOrder) {
+      const tableIdToCheck = table?.id || tableId;
+      const isOccupied = table?.status === 'occupied' || await tableService.isTableOccupied(tableIdToCheck, table?.restaurant_id);
+      if (isOccupied) {
+        isSubmittingOrderRef.current = false;
+        setSubmittingOrder(false);
+        const msg = `This table (${table?.table_number || 'Table'}) currently has an active ongoing order. New orders from Digital QR are not allowed while the table is occupied. Please ask restaurant staff.`;
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(`🚫 Table Occupied: ${msg}`);
+        } else {
+          Alert.alert('🚫 Table Occupied', msg);
+        }
+        return;
+      }
+    }
+
     if (!isTableQrOrder && !user) {
       isSubmittingOrderRef.current = false;
       setSubmittingOrder(false);
@@ -474,6 +514,18 @@ export default function CustomerDigitalMenuScreen() {
       isSubmittingOrderRef.current = false;
       setSubmittingOrder(false);
       Alert.alert('Delivery Address Required', 'Please enter or select a delivery address to place your online delivery order.');
+      return;
+    }
+
+    if (custPhone.trim() && !isValidIndianPhone(custPhone.trim())) {
+      isSubmittingOrderRef.current = false;
+      setSubmittingOrder(false);
+      const invalidPhoneMsg = 'Please enter a valid 10-digit Indian mobile number.';
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(invalidPhoneMsg);
+      } else {
+        Alert.alert('Invalid Phone Number', invalidPhoneMsg);
+      }
       return;
     }
 
@@ -522,6 +574,9 @@ export default function CustomerDigitalMenuScreen() {
         (isTableQrOrder ? (tableId.startsWith('tbl-') ? tableId.replace('tbl-', 'Table ') : `Table ${tableId}`) : undefined);
       const currentTableId = activeTable?.id || table?.id || (isTableQrOrder ? tableId : undefined);
 
+      const rawPhone = user?.phone || custPhone.trim();
+      const cleanPhone = rawPhone && isValidIndianPhone(rawPhone) ? normalizeIndianPhone(rawPhone) : (rawPhone || undefined);
+
       const orderPayload: Partial<Order> & { payment_method?: PaymentMethod; payment_proof_url?: string } = {
         restaurant_id: targetRestaurantId,
         order_source: isTableQrOrder ? 'CUSTOMER_QR' : 'CUSTOMER_APP',
@@ -529,7 +584,7 @@ export default function CustomerDigitalMenuScreen() {
         table_id: isTableQrOrder ? currentTableId : undefined,
         table_number: isTableQrOrder ? currentTableNum : undefined,
         customer_name: user?.full_name || custName || (isTableQrOrder ? `${currentTableNum} Guest` : 'Customer'),
-        customer_phone: user?.phone || custPhone || undefined,
+        customer_phone: cleanPhone,
         customer_id: user?.id || undefined,
         delivery_address: isTableQrOrder ? undefined : deliveryAddress.trim(),
         delivery_landmark: isTableQrOrder ? undefined : (deliveryLandmark.trim() || undefined),
@@ -780,6 +835,23 @@ export default function CustomerDigitalMenuScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
+        {/* Table Occupied Warning Alert Banner */}
+        {isTableOccupied && (
+          <View style={styles.occupiedAlertBanner}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+              <Text style={{ fontSize: 22, marginTop: 1 }}>🚫</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.occupiedAlertTitle}>
+                  Table {table?.table_number} is Currently Occupied
+                </Text>
+                <Text style={styles.occupiedAlertSub}>
+                  This table currently has an active ongoing order. Placing new orders from Digital QR is disabled for occupied tables. Please speak with restaurant staff for assistance.
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* Search Bar */}
         <View style={styles.searchContainer}>
           <TextInput
@@ -921,8 +993,14 @@ export default function CustomerDigitalMenuScreen() {
                     </Text>
 
                     {qty === 0 ? (
-                      <TouchableOpacity style={styles.addBtn} onPress={() => addToCart(prod)}>
-                        <Text style={styles.addBtnText}>+ ADD</Text>
+                      <TouchableOpacity
+                        style={[styles.addBtn, isTableOccupied && styles.addBtnDisabled]}
+                        onPress={() => addToCart(prod)}
+                        disabled={isTableOccupied}
+                      >
+                        <Text style={[styles.addBtnText, isTableOccupied && styles.addBtnTextDisabled]}>
+                          {isTableOccupied ? 'LOCKED' : '+ ADD'}
+                        </Text>
                       </TouchableOpacity>
                     ) : (
                       <View style={styles.stepper}>
@@ -934,8 +1012,9 @@ export default function CustomerDigitalMenuScreen() {
                         </TouchableOpacity>
                         <Text style={styles.stepQty}>{qty}</Text>
                         <TouchableOpacity
-                          style={[styles.stepBtn, styles.stepBtnAdd]}
+                          style={[styles.stepBtn, styles.stepBtnAdd, isTableOccupied && { opacity: 0.5 }]}
                           onPress={() => updateQuantity(prod.id, qty + 1)}
+                          disabled={isTableOccupied}
                         >
                           <Text style={[styles.stepBtnText, { color: '#ffffff' }]}>+</Text>
                         </TouchableOpacity>
@@ -1118,9 +1197,15 @@ export default function CustomerDigitalMenuScreen() {
                       placeholder="Phone Number *"
                       placeholderTextColor="#94a3b8"
                       keyboardType="phone-pad"
+                      maxLength={13}
                       value={custPhone}
-                      onChangeText={setCustPhone}
+                      onChangeText={(v) => setCustPhone(v.replace(/[^\d+]/g, ''))}
                     />
+                    {Boolean(custPhone && !isValidIndianPhone(custPhone)) && (
+                      <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: -4, marginBottom: 4 }}>
+                        ⚠️ Enter a valid 10-digit Indian mobile number
+                      </Text>
+                    )}
 
                     {/* Selected Address Display Card or New Address Inputs */}
                     {selectedAddressId !== 'new' && (
@@ -1477,12 +1562,19 @@ export default function CustomerDigitalMenuScreen() {
 
               {/* Confirm & Place Order Action */}
               <TouchableOpacity
-                style={[styles.checkoutBtn, submittingOrder && { opacity: 0.7 }]}
+                style={[
+                  styles.checkoutBtn,
+                  (submittingOrder || isTableOccupied) && { opacity: 0.6, backgroundColor: '#94a3b8' },
+                ]}
                 onPress={handlePlaceOrder}
-                disabled={submittingOrder}
+                disabled={submittingOrder || isTableOccupied}
               >
                 {submittingOrder ? (
                   <ActivityIndicator color="#ffffff" />
+                ) : isTableOccupied ? (
+                  <Text style={styles.checkoutBtnText}>
+                    🚫 TABLE OCCUPIED — QR ORDERS LOCKED
+                  </Text>
                 ) : (
                   <Text style={styles.checkoutBtnText}>
                     {tableId && tableId !== 'general'
@@ -3010,5 +3102,34 @@ const styles = StyleSheet.create({
     color: '#dc2626',
     fontWeight: '700',
     marginTop: 4,
+  },
+  occupiedAlertBanner: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
+    borderWidth: 1.5,
+    borderRadius: 12,
+    padding: 12,
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  occupiedAlertTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#991b1b',
+    marginBottom: 2,
+  },
+  occupiedAlertSub: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#b91c1c',
+    lineHeight: 16,
+  },
+  addBtnDisabled: {
+    backgroundColor: '#f1f5f9',
+    borderColor: '#cbd5e1',
+  },
+  addBtnTextDisabled: {
+    color: '#94a3b8',
   },
 });

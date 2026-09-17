@@ -42,7 +42,6 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (queue.length === 0) return;
 
     // Process queued operations safely
-    console.log(`Flushing ${queue.length} pending offline operations to backend...`);
     await offlineCache.clearSyncQueue();
     setPendingSyncCount(0);
   };

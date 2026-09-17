@@ -54,6 +54,9 @@ WHERE NOT EXISTS (
 );
 
 -- Step 3: Update public.provision_privileged_user stored procedure
+DROP FUNCTION IF EXISTS public.provision_privileged_user(UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB);
+DROP FUNCTION IF EXISTS public.provision_privileged_user;
+
 CREATE OR REPLACE FUNCTION public.provision_privileged_user(
     p_restaurant_id UUID,
     p_email TEXT,

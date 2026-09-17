@@ -160,7 +160,19 @@ export const restaurantService = {
     // They have platform-wide access and can manage ANY restaurant.
     if (userRole === 'SUPER_ADMIN') {
       if (preferredRestaurantId) {
-        const preferredRest = await this.getRestaurantById(preferredRestaurantId);
+        let preferredRest = await this.getRestaurantById(preferredRestaurantId);
+        if (!preferredRest) {
+          try {
+            const { data } = await supabase
+              .from('restaurants')
+              .select('*')
+              .eq('id', preferredRestaurantId)
+              .maybeSingle();
+            if (data) preferredRest = data as Restaurant;
+          } catch (e) {
+            console.warn('Super admin restaurant direct query error:', e);
+          }
+        }
         if (preferredRest) {
           return {
             restaurantId: preferredRest.id,
@@ -168,9 +180,15 @@ export const restaurantService = {
             restaurant: preferredRest,
           };
         }
+        // If preferredRestaurantId was explicitly provided, keep that tenant ID
+        return {
+          restaurantId: preferredRestaurantId,
+          membership: null,
+          restaurant: null,
+        };
       }
 
-      // Check if super admin has a specific membership first
+      // Check if super admin has a specific membership first ONLY when no preference was stored
       const memberships = await this.getUserMemberships(currentAuthUid, seq, eventName);
       if (memberships && memberships.length > 0) {
         const primary = memberships[0];

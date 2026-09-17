@@ -313,7 +313,7 @@ export const dayRegisterService = {
     const allOrders = await orderService.getOrders(restaurantId);
     return allOrders.filter((ord) => {
       if (ord.status === 'cancelled') return false;
-      if (ord.status === 'completed' || ord.status === 'delivered' || ord.status === 'settled') {
+      if (ord.status === 'completed' || ord.status === 'delivered' || (ord.status as string) === 'settled') {
         return false;
       }
       if (registerOpenedAt) {

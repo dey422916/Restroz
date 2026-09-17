@@ -865,9 +865,9 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
         <View style={[styles.headerActionRow, isMobile && styles.headerActionRowMobile]}>
           <TouchableOpacity
             style={[styles.primaryBtn, { backgroundColor: '#0284C7', borderColor: '#0369A1' }]}
-            onPress={() => {
+            onPress={async () => {
               if (restaurant) {
-                setActiveRestaurantId(restaurant.id);
+                await setActiveRestaurantId(restaurant.id);
                 router.push('/(admin)/pos' as any);
               }
             }}

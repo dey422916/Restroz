@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { Linking } from 'react-native';
+import { Linking, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { UserProfile, UserRole, Restaurant, RestaurantMember, RestaurantMemberPermissions } from '../types';
 import { authService } from '../services/api/authService';
@@ -19,7 +19,7 @@ interface AuthContextType {
   memberPermissions: RestaurantMemberPermissions | null;
   hasPermission: (key: keyof RestaurantMemberPermissions) => boolean;
   refreshPermissions: () => Promise<void>;
-  setActiveRestaurantId: (restaurantId: string) => void;
+  setActiveRestaurantId: (restaurantId: string) => Promise<void>;
   login: (email: string, password?: string) => Promise<UserProfile>;
   signUp: (email: string, password: string, fullName: string, phone?: string) => Promise<UserProfile>;
   resetPassword: (email: string) => Promise<void>;
@@ -56,6 +56,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const timestamp = new Date().toISOString();
 
     let preferredRestaurantId = activeRestaurantIdRef.current;
+    if (!preferredRestaurantId) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+        try {
+          preferredRestaurantId = window.localStorage.getItem('@active_restaurant_id') || '';
+        } catch (e) {
+          // Ignored
+        }
+      }
+    }
     if (!preferredRestaurantId) {
       try {
         preferredRestaurantId = (await AsyncStorage.getItem('@active_restaurant_id')) || '';
@@ -133,6 +142,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       activeRestaurantIdRef.current = restaurantId;
       if (restaurantId) {
+        if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+          try {
+            window.localStorage.setItem('@active_restaurant_id', restaurantId);
+          } catch (e) {}
+        }
         AsyncStorage.setItem('@active_restaurant_id', restaurantId).catch(() => {});
       }
       setUserMemberships(memberships || []);
@@ -219,7 +233,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const current = await authService.getCurrentUser();
             if (isMounted && current) {
               setUser(current);
-              await loadRestaurantContext(current, event);
+              // Only trigger full restaurant context reloading if not already resolved
+              // or on initial session, preserving the explicitly selected restaurant
+              if (!activeRestaurantIdRef.current || event === 'INITIAL_SESSION') {
+                await loadRestaurantContext(current, event);
+              }
             }
           }
         } else if (event === 'SIGNED_OUT') {
@@ -293,6 +311,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         registerReminderService.unregisterMobileDevicePushToken(previousRestaurantId).catch(() => {});
       }
       activeRestaurantIdRef.current = '';
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+        try {
+          window.localStorage.removeItem('@active_restaurant_id');
+        } catch (e) {}
+      }
       await AsyncStorage.removeItem('@active_restaurant_id').catch(() => {});
       await authService.logout();
       setUser(null);
@@ -325,6 +348,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const setCustomActiveRestaurantId = async (restaurantId: string) => {
     activeRestaurantIdRef.current = restaurantId;
     setActiveRestaurantId(restaurantId);
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      try {
+        if (restaurantId) {
+          window.localStorage.setItem('@active_restaurant_id', restaurantId);
+        } else {
+          window.localStorage.removeItem('@active_restaurant_id');
+        }
+      } catch (e) {}
+    }
     try {
       if (restaurantId) {
         await AsyncStorage.setItem('@active_restaurant_id', restaurantId);
@@ -334,6 +366,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const rest = await restaurantService.getRestaurantById(restaurantId);
       if (rest) {
         setActiveRestaurant(rest);
+      }
+      if (user?.id && restaurantId) {
+        const perms = await staffService.getCurrentUserPermissions(user.id, restaurantId);
+        setMemberPermissions(perms);
       }
     } catch (e) {
       console.warn('Error setting active restaurant:', e);

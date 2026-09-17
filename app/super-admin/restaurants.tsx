@@ -542,8 +542,8 @@ export default function SuperAdminRestaurantsScreen() {
                     <View style={styles.mobileActionRow}>
                       <TouchableOpacity
                         style={[styles.mobileViewBtn, { backgroundColor: '#0284C7' }]}
-                        onPress={() => {
-                          setActiveRestaurantId(r.id);
+                        onPress={async () => {
+                          await setActiveRestaurantId(r.id);
                           router.push('/(admin)/pos' as any);
                         }}
                         activeOpacity={0.8}
@@ -666,8 +666,8 @@ export default function SuperAdminRestaurantsScreen() {
                     <View style={[styles.actionRow, { flex: 2, justifyContent: 'flex-end', gap: 6 }]}>
                       <TouchableOpacity
                         style={[styles.actionBtn, { backgroundColor: '#E0F2FE', borderColor: '#BAE6FD', paddingHorizontal: 10, width: 'auto' }]}
-                        onPress={() => {
-                          setActiveRestaurantId(r.id);
+                        onPress={async () => {
+                          await setActiveRestaurantId(r.id);
                           router.push('/(admin)/pos' as any);
                         }}
                       >

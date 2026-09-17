@@ -946,10 +946,11 @@ export const superAdminService = {
 
     const normalizePaymentMethod = (method?: string) => {
       const m = (method || '').toLowerCase().trim();
-      if (['upi', 'netbanking', 'card', 'manual_bank_transfer', 'free_tier'].includes(m)) {
+      if (['cash', 'bank_transfer', 'upi', 'card', 'online', 'other'].includes(m)) {
         return m;
       }
-      if (m === 'bank_transfer' || m === 'bank' || m === 'cash') return 'manual_bank_transfer';
+      if (m === 'manual_bank_transfer' || m === 'bank' || m === 'netbanking') return 'bank_transfer';
+      if (m === 'free_tier') return 'other';
       return 'upi';
     };
 
@@ -1013,10 +1014,10 @@ export const superAdminService = {
       await supabase.from('subscription_payments').insert({
         restaurant_id: payload.restaurant_id,
         subscription_id: newSub.id,
-        plan_id: payload.plan_id,
         amount,
         currency: plan?.currency || 'INR',
         payment_method: validPaymentMethod,
+        payment_reference: payload.payment_reference || `SUB-${Date.now()}`,
         payment_status: 'paid',
         paid_at: new Date().toISOString(),
         notes: payload.notes || `Subscription payment for plan: ${plan?.name || payload.plan_id}`,
@@ -1073,33 +1074,28 @@ export const superAdminService = {
   }): Promise<SubscriptionPayment> {
     if (!isSupabaseConfigured) throw new Error('Supabase not configured.');
 
-    let planId = 'starter';
     let subId = payload.subscription_id;
 
-    if (subId) {
+    if (!subId) {
       const { data: sub } = await supabase
         .from('restaurant_subscriptions')
-        .select('plan_id')
-        .eq('id', subId)
-        .maybeSingle();
-      if (sub?.plan_id) planId = sub.plan_id;
-    } else {
-      const { data: sub } = await supabase
-        .from('restaurant_subscriptions')
-        .select('id, plan_id')
+        .select('id')
         .eq('restaurant_id', payload.restaurant_id)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
       if (sub) {
         subId = sub.id;
-        if (sub.plan_id) planId = sub.plan_id;
       }
     }
 
     const methodLower = (payload.payment_method || '').toLowerCase().trim();
-    const validPaymentMethod = ['upi', 'netbanking', 'card', 'manual_bank_transfer', 'free_tier'].includes(methodLower)
+    const validPaymentMethod = ['cash', 'bank_transfer', 'upi', 'card', 'online', 'other'].includes(methodLower)
       ? methodLower
+      : methodLower === 'manual_bank_transfer' || methodLower === 'bank' || methodLower === 'netbanking'
+      ? 'bank_transfer'
+      : methodLower === 'free_tier'
+      ? 'other'
       : 'upi';
 
     const { data, error } = await supabase
@@ -1107,10 +1103,10 @@ export const superAdminService = {
       .insert({
         restaurant_id: payload.restaurant_id,
         subscription_id: subId || null,
-        plan_id: planId,
         amount: payload.amount,
         currency: payload.currency || 'INR',
         payment_method: validPaymentMethod,
+        payment_reference: payload.payment_reference || `REC-${Date.now()}`,
         payment_status: 'paid',
         paid_at: new Date().toISOString(),
         notes: payload.notes || null,

@@ -168,9 +168,9 @@ export default function SuperAdminDashboardScreen() {
       </View>
 
       {/* 2-Column Dashboard Panels */}
-      <View style={[styles.twoColLayout, { flexDirection: isMobile ? 'column' : 'row' }]}>
+      <View style={[styles.twoColLayout, isMobile && styles.twoColLayoutMobile]}>
         {/* Left Column: Recent Tenants */}
-        <View style={styles.col}>
+        <View style={[styles.col, isMobile && styles.colMobile]}>
           <View style={styles.panel}>
             <View style={styles.panelHeader}>
               <Text style={styles.panelTitle}>Recent Restaurants</Text>
@@ -228,7 +228,7 @@ export default function SuperAdminDashboardScreen() {
         </View>
 
         {/* Right Column: Platform Revenue & Expiring */}
-        <View style={styles.col}>
+        <View style={[styles.col, isMobile && styles.colMobile]}>
           {/* Recent Payments */}
           <View style={styles.panel}>
             <View style={styles.panelHeader}>
@@ -401,10 +401,24 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
   twoColLayout: {
+    flexDirection: 'row',
     gap: 16,
+    width: '100%',
+  },
+  twoColLayoutMobile: {
+    flexDirection: 'column',
+    gap: 16,
+    width: '100%',
   },
   col: {
     flex: 1,
+    minWidth: 0,
+  },
+  colMobile: {
+    flex: 0,
+    flexGrow: 0,
+    flexShrink: 0,
+    width: '100%',
   },
   panel: {
     backgroundColor: '#FFFFFF',

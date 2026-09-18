@@ -95,6 +95,7 @@ export default function OrdersScreen() {
   const [closingOrder, setClosingOrder] = useState<boolean>(false);
   const [verifyingPaymentOrderId, setVerifyingPaymentOrderId] = useState<string | null>(null);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isMobile = windowWidth < 768;
   const isTwoColumn = (Platform.OS === 'web' && windowWidth >= 600) || windowWidth >= 768;
 
   const cardWidth = useMemo(() => {
@@ -1917,10 +1918,7 @@ export default function OrdersScreen() {
         <View
           style={[
             styles.modalOverlay,
-            {
-              paddingTop: 16,
-              paddingBottom: 16,
-            },
+            isMobile && { paddingHorizontal: 10, paddingVertical: 10 },
           ]}
         >
           <KeyboardAvoidingView
@@ -1928,17 +1926,17 @@ export default function OrdersScreen() {
             style={{
               width: '100%',
               maxWidth: 580,
-              maxHeight: windowHeight * 0.9,
+              maxHeight: windowHeight * (isMobile ? 0.95 : 0.9),
               flexShrink: 1,
             }}
           >
-            <View style={[styles.modalContent, { maxHeight: '100%', display: 'flex' }]}>
+            <View style={[styles.modalContent, isMobile && { padding: 12, borderRadius: 16 }, { maxHeight: '100%', display: 'flex' }]}>
               <View style={styles.modalHeader}>
-                <View>
-                  <Text style={styles.modalTitle}>
+                <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
+                  <Text style={styles.modalTitle} numberOfLines={1}>
                     Edit Order #{editOrderModal?.order_number}
                   </Text>
-                  <Text style={styles.modalSubTitle}>
+                  <Text style={styles.modalSubTitle} numberOfLines={1}>
                     Add/remove items & recalculate bill • 🕒 {formatOrderDateTime(editOrderModal?.created_at)}
                   </Text>
                 </View>
@@ -2262,8 +2260,8 @@ export default function OrdersScreen() {
       {/* 2. CANCEL ORDER MODAL                                        */}
       {/* ============================================================ */}
       <Modal visible={Boolean(cancelOrderModal)} transparent animationType="fade">
-        <View style={[styles.modalOverlay, { paddingHorizontal: 20 }]}>
-          <View style={styles.cancelModalContent}>
+        <View style={[styles.modalOverlay, isMobile && { paddingHorizontal: 10 }]}>
+          <View style={[styles.cancelModalContent, isMobile && { padding: 14, borderRadius: 16 }]}>
             <Text style={styles.cancelModalTitle}>Cancel Order #{cancelOrderModal?.order_number}</Text>
             <Text style={{ fontSize: 11.5, color: '#64748B', fontWeight: '600', marginBottom: 4 }}>
               🕒 Placed on: {formatOrderDateTime(cancelOrderModal?.created_at)}
@@ -2387,10 +2385,7 @@ export default function OrdersScreen() {
         <View
           style={[
             styles.modalOverlay,
-            {
-              paddingTop: 16,
-              paddingBottom: 16,
-            },
+            isMobile && { paddingHorizontal: 10, paddingVertical: 10 },
           ]}
         >
           <KeyboardAvoidingView
@@ -2398,23 +2393,24 @@ export default function OrdersScreen() {
             style={{
               width: '100%',
               maxWidth: 580,
-              maxHeight: windowHeight * 0.9,
+              maxHeight: windowHeight * (isMobile ? 0.95 : 0.9),
               flexShrink: 1,
             }}
           >
-            <View style={[styles.modalContent, { maxHeight: '100%', display: 'flex' }]}>
+            <View style={[styles.modalContent, isMobile && { padding: 12, borderRadius: 16 }, { maxHeight: '100%', display: 'flex' }]}>
               <View style={styles.modalHeader}>
-                <View>
-                  <Text style={styles.modalTitle}>
+                <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
+                  <Text style={styles.modalTitle} numberOfLines={1}>
                     Close Order & Settle Bill #{payOrderModal?.order_number}
                   </Text>
-                  <Text style={styles.modalSubTitle}>
+                  <Text style={styles.modalSubTitle} numberOfLines={1}>
                     {payOrderModal?.order_type.toUpperCase()} • {payOrderModal?.table_number ? `Table ${payOrderModal.table_number}` : payOrderModal?.customer_name} • 🕒 {formatOrderDateTime(payOrderModal?.created_at)}
                   </Text>
                 </View>
                 <TouchableOpacity
                   onPress={() => setPayOrderModal(null)}
                   style={styles.modalCloseBtn}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
                   <Text style={styles.modalCloseText}>✕</Text>
                 </TouchableOpacity>
@@ -2429,9 +2425,9 @@ export default function OrdersScreen() {
                 {/* 1. DISCOUNT SELECTION */}
                 <View style={styles.sectionBox}>
                   <Text style={styles.sectionLabel}>Apply Bill Discount</Text>
-                  <View style={styles.discountTypeRow}>
+                  <View style={[styles.discountTypeRow, isMobile && { flexWrap: 'wrap' }]}>
                     <TouchableOpacity
-                      style={[styles.discTypeBtn, payDiscountType === 'none' && styles.discTypeBtnActive]}
+                      style={[styles.discTypeBtn, isMobile && { minWidth: 90 }, payDiscountType === 'none' && styles.discTypeBtnActive]}
                       onPress={() => {
                         setPayDiscountType('none');
                         setPayDiscountValue('');
@@ -2443,7 +2439,7 @@ export default function OrdersScreen() {
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={[styles.discTypeBtn, payDiscountType === 'fixed' && styles.discTypeBtnActive]}
+                      style={[styles.discTypeBtn, isMobile && { minWidth: 90 }, payDiscountType === 'fixed' && styles.discTypeBtnActive]}
                       onPress={() => setPayDiscountType('fixed')}
                     >
                       <Text style={[styles.discTypeText, payDiscountType === 'fixed' && styles.discTypeTextActive]}>
@@ -2452,7 +2448,7 @@ export default function OrdersScreen() {
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={[styles.discTypeBtn, payDiscountType === 'percentage' && styles.discTypeBtnActive]}
+                      style={[styles.discTypeBtn, isMobile && { minWidth: 90 }, payDiscountType === 'percentage' && styles.discTypeBtnActive]}
                       onPress={() => setPayDiscountType('percentage')}
                     >
                       <Text style={[styles.discTypeText, payDiscountType === 'percentage' && styles.discTypeTextActive]}>
@@ -2552,7 +2548,7 @@ export default function OrdersScreen() {
 
                 {/* Payment Method Selector */}
                 <Text style={styles.fieldLabel}>Payment Mode *</Text>
-                <View style={styles.payMethodsGrid}>
+                <View style={[styles.payMethodsGrid, isMobile && { flexWrap: 'wrap', gap: 6 }]}>
                   {[
                     { id: 'cash', label: '💵 CASH' },
                     { id: 'upi', label: '📱 UPI / QR' },
@@ -2563,6 +2559,7 @@ export default function OrdersScreen() {
                       key={m.id}
                       style={[
                         styles.payMethodBtn,
+                        isMobile && { width: '48%', flex: 0, flexGrow: 1, minWidth: 120 },
                         payMethod === m.id && styles.payMethodBtnActive,
                       ]}
                       onPress={() => setPayMethod(m.id as any)}
@@ -2572,6 +2569,7 @@ export default function OrdersScreen() {
                           styles.payMethodText,
                           payMethod === m.id && styles.payMethodTextActive,
                         ]}
+                        numberOfLines={1}
                       >
                         {m.label}
                       </Text>
@@ -2581,9 +2579,9 @@ export default function OrdersScreen() {
 
                 {/* Payment Received Toggle (Yes/No) */}
                 <Text style={styles.fieldLabel}>Payment Received? *</Text>
-                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+                <View style={[{ flexDirection: isMobile ? 'column' : 'row', gap: 8, marginBottom: 10 }]}>
                   <TouchableOpacity
-                    style={[styles.recBtn, payReceived && styles.recBtnActive]}
+                    style={[styles.recBtn, isMobile && { width: '100%', flex: 0 }, payReceived && styles.recBtnActive]}
                     onPress={() => setPayReceived(true)}
                   >
                     <Text style={[styles.recBtnText, payReceived && styles.recBtnTextActive]}>
@@ -2592,7 +2590,7 @@ export default function OrdersScreen() {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[styles.recBtn, !payReceived && styles.recBtnUnpaidActive]}
+                    style={[styles.recBtn, isMobile && { width: '100%', flex: 0 }, !payReceived && styles.recBtnUnpaidActive]}
                     onPress={() => setPayReceived(false)}
                   >
                     <Text style={[styles.recBtnText, !payReceived && styles.recBtnTextActive]}>
@@ -2673,17 +2671,15 @@ export default function OrdersScreen() {
             <View
               style={[
                 styles.modalOverlay,
-                {
-                  paddingTop: 16,
-                  paddingBottom: 16,
-                },
+                isMobile && { paddingHorizontal: 10, paddingVertical: 10 },
               ]}
             >
               <View
                 style={[
                   styles.modalContent,
+                  isMobile && { padding: 12, borderRadius: 16 },
                   {
-                    maxHeight: windowHeight * 0.9,
+                    maxHeight: windowHeight * (isMobile ? 0.95 : 0.9),
                     maxWidth: 580,
                     display: 'flex',
                   },
@@ -2947,23 +2943,23 @@ export default function OrdersScreen() {
                   </View>
 
                   {/* Print and Share buttons */}
-                  <View style={{ flexDirection: 'row', gap: 6, marginTop: 12 }}>
+                  <View style={[{ flexDirection: isMobile ? 'column' : 'row', gap: 8, marginTop: 12 }]}>
                     <TouchableOpacity
-                      style={styles.printBtnSmall}
+                      style={[styles.printBtnSmall, isMobile && { width: '100%', flex: 0 }]}
                       onPress={() => printService.printFinalReceiptThermal(viewOrderModal, settings, user?.full_name)}
                     >
                       <Text style={styles.printBtnSmallText}>🖨️ Thermal Bill</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={styles.printKotBtnSmall}
+                      style={[styles.printKotBtnSmall, isMobile && { width: '100%', flex: 0 }]}
                       onPress={() => printService.printKotThermal(viewOrderModal, settings)}
                     >
                       <Text style={styles.printKotBtnSmallText}>🖨️ KOT Slip</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={styles.shareBtnSmall}
+                      style={[styles.shareBtnSmall, isMobile && { width: '100%', flex: 0 }]}
                       onPress={() => printService.printTaxInvoiceA4(viewOrderModal, settings)}
                     >
                       <Text style={styles.shareBtnSmallText}>📄 Tax Invoice A4</Text>
@@ -3430,12 +3426,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.7)',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
   },
   modalContent: {
     backgroundColor: '#ffffff',
-    borderRadius: 20,
-    padding: 16,
+    borderRadius: 16,
+    padding: 14,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     elevation: 10,
@@ -3621,14 +3618,14 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     marginVertical: 8,
   },
-  billRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 2 },
-  billLabel: { fontSize: 11, color: '#64748b' },
+  billRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', marginVertical: 2 },
+  billLabel: { fontSize: 11, color: '#64748b', flexShrink: 1 },
   billVal: { fontSize: 11, fontWeight: '700', color: '#0f172a' },
   billTotalRow: { borderTopWidth: 1, borderColor: '#cbd5e1', paddingTop: 6, marginTop: 4 },
   billTotalLabel: { fontSize: 13, fontWeight: '900', color: '#0f172a' },
   billTotalVal: { fontSize: 16, fontWeight: '900', color: '#16a34a' },
   wordsText: { fontSize: 9, fontStyle: 'italic', color: '#64748b', marginTop: 2 },
-  payMethodsGrid: { flexDirection: 'row', gap: 6, marginBottom: 8 },
+  payMethodsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
   payMethodBtn: {
     flex: 1,
     backgroundColor: '#f1f5f9',

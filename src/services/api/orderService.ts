@@ -1814,6 +1814,13 @@ export const orderService = {
     if (order.status === 'completed') throw new Error('Order is already completed and locked.');
     if (order.status === 'cancelled') throw new Error('Cannot close a cancelled order.');
 
+    const normalizedPaymentMethod: PaymentMethod =
+      paymentMethod === 'online' || (paymentMethod as any) === 'upi'
+        ? 'upi'
+        : (paymentMethod as any) === 'cod'
+        ? 'cash'
+        : paymentMethod;
+
     const targetPayable = (payableAmount !== undefined && payableAmount !== null)
       ? payableAmount
       : (order.payable_amount !== undefined && order.payable_amount !== null ? order.payable_amount : (payableAmount ?? 0));
@@ -1821,12 +1828,15 @@ export const orderService = {
     const finalPaymentStatus = paymentReceived ? 'paid' : 'unpaid';
     const finalOrderStatus: OrderStatus = 'completed';
 
-    const payRecord: Payment = {
-      id: 'pay-' + Date.now(),
+    const payRecord: any = {
+      id: 'pay-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
       order_id: orderId,
-      payment_method: paymentMethod,
+      restaurant_id: order.restaurant_id,
+      payment_method: normalizedPaymentMethod,
       amount: finalPaidAmount,
+      status: 'completed',
       reference_number: transactionReference || (paymentReceived ? 'TXN-' + Date.now() : undefined),
+      notes: notes || undefined,
       created_at: new Date().toISOString(),
     };
 
@@ -1840,7 +1850,7 @@ export const orderService = {
     const updatePayload: Record<string, any> = {
       status: finalOrderStatus,
       payment_status: finalPaymentStatus,
-      payment_method: paymentMethod,
+      payment_method: normalizedPaymentMethod,
       paid_amount: finalPaidAmount,
       notes: finalNotesWithGstin,
       updated_at: new Date().toISOString(),
@@ -1855,8 +1865,11 @@ export const orderService = {
 
     if (isSupabaseConfigured) {
       try {
-        if (paymentReceived) {
-          await supabase.from('payments').insert([payRecord]);
+        if (paymentReceived && finalPaidAmount > 0) {
+          const { error: payErr } = await supabase.from('payments').insert([payRecord]);
+          if (payErr) {
+            console.warn('Supabase insert payment record warning:', payErr);
+          }
         }
 
         // Release table if completed
@@ -1872,7 +1885,7 @@ export const orderService = {
           .single();
 
         if (error) {
-          console.warn('Supabase closeAndPayOrder update error:', error);
+          console.error('Supabase closeAndPayOrder update error:', error);
           throw error;
         }
 
@@ -1882,7 +1895,7 @@ export const orderService = {
             restaurant_id: updated.restaurant_id,
             order_id: orderId,
             order_number: updated.order_number,
-            payment_method: paymentMethod,
+            payment_method: normalizedPaymentMethod,
             payment_received: paymentReceived,
             amount: finalPaidAmount,
             status: updated.status,
@@ -1891,15 +1904,15 @@ export const orderService = {
           const localOrders = mockStorage.getOrders(updated.restaurant_id);
           const orderIndex = localOrders.findIndex((o) => o.id === orderId);
           if (orderIndex !== -1) {
-            localOrders[orderIndex] = { ...localOrders[orderIndex], ...updated, payment_method: paymentMethod };
+            localOrders[orderIndex] = { ...localOrders[orderIndex], ...updated, payment_method: normalizedPaymentMethod };
           } else {
-            localOrders.unshift({ ...updated, payment_method: paymentMethod });
+            localOrders.unshift({ ...updated, payment_method: normalizedPaymentMethod });
           }
           mockStorage.saveOrders(localOrders, updated.restaurant_id);
           await this.getOrders(updated.restaurant_id, true);
           return {
             ...updated,
-            payment_method: paymentMethod,
+            payment_method: normalizedPaymentMethod,
             order_source: resolveOrderSource(updated),
             subtotal: getOrderSubtotal(updated),
             discount_type: discountType,
@@ -1907,8 +1920,11 @@ export const orderService = {
             taxable_amount: taxableAmount,
           } as Order;
         }
-      } catch (e) {
-        console.warn('Supabase closeAndPayOrder failed:', e);
+      } catch (e: any) {
+        console.warn('Supabase closeAndPayOrder failed, attempting fallback or propagating error:', e);
+        if (e && e.message && !e.message.includes('network') && !e.message.includes('fetch')) {
+          throw e;
+        }
       }
     }
 

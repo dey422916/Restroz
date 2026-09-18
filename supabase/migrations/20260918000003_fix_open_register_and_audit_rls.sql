@@ -1,15 +1,21 @@
 -- ============================================================================
 -- MIGRATION: 20260918000003_fix_open_register_and_audit_rls.sql
 -- DESCRIPTION:
---   1. Ensures register_date has DEFAULT CURRENT_DATE on public.day_registers.
---   2. Ensures column parity (opening_cash, opening_cash_float, etc.) with safe defaults.
---   3. Strictly validates no duplicate open registers exist before creating the partial
+--   1. Ensures complete column parity on public.day_registers:
+--      - Adds register_date DATE if not present.
+--      - Adds opening_cash_float, actual_cash_counted, cash_difference, and all sales fields.
+--   2. Safely backfills register_date for historical records from opened_at/created_at
+--      using restaurant-local timezone (falling back to Asia/Kolkata).
+--   3. Sets DEFAULT CURRENT_DATE and enforces NOT NULL on register_date.
+--   4. Strictly validates no duplicate open registers exist before creating the partial
 --      unique index idx_single_open_day_register_per_restaurant.
---   4. Explicitly drops the legacy un-scoped policy "Admin All Audit Logs" on public.audit_logs
+--   5. Ensures column parity on public.audit_logs.
+--   6. Explicitly drops the legacy un-scoped policy "Admin All Audit Logs" on public.audit_logs
 --      and reaffirms tenant-isolated RLS policies for day_registers and audit_logs.
---   5. Creates atomic RPC public.open_day_register(...) with minimal search_path (pg_catalog),
+--   7. Creates atomic RPC public.open_day_register(...) with minimal search_path (pg_catalog),
 --      server-derived user identity, and atomic audit logging.
---   6. Wrapped in BEGIN ... COMMIT for 100% transactional safety.
+--   8. 100% self-sufficient and idempotent for fresh databases, DEV, and PROD.
+--   9. Wrapped in BEGIN ... COMMIT for total transactional safety.
 -- ============================================================================
 
 BEGIN;
@@ -31,11 +37,9 @@ BEGIN
     END IF;
 END $$;
 
--- 2. DAY REGISTERS COLUMN DEFAULTS & PARITY
+-- 2. DAY REGISTERS COLUMN PARITY & SAFE ADDITIONS
 ALTER TABLE public.day_registers
-    ALTER COLUMN register_date SET DEFAULT CURRENT_DATE;
-
-ALTER TABLE public.day_registers
+    ADD COLUMN IF NOT EXISTS register_date DATE,
     ADD COLUMN IF NOT EXISTS opening_cash NUMERIC(10, 2) DEFAULT 0.0,
     ADD COLUMN IF NOT EXISTS opening_cash_float NUMERIC(10, 2) DEFAULT 0.0,
     ADD COLUMN IF NOT EXISTS cash_sales NUMERIC(10, 2) DEFAULT 0.0,
@@ -53,16 +57,46 @@ ALTER TABLE public.day_registers
     ADD COLUMN IF NOT EXISTS cash_difference NUMERIC(10, 2),
     ADD COLUMN IF NOT EXISTS closing_cash NUMERIC(10, 2) DEFAULT 0.0;
 
--- Ensure opened_by has a safe fallback default if not provided
+-- 3. SAFE BACKFILL FOR HISTORICAL REGISTERS WHERE register_date IS NULL
+-- Pass A: Derive from opened_at/created_at using restaurant timezone
+UPDATE public.day_registers dr
+SET register_date = (
+    COALESCE(dr.opened_at, dr.created_at, NOW())
+    AT TIME ZONE COALESCE(NULLIF(TRIM(r.timezone), ''), 'Asia/Kolkata')
+)::DATE
+FROM public.restaurants r
+WHERE r.id = dr.restaurant_id
+  AND dr.register_date IS NULL;
+
+-- Pass B: Fallback for orphaned records where restaurant cannot be joined
+UPDATE public.day_registers dr
+SET register_date = (
+    COALESCE(dr.opened_at, dr.created_at, NOW())
+    AT TIME ZONE 'Asia/Kolkata'
+)::DATE
+WHERE dr.register_date IS NULL;
+
+-- Backfill opening_cash_float if NULL
+UPDATE public.day_registers
+SET opening_cash_float = COALESCE(opening_cash, 0.0)
+WHERE opening_cash_float IS NULL;
+
+-- 4. ENFORCE CONSTRAINTS & DEFAULTS
+ALTER TABLE public.day_registers
+    ALTER COLUMN register_date SET DEFAULT CURRENT_DATE;
+
+ALTER TABLE public.day_registers
+    ALTER COLUMN register_date SET NOT NULL;
+
 ALTER TABLE public.day_registers
     ALTER COLUMN opened_by SET DEFAULT 'Admin';
 
--- 3. CREATE PARTIAL UNIQUE INDEX (Safe: zero duplicate open registers in production)
+-- 5. CREATE PARTIAL UNIQUE INDEX (Safe: zero duplicate open registers)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_single_open_day_register_per_restaurant
     ON public.day_registers (restaurant_id)
     WHERE status = 'open';
 
--- 4. AUDIT LOGS COLUMN PARITY
+-- 6. AUDIT LOGS COLUMN PARITY
 ALTER TABLE public.audit_logs
     ADD COLUMN IF NOT EXISTS entity_id TEXT,
     ADD COLUMN IF NOT EXISTS entity_type TEXT,
@@ -71,7 +105,7 @@ ALTER TABLE public.audit_logs
     ADD COLUMN IF NOT EXISTS ip_address TEXT,
     ADD COLUMN IF NOT EXISTS user_agent TEXT;
 
--- 5. TARGETED RLS POLICY HARDENING
+-- 7. TARGETED RLS POLICY HARDENING
 ALTER TABLE public.day_registers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
@@ -110,7 +144,7 @@ CREATE POLICY "Tenant Insert Audit Logs" ON public.audit_logs
         (restaurant_id IS NOT NULL AND public.is_restaurant_member(restaurant_id, 'STAFF'))
     );
 
--- 6. ATOMIC OPEN DAY REGISTER RPC
+-- 8. ATOMIC OPEN DAY REGISTER RPC
 DROP FUNCTION IF EXISTS public.open_day_register(UUID, NUMERIC, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.open_day_register(UUID, NUMERIC, TEXT);
 

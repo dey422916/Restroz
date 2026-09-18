@@ -998,9 +998,9 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
           <View style={[styles.statIconBadge, { backgroundColor: '#FFF7ED' }]}>
             <Text style={{ fontSize: 18 }}>🍔</Text>
           </View>
-          <View style={{ alignItems: isMobile ? 'flex-start' : 'center' }}>
-            <Text style={styles.statValue}>{stats?.productCount || 0}</Text>
-            <Text style={styles.statLabel}>Products</Text>
+          <View style={{ flex: 1, minWidth: 0, alignItems: isMobile ? 'flex-start' : 'center' }}>
+            <Text style={styles.statValue} numberOfLines={1}>{stats?.productCount || 0}</Text>
+            <Text style={styles.statLabel} numberOfLines={1}>Products</Text>
           </View>
         </View>
 
@@ -1008,9 +1008,9 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
           <View style={[styles.statIconBadge, { backgroundColor: '#EFF6FF' }]}>
             <Text style={{ fontSize: 18 }}>🪑</Text>
           </View>
-          <View style={{ alignItems: isMobile ? 'flex-start' : 'center' }}>
-            <Text style={styles.statValue}>{stats?.tableCount || 0}</Text>
-            <Text style={styles.statLabel}>Tables</Text>
+          <View style={{ flex: 1, minWidth: 0, alignItems: isMobile ? 'flex-start' : 'center' }}>
+            <Text style={styles.statValue} numberOfLines={1}>{stats?.tableCount || 0}</Text>
+            <Text style={styles.statLabel} numberOfLines={1}>Tables</Text>
           </View>
         </View>
 
@@ -1018,9 +1018,9 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
           <View style={[styles.statIconBadge, { backgroundColor: '#F0FDF4' }]}>
             <Text style={{ fontSize: 18 }}>🧾</Text>
           </View>
-          <View style={{ alignItems: isMobile ? 'flex-start' : 'center' }}>
-            <Text style={styles.statValue}>{stats?.orderCount || 0}</Text>
-            <Text style={styles.statLabel}>Orders</Text>
+          <View style={{ flex: 1, minWidth: 0, alignItems: isMobile ? 'flex-start' : 'center' }}>
+            <Text style={styles.statValue} numberOfLines={1}>{stats?.orderCount || 0}</Text>
+            <Text style={styles.statLabel} numberOfLines={1}>Orders</Text>
           </View>
         </View>
 
@@ -1028,17 +1028,17 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
           <View style={[styles.statIconBadge, { backgroundColor: '#FAF5FF' }]}>
             <Text style={{ fontSize: 18 }}>👥</Text>
           </View>
-          <View style={{ alignItems: isMobile ? 'flex-start' : 'center' }}>
-            <Text style={styles.statValue}>{stats?.staffCount || members.length}</Text>
-            <Text style={styles.statLabel}>Members</Text>
+          <View style={{ flex: 1, minWidth: 0, alignItems: isMobile ? 'flex-start' : 'center' }}>
+            <Text style={styles.statValue} numberOfLines={1}>{stats?.staffCount || members.length}</Text>
+            <Text style={styles.statLabel} numberOfLines={1}>Members</Text>
           </View>
         </View>
       </View>
 
       {/* Two Column Details */}
-      <View style={[styles.twoCol, { flexDirection: isMobile ? 'column' : 'row' }]}>
+      <View style={[styles.twoCol, isMobile && styles.twoColMobile]}>
         {/* Left Column: Active Subscription & Members */}
-        <View style={styles.col}>
+        <View style={[styles.col, isMobile && styles.colMobile]}>
           {/* Active Subscription Panel */}
           <View style={styles.panel}>
             <View style={styles.panelHeader}>
@@ -1199,7 +1199,7 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
         </View>
 
         {/* Right Column: Subscription History & Payments */}
-        <View style={styles.col}>
+        <View style={[styles.col, isMobile && styles.colMobile]}>
           {/* Payments Panel */}
           <View style={styles.panel}>
             <View style={styles.panelHeader}>
@@ -1291,8 +1291,8 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
 
         <View style={{ gap: 14, marginTop: 12 }}>
           {/* Action 1: Archive / Suspend */}
-          <View style={styles.dangerActionRow}>
-            <View style={{ flex: 1, marginRight: 16 }}>
+          <View style={[styles.dangerActionRow, isMobile && styles.dangerActionRowMobile]}>
+            <View style={{ flex: 1, minWidth: 0, marginRight: isMobile ? 0 : 16 }}>
               <Text style={styles.dangerActionTitle}>
                 {restaurant?.status === 'ACTIVE' ? 'Archive / Suspend Restaurant' : 'Reactivate Restaurant'}
               </Text>
@@ -1306,6 +1306,7 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
               style={[
                 styles.btnArchive,
                 restaurant?.status === 'ACTIVE' ? styles.btnArchiveActive : styles.btnArchiveReactivate,
+                isMobile && { width: '100%', marginTop: 8 },
               ]}
               onPress={handleArchiveToggle}
               disabled={archivingRestaurant}
@@ -1321,8 +1322,8 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
           </View>
 
           {/* Action 2: Permanently Delete */}
-          <View style={[styles.dangerActionRow, { borderTopWidth: 1, borderTopColor: '#FEE2E2', paddingTop: 14 }]}>
-            <View style={{ flex: 1, marginRight: 16 }}>
+          <View style={[styles.dangerActionRow, isMobile && styles.dangerActionRowMobile, { borderTopWidth: 1, borderTopColor: '#FEE2E2', paddingTop: 14 }]}>
+            <View style={{ flex: 1, minWidth: 0, marginRight: isMobile ? 0 : 16 }}>
               <Text style={[styles.dangerActionTitle, { color: '#DC2626' }]}>
                 Permanently Delete Restaurant & All Data
               </Text>
@@ -1331,7 +1332,7 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
               </Text>
             </View>
             <TouchableOpacity
-              style={styles.btnPermanentDelete}
+              style={[styles.btnPermanentDelete, isMobile && { width: '100%', marginTop: 8 }]}
               onPress={handleOpenDeleteModal}
             >
               <Text style={styles.btnPermanentDeleteText}>🗑️ Permanently Delete</Text>
@@ -2829,15 +2830,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     marginBottom: 20,
+    width: '100%',
   },
   statsRowMobile: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    justifyContent: 'space-between',
     gap: 10,
     marginBottom: 16,
+    width: '100%',
   },
   statCard: {
     flex: 1,
+    minWidth: 130,
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     padding: 16,
@@ -2852,8 +2857,10 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   statCardMobile: {
-    width: '48%',
     flex: 0,
+    flexGrow: 0,
+    flexShrink: 0,
+    width: '48%',
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
@@ -2880,9 +2887,22 @@ const styles = StyleSheet.create({
   twoCol: {
     flexDirection: 'row',
     gap: 20,
+    width: '100%',
+  },
+  twoColMobile: {
+    flexDirection: 'column',
+    gap: 20,
+    width: '100%',
   },
   col: {
     flex: 1,
+    minWidth: 0,
+  },
+  colMobile: {
+    flex: 0,
+    flexGrow: 0,
+    flexShrink: 0,
+    width: '100%',
   },
   panel: {
     backgroundColor: '#FFFFFF',
@@ -2890,6 +2910,7 @@ const styles = StyleSheet.create({
     padding: 20,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    width: '100%',
   },
   panelHeader: {
     flexDirection: 'row',
@@ -3763,6 +3784,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  dangerActionRowMobile: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 12,
   },
   dangerActionTitle: {
     fontSize: 14,

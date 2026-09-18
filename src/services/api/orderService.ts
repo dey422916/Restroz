@@ -1624,6 +1624,7 @@ export const orderService = {
       if (idx !== -1) {
         localOrders[idx] = {
           ...localOrders[idx],
+          status: 'completed',
           payment_status: 'paid',
           paid_amount: localOrders[idx].payable_amount || localOrders[idx].grand_total,
           payment_verified_at: rpcData?.payment_verified_at || new Date().toISOString(),

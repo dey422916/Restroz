@@ -894,6 +894,7 @@ export default function OrdersScreen() {
             o.id === order.id
               ? {
                   ...o,
+                  status: 'completed',
                   payment_status: 'paid',
                   paid_amount: o.payable_amount || o.grand_total,
                   payment_verified_at: res.payment_verified_at || new Date().toISOString(),
@@ -908,6 +909,7 @@ export default function OrdersScreen() {
             o.id === order.id
               ? {
                   ...o,
+                  status: 'completed',
                   payment_status: 'paid',
                   paid_amount: o.payable_amount || o.grand_total,
                   payment_verified_at: res.payment_verified_at || new Date().toISOString(),
@@ -921,6 +923,7 @@ export default function OrdersScreen() {
           prev && prev.id === order.id
             ? {
                 ...prev,
+                status: 'completed',
                 payment_status: 'paid',
                 paid_amount: prev.payable_amount || prev.grand_total,
                 payment_verified_at: res.payment_verified_at || new Date().toISOString(),

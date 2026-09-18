@@ -3,7 +3,7 @@ import { mockStorage } from '../mockStorage';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import { tableService } from './tableService';
 import { settingsService } from './settingsService';
-import { kotService } from './kotService';
+import { kotService, clearKotsCache } from './kotService';
 import { auditService } from './auditService';
 import { subscriptionService } from './subscriptionService';
 import { couponService } from './couponService';
@@ -1135,9 +1135,8 @@ export const orderService = {
 
   /**
    * Edit an active order before final settlement:
-   * - Computes item diff: generates Supplementary KOT for added items & deducts stock.
-   * - For removed/reduced items: generates Kitchen cancellation ticket & restores stock.
-   * - Recalculates all order totals and updates database.
+   * - Atomically updates items, recalculates totals, and updates order row in database.
+   * - Generates Supplementary KOT for newly added items if applicable.
    */
   async editActiveOrder(params: {
     orderId: string;
@@ -1176,11 +1175,21 @@ export const orderService = {
       reason,
     } = params;
 
+    if (isSupabaseConfigured) {
+      const { data: { session }, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr || !session) {
+        throw new Error('Your session has expired. Please login again.');
+      }
+    }
+
     // Fetch existing order
     const existingOrder = await this.getOrderById(orderId);
     if (!existingOrder) throw new Error('Order not found');
-    if (existingOrder.status === 'completed' || existingOrder.status === 'cancelled') {
+    if (existingOrder.status === 'completed' || existingOrder.payment_status === 'paid') {
       throw new Error(`Cannot edit an order that is already ${existingOrder.status.toUpperCase()}.`);
+    }
+    if (existingOrder.status === 'cancelled') {
+      throw new Error('Cannot edit a cancelled order.');
     }
 
     // Phone number validation for edited order
@@ -1195,29 +1204,23 @@ export const orderService = {
       );
     }
 
+    if (!updatedItems || updatedItems.length === 0) {
+      throw new Error('An order must contain at least one item.');
+    }
+
     const oldItems = existingOrder.items || [];
 
-    // Calculate item differences
+    // Calculate item differences for KOT supplementary generation
     const addedItems: OrderItem[] = [];
-    const reducedOrRemovedItems: { product_name: string; old_quantity: number; new_quantity: number }[] = [];
-
-    // Map old items by product_id
     const oldItemMap = new Map<string, OrderItem>();
     oldItems.forEach((i) => oldItemMap.set(i.product_id, i));
 
-    // Map new items by product_id
-    const newItemMap = new Map<string, OrderItem>();
-    updatedItems.forEach((i) => newItemMap.set(i.product_id, i));
-
-    // Check newly added items or increased quantity
     for (const newItem of updatedItems) {
       const oldItem = oldItemMap.get(newItem.product_id);
       if (!oldItem) {
-        // Completely new item
         addedItems.push(newItem);
-      } else if (newItem.quantity > oldItem.quantity) {
-        // Increased quantity
-        const diffQty = newItem.quantity - oldItem.quantity;
+      } else if (Number(newItem.quantity || 0) > Number(oldItem.quantity || 0)) {
+        const diffQty = Number(newItem.quantity || 0) - Number(oldItem.quantity || 0);
         addedItems.push({
           ...newItem,
           quantity: diffQty,
@@ -1238,68 +1241,8 @@ export const orderService = {
       throw new Error('Adding items or increasing item quantities is not permitted for dispatched delivery and online orders.');
     }
 
-    // Check removed or reduced items
-    for (const oldItem of oldItems) {
-      const newItem = newItemMap.get(oldItem.product_id);
-      if (!newItem) {
-        // Completely removed
-        reducedOrRemovedItems.push({
-          product_name: oldItem.product_name,
-          old_quantity: oldItem.quantity,
-          new_quantity: 0,
-        });
-      } else if (newItem.quantity < oldItem.quantity) {
-        // Reduced quantity
-        reducedOrRemovedItems.push({
-          product_name: oldItem.product_name,
-          old_quantity: oldItem.quantity,
-          new_quantity: newItem.quantity,
-        });
-      }
-    }
-
-    // Generate Supplementary KOT for added items & deduct stock
-    let generatedKot: KOT | undefined;
-    if (addedItems.length > 0) {
-      generatedKot = await kotService.generateKot(existingOrder, reason || 'Supplementary addition from POS', addedItems);
-      if (isSupabaseConfigured) {
-        for (const itm of addedItems) {
-          try {
-            const { data: curP } = await supabase.from('products').select('stock_quantity').eq('id', itm.product_id).single();
-            if (curP) {
-              const newStock = Math.max(0, (curP.stock_quantity || 0) - itm.quantity);
-              await supabase.from('products').update({ stock_quantity: newStock, is_available: newStock > 0 }).eq('id', itm.product_id);
-            }
-          } catch (e) {
-            console.warn('Stock update for added items exception:', e);
-          }
-        }
-      }
-    }
-
-    // Generate cancellation ticket for reduced/removed items & restore stock
-    for (const red of reducedOrRemovedItems) {
-      await kotService.generateCancellationTicket(existingOrder, {
-        ...red,
-        reason: reason || 'Customer requested item modification',
-      });
-      const diffRestored = red.old_quantity - red.new_quantity;
-      const matchingOld = oldItems.find((x) => x.product_name === red.product_name);
-      if (matchingOld && isSupabaseConfigured) {
-        try {
-          const { data: curP } = await supabase.from('products').select('stock_quantity').eq('id', matchingOld.product_id).single();
-          if (curP) {
-            const restored = (curP.stock_quantity || 0) + diffRestored;
-            await supabase.from('products').update({ stock_quantity: restored, is_available: true }).eq('id', matchingOld.product_id);
-          }
-        } catch (e) {
-          console.warn('Stock restore exception:', e);
-        }
-      }
-    }
-
     // Recalculate totals using unified calculateOrderTotals
-    const normalizedItems = updatedItems.map((i) => {
+    const normalizedItems = updatedItems.map((i, idx) => {
       const qty = Number(i.quantity) || 1;
       const unitPrice = Number(i.unit_price) || (i.total && qty ? Number(i.total) / qty : 0);
       const taxRate = Number(i.tax_rate) || 5;
@@ -1307,12 +1250,15 @@ export const orderService = {
       const taxAmount = (itemSubtotal * taxRate) / 100;
       return {
         ...i,
+        id: i.id?.startsWith('item-') ? i.id : `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
+        order_id: orderId,
         quantity: qty,
         unit_price: unitPrice,
         tax_rate: taxRate,
         tax_amount: taxAmount,
         subtotal: itemSubtotal,
         total: itemSubtotal,
+        total_price: itemSubtotal,
       };
     });
 
@@ -1343,7 +1289,7 @@ export const orderService = {
       effectiveCouponDiscount = Math.min(existingOrder.coupon_discount, newSubtotal);
     }
 
-    // Resolve effective discount type and value so percentages dynamically recalculate on new subtotal
+    // Resolve effective discount type and value
     const effectiveDiscountType =
       discountType !== undefined
         ? discountType
@@ -1381,160 +1327,123 @@ export const orderService = {
       taxRate: restSettings.default_tax_rate !== undefined ? Number(restSettings.default_tax_rate) : 5.0,
     });
 
-    // Handle table changes
-    if (existingOrder.order_type === 'dine_in' && tableId && tableId !== existingOrder.table_id) {
-      if (existingOrder.table_id) {
-        await this.releaseTableIfSafe(existingOrder.table_id, orderId);
-      }
-      await tableService.updateTableStatus(tableId, 'occupied');
-    }
-
     const updatedNotes = attachDiscountToNotes(
       notes ?? existingOrder.notes,
       effectiveDiscountType,
       effectiveDiscountValue
     );
 
-    const updatePayload: Record<string, any> = {
-      customer_name: customerName ?? existingOrder.customer_name,
-      customer_phone: customerPhone ?? existingOrder.customer_phone,
-      delivery_address: deliveryAddress ?? existingOrder.delivery_address,
-      delivery_landmark: deliveryLandmark ?? existingOrder.delivery_landmark,
-      delivery_charge: deliveryCharge,
-      table_id: tableId ?? existingOrder.table_id,
-      table_number: tableNumber ?? existingOrder.table_number,
-      notes: updatedNotes,
-      subtotal: calculated.subtotal,
-      discount_amount: calculated.discountAmount,
-      coupon_code: effectiveCouponCode || null,
-      coupon_discount: calculated.couponDiscount,
-      cgst_amount: calculated.cgstAmount,
-      sgst_amount: calculated.sgstAmount,
-      igst_amount: calculated.igstAmount,
-      grand_total: calculated.rawTotal,
-      round_off: calculated.roundOff,
-      payable_amount: calculated.payableAmount,
-      updated_at: new Date().toISOString(),
-    };
+    const formattedRpcItems = normalizedItems.map((i: any, idx: number) => {
+      const rawItem = i as any;
+      const unitPrice = Number(i.unit_price) || 0;
+      const quantity = Number(i.quantity) || 1;
+      const itemSubtotal = Number(i.subtotal) || (unitPrice * quantity);
+      const taxRate = Number(i.tax_rate) || (restSettings.default_tax_rate !== undefined ? Number(restSettings.default_tax_rate) : 5.0);
+      const itemTax = Number(i.tax_amount) || Number(((itemSubtotal * taxRate) / 100).toFixed(2));
+      const cgst = Number(rawItem.cgst_amount) || Number((itemTax / 2).toFixed(2));
+      const sgst = Number(rawItem.sgst_amount) || Number((itemTax / 2).toFixed(2));
+      const itemTotal = Number(i.total) || Number((itemSubtotal + itemTax).toFixed(2));
+
+      return {
+        id: i.id?.startsWith('item-') ? i.id : `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
+        product_id: i.product_id || null,
+        product_name: i.product_name || rawItem.name || 'Unnamed Item',
+        unit_price: unitPrice,
+        quantity: quantity,
+        tax_rate: taxRate,
+        tax_amount: itemTax,
+        cgst_amount: cgst,
+        sgst_amount: sgst,
+        igst_amount: Number(rawItem.igst_amount) || 0,
+        discount_amount: Number(rawItem.discount_amount) || 0,
+        subtotal: itemSubtotal,
+        total: itemTotal,
+        total_price: itemTotal,
+        notes: rawItem.notes || i.item_notes || null,
+        item_notes: i.item_notes || rawItem.notes || null,
+        hsn_code: rawItem.hsn_code || null,
+        image_url: i.image_url || null,
+      };
+    });
 
     if (isSupabaseConfigured) {
-      try {
-        // Delete old items and insert updated items
-        const { error: delErr } = await supabase.from('order_items').delete().eq('order_id', orderId);
-        if (delErr) {
-          console.error('Failed to clear old order items during editActiveOrder:', delErr);
-          throw new Error(`Failed to clear existing order items: ${delErr.message}`);
-        }
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('edit_order', {
+        p_order_id: orderId,
+        p_items: formattedRpcItems,
+        p_customer_name: customerName ?? null,
+        p_customer_phone: customerPhone ?? null,
+        p_delivery_address: deliveryAddress ?? null,
+        p_delivery_landmark: deliveryLandmark ?? null,
+        p_delivery_charge: deliveryCharge,
+        p_table_id: tableId ?? null,
+        p_table_number: tableNumber ?? null,
+        p_notes: updatedNotes ?? null,
+        p_discount_amount: calculated.discountAmount,
+        p_coupon_code: effectiveCouponCode || null,
+        p_coupon_discount: calculated.couponDiscount,
+        p_cgst_amount: calculated.cgstAmount,
+        p_sgst_amount: calculated.sgstAmount,
+        p_igst_amount: calculated.igstAmount,
+        p_service_charge: calculated.serviceCharge || 0,
+        p_grand_total: calculated.rawTotal,
+        p_round_off: calculated.roundOff,
+        p_payable_amount: calculated.payableAmount,
+        p_reason: reason || 'Active order edited from POS',
+      });
 
-        const formattedItems = normalizedItems.map((i: any, idx: number) => {
-          const rawItem = i as any;
-          const unitPrice = Number(i.unit_price) || 0;
-          const quantity = Number(i.quantity) || 1;
-          const itemSubtotal = Number(i.subtotal) || (unitPrice * quantity);
-          const taxRate = Number(i.tax_rate) || 5;
-          const itemTax = Number(i.tax_amount) || Number(((itemSubtotal * taxRate) / 100).toFixed(2));
-          const cgst = Number(rawItem.cgst_amount) || Number((itemTax / 2).toFixed(2));
-          const sgst = Number(rawItem.sgst_amount) || Number((itemTax / 2).toFixed(2));
-          const itemTotal = Number(i.total) || Number((itemSubtotal + itemTax).toFixed(2));
-
-          return {
-            id: i.id?.startsWith('item-') ? i.id : `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
-            order_id: orderId,
-            product_id: i.product_id || i.id || `prod-fallback-${idx}`,
-            product_name: i.product_name || rawItem.name || 'Unnamed Item',
-            unit_price: unitPrice,
-            quantity: quantity,
-            tax_rate: taxRate,
-            tax_amount: itemTax,
-            cgst_amount: cgst,
-            sgst_amount: sgst,
-            igst_amount: Number(rawItem.igst_amount) || 0,
-            discount_amount: Number(rawItem.discount_amount) || 0,
-            subtotal: itemSubtotal,
-            total: itemTotal,
-            total_price: itemTotal,
-            notes: rawItem.notes || i.item_notes || null,
-            item_notes: i.item_notes || rawItem.notes || null,
-            hsn_code: rawItem.hsn_code || null,
-            image_url: i.image_url || null,
-            created_at: new Date().toISOString(),
-          };
-        });
-
-        const { error: insertErr } = await supabase.from('order_items').insert(formattedItems);
-        if (insertErr) {
-          console.error('Failed to insert updated order items in editActiveOrder:', insertErr);
-          throw new Error(`Failed to save updated order items: ${insertErr.message || insertErr.details || 'Database insert error'}`);
-        }
-
-        const { data: updatedOrder, error } = await supabase
-          .from('orders')
-          .update(updatePayload)
-          .eq('id', orderId)
-          .select('*, items:order_items(*), payments:payments(*), kots:kots(*, items:kot_items(*))')
-          .single();
-
-        if (error || !updatedOrder) {
-          console.error('Supabase update order error in editActiveOrder:', error);
-          throw new Error(`Failed to update order: ${error?.message || 'Database update error'}`);
-        }
-
-        clearOrdersCache(existingOrder.restaurant_id);
-        await auditService.log('UPDATE_ORDER', {
-          order_number: updatedOrder.order_number,
-          added_items_count: addedItems.length,
-          removed_items_count: reducedOrRemovedItems.length,
-          new_payable_amount: updatedOrder.payable_amount,
-          reason: reason || 'Active order edited from POS',
-        });
-        const localOrders = mockStorage.getOrders(existingOrder.restaurant_id);
-        const orderIndex = localOrders.findIndex((o) => o.id === orderId);
-        if (orderIndex !== -1) {
-          localOrders[orderIndex] = { ...localOrders[orderIndex], ...updatedOrder, items: normalizedItems };
-        } else {
-          localOrders.unshift({ ...updatedOrder, items: normalizedItems });
-        }
-        mockStorage.saveOrders(localOrders, existingOrder.restaurant_id);
-        await this.getOrders(existingOrder.restaurant_id, true);
-        const finalResult = {
-          ...updatedOrder,
-          latest_kot: generatedKot,
-        };
-        return finalResult as Order;
-      } catch (e: any) {
-        console.error('Supabase editActiveOrder failed:', e);
-        throw e;
+      if (rpcErr) {
+        console.error('Supabase edit_order RPC failed:', rpcErr);
+        throw new Error(rpcErr.message || 'Failed to edit order on database');
       }
+
+      const updatedOrder = rpcRes?.order as Order;
+      if (!updatedOrder) {
+        throw new Error('Database did not return updated order record.');
+      }
+
+      // Automatically generate supplementary KOT if items were added
+      let generatedKot: KOT | undefined;
+      if (addedItems.length > 0 && existingOrder.status !== 'held') {
+        try {
+          const supplementaryOrderForKot: Order = {
+            ...updatedOrder,
+            items: addedItems,
+            notes: `[ADD-ON KOT] Original: #${existingOrder.order_number}`,
+          };
+          generatedKot = await kotService.generateKot(supplementaryOrderForKot);
+        } catch (kotErr) {
+          console.warn('Failed to auto-generate supplementary KOT on edit:', kotErr);
+        }
+      }
+
+      clearOrdersCache(existingOrder.restaurant_id);
+      clearKotsCache(existingOrder.restaurant_id);
+      const localOrders = mockStorage.getOrders(existingOrder.restaurant_id);
+      const orderIndex = localOrders.findIndex((o) => o.id === orderId);
+      const fullUpdatedOrder: Order = {
+        ...updatedOrder,
+        items: rpcRes?.items || normalizedItems,
+        payments: rpcRes?.payments || [],
+        kots: generatedKot ? [generatedKot] : (updatedOrder.kots || []),
+      };
+      if (orderIndex !== -1) {
+        localOrders[orderIndex] = fullUpdatedOrder;
+      } else {
+        localOrders.unshift(fullUpdatedOrder);
+      }
+      mockStorage.saveOrders(localOrders, existingOrder.restaurant_id);
+      await this.getOrders(existingOrder.restaurant_id, true);
+      return fullUpdatedOrder;
     }
 
-    // Local fallback
-    const localOrders = mockStorage.getOrders(existingOrder.restaurant_id);
-    const orderIndex = localOrders.findIndex((o) => o.id === orderId);
-    if (orderIndex !== -1) {
-      localOrders[orderIndex] = {
-        ...localOrders[orderIndex],
-        ...updatePayload,
-        items: normalizedItems,
-        order_source: resolveOrderSource({ ...localOrders[orderIndex], ...updatePayload }),
-        status: normalizeOrderStatus(localOrders[orderIndex]),
-      };
-      mockStorage.saveOrders(localOrders, existingOrder.restaurant_id);
-      clearOrdersCache(existingOrder.restaurant_id);
-      return {
-        ...localOrders[orderIndex],
-        latest_kot: generatedKot,
-      } as Order;
-    }
-    return existingOrder;
+    throw new Error('Supabase client is not configured.');
   },
 
   /**
    * Cancel an active order with required reason:
-   * - Does NOT delete order or KOTs.
-   * - Sets status = 'cancelled'.
-   * - Restores product stock exactly once.
-   * - Releases table safely (only if no other active orders on table).
-   * - Preserves payment records (marking refund/reversal needed if already paid).
+   * - Atomically sets status = 'cancelled' via cancel_order RPC.
+   * - Restores stock automatically and safely via database trigger.
+   * - Releases table safely and logs cancellation audit event.
    */
   async cancelActiveOrder(orderId: string, reason: string): Promise<Order> {
     const trimmedReason = (reason || '').trim();
@@ -1542,82 +1451,46 @@ export const orderService = {
       throw new Error('A cancellation reason is required (e.g. Customer changed mind, Duplicate order, Wrong table).');
     }
 
-    const targetOrder = await this.getOrderById(orderId);
-    if (!targetOrder) throw new Error('Order not found');
-
-    if (targetOrder.status === 'completed') {
-      throw new Error('Cannot cancel an order that is already completed. Please use Void / Refund workflow.');
-    }
-    if (targetOrder.status === 'cancelled') {
-      return targetOrder;
-    }
-
-    const cancelNotes = `[CANCELLED] Reason: ${trimmedReason} | Prev Status: ${targetOrder.status} | Cancelled At: ${new Date().toLocaleTimeString()}`;
-
     if (isSupabaseConfigured) {
-      try {
-        // Restore stock
-        if (targetOrder.items && targetOrder.items.length > 0) {
-          for (const itm of targetOrder.items) {
-            if (itm.product_id && itm.quantity > 0) {
-              try {
-                const { data: curP } = await supabase.from('products').select('stock_quantity').eq('id', itm.product_id).single();
-                if (curP) {
-                  const restored = (curP.stock_quantity || 0) + itm.quantity;
-                  await supabase.from('products').update({ stock_quantity: restored, is_available: true }).eq('id', itm.product_id);
-                }
-              } catch (e) {
-                console.warn('Stock restore on cancellation exception:', e);
-              }
-            }
-          }
-        }
-
-        // Release table safely
-        if (targetOrder.order_type === 'dine_in' && targetOrder.table_id) {
-          await this.releaseTableIfSafe(targetOrder.table_id, orderId);
-        }
-
-        const { data: cancelledOrder, error } = await supabase
-          .from('orders')
-          .update({
-            status: 'cancelled',
-            notes: targetOrder.notes ? `${targetOrder.notes} • ${cancelNotes}` : cancelNotes,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', orderId)
-          .select('*, items:order_items(*), payments:payments(*), kots:kots(*, items:kot_items(*))')
-          .single();
-
-        if (!error && cancelledOrder) {
-          await auditService.log('CANCEL_ORDER', {
-            order_number: cancelledOrder.order_number,
-            reason: trimmedReason,
-            had_payment: cancelledOrder.payment_status === 'paid',
-          });
-          clearOrdersCache(targetOrder.restaurant_id);
-          await this.getOrders(targetOrder.restaurant_id);
-          return cancelledOrder as Order;
-        }
-      } catch (e) {
-        console.warn('Supabase cancelActiveOrder failed:', e);
+      const { data: { session }, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr || !session) {
+        throw new Error('Your session has expired. Please login again.');
       }
+
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('cancel_order', {
+        p_order_id: orderId,
+        p_reason: trimmedReason,
+      });
+
+      if (rpcErr) {
+        console.error('Supabase cancel_order RPC failed:', rpcErr);
+        throw new Error(rpcErr.message || 'Failed to cancel order on database');
+      }
+
+      const cancelledOrder = rpcRes?.order as Order;
+      if (!cancelledOrder) {
+        throw new Error('Database did not return cancelled order record.');
+      }
+
+      clearOrdersCache(cancelledOrder.restaurant_id);
+      const localOrders = mockStorage.getOrders(cancelledOrder.restaurant_id);
+      const idx = localOrders.findIndex((o) => o.id === orderId);
+      const fullCancelledOrder: Order = {
+        ...cancelledOrder,
+        items: rpcRes?.items || [],
+        payments: rpcRes?.payments || [],
+      };
+      if (idx !== -1) {
+        localOrders[idx] = fullCancelledOrder;
+      } else {
+        localOrders.unshift(fullCancelledOrder);
+      }
+      mockStorage.saveOrders(localOrders, cancelledOrder.restaurant_id);
+      await this.getOrders(cancelledOrder.restaurant_id, true);
+      return fullCancelledOrder;
     }
 
-    // Local fallback
-    const localOrders = mockStorage.getOrders(targetOrder.restaurant_id);
-    const idx = localOrders.findIndex((o) => o.id === orderId);
-    if (idx !== -1) {
-      localOrders[idx].status = 'cancelled';
-      localOrders[idx].notes = targetOrder.notes ? `${targetOrder.notes} • ${cancelNotes}` : cancelNotes;
-      if (localOrders[idx].table_id) {
-        await tableService.updateTableStatus(localOrders[idx].table_id!, 'available');
-      }
-      mockStorage.saveOrders(localOrders, targetOrder.restaurant_id);
-      clearOrdersCache(targetOrder.restaurant_id);
-      return localOrders[idx];
-    }
-    return targetOrder;
+    throw new Error('Supabase client is not configured.');
   },
 
   /**
@@ -1627,6 +1500,12 @@ export const orderService = {
    * - Does NOT print another KOT.
    */
   async holdOrder(orderId: string): Promise<Order> {
+    if (isSupabaseConfigured) {
+      const { data: { session }, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr || !session) {
+        throw new Error('Your session has expired. Please login again.');
+      }
+    }
     const order = await this.getOrderById(orderId);
     if (!order) throw new Error('Order not found');
     if (order.status === 'completed' || order.status === 'cancelled') {
@@ -1651,6 +1530,12 @@ export const orderService = {
    * - Does NOT print a new KOT.
    */
   async resumeOrder(orderId: string): Promise<Order> {
+    if (isSupabaseConfigured) {
+      const { data: { session }, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr || !session) {
+        throw new Error('Your session has expired. Please login again.');
+      }
+    }
     const order = await this.getOrderById(orderId);
     if (!order) throw new Error('Order not found');
     if (order.status !== 'held') {
@@ -1687,6 +1572,12 @@ export const orderService = {
     payment_verified_at?: string;
     payment_verified_by?: string;
   }> {
+    if (isSupabaseConfigured) {
+      const { data: { session }, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr || !session) {
+        throw new Error('Your session has expired. Please login again.');
+      }
+    }
     const targetOrder = await this.getOrderById(orderId, restaurantId);
     if (!targetOrder) throw new Error('Order not found');
     if (targetOrder.status === 'cancelled') {
@@ -1732,42 +1623,12 @@ export const orderService = {
       return rpcData;
     }
 
-    // Local fallback
-    const localOrders = mockStorage.getOrders(restId);
-    const idx = localOrders.findIndex((o) => o.id === orderId);
-    if (idx === -1) throw new Error('Order not found');
-    if (localOrders[idx].status === 'cancelled') {
-      throw new Error('Cannot verify payment for a cancelled order.');
-    }
-
-    const alreadyVerified = localOrders[idx].payment_status === 'paid';
-    const nowIso = new Date().toISOString();
-    localOrders[idx] = {
-      ...localOrders[idx],
-      payment_status: 'paid',
-      paid_amount: localOrders[idx].payable_amount || localOrders[idx].grand_total,
-      payment_verified_at: localOrders[idx].payment_verified_at || nowIso,
-    };
-    mockStorage.saveOrders(localOrders, restId);
-    if (restId) clearOrdersCache(restId);
-
-    return {
-      success: true,
-      order_id: orderId,
-      order_number: localOrders[idx].order_number,
-      payment_status: 'paid',
-      already_verified: alreadyVerified,
-      payment_verified_at: localOrders[idx].payment_verified_at,
-    };
+    throw new Error('Supabase client is not configured.');
   },
 
   /**
-   * Close Order and Settle Payment (CASH, ONLINE / UPI, CARD, SPLIT, ROOM):
-   * - Computes final bill amounts.
-   * - Records payment.
-   * - Marks payment_status as paid or unpaid (e.g. COD / Delivery).
-   * - Marks status = 'completed' (locks editing).
-   * - Releases dining table safely.
+   * Close Order and Settle Payment (CASH, UPI, CARD, SPLIT, ROOM):
+   * - Calls atomic settle_order RPC to record payments, update order, update register totals, release table, and audit.
    */
   async closeAndPayOrder(params: {
     orderId: string;
@@ -1787,6 +1648,7 @@ export const orderService = {
     payableAmount?: number;
     customerGstin?: string;
     customer_gstin?: string;
+    splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;
   }): Promise<Order> {
     const {
       orderId,
@@ -1795,9 +1657,9 @@ export const orderService = {
       amountPaid,
       transactionReference,
       notes,
-      discountType,
-      discountValue,
-      discountAmount,
+      discountType = 'none',
+      discountValue = 0,
+      discountAmount = 0,
       taxableAmount,
       cgstAmount,
       sgstAmount,
@@ -1806,147 +1668,78 @@ export const orderService = {
       payableAmount,
       customerGstin,
       customer_gstin,
+      splitPayments,
     } = params;
-    const effectiveCustomerGstin = customer_gstin || customerGstin;
-
-    const order = await this.getOrderById(orderId);
-    if (!order) throw new Error('Order not found');
-    if (order.status === 'completed') throw new Error('Order is already completed and locked.');
-    if (order.status === 'cancelled') throw new Error('Cannot close a cancelled order.');
-
-    const normalizedPaymentMethod: PaymentMethod =
-      paymentMethod === 'online' || (paymentMethod as any) === 'upi'
-        ? 'upi'
-        : (paymentMethod as any) === 'cod'
-        ? 'cash'
-        : paymentMethod;
-
-    const targetPayable = (payableAmount !== undefined && payableAmount !== null)
-      ? payableAmount
-      : (order.payable_amount !== undefined && order.payable_amount !== null ? order.payable_amount : (payableAmount ?? 0));
-    const finalPaidAmount = paymentReceived ? (amountPaid ?? targetPayable) : 0;
-    const finalPaymentStatus = paymentReceived ? 'paid' : 'unpaid';
-    const finalOrderStatus: OrderStatus = 'completed';
-
-    const payRecord: any = {
-      id: 'pay-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
-      order_id: orderId,
-      restaurant_id: order.restaurant_id,
-      payment_method: normalizedPaymentMethod,
-      amount: finalPaidAmount,
-      status: 'completed',
-      reference_number: transactionReference || (paymentReceived ? 'TXN-' + Date.now() : undefined),
-      notes: notes || undefined,
-      created_at: new Date().toISOString(),
-    };
-
-    const updatedNotes = attachDiscountToNotes(
-      notes ? (order.notes ? `${order.notes} • ${notes}` : notes) : order.notes,
-      discountType !== 'none' ? discountType : undefined,
-      discountValue
-    );
-    const finalNotesWithGstin = effectiveCustomerGstin ? attachGstinToNotes(updatedNotes, effectiveCustomerGstin) : updatedNotes;
-
-    const updatePayload: Record<string, any> = {
-      status: finalOrderStatus,
-      payment_status: finalPaymentStatus,
-      payment_method: normalizedPaymentMethod,
-      paid_amount: finalPaidAmount,
-      notes: finalNotesWithGstin,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (discountAmount !== undefined) updatePayload.discount_amount = discountAmount;
-    if (cgstAmount !== undefined) updatePayload.cgst_amount = cgstAmount;
-    if (sgstAmount !== undefined) updatePayload.sgst_amount = sgstAmount;
-    if (grandTotal !== undefined) updatePayload.grand_total = grandTotal;
-    if (roundOff !== undefined) updatePayload.round_off = roundOff;
-    if (payableAmount !== undefined) updatePayload.payable_amount = payableAmount;
+    const effectiveCustomerGstin = (customer_gstin || customerGstin)?.trim().toUpperCase();
 
     if (isSupabaseConfigured) {
-      try {
-        if (paymentReceived && finalPaidAmount > 0) {
-          const { error: payErr } = await supabase.from('payments').insert([payRecord]);
-          if (payErr) {
-            console.warn('Supabase insert payment record warning:', payErr);
-          }
-        }
-
-        // Release table if completed
-        if (order.order_type === 'dine_in' && order.table_id) {
-          await this.releaseTableIfSafe(order.table_id, orderId);
-        }
-
-        const { data: updated, error } = await supabase
-          .from('orders')
-          .update(updatePayload)
-          .eq('id', orderId)
-          .select('*, items:order_items(*), payments:payments(*), kots:kots(*, items:kot_items(*))')
-          .single();
-
-        if (error) {
-          console.error('Supabase closeAndPayOrder update error:', error);
-          throw error;
-        }
-
-        if (updated) {
-          clearOrdersCache(updated.restaurant_id);
-          await auditService.log('CLOSE_ORDER', {
-            restaurant_id: updated.restaurant_id,
-            order_id: orderId,
-            order_number: updated.order_number,
-            payment_method: normalizedPaymentMethod,
-            payment_received: paymentReceived,
-            amount: finalPaidAmount,
-            status: updated.status,
-            discount_amount: discountAmount,
-          });
-          const localOrders = mockStorage.getOrders(updated.restaurant_id);
-          const orderIndex = localOrders.findIndex((o) => o.id === orderId);
-          if (orderIndex !== -1) {
-            localOrders[orderIndex] = { ...localOrders[orderIndex], ...updated, payment_method: normalizedPaymentMethod };
-          } else {
-            localOrders.unshift({ ...updated, payment_method: normalizedPaymentMethod });
-          }
-          mockStorage.saveOrders(localOrders, updated.restaurant_id);
-          await this.getOrders(updated.restaurant_id, true);
-          return {
-            ...updated,
-            payment_method: normalizedPaymentMethod,
-            order_source: resolveOrderSource(updated),
-            subtotal: getOrderSubtotal(updated),
-            discount_type: discountType,
-            discount_value: discountValue,
-            taxable_amount: taxableAmount,
-          } as Order;
-        }
-      } catch (e: any) {
-        console.warn('Supabase closeAndPayOrder failed, attempting fallback or propagating error:', e);
-        if (e && e.message && !e.message.includes('network') && !e.message.includes('fetch')) {
-          throw e;
-        }
+      const { data: { session }, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr || !session) {
+        throw new Error('Your session has expired. Please login again.');
       }
-    }
 
-    // Local fallback
-    const localOrders = mockStorage.getOrders(order.restaurant_id);
-    const idx = localOrders.findIndex((o) => o.id === orderId);
-    if (idx !== -1) {
-      localOrders[idx] = {
-        ...localOrders[idx],
-        ...updatePayload,
+      const normalizedPaymentMethod: PaymentMethod =
+        paymentMethod === 'online' || (paymentMethod as any) === 'upi'
+          ? 'upi'
+          : (paymentMethod as any) === 'cod'
+          ? 'cash'
+          : paymentMethod;
+
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('settle_order', {
+        p_order_id: orderId,
+        p_payment_method: normalizedPaymentMethod,
+        p_amount: amountPaid ?? payableAmount ?? 0,
+        p_reference_number: transactionReference || null,
+        p_notes: notes || null,
+        p_discount_type: discountType,
+        p_discount_value: discountValue,
+        p_discount_amount: discountAmount,
+        p_taxable_amount: taxableAmount ?? null,
+        p_cgst_amount: cgstAmount ?? null,
+        p_sgst_amount: sgstAmount ?? null,
+        p_grand_total: grandTotal ?? null,
+        p_round_off: roundOff ?? null,
+        p_payable_amount: payableAmount ?? null,
+        p_customer_gstin: effectiveCustomerGstin || null,
+        p_payment_received: paymentReceived,
+        p_split_payments: splitPayments && splitPayments.length > 0 ? splitPayments : null,
+      });
+
+      if (rpcErr) {
+        console.error('Supabase settle_order RPC failed:', rpcErr);
+        throw new Error(rpcErr.message || 'Failed to settle order on database');
+      }
+
+      const settledOrder = rpcRes?.order as Order;
+      if (!settledOrder) {
+        throw new Error('Database did not return settled order record.');
+      }
+
+      clearOrdersCache(settledOrder.restaurant_id);
+      const localOrders = mockStorage.getOrders(settledOrder.restaurant_id);
+      const orderIndex = localOrders.findIndex((o) => o.id === orderId);
+      const fullSettledOrder: Order = {
+        ...settledOrder,
+        items: rpcRes?.items || [],
+        payments: rpcRes?.payments || [],
+        payment_method: normalizedPaymentMethod,
+        order_source: resolveOrderSource(settledOrder),
+        subtotal: getOrderSubtotal(settledOrder),
         discount_type: discountType,
         discount_value: discountValue,
         taxable_amount: taxableAmount,
       };
-      if (localOrders[idx].table_id) {
-        await tableService.updateTableStatus(localOrders[idx].table_id!, 'available');
+      if (orderIndex !== -1) {
+        localOrders[orderIndex] = fullSettledOrder;
+      } else {
+        localOrders.unshift(fullSettledOrder);
       }
-      mockStorage.saveOrders(localOrders, order.restaurant_id);
-      clearOrdersCache(order.restaurant_id);
-      return localOrders[idx];
+      mockStorage.saveOrders(localOrders, settledOrder.restaurant_id);
+      await this.getOrders(settledOrder.restaurant_id, true);
+      return fullSettledOrder;
     }
-    return order;
+
+    throw new Error('Supabase client is not configured.');
   },
 
   /**
@@ -2189,119 +1982,27 @@ export const orderService = {
       round_off?: number;
       payable_amount?: number;
       customer_gstin?: string;
+      splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;
     }
   ): Promise<Order> {
-    const target = await this.getOrderById(orderId);
-    if (!target) throw new Error('Order not found');
-
-    const finalPayable = params.payable_amount !== undefined ? params.payable_amount : target.payable_amount;
-    const finalPaid = Math.max(finalPayable, params.amount);
-
-    const updatedNotes = attachDiscountToNotes(
-      target.notes,
-      params.discount_type !== 'none' ? params.discount_type : undefined,
-      params.discount_value
-    );
-    const finalNotesWithGstin = params.customer_gstin ? attachGstinToNotes(updatedNotes, params.customer_gstin) : updatedNotes;
-
-    const updatePayload: Record<string, any> = {
-      status: 'completed',
-      payment_status: 'paid',
-      payment_method: params.payment_method,
-      paid_amount: finalPaid,
-      notes: finalNotesWithGstin,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (params.discount_amount !== undefined) updatePayload.discount_amount = params.discount_amount;
-    if (params.cgst_amount !== undefined) updatePayload.cgst_amount = params.cgst_amount;
-    if (params.sgst_amount !== undefined) updatePayload.sgst_amount = params.sgst_amount;
-    if (params.grand_total !== undefined) updatePayload.grand_total = params.grand_total;
-    if (params.round_off !== undefined) updatePayload.round_off = params.round_off;
-    if (params.payable_amount !== undefined) updatePayload.payable_amount = params.payable_amount;
-
-    if (isSupabaseConfigured) {
-      try {
-        const payRecord = {
-          id: 'pay-' + Date.now(),
-          order_id: orderId,
-          payment_method: params.payment_method,
-          amount: params.amount,
-          reference_number: params.reference_number || `TXN-${Date.now()}`,
-          created_at: new Date().toISOString(),
-        };
-        await supabase.from('payments').insert([payRecord]);
-
-        const { data: updated, error } = await supabase
-          .from('orders')
-          .update(updatePayload)
-          .eq('id', orderId)
-          .eq('restaurant_id', target.restaurant_id)
-          .select('*, items:order_items(*), payments:payments(*), kots:kots(*, items:kot_items(*))')
-          .single();
-
-        if (target.table_id) {
-          await this.releaseTableIfSafe(target.table_id, orderId);
-        }
-
-        if (error) {
-          console.warn('Supabase closeAndSettleOrder update error:', error);
-          throw error;
-        }
-
-        if (updated) {
-          clearOrdersCache(target.restaurant_id);
-          const localOrders = mockStorage.getOrders(target.restaurant_id);
-          const orderIndex = localOrders.findIndex((o) => o.id === orderId);
-          if (orderIndex !== -1) {
-            localOrders[orderIndex] = { ...localOrders[orderIndex], ...updated, payment_method: params.payment_method };
-          } else {
-            localOrders.unshift({ ...updated, payment_method: params.payment_method });
-          }
-          mockStorage.saveOrders(localOrders, target.restaurant_id);
-          await this.getOrders(target.restaurant_id, true);
-          return {
-            ...updated,
-            payment_method: params.payment_method,
-            order_source: resolveOrderSource(updated),
-            subtotal: getOrderSubtotal(updated),
-            discount_type: params.discount_type,
-            discount_value: params.discount_value,
-            taxable_amount: params.taxable_amount,
-          } as Order;
-        }
-      } catch (e) {
-        console.warn('Supabase closeAndSettleOrder failed, falling back to local cache:', e);
-      }
-    }
-
-    const localOrders = mockStorage.getOrders();
-    const idx = localOrders.findIndex((o) => o.id === orderId);
-    if (idx !== -1) {
-      localOrders[idx] = {
-        ...localOrders[idx],
-        ...updatePayload,
-        payment_method: params.payment_method,
-        discount_type: params.discount_type,
-        discount_value: params.discount_value,
-        taxable_amount: params.taxable_amount,
-      };
-      if (!localOrders[idx].payments) localOrders[idx].payments = [];
-      localOrders[idx].payments!.push({
-        id: 'pay-' + Date.now(),
-        order_id: orderId,
-        payment_method: params.payment_method,
-        amount: params.amount,
-        reference_number: params.reference_number || `TXN-${Date.now()}`,
-        created_at: new Date().toISOString(),
-      });
-      mockStorage.saveOrders(localOrders);
-      if (target.table_id) {
-        await tableService.updateTableStatus(target.table_id, 'available');
-      }
-      return localOrders[idx];
-    }
-    return target;
+    return this.closeAndPayOrder({
+      orderId,
+      paymentMethod: params.payment_method,
+      paymentReceived: true,
+      amountPaid: params.amount,
+      transactionReference: params.reference_number,
+      discountType: params.discount_type,
+      discountValue: params.discount_value,
+      discountAmount: params.discount_amount,
+      taxableAmount: params.taxable_amount,
+      cgstAmount: params.cgst_amount,
+      sgstAmount: params.sgst_amount,
+      grandTotal: params.grand_total,
+      roundOff: params.round_off,
+      payableAmount: params.payable_amount,
+      customer_gstin: params.customer_gstin,
+      splitPayments: params.splitPayments,
+    });
   },
 
   /**

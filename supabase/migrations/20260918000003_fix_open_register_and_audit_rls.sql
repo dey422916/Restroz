@@ -3,9 +3,9 @@
 -- DESCRIPTION:
 --   1. Ensures register_date has DEFAULT CURRENT_DATE on public.day_registers.
 --   2. Ensures column parity (opening_cash, opening_cash_float, etc.) with safe defaults.
---   3. Safely auto-closes duplicate legacy open registers (if any) and creates partial
---      unique index idx_single_open_day_register_per_restaurant.
---   4. Creates atomic RPC public.open_day_register(...) for one-transaction execution
+--   3. Strictly validates no duplicate open registers exist before creating the partial
+--      unique index idx_single_open_day_register_per_restaurant (fails safe with no automatic data modification).
+--   4. Creates atomic RPC public.open_day_register(...) for all-or-nothing execution
 --      (validation, open register insertion, and audit logging with server-derived identity).
 --   5. Hardens RLS policies for day_registers and audit_logs.
 -- ============================================================================
@@ -36,32 +36,21 @@ ALTER TABLE public.day_registers
 ALTER TABLE public.day_registers
     ALTER COLUMN opened_by SET DEFAULT 'Admin';
 
--- 2. SAFE PRE-INDEX REMEDIATION & PREVENT DUPLICATE OPEN REGISTERS
--- If any restaurant has multiple 'open' registers from past crashes, auto-close older ones cleanly.
+-- 2. STRICT DUPLICATE VALIDATION & UNIQUE INDEX CREATION
+-- Does NOT delete, close, or modify any existing register data.
+-- If duplicates exist, the migration halts with an informative error prompting manual review.
 DO $$
-DECLARE
-    r_dup RECORD;
 BEGIN
-    FOR r_dup IN
-        SELECT id
-        FROM (
-            SELECT id,
-                   ROW_NUMBER() OVER (PARTITION BY restaurant_id ORDER BY opened_at DESC, created_at DESC) AS rn
-            FROM public.day_registers
-            WHERE status = 'open'
-        ) sub
-        WHERE sub.rn > 1
-    LOOP
-        UPDATE public.day_registers
-        SET status = 'closed',
-            closed_at = COALESCE(closed_at, NOW()),
-            notes = CASE
-                WHEN notes IS NULL OR notes = '' THEN 'Auto-closed legacy duplicate open register during index creation'
-                ELSE notes || ' | Auto-closed legacy duplicate open register'
-            END,
-            updated_at = NOW()
-        WHERE id = r_dup.id;
-    END LOOP;
+    IF EXISTS (
+        SELECT 1
+        FROM public.day_registers
+        WHERE status = 'open'
+        GROUP BY restaurant_id
+        HAVING COUNT(*) > 1
+    ) THEN
+        RAISE EXCEPTION
+        'Cannot create single-open-register constraint: duplicate open registers exist for one or more restaurants. Please run the duplicate-detection query and resolve them manually before applying this migration.';
+    END IF;
 END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_single_open_day_register_per_restaurant
@@ -114,8 +103,10 @@ CREATE POLICY "Tenant Insert Audit Logs" ON public.audit_logs
     );
 
 -- 6. ATOMIC OPEN DAY REGISTER RPC
--- Strictly validates auth.uid(), role, subscription, locks for existing open shifts,
--- assigns server-verified opened_by identity, and logs the audit event in one transaction.
+-- Truly atomic: register creation + audit logging inside one transaction.
+-- If any step fails (including audit log creation), the entire transaction rolls back.
+-- Server-derived identity from auth.uid() prevents client impersonation.
+-- Catches unique_violation (23505) gracefully for concurrent attempts.
 DROP FUNCTION IF EXISTS public.open_day_register(UUID, NUMERIC, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.open_day_register(UUID, NUMERIC, TEXT);
 
@@ -141,13 +132,13 @@ DECLARE
     v_clean_cash NUMERIC(10, 2);
     v_open_by_final TEXT;
 BEGIN
-    -- 1. Strict Authentication Check (Derived securely from JWT)
+    -- 1. Strict Authentication Check (Derived securely from JWT auth.uid())
     v_user_id := auth.uid();
     IF v_user_id IS NULL AND (auth.jwt() ->> 'role' <> 'service_role' AND auth.role() <> 'service_role') THEN
         RAISE EXCEPTION 'Authentication required. Your session has expired. Please login again.';
     END IF;
 
-    -- 2. Authorization Check (Must be SUPER_ADMIN or STAFF/ADMIN of the target restaurant)
+    -- 2. Authorization Check (Must be SUPER_ADMIN or STAFF/ADMIN of target restaurant)
     v_is_authorized := (auth.jwt() ->> 'role' = 'service_role' OR auth.role() = 'service_role')
                        OR public.is_super_admin()
                        OR public.is_restaurant_member(p_restaurant_id, 'STAFF');
@@ -171,7 +162,7 @@ BEGIN
         RAISE EXCEPTION 'You don''t have any active subscription';
     END IF;
 
-    -- 4. Determine Restaurant Local Timezone & Date
+    -- 4. Determine Restaurant Local Timezone & Date (Default to Asia/Kolkata)
     SELECT COALESCE(NULLIF(TRIM(timezone), ''), 'Asia/Kolkata') INTO v_tz
     FROM public.restaurants
     WHERE id = p_restaurant_id;
@@ -190,7 +181,7 @@ BEGIN
         RAISE EXCEPTION 'A register is already OPEN for this restaurant. Please close the active shift before opening a new register.';
     END IF;
 
-    -- 6. Prepare Payload & Resolve Server-Side User Identity
+    -- 6. Prepare Payload & Resolve Server-Side User Identity (Zero Client Impersonation)
     v_clean_cash := GREATEST(0.0, COALESCE(p_opening_cash, 0.0));
 
     IF v_user_id IS NOT NULL THEN
@@ -203,84 +194,84 @@ BEGIN
         v_open_by_final := 'Admin';
     END IF;
 
-    -- 7. Insert New Day Register
-    INSERT INTO public.day_registers (
-        id,
-        restaurant_id,
-        register_date,
-        status,
-        opening_cash,
-        opening_cash_float,
-        cash_sales,
-        upi_sales,
-        card_sales,
-        other_sales,
-        total_sales,
-        total_orders,
-        total_discount,
-        total_tax,
-        expected_cash,
-        actual_cash,
-        difference,
-        notes,
-        opened_at,
-        opened_by,
-        created_at,
-        updated_at
-    ) VALUES (
-        'reg-' || uuid_generate_v4()::TEXT,
-        p_restaurant_id,
-        v_local_date,
-        'open',
-        v_clean_cash,
-        v_clean_cash,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0,
-        0.0,
-        0.0,
-        v_clean_cash,
-        0.0,
-        0.0,
-        NULLIF(TRIM(p_notes), ''),
-        NOW(),
-        v_open_by_final,
-        NOW(),
-        NOW()
-    )
-    RETURNING * INTO v_new_register;
-
-    -- 8. Insert Audit Log
+    -- 7. Insert New Day Register (Protected by Unique Constraint against concurrency)
     BEGIN
-        INSERT INTO public.audit_logs (
+        INSERT INTO public.day_registers (
+            id,
             restaurant_id,
-            user_id,
-            action,
-            entity_type,
-            entity_id,
-            new_values,
-            created_at
+            register_date,
+            status,
+            opening_cash,
+            opening_cash_float,
+            cash_sales,
+            upi_sales,
+            card_sales,
+            other_sales,
+            total_sales,
+            total_orders,
+            total_discount,
+            total_tax,
+            expected_cash,
+            actual_cash,
+            difference,
+            notes,
+            opened_at,
+            opened_by,
+            created_at,
+            updated_at
         ) VALUES (
+            'reg-' || uuid_generate_v4()::TEXT,
             p_restaurant_id,
-            v_user_id,
-            'REGISTER_OPENED',
-            'day_register',
-            v_new_register.id,
-            jsonb_build_object(
-                'restaurant_id', p_restaurant_id,
-                'register_date', v_new_register.register_date,
-                'opening_cash_float', v_clean_cash,
-                'opened_by', v_open_by_final
-            ),
+            v_local_date,
+            'open',
+            v_clean_cash,
+            v_clean_cash,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0,
+            0.0,
+            0.0,
+            v_clean_cash,
+            0.0,
+            0.0,
+            NULLIF(TRIM(p_notes), ''),
+            NOW(),
+            v_open_by_final,
+            NOW(),
             NOW()
-        );
+        )
+        RETURNING * INTO v_new_register;
     EXCEPTION
-        WHEN OTHERS THEN
-            RAISE WARNING 'Audit log insertion in open_day_register warning: %', SQLERRM;
+        WHEN unique_violation THEN
+            RAISE EXCEPTION 'A register is already OPEN for this restaurant. Please close the active shift before opening a new register.';
     END;
+
+    -- 8. Insert Audit Log (Must succeed atomically; failure will roll back entire transaction)
+    INSERT INTO public.audit_logs (
+        restaurant_id,
+        user_id,
+        action,
+        entity_type,
+        entity_id,
+        new_values,
+        created_at
+    ) VALUES (
+        p_restaurant_id,
+        v_user_id,
+        'REGISTER_OPENED',
+        'day_register',
+        v_new_register.id,
+        jsonb_build_object(
+            'restaurant_id', p_restaurant_id,
+            'register_date', v_new_register.register_date,
+            'opening_cash_float', v_clean_cash,
+            'opened_by', v_open_by_final
+        ),
+        NOW()
+    );
 
     RETURN v_new_register;
 END;

@@ -3,10 +3,10 @@
 -- DESCRIPTION:
 --   1. Ensures register_date has DEFAULT CURRENT_DATE on public.day_registers.
 --   2. Ensures column parity (opening_cash, opening_cash_float, etc.) with safe defaults.
---   3. Adds partial unique index idx_single_open_day_register_per_restaurant
---      to strictly prevent multiple active 'open' registers per restaurant at DB level.
+--   3. Safely auto-closes duplicate legacy open registers (if any) and creates partial
+--      unique index idx_single_open_day_register_per_restaurant.
 --   4. Creates atomic RPC public.open_day_register(...) for one-transaction execution
---      (validation, open register insertion, and audit logging).
+--      (validation, open register insertion, and audit logging with server-derived identity).
 --   5. Hardens RLS policies for day_registers and audit_logs.
 -- ============================================================================
 
@@ -36,8 +36,34 @@ ALTER TABLE public.day_registers
 ALTER TABLE public.day_registers
     ALTER COLUMN opened_by SET DEFAULT 'Admin';
 
--- 2. PREVENT DUPLICATE OPEN REGISTERS AT DATABASE LEVEL
--- Note: status in day_registers uses lowercase 'open' / 'closed'
+-- 2. SAFE PRE-INDEX REMEDIATION & PREVENT DUPLICATE OPEN REGISTERS
+-- If any restaurant has multiple 'open' registers from past crashes, auto-close older ones cleanly.
+DO $$
+DECLARE
+    r_dup RECORD;
+BEGIN
+    FOR r_dup IN
+        SELECT id
+        FROM (
+            SELECT id,
+                   ROW_NUMBER() OVER (PARTITION BY restaurant_id ORDER BY opened_at DESC, created_at DESC) AS rn
+            FROM public.day_registers
+            WHERE status = 'open'
+        ) sub
+        WHERE sub.rn > 1
+    LOOP
+        UPDATE public.day_registers
+        SET status = 'closed',
+            closed_at = COALESCE(closed_at, NOW()),
+            notes = CASE
+                WHEN notes IS NULL OR notes = '' THEN 'Auto-closed legacy duplicate open register during index creation'
+                ELSE notes || ' | Auto-closed legacy duplicate open register'
+            END,
+            updated_at = NOW()
+        WHERE id = r_dup.id;
+    END LOOP;
+END $$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_single_open_day_register_per_restaurant
     ON public.day_registers (restaurant_id)
     WHERE status = 'open';
@@ -88,13 +114,15 @@ CREATE POLICY "Tenant Insert Audit Logs" ON public.audit_logs
     );
 
 -- 6. ATOMIC OPEN DAY REGISTER RPC
--- Performs authentication validation, role validation, subscription check,
--- duplicate check, day_register creation, and audit logging in a single transaction.
+-- Strictly validates auth.uid(), role, subscription, locks for existing open shifts,
+-- assigns server-verified opened_by identity, and logs the audit event in one transaction.
+DROP FUNCTION IF EXISTS public.open_day_register(UUID, NUMERIC, TEXT, TEXT);
+DROP FUNCTION IF EXISTS public.open_day_register(UUID, NUMERIC, TEXT);
+
 CREATE OR REPLACE FUNCTION public.open_day_register(
     p_restaurant_id UUID,
     p_opening_cash NUMERIC DEFAULT 0.0,
-    p_notes TEXT DEFAULT NULL,
-    p_opened_by TEXT DEFAULT NULL
+    p_notes TEXT DEFAULT NULL
 )
 RETURNS public.day_registers
 LANGUAGE plpgsql
@@ -106,12 +134,14 @@ DECLARE
     v_user_name TEXT;
     v_is_authorized BOOLEAN;
     v_has_subscription BOOLEAN;
+    v_tz TEXT;
+    v_local_date DATE;
     v_existing_id TEXT;
     v_new_register public.day_registers;
     v_clean_cash NUMERIC(10, 2);
     v_open_by_final TEXT;
 BEGIN
-    -- 1. Strict Authentication Check
+    -- 1. Strict Authentication Check (Derived securely from JWT)
     v_user_id := auth.uid();
     IF v_user_id IS NULL AND (auth.jwt() ->> 'role' <> 'service_role' AND auth.role() <> 'service_role') THEN
         RAISE EXCEPTION 'Authentication required. Your session has expired. Please login again.';
@@ -129,18 +159,26 @@ BEGIN
     -- 3. Active Subscription Check
     SELECT EXISTS (
         SELECT 1
-        FROM public.restaurant_subscriptions rs
-        JOIN public.subscription_plans sp ON sp.id = rs.plan_id
-        WHERE rs.restaurant_id = p_restaurant_id
-          AND rs.status IN ('ACTIVE', 'TRIAL')
-          AND (rs.expires_at IS NULL OR rs.expires_at > NOW())
+        FROM public.restaurant_subscriptions s
+        JOIN public.subscription_plans p ON s.plan_id = p.id
+        WHERE s.restaurant_id = p_restaurant_id
+          AND LOWER(s.status) IN ('active', 'trial')
+          AND s.start_date <= NOW()
+          AND (s.end_date IS NULL OR s.end_date >= NOW())
     ) INTO v_has_subscription;
 
     IF NOT v_has_subscription AND NOT public.is_super_admin() THEN
         RAISE EXCEPTION 'You don''t have any active subscription';
     END IF;
 
-    -- 4. Check for Existing Open Register (Row Lock via FOR UPDATE)
+    -- 4. Determine Restaurant Local Timezone & Date
+    SELECT COALESCE(NULLIF(TRIM(timezone), ''), 'Asia/Kolkata') INTO v_tz
+    FROM public.restaurants
+    WHERE id = p_restaurant_id;
+
+    v_local_date := (NOW() AT TIME ZONE COALESCE(v_tz, 'Asia/Kolkata'))::DATE;
+
+    -- 5. Check for Existing Open Register with Row Lock (FOR UPDATE)
     SELECT id INTO v_existing_id
     FROM public.day_registers
     WHERE restaurant_id = p_restaurant_id
@@ -152,14 +190,12 @@ BEGIN
         RAISE EXCEPTION 'A register is already OPEN for this restaurant. Please close the active shift before opening a new register.';
     END IF;
 
-    -- 5. Prepare Payload
+    -- 6. Prepare Payload & Resolve Server-Side User Identity
     v_clean_cash := GREATEST(0.0, COALESCE(p_opening_cash, 0.0));
 
-    -- Determine user display name for opened_by
-    IF p_opened_by IS NOT NULL AND TRIM(p_opened_by) <> '' THEN
-        v_open_by_final := TRIM(p_opened_by);
-    ELSIF v_user_id IS NOT NULL THEN
-        SELECT COALESCE(full_name, email, 'Staff') INTO v_user_name
+    IF v_user_id IS NOT NULL THEN
+        SELECT COALESCE(NULLIF(TRIM(full_name), ''), NULLIF(TRIM(email), ''), 'Staff')
+        INTO v_user_name
         FROM public.profiles
         WHERE id = v_user_id;
         v_open_by_final := COALESCE(v_user_name, 'Staff');
@@ -167,7 +203,7 @@ BEGIN
         v_open_by_final := 'Admin';
     END IF;
 
-    -- 6. Insert New Day Register
+    -- 7. Insert New Day Register
     INSERT INTO public.day_registers (
         id,
         restaurant_id,
@@ -194,7 +230,7 @@ BEGIN
     ) VALUES (
         'reg-' || uuid_generate_v4()::TEXT,
         p_restaurant_id,
-        CURRENT_DATE,
+        v_local_date,
         'open',
         v_clean_cash,
         v_clean_cash,
@@ -217,7 +253,7 @@ BEGIN
     )
     RETURNING * INTO v_new_register;
 
-    -- 7. Insert Audit Log
+    -- 8. Insert Audit Log
     BEGIN
         INSERT INTO public.audit_logs (
             restaurant_id,
@@ -243,7 +279,6 @@ BEGIN
         );
     EXCEPTION
         WHEN OTHERS THEN
-            -- Non-fatal to audit logging failure inside transaction
             RAISE WARNING 'Audit log insertion in open_day_register warning: %', SQLERRM;
     END;
 
@@ -252,5 +287,5 @@ END;
 $$;
 
 -- Grant execution permissions
-REVOKE ALL ON FUNCTION public.open_day_register(UUID, NUMERIC, TEXT, TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.open_day_register(UUID, NUMERIC, TEXT, TEXT) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION public.open_day_register(UUID, NUMERIC, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.open_day_register(UUID, NUMERIC, TEXT) TO authenticated, service_role;

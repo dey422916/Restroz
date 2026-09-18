@@ -286,11 +286,16 @@ export const dayRegisterService = {
           p_restaurant_id: targetRestId,
           p_opening_cash: cleanFloat,
           p_notes: params.notes || null,
-          p_opened_by: params.opened_by || null,
         });
 
         if (rpcErr) {
-          if (!rpcErr.message.includes('function') && !rpcErr.message.includes('not found') && !rpcErr.message.includes('schema')) {
+          const isMissingFunction =
+            rpcErr.code === 'PGRST202' ||
+            rpcErr.code === '42883' ||
+            rpcErr.message.toLowerCase().includes('could not find the function') ||
+            (rpcErr.message.toLowerCase().includes('function') && rpcErr.message.toLowerCase().includes('not found'));
+
+          if (!isMissingFunction) {
             console.error({
               operation: 'open_day_register_rpc',
               code: rpcErr.code,
@@ -315,16 +320,18 @@ export const dayRegisterService = {
             expected_cash: Number(r.expected_cash ?? cleanFloat),
             notes: r.notes || undefined,
             opened_at: r.opened_at || now.toISOString(),
-            opened_by: r.opened_by || params.opened_by || 'Admin',
+            opened_by: r.opened_by || 'Staff',
           };
           rpcHandledAudit = true;
         }
       } catch (rpcEx: any) {
         if (
           rpcEx.message?.includes('already OPEN') ||
+          rpcEx.message?.includes('already open') ||
           rpcEx.message?.includes('subscription') ||
           rpcEx.message?.includes('session') ||
-          rpcEx.message?.includes('Access denied')
+          rpcEx.message?.includes('Access denied') ||
+          rpcEx.message?.includes('Authentication required')
         ) {
           throw rpcEx;
         }

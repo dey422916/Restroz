@@ -299,10 +299,10 @@ export default function SuperAdminLayout() {
         </View>
 
         {/* Bottom Margin for Mobile to prevent Android navigation bar overlap */}
-        {isMobile && (
+        {isMobile && Platform.OS !== 'web' && insets.bottom > 0 && (
           <View
             style={{
-              height: Math.max(insets.bottom, 48),
+              height: insets.bottom,
               backgroundColor: '#000000',
               width: '100%',
             }}

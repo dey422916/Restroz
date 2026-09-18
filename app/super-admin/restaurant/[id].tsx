@@ -929,7 +929,7 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
           <View style={{ flex: 1, minWidth: 0, width: isMobile ? '100%' : 'auto' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
-                <Text style={styles.restaurantHeroName} numberOfLines={1}>{restaurant.name}</Text>
+                <Text style={styles.restaurantHeroName} numberOfLines={2}>{restaurant.name}</Text>
                 <View
                   style={[
                     styles.badge,
@@ -1040,7 +1040,7 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
         {/* Left Column: Active Subscription & Members */}
         <View style={[styles.col, isMobile && styles.colMobile]}>
           {/* Active Subscription Panel */}
-          <View style={styles.panel}>
+          <View style={[styles.panel, isMobile && styles.panelMobile]}>
             <View style={styles.panelHeader}>
               <Text style={styles.panelTitle}>Active Subscription</Text>
               {activeSub && (
@@ -1101,7 +1101,7 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
           </View>
 
           {/* Authorized Members */}
-          <View style={[styles.panel, { marginTop: 20 }]}>
+          <View style={[styles.panel, isMobile && styles.panelMobile, { marginTop: 20 }]}>
             <View style={styles.panelHeader}>
               <Text style={styles.panelTitle}>Authorized Members ({members.length})</Text>
               <TouchableOpacity
@@ -1201,7 +1201,7 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
         {/* Right Column: Subscription History & Payments */}
         <View style={[styles.col, isMobile && styles.colMobile]}>
           {/* Payments Panel */}
-          <View style={styles.panel}>
+          <View style={[styles.panel, isMobile && styles.panelMobile]}>
             <View style={styles.panelHeader}>
               <Text style={styles.panelTitle}>Payment History</Text>
               <TouchableOpacity
@@ -1236,7 +1236,7 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
           </View>
 
           {/* Subscription History */}
-          <View style={[styles.panel, { marginTop: 20 }]}>
+          <View style={[styles.panel, isMobile && styles.panelMobile, { marginTop: 20 }]}>
             <View style={styles.panelHeader}>
               <Text style={styles.panelTitle}>Subscription History</Text>
             </View>
@@ -1276,7 +1276,7 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
       </View>
 
       {/* Danger Zone Panel */}
-      <View style={[styles.panel, styles.dangerZonePanel]}>
+      <View style={[styles.panel, isMobile && styles.panelMobile, styles.dangerZonePanel]}>
         <View style={styles.panelHeader}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text style={{ fontSize: 20 }}>⚠️</Text>
@@ -2857,9 +2857,6 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   statCardMobile: {
-    flex: 0,
-    flexGrow: 0,
-    flexShrink: 0,
     width: '48%',
     flexDirection: 'row',
     alignItems: 'center',
@@ -2886,23 +2883,23 @@ const styles = StyleSheet.create({
   },
   twoCol: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 20,
     width: '100%',
   },
   twoColMobile: {
     flexDirection: 'column',
-    gap: 20,
+    gap: 16,
     width: '100%',
   },
   col: {
     flex: 1,
-    minWidth: 0,
+    minWidth: 300,
+    width: '100%',
   },
   colMobile: {
-    flex: 0,
-    flexGrow: 0,
-    flexShrink: 0,
     width: '100%',
+    minWidth: '100%',
   },
   panel: {
     backgroundColor: '#FFFFFF',
@@ -2911,6 +2908,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
     width: '100%',
+  },
+  panelMobile: {
+    padding: 14,
   },
   panelHeader: {
     flexDirection: 'row',

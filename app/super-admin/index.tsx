@@ -415,9 +415,6 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   colMobile: {
-    flex: 0,
-    flexGrow: 0,
-    flexShrink: 0,
     width: '100%',
   },
   panel: {

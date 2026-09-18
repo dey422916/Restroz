@@ -351,8 +351,15 @@ export default function OrdersScreen() {
   // Open Edit Modal
   const openEditModal = (ord: Order) => {
     markAsSeen(ord.id);
+    if (ord.payment_status === 'paid' || ord.status === 'completed') {
+      showAlert(
+        'Editing Locked',
+        'Cannot edit an order that is already completed or paid.'
+      );
+      return;
+    }
     if (isDispatchedDeliveryOrder(ord)) {
-      Alert.alert(
+      showAlert(
         'Modification Locked',
         'This delivery/online order has already been dispatched. Adding or modifying items is not allowed from the admin panel.'
       );
@@ -394,7 +401,7 @@ export default function OrdersScreen() {
   // Add Product to Edit list
   const handleAddProductToEdit = (prod: Product) => {
     if (isDispatchedDeliveryOrder(editOrderModal)) {
-      Alert.alert(
+      showAlert(
         'Adding Items Locked',
         'Items cannot be added to a dispatched delivery or online order.'
       );
@@ -439,7 +446,7 @@ export default function OrdersScreen() {
       const origItem = editOrderModal?.items?.find((i) => i.product_id === productId);
       const origQty = origItem ? Number(origItem.quantity) || 0 : 0;
       if (newQty > origQty) {
-        Alert.alert(
+        showAlert(
           'Action Not Allowed',
           'Cannot increase item quantities on a dispatched delivery or online order.'
         );
@@ -508,8 +515,13 @@ export default function OrdersScreen() {
   // Save Edit Order
   const handleSaveEditOrder = async () => {
     if (!editOrderModal) return;
+    if (editOrderModal.payment_status === 'paid' || editOrderModal.status === 'completed') {
+      showAlert('Editing Locked', 'Cannot edit an order that is already completed or paid.');
+      setEditOrderModal(null);
+      return;
+    }
     if (editItems.length === 0) {
-      Alert.alert('Empty Order', 'An order must contain at least one item.');
+      showAlert('Empty Order', 'An order must contain at least one item.');
       return;
     }
 
@@ -521,7 +533,7 @@ export default function OrdersScreen() {
         return prev === undefined || (Number(i.quantity) || 0) > prev;
       });
       if (hasAddedItems) {
-        Alert.alert(
+        showAlert(
           'Adding Items Locked',
           'Adding new items or increasing quantities is not permitted for dispatched delivery and online orders.'
         );
@@ -531,11 +543,11 @@ export default function OrdersScreen() {
 
     if (editCustomerPhone.trim()) {
       if (!isValidIndianPhone(editCustomerPhone)) {
-        Alert.alert('Invalid Phone Number', 'Enter a valid 10-digit Indian mobile number.');
+        showAlert('Invalid Phone Number', 'Enter a valid 10-digit Indian mobile number.');
         return;
       }
     } else if (editOrderModal.order_type === 'delivery') {
-      Alert.alert('Phone Required', 'Customer contact phone number is required for delivery orders.');
+      showAlert('Phone Required', 'Customer contact phone number is required for delivery orders.');
       return;
     }
 
@@ -579,7 +591,7 @@ export default function OrdersScreen() {
       clearKotsCache(updated.restaurant_id || activeRestaurantId);
       setOrders((prev) => prev.map((o) => (o.id === updated.id ? { ...o, ...updated } : o)));
 
-      Alert.alert(
+      showAlert(
         'Order Updated',
         `Order #${updated.order_number} has been updated.\nOrder items and bill recalculated successfully.${
           (updated as any).latest_kot ? '\n\n📄 Kitchen KOT ticket for new items generated & printed.' : ''
@@ -588,7 +600,7 @@ export default function OrdersScreen() {
       setEditOrderModal(null);
       await loadData(true);
     } catch (err: any) {
-      Alert.alert('Update Failed', err.message);
+      showAlert('Update Failed', err?.message || 'Failed to update order.');
     } finally {
       setSavingEdit(false);
     }
@@ -1801,12 +1813,26 @@ export default function OrdersScreen() {
 
                           {/* ROW 2: 3 Buttons (Edit, Cancel, Settle) */}
                           <View style={[styles.cardActionRow, { marginTop: 6 }]}>
-                            {isDispatchedDeliveryOrder(order) ? (
+                            {/* BUTTON: Edit (Disabled if completed or paid) */}
+                            {order.payment_status === 'paid' || order.status === 'completed' ? (
                               <TouchableOpacity
                                 style={[styles.gridActionBtn, styles.actionDisabledBg]}
                                 disabled={true}
                                 onPress={() =>
-                                  Alert.alert(
+                                  showAlert(
+                                    'Editing Locked',
+                                    'Cannot edit an order that is already completed or paid.'
+                                  )
+                                }
+                              >
+                                <Text style={styles.actionBtnTextMuted}>🔒 Edit</Text>
+                              </TouchableOpacity>
+                            ) : isDispatchedDeliveryOrder(order) ? (
+                              <TouchableOpacity
+                                style={[styles.gridActionBtn, styles.actionDisabledBg]}
+                                disabled={true}
+                                onPress={() =>
+                                  showAlert(
                                     'Adding Items Locked',
                                     'This delivery/online order is already dispatched. Adding items is not permitted.'
                                   )

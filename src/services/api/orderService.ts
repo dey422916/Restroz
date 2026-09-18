@@ -1389,6 +1389,8 @@ export const orderService = {
         p_round_off: calculated.roundOff,
         p_payable_amount: calculated.payableAmount,
         p_reason: reason || 'Active order edited from POS',
+        p_discount_type: effectiveDiscountType,
+        p_discount_value: effectiveDiscountValue,
       });
 
       if (rpcErr) {

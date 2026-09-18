@@ -546,8 +546,10 @@ export default function OrdersScreen() {
         orderId: editOrderModal.id,
         updatedItems: editItems,
         customerName: editCustomerName.trim(),
-        customerPhone: editCustomerPhone.trim() ? normalizeIndianPhone(editCustomerPhone.trim()) : undefined,
+        customerPhone: editCustomerPhone.trim() ? normalizeIndianPhone(editCustomerPhone.trim()) : "",
         deliveryAddress: editDeliveryAddress.trim(),
+        deliveryLandmark: editOrderModal.delivery_landmark || undefined,
+        deliveryCharge: editOrderModal.delivery_charge || 0,
         tableId: editTableId || undefined,
         tableNumber: selectedTbl?.table_number || editOrderModal.table_number,
         notes: editNotes.trim()

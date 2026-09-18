@@ -36,28 +36,35 @@ export const subscriptionService = {
         });
 
         if (!rpcErr && rpcRes && typeof rpcRes === 'object') {
-          const hasSub = (rpcRes as any).has_subscription ?? (rpcRes as any).is_active;
-          const isAllowed = Boolean((rpcRes as any).is_active ?? hasSub);
-          if (hasSub === false || (rpcRes as any).status === 'none') {
+          const resObj = rpcRes as any;
+          const isExplicitlyAllowed = resObj.is_allowed !== undefined ? Boolean(resObj.is_allowed) : (resObj.is_active !== undefined ? Boolean(resObj.is_active) : (resObj.has_subscription !== undefined ? Boolean(resObj.has_subscription) : undefined));
+          const hasSub = resObj.has_subscription !== undefined ? Boolean(resObj.has_subscription) : (resObj.is_active !== undefined ? Boolean(resObj.is_active) : (resObj.is_allowed !== undefined ? Boolean(resObj.is_allowed) : undefined));
+          const subStatus = resObj.status || (isExplicitlyAllowed ? 'active' : 'none');
+          const restStatus = resObj.restaurant_status || (isExplicitlyAllowed ? 'ACTIVE' : 'INACTIVE');
+          const daysRem = typeof resObj.days_remaining === 'number' ? resObj.days_remaining : (typeof resObj.days_left === 'number' ? resObj.days_left : (isExplicitlyAllowed ? 30 : 0));
+
+          if (isExplicitlyAllowed !== undefined || hasSub !== undefined) {
+            const isAllowed = isExplicitlyAllowed !== undefined ? isExplicitlyAllowed : Boolean(hasSub);
+            if (!isAllowed || subStatus === 'none' || subStatus === 'suspended' || subStatus === 'cancelled' || subStatus === 'expired' || restStatus === 'SUSPENDED') {
+              return {
+                isAllowed: false,
+                status: subStatus,
+                restaurantStatus: restStatus,
+                planName: resObj.plan_name || 'No Active Plan',
+                daysRemaining: daysRem,
+                endDate: resObj.end_date || null,
+                message: resObj.message || (restStatus === 'SUSPENDED' ? 'Restaurant account is suspended.' : 'No active subscription plan assigned to this restaurant.'),
+              };
+            }
+
             return {
-              isAllowed: false,
-              status: 'none',
-              restaurantStatus: (rpcRes as any).restaurant_status || 'ACTIVE',
-              planName: 'No Active Plan',
-              daysRemaining: 0,
-              endDate: null,
-              message: 'No active subscription plan assigned to this restaurant.',
-            };
-          }
-          if (hasSub !== undefined) {
-            return {
-              isAllowed,
-              status: (rpcRes as any).status || (isAllowed ? 'active' : 'none'),
-              restaurantStatus: (rpcRes as any).restaurant_status || (isAllowed ? 'ACTIVE' : 'INACTIVE'),
-              planName: (rpcRes as any).plan_name || (isAllowed ? 'Active Plan' : 'No Active Plan'),
-              daysRemaining: typeof (rpcRes as any).days_left === 'number' ? (rpcRes as any).days_left : (typeof (rpcRes as any).days_remaining === 'number' ? (rpcRes as any).days_remaining : (isAllowed ? 30 : 0)),
-              endDate: (rpcRes as any).end_date || null,
-              message: (rpcRes as any).message,
+              isAllowed: true,
+              status: subStatus,
+              restaurantStatus: restStatus,
+              planName: resObj.plan_name || 'Active Plan',
+              daysRemaining: daysRem,
+              endDate: resObj.end_date || null,
+              message: resObj.message || 'Active subscription verified',
             };
           }
         }

@@ -104,6 +104,14 @@ export default function OrdersScreen() {
     return Math.floor((windowWidth - 28 - 14) / 2);
   }, [isTwoColumn, windowWidth]);
 
+  const showAlert = (title: string, message?: string) => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.alert(message ? `${title}\n\n${message}` : title);
+    } else {
+      Alert.alert(title, message);
+    }
+  };
+
   const [ordersPage, setOrdersPage] = useState<number>(1);
   const [hasMoreOrders, setHasMoreOrders] = useState<boolean>(false);
   const [loadingMore, setLoadingMore] = useState<boolean>(false);
@@ -632,7 +640,16 @@ export default function OrdersScreen() {
     if (!cancelOrderModal) return;
     const finalReason = cancelCustomReason.trim() || cancelReasonPreset;
     if (!finalReason) {
-      Alert.alert('Reason Required', 'Please select or enter a cancellation reason.');
+      showAlert('Reason Required', 'Please select or enter a cancellation reason.');
+      return;
+    }
+
+    if (cancelOrderModal.payment_status === 'paid' || cancelOrderModal.status === 'completed') {
+      showAlert(
+        'Cannot Cancel Order',
+        'Cannot cancel an order that is already completed or paid. Please use Refund / Void workflow.'
+      );
+      setCancelOrderModal(null);
       return;
     }
 
@@ -650,7 +667,7 @@ export default function OrdersScreen() {
         }
         return prev;
       });
-      Alert.alert(
+      showAlert(
         'Order Cancelled',
         `Order #${cancelOrderModal.order_number} has been cancelled.\nInventory stock restored and table released safely.`
       );
@@ -658,7 +675,7 @@ export default function OrdersScreen() {
       setCancelCustomReason('');
       await loadData();
     } catch (err: any) {
-      Alert.alert('Cancellation Failed', err.message);
+      showAlert('Cancellation Failed', err?.message || 'Failed to cancel order.');
     } finally {
       setCancellingOrder(false);
     }
@@ -1806,12 +1823,28 @@ export default function OrdersScreen() {
                               </TouchableOpacity>
                             )}
 
-                            <TouchableOpacity
-                              style={[styles.gridActionBtn, styles.actionCancelBg]}
-                              onPress={() => setCancelOrderModal(order)}
-                            >
-                              <Text style={styles.actionBtnTextRed}>❌ Cancel</Text>
-                            </TouchableOpacity>
+                            {/* BUTTON: Cancel (Disabled once payment is verified / paid) */}
+                            {order.payment_status === 'paid' || order.status === 'completed' ? (
+                              <TouchableOpacity
+                                style={[styles.gridActionBtn, styles.actionDisabledBg]}
+                                disabled={true}
+                                onPress={() =>
+                                  showAlert(
+                                    'Cancellation Locked',
+                                    'Cannot cancel an order that is already completed or paid. Please use Refund / Void workflow.'
+                                  )
+                                }
+                              >
+                                <Text style={styles.actionBtnTextMuted}>🔒 Cancel</Text>
+                              </TouchableOpacity>
+                            ) : (
+                              <TouchableOpacity
+                                style={[styles.gridActionBtn, styles.actionCancelBg]}
+                                onPress={() => setCancelOrderModal(order)}
+                              >
+                                <Text style={styles.actionBtnTextRed}>❌ Cancel</Text>
+                              </TouchableOpacity>
+                            )}
 
                             <TouchableOpacity
                               style={[styles.gridActionBtn, styles.actionSettleBg]}

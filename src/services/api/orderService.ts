@@ -529,7 +529,7 @@ export const orderService = {
         .eq('id', user.id)
         .maybeSingle();
 
-      const userRole = profile?.role;
+      const userRole = (profile?.role || user.user_metadata?.role || '').toUpperCase();
 
       // 1. SUPER_ADMIN: Can access any order across all tenants (unless explicitly scoped by active restaurant)
       if (userRole === 'SUPER_ADMIN') {
@@ -539,27 +539,26 @@ export const orderService = {
         return true;
       }
 
-      // 2. RESTAURANT ADMIN / STAFF: Must belong to order.restaurant_id
-      if (userRole === 'ADMIN' || userRole === 'STAFF') {
-        if (requiredRestaurantId && order.restaurant_id !== requiredRestaurantId) {
-          return false;
-        }
-        const { data: membership } = await supabase
-          .from('restaurant_members')
-          .select('id, restaurant_id, is_active')
-          .eq('user_id', user.id)
-          .eq('restaurant_id', order.restaurant_id)
-          .eq('is_active', true)
-          .maybeSingle();
-
-        if (membership) {
-          return true;
-        }
+      // If requiredRestaurantId is explicitly specified and does not match order's restaurant_id, deny access
+      if (requiredRestaurantId && order.restaurant_id !== requiredRestaurantId) {
         return false;
       }
 
+      // 2. RESTAURANT MEMBER: Check active restaurant membership for order.restaurant_id
+      const { data: membership } = await supabase
+        .from('restaurant_members')
+        .select('id, restaurant_id, is_active')
+        .eq('user_id', user.id)
+        .eq('restaurant_id', order.restaurant_id)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (membership) {
+        return true;
+      }
+
       // 3. CUSTOMER: Can only access if order.customer_id === user.id
-      if (order.customer_id === user.id) {
+      if (order.customer_id && order.customer_id === user.id) {
         return true;
       }
 

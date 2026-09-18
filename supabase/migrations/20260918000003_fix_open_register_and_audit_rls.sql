@@ -3,14 +3,33 @@
 -- DESCRIPTION:
 --   1. Ensures register_date has DEFAULT CURRENT_DATE on public.day_registers.
 --   2. Ensures column parity (opening_cash, opening_cash_float, etc.) with safe defaults.
---   3. Strictly validates no duplicate open registers exist before creating the partial
---      unique index idx_single_open_day_register_per_restaurant (fails safe with no automatic data modification).
---   4. Creates atomic RPC public.open_day_register(...) for all-or-nothing execution
---      (validation, open register insertion, and audit logging with server-derived identity).
---   5. Hardens RLS policies for day_registers and audit_logs.
+--   3. Strictly validates no duplicate open registers exist BEFORE altering data/indexes.
+--   4. Purges all legacy/lingering policies on day_registers and audit_logs, then
+--      re-applies strictly hardened tenant-scoped RLS policies.
+--   5. Creates atomic RPC public.open_day_register(...) for all-or-nothing execution.
+--   6. Fully wrapped in a single transaction (BEGIN ... COMMIT) for 100% transactional safety.
 -- ============================================================================
 
--- 1. DAY REGISTERS COLUMN DEFAULTS & PARITY
+BEGIN;
+
+-- 1. STRICT PRE-FLIGHT DUPLICATE VALIDATION
+-- If duplicates exist, the transaction immediately aborts with an informative error.
+-- Zero rows are modified, deleted, or partially altered.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM public.day_registers
+        WHERE status = 'open'
+        GROUP BY restaurant_id
+        HAVING COUNT(*) > 1
+    ) THEN
+        RAISE EXCEPTION
+        'Cannot create single-open-register constraint: duplicate open registers exist for one or more restaurants. Please run the duplicate-detection query and resolve them manually before applying this migration.';
+    END IF;
+END $$;
+
+-- 2. DAY REGISTERS COLUMN DEFAULTS & PARITY
 ALTER TABLE public.day_registers
     ALTER COLUMN register_date SET DEFAULT CURRENT_DATE;
 
@@ -36,28 +55,12 @@ ALTER TABLE public.day_registers
 ALTER TABLE public.day_registers
     ALTER COLUMN opened_by SET DEFAULT 'Admin';
 
--- 2. STRICT DUPLICATE VALIDATION & UNIQUE INDEX CREATION
--- Does NOT delete, close, or modify any existing register data.
--- If duplicates exist, the migration halts with an informative error prompting manual review.
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM public.day_registers
-        WHERE status = 'open'
-        GROUP BY restaurant_id
-        HAVING COUNT(*) > 1
-    ) THEN
-        RAISE EXCEPTION
-        'Cannot create single-open-register constraint: duplicate open registers exist for one or more restaurants. Please run the duplicate-detection query and resolve them manually before applying this migration.';
-    END IF;
-END $$;
-
+-- 3. CREATE PARTIAL UNIQUE INDEX (Guaranteed safe after pre-flight check)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_single_open_day_register_per_restaurant
     ON public.day_registers (restaurant_id)
     WHERE status = 'open';
 
--- 3. AUDIT LOGS COLUMN PARITY
+-- 4. AUDIT LOGS COLUMN PARITY
 ALTER TABLE public.audit_logs
     ADD COLUMN IF NOT EXISTS entity_id TEXT,
     ADD COLUMN IF NOT EXISTS entity_type TEXT,
@@ -66,26 +69,38 @@ ALTER TABLE public.audit_logs
     ADD COLUMN IF NOT EXISTS ip_address TEXT,
     ADD COLUMN IF NOT EXISTS user_agent TEXT;
 
--- 4. HARDEN RLS POLICIES FOR DAY REGISTERS
+-- 5. PURGE ALL LEGACY POLICIES & RE-APPLY HARDENED RLS POLICIES
 ALTER TABLE public.day_registers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Tenant Staff Read Day Registers" ON public.day_registers;
+-- Dynamic drop ensures no permissive bypass policy is left active under any historical name
+DO $$
+DECLARE
+    pol RECORD;
+BEGIN
+    FOR pol IN
+        SELECT schemaname, tablename, policyname
+        FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename IN ('day_registers', 'audit_logs')
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I;', pol.policyname, pol.schemaname, pol.tablename);
+    END LOOP;
+END $$;
+
+-- Day Registers Hardened Policies
 CREATE POLICY "Tenant Staff Read Day Registers" ON public.day_registers
     FOR SELECT USING (
         public.is_super_admin() OR
         restaurant_id IN (SELECT public.get_user_restaurant_ids())
     );
 
-DROP POLICY IF EXISTS "Tenant Staff Manage Day Registers" ON public.day_registers;
 CREATE POLICY "Tenant Staff Manage Day Registers" ON public.day_registers
     FOR ALL
     USING (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'STAFF'))
     WITH CHECK (public.is_super_admin() OR public.is_restaurant_member(restaurant_id, 'STAFF'));
 
--- 5. HARDEN RLS POLICIES FOR AUDIT LOGS
-ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Tenant Admin Read Audit Logs" ON public.audit_logs;
+-- Audit Logs Hardened Policies
 CREATE POLICY "Tenant Admin Read Audit Logs" ON public.audit_logs
     FOR SELECT
     USING (
@@ -93,7 +108,6 @@ CREATE POLICY "Tenant Admin Read Audit Logs" ON public.audit_logs
         (restaurant_id IS NOT NULL AND public.is_restaurant_member(restaurant_id, 'ADMIN'))
     );
 
-DROP POLICY IF EXISTS "Tenant Insert Audit Logs" ON public.audit_logs;
 CREATE POLICY "Tenant Insert Audit Logs" ON public.audit_logs
     FOR INSERT
     WITH CHECK (
@@ -103,10 +117,6 @@ CREATE POLICY "Tenant Insert Audit Logs" ON public.audit_logs
     );
 
 -- 6. ATOMIC OPEN DAY REGISTER RPC
--- Truly atomic: register creation + audit logging inside one transaction.
--- If any step fails (including audit log creation), the entire transaction rolls back.
--- Server-derived identity from auth.uid() prevents client impersonation.
--- Catches unique_violation (23505) gracefully for concurrent attempts.
 DROP FUNCTION IF EXISTS public.open_day_register(UUID, NUMERIC, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.open_day_register(UUID, NUMERIC, TEXT);
 
@@ -280,3 +290,5 @@ $$;
 -- Grant execution permissions
 REVOKE ALL ON FUNCTION public.open_day_register(UUID, NUMERIC, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.open_day_register(UUID, NUMERIC, TEXT) TO authenticated, service_role;
+
+COMMIT;

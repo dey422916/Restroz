@@ -1278,11 +1278,11 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
       {/* Danger Zone Panel */}
       <View style={[styles.panel, isMobile && styles.panelMobile, styles.dangerZonePanel]}>
         <View style={styles.panelHeader}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={{ fontSize: 20 }}>⚠️</Text>
-            <View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+            <Text style={{ fontSize: 22 }}>⚠️</Text>
+            <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={[styles.panelTitle, { color: '#991B1B' }]}>Danger Zone</Text>
-              <Text style={{ fontSize: 12, color: '#7F1D1D', marginTop: 2 }}>
+              <Text style={{ fontSize: 12, color: '#7F1D1D', marginTop: 2, lineHeight: 16 }}>
                 Tenant lifecycle management, deactivation, and permanent database & storage purging
               </Text>
             </View>
@@ -2835,7 +2835,6 @@ const styles = StyleSheet.create({
   statsRowMobile: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
     gap: 10,
     marginBottom: 16,
     width: '100%',
@@ -2858,6 +2857,8 @@ const styles = StyleSheet.create({
   },
   statCardMobile: {
     width: '48%',
+    minWidth: '47%',
+    flexGrow: 1,
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
@@ -2883,7 +2884,6 @@ const styles = StyleSheet.create({
   },
   twoCol: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 20,
     width: '100%',
   },
@@ -2894,29 +2894,39 @@ const styles = StyleSheet.create({
   },
   col: {
     flex: 1,
-    minWidth: 300,
+    minWidth: 0,
     width: '100%',
   },
   colMobile: {
     width: '100%',
     minWidth: '100%',
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 'auto',
   },
   panel: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 20,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     width: '100%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
   },
   panelMobile: {
-    padding: 14,
+    padding: 16,
+    borderRadius: 12,
   },
   panelHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
+    gap: 8,
   },
   panelTitle: {
     fontSize: 16,
@@ -2930,7 +2940,7 @@ const styles = StyleSheet.create({
   },
   subDetailBox: {
     backgroundColor: '#F8FAFC',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -2953,7 +2963,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   subMetaItem: {
-    width: '45%',
+    width: '46%',
+    minWidth: 120,
+    flexGrow: 1,
   },
   subMetaLabel: {
     fontSize: 11,

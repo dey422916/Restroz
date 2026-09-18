@@ -988,7 +988,7 @@ export const orderService = {
               const taxRate = hasOrderTax ? (Number(i.tax_rate) || 5) : 0;
               const itemTax = hasOrderTax ? (Number(i.tax_amount) || ((unitPrice * quantity * taxRate) / 100)) : 0;
               const itemSubtotal = Number(i.subtotal) || (unitPrice * quantity);
-              const itemTotal = Number(i.total) || Number(rawItem.total_price) || (itemSubtotal + itemTax);
+              const itemTotal = itemSubtotal;
               const cgst = hasOrderTax ? (Number(rawItem.cgst_amount) || (itemTax / 2)) : 0;
               const sgst = hasOrderTax ? (Number(rawItem.sgst_amount) || (itemTax / 2)) : 0;
 
@@ -1244,7 +1244,7 @@ export const orderService = {
     // Recalculate totals using unified calculateOrderTotals
     const normalizedItems = updatedItems.map((i, idx) => {
       const qty = Number(i.quantity) || 1;
-      const unitPrice = Number(i.unit_price) || (i.total && qty ? Number(i.total) / qty : 0);
+      const unitPrice = Number(i.unit_price) || (i.subtotal && qty ? Number(i.subtotal) / qty : (i.total && qty ? Number(i.total) / qty : 0));
       const taxRate = Number(i.tax_rate) || 5;
       const itemSubtotal = qty * unitPrice;
       const taxAmount = (itemSubtotal * taxRate) / 100;
@@ -1342,7 +1342,7 @@ export const orderService = {
       const itemTax = Number(i.tax_amount) || Number(((itemSubtotal * taxRate) / 100).toFixed(2));
       const cgst = Number(rawItem.cgst_amount) || Number((itemTax / 2).toFixed(2));
       const sgst = Number(rawItem.sgst_amount) || Number((itemTax / 2).toFixed(2));
-      const itemTotal = Number(i.total) || Number((itemSubtotal + itemTax).toFixed(2));
+      const itemTotal = itemSubtotal;
 
       return {
         id: i.id?.startsWith('item-') ? i.id : `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,

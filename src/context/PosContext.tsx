@@ -215,7 +215,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           quantity: newQty,
           subtotal,
           tax_amount: taxAmount,
-          total: subtotal + taxAmount,
+          total: subtotal,
+          total_price: subtotal,
           item_notes: notes || updated[existingIdx].item_notes,
         };
         return updated;
@@ -238,7 +239,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         tax_amount: taxAmount,
         item_notes: notes,
         subtotal,
-        total: subtotal + taxAmount,
+        total: subtotal,
         image_url: product.image_url,
       };
 
@@ -261,7 +262,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             quantity,
             subtotal,
             tax_amount: taxAmount,
-            total: subtotal + taxAmount,
+            total: subtotal,
+            total_price: subtotal,
           };
         }
         return item;

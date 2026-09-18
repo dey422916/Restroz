@@ -360,7 +360,7 @@ export default function CustomerOrdersScreen() {
                           <Text style={styles.itemQty}>{item.quantity}x</Text>
                         </View>
                         <Text style={styles.itemName}>{item.product_name || 'Item'}</Text>
-                        <Text style={styles.itemPrice}>₹{formatPrice(item.total || item.unit_price * item.quantity)}</Text>
+                        <Text style={styles.itemPrice}>₹{formatPrice((Number(item.unit_price) && Number(item.quantity)) ? (Number(item.unit_price) * Number(item.quantity)) : (Number(item.subtotal) || Number(item.total) || 0))}</Text>
                       </View>
                     ))}
                   </View>

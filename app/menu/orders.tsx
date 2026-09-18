@@ -366,7 +366,7 @@ export default function CustomerOrdersScreen() {
                           </Text>
                         </View>
                         <Text style={{ fontSize: 12, fontWeight: '900', color: '#0f172a' }}>
-                          {formatCurrency(item.total || item.subtotal)}
+                          {formatCurrency((Number(item.unit_price) && Number(item.quantity)) ? (Number(item.unit_price) * Number(item.quantity)) : (Number(item.subtotal) || Number(item.total) || 0))}
                         </Text>
                       </View>
                     ))}

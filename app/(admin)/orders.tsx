@@ -354,7 +354,7 @@ export default function OrdersScreen() {
     setEditItems(
       (ord.items || []).map((i) => {
         const qty = Number(i.quantity) || 1;
-        const unitPrice = Number(i.unit_price) || (Number(i.total) && qty ? Number(i.total) / qty : 0);
+        const unitPrice = Number(i.unit_price) || (Number(i.subtotal) && qty ? Number(i.subtotal) / qty : (Number(i.total) && qty ? Number(i.total) / qty : 0));
         const subtotal = qty * unitPrice;
         return {
           ...i,
@@ -1399,7 +1399,7 @@ export default function OrdersScreen() {
                         <Text style={styles.itemQty}>{i.quantity}x</Text>
                         <Text style={styles.itemName} numberOfLines={1}>{i.product_name}</Text>
                         <Text style={styles.itemPrice}>
-                          {formatCurrency(Number(i.total) || Number((i as any).total_price) || Number(i.subtotal) || ((Number(i.unit_price) || 0) * (Number(i.quantity) || 1)))}
+                          {formatCurrency((Number(i.unit_price) && Number(i.quantity)) ? (Number(i.unit_price) * Number(i.quantity)) : (Number(i.subtotal) || Number(i.total) || 0))}
                         </Text>
                       </View>
                     ))}
@@ -1621,7 +1621,7 @@ export default function OrdersScreen() {
                             : (order.grand_total !== undefined && order.grand_total !== null
                                 ? Number(order.grand_total)
                                 : (order.items && order.items.length > 0
-                                    ? order.items.reduce((sum, item) => sum + (Number(item.total) || (Number(item.unit_price) * Number(item.quantity)) || 0), 0)
+                                    ? order.items.reduce((sum, item) => sum + ((Number(item.unit_price) * Number(item.quantity)) || Number(item.subtotal) || Number(item.total) || 0), 0)
                                     : 0))
                         )}
                       </Text>
@@ -1984,7 +1984,7 @@ export default function OrdersScreen() {
                     </View>
 
                     <Text style={styles.editItemTotal}>
-                      {formatCurrency(Number(itm.total) || Number((itm as any).total_price) || Number(itm.subtotal) || ((Number(itm.unit_price) || 0) * (Number(itm.quantity) || 1)))}
+                      {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
                     </Text>
                   </View>
                 ))}
@@ -2863,7 +2863,7 @@ export default function OrdersScreen() {
                           {itm.quantity}x {itm.product_name}
                         </Text>
                         <Text style={{ fontWeight: 'bold' }}>
-                          {formatCurrency(Number(itm.total) || Number((itm as any).total_price) || Number(itm.subtotal) || ((Number(itm.unit_price) || 0) * (Number(itm.quantity) || 1)))}
+                          {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
                         </Text>
                       </View>
                     ))}

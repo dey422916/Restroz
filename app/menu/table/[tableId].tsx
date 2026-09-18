@@ -281,7 +281,8 @@ export default function CustomerDigitalMenuScreen() {
         const copy = [...prev];
         copy[idx].quantity += 1;
         copy[idx].subtotal = copy[idx].quantity * copy[idx].unit_price;
-        copy[idx].total = copy[idx].subtotal * (1 + copy[idx].tax_rate / 100);
+        copy[idx].total = copy[idx].subtotal;
+        copy[idx].total_price = copy[idx].subtotal;
         return copy;
       }
       const unitPrice = product.discounted_price || product.price;
@@ -298,7 +299,7 @@ export default function CustomerDigitalMenuScreen() {
           tax_amount: (unitPrice * product.tax_rate) / 100,
           subtotal: unitPrice,
           total_price: unitPrice,
-          total: unitPrice * (1 + product.tax_rate / 100),
+          total: unitPrice,
           image_url: product.image_url,
         },
       ];
@@ -1870,7 +1871,7 @@ export default function CustomerDigitalMenuScreen() {
                         {itm.quantity}x
                       </Text>
                       <Text style={{ fontSize: 11, fontWeight: '700', color: '#0f172a', width: 70, textAlign: 'right' }}>
-                        {formatCurrency(Number(itm.total) || Number((itm as any).total_price) || Number(itm.subtotal) || ((Number(itm.unit_price) || 0) * (Number(itm.quantity) || 1)))}
+                        {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
                       </Text>
                     </View>
                   ))}

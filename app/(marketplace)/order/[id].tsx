@@ -312,7 +312,7 @@ export default function CustomerOrderDetailsScreen() {
                       ) : null}
                     </View>
                     <Text style={styles.itemPrice}>
-                      ₹{formatPrice(item.total || item.unit_price * item.quantity)}
+                      ₹{formatPrice((Number(item.unit_price) && Number(item.quantity)) ? (Number(item.unit_price) * Number(item.quantity)) : (Number(item.subtotal) || Number(item.total) || 0))}
                     </Text>
                   </View>
                 ))}

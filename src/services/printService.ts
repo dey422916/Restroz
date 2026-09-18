@@ -440,9 +440,13 @@ export const printService = {
 
     const itemsHtml = activeItems
       .map((item) => {
-        const rate = (Number(item.unit_price) || 0).toFixed(2);
-        const itemTotal = Number(item.total) || Number((item as any).total_price) || Number(item.subtotal) || ((Number(item.unit_price) || 0) * (Number(item.quantity) || 1));
-        const amount = itemTotal.toFixed(2);
+        const qty = Number(item.quantity) || 1;
+        const rateNum = Number(item.unit_price) || (item.subtotal ? Number(item.subtotal) / qty : 0);
+        const rate = rateNum.toFixed(2);
+        const lineAmount = (Number(item.unit_price) && Number(item.quantity))
+          ? Number(item.unit_price) * Number(item.quantity)
+          : (Number(item.subtotal) || Number(item.total) || 0);
+        const amount = lineAmount.toFixed(2);
         return `
           <tr style="border-bottom: 1px dashed #e2e8f0;">
             <td style="padding: 4px 0; font-size: 12px; font-weight: bold; line-height: 1.2;">
@@ -825,7 +829,11 @@ export const printService = {
     const itemsHtml = (order.items || [])
       .filter((i) => i.quantity > 0)
       .map((i, idx) => {
-        const rowTotal = Number(i.total) || Number((i as any).total_price) || Number(i.subtotal) || ((Number(i.unit_price) || 0) * (Number(i.quantity) || 1));
+        const qty = Number(i.quantity) || 1;
+        const unitPrice = Number(i.unit_price) || (i.subtotal ? Number(i.subtotal) / qty : 0);
+        const lineAmount = (Number(i.unit_price) && Number(i.quantity))
+          ? Number(i.unit_price) * Number(i.quantity)
+          : (Number(i.subtotal) || Number(i.total) || 0);
         return `
         <tr style="border-bottom: 1px solid #e2e8f0; ${idx % 2 === 1 ? 'background-color: #f8fafc;' : ''}">
           <td style="padding: 8px 10px; text-align: center; color: #64748b; font-weight: 600;">${idx + 1}</td>
@@ -835,8 +843,8 @@ export const printService = {
           </td>
           ${isTaxInvoice ? `<td style="padding: 8px 10px; text-align: center; color: #475569; font-size: 12px;">${(i as any).hsn_code || '996331'}</td>` : ''}
           <td style="padding: 8px 10px; text-align: center; font-weight: 800; color: #0f172a; font-size: 13px;">${i.quantity}</td>
-          <td style="padding: 8px 10px; text-align: right; color: #334155; font-size: 12.5px;">${formatCurrency(i.unit_price)}</td>
-          <td style="padding: 8px 10px; text-align: right; font-weight: 800; color: #0f172a; font-size: 13px;">${formatCurrency(rowTotal)}</td>
+          <td style="padding: 8px 10px; text-align: right; color: #334155; font-size: 12.5px;">${formatCurrency(unitPrice)}</td>
+          <td style="padding: 8px 10px; text-align: right; font-weight: 800; color: #0f172a; font-size: 13px;">${formatCurrency(lineAmount)}</td>
         </tr>`;
       })
       .join('');

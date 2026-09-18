@@ -156,7 +156,7 @@ export function getOrderSubtotal(order: Partial<Order>): number {
   if (order.items && order.items.length > 0) {
     const sum = order.items.reduce((acc, item) => {
       const qty = Number(item.quantity) || 0;
-      const unitPrice = Number(item.unit_price) || (item.total && qty ? Number(item.total) / qty : 0);
+      const unitPrice = Number(item.unit_price) || (item.subtotal && qty ? Number(item.subtotal) / qty : (item.total && qty ? Number(item.total) / qty : 0));
       return acc + (qty * unitPrice);
     }, 0);
     return roundToTwoDecimals(sum);

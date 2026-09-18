@@ -56,10 +56,13 @@ export const auditService = {
       }
 
       if (isSupabaseConfigured) {
-        const { data: userData } = await supabase.auth.getUser();
-        if (userData?.user) {
-          userId = userData.user.id;
+        const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+        const currentSession = sessionData?.session;
+        if (sessionErr || !currentSession?.user) {
+          // Unauthenticated or expired session: skip writing audit log to prevent 401 RLS violations
+          return;
         }
+        userId = currentSession.user.id;
 
         // If restaurantId is not provided in payload, resolve it from the user's active restaurant membership
         if (!restaurantId && userId) {
@@ -104,7 +107,7 @@ export const auditService = {
 
         const insertPayload: Record<string, any> = {
           restaurant_id: restaurantId,
-          user_id: userId || null,
+          user_id: userId,
           action,
           entity_type: entityType,
           entity_id: entityId || null,
@@ -115,7 +118,13 @@ export const auditService = {
 
         const { error: insErr } = await supabase.from('audit_logs').insert([insertPayload]);
         if (insErr) {
-          console.warn('Audit log write error:', insErr.message || insErr);
+          console.error({
+            operation: 'audit_log_write',
+            code: insErr.code,
+            message: insErr.message,
+            details: insErr.details,
+            hint: insErr.hint,
+          });
         }
       }
     } catch (err) {

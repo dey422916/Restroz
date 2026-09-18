@@ -12,6 +12,16 @@ export const authService = {
     try {
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       if (sessionError || !session?.user) {
+        if (sessionError) {
+          console.warn('[AUTH] getSession error in getCurrentUser:', sessionError.message);
+          if (
+            sessionError.message?.toLowerCase().includes('session') ||
+            sessionError.message?.toLowerCase().includes('token') ||
+            sessionError.message?.toLowerCase().includes('jwt')
+          ) {
+            await supabase.auth.signOut().catch(() => {});
+          }
+        }
         return null;
       }
 

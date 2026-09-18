@@ -369,11 +369,7 @@ export const marketplaceService = {
     const {
       data: { session },
     } = await supabase.auth.getSession();
-    if (session?.user?.id) return session.user.id;
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    return user?.id || null;
+    return session?.user?.id || null;
   },
 
   // 4. Customer Addresses CRUD
@@ -559,8 +555,9 @@ export const marketplaceService = {
   // 5. Create Customer Delivery Order via Server-Side Atomic RPC & Resilient Execution
   async placeDeliveryOrder(payload: DeliveryOrderPayload): Promise<Order> {
     const {
-      data: { user },
-    } = await supabase.auth.getUser();
+      data: { session },
+    } = await supabase.auth.getSession();
+    const user = session?.user;
     if (!user) throw new Error('Please log in to place an order.');
 
     // Enforce phone number validation on customer online delivery order

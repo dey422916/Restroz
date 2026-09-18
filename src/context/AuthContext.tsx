@@ -194,8 +194,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         let u: UserProfile | null = null;
         if (isSupabaseConfigured) {
-          const { data: sessionData } = await supabase.auth.getSession();
-          if (sessionData?.session?.user) {
+          const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+          if (sessionErr) {
+            console.warn('[AUTH] getSession error during auth initialization:', sessionErr.message);
+            await supabase.auth.signOut().catch(() => {});
+          } else if (sessionData?.session?.user) {
             u = await authService.getCurrentUser();
           }
         } else {
@@ -208,6 +211,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setPendingTableIdState(tblId);
         if (u) {
           await loadRestaurantContext(u, 'INITIAL_LOAD');
+        } else {
+          await loadRestaurantContext(null, 'SIGNED_OUT');
         }
       } catch (err) {
         console.warn('Auth initialization error:', err);

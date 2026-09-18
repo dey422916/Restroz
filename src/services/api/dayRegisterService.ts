@@ -221,6 +221,19 @@ export const dayRegisterService = {
     restaurant_id?: string;
   }): Promise<DayRegister> {
     const targetRestId = params.restaurant_id || (await restaurantService.getDefaultRestaurant())?.id || '';
+    if (!targetRestId) {
+      throw new Error('Unable to identify your restaurant. Please contact your administrator.');
+    }
+
+    // 1. Session and Auth Check
+    if (isSupabaseConfigured) {
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr || !sessionData?.session?.user) {
+        throw new Error('Your session has expired. Please login again.');
+      }
+    }
+
+    // 2. Subscription Check
     if (targetRestId && isSupabaseConfigured) {
       const hasSub = await subscriptionGuardService.hasActiveSubscription(targetRestId);
       if (!hasSub) {
@@ -228,9 +241,34 @@ export const dayRegisterService = {
       }
     }
 
-    const registers = await this.getRegisters(targetRestId);
+    const cleanFloat = Math.max(0, Number(params.opening_cash_float) || 0);
+    const now = new Date();
+    const todayDate = getLocalRestaurantDate(now);
 
-    // Rule: Allow ONLY ONE open register per restaurant scope at a time
+    // 3. Prevent Duplicates: Direct Supabase Check
+    if (isSupabaseConfigured) {
+      try {
+        const { data: existingDbOpen, error: checkErr } = await supabase
+          .from('day_registers')
+          .select('id, register_date, opened_at')
+          .eq('restaurant_id', targetRestId)
+          .eq('status', 'open')
+          .maybeSingle();
+
+        if (!checkErr && existingDbOpen) {
+          throw new Error(
+            `A register is already OPEN for this restaurant (Shift: ${existingDbOpen.register_date || 'today'}). Please close the active shift before opening a new register.`
+          );
+        }
+      } catch (checkEx: any) {
+        if (checkEx.message?.includes('already OPEN')) {
+          throw checkEx;
+        }
+        console.warn('Pre-check existing open register warning:', checkEx);
+      }
+    }
+
+    const registers = await this.getRegisters(targetRestId);
     const existingOpen = registers.find((r) => r.status === 'open');
     if (existingOpen) {
       throw new Error(
@@ -238,67 +276,139 @@ export const dayRegisterService = {
       );
     }
 
-    const now = new Date();
-    const todayDate = getLocalRestaurantDate(now);
+    let createdRegister: DayRegister | null = null;
+    let rpcHandledAudit = false;
 
-    const newRegister: DayRegister = {
-      id: `reg-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      restaurant_id: targetRestId,
-      register_date: todayDate,
-      status: 'open',
-      opening_cash_float: Math.max(0, Number(params.opening_cash_float) || 0),
-      cash_sales: 0,
-      upi_sales: 0,
-      card_sales: 0,
-      total_sales: 0,
-      expected_cash: Math.max(0, Number(params.opening_cash_float) || 0),
-      notes: params.notes || undefined,
-      opened_at: now.toISOString(),
-      opened_by: params.opened_by || 'Admin',
-    };
-
-    const updatedList = [newRegister, ...registers];
-    await this.saveRegisters(updatedList, targetRestId);
-
+    // 4. Primary Execution: Atomic Database RPC
     if (isSupabaseConfigured) {
       try {
-        const { error: insertErr } = await supabase.from('day_registers').insert([{
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('open_day_register', {
+          p_restaurant_id: targetRestId,
+          p_opening_cash: cleanFloat,
+          p_notes: params.notes || null,
+          p_opened_by: params.opened_by || null,
+        });
+
+        if (rpcErr) {
+          if (!rpcErr.message.includes('function') && !rpcErr.message.includes('not found') && !rpcErr.message.includes('schema')) {
+            console.error({
+              operation: 'open_day_register_rpc',
+              code: rpcErr.code,
+              message: rpcErr.message,
+              details: rpcErr.details,
+              hint: rpcErr.hint,
+            });
+            throw new Error(rpcErr.message || 'Unable to open register. Please try again.');
+          }
+        } else if (rpcData) {
+          const r = rpcData as any;
+          createdRegister = {
+            id: r.id,
+            restaurant_id: r.restaurant_id || targetRestId,
+            register_date: r.register_date || todayDate,
+            status: 'open',
+            opening_cash_float: Number(r.opening_cash_float ?? r.opening_cash ?? cleanFloat),
+            cash_sales: 0,
+            upi_sales: 0,
+            card_sales: 0,
+            total_sales: 0,
+            expected_cash: Number(r.expected_cash ?? cleanFloat),
+            notes: r.notes || undefined,
+            opened_at: r.opened_at || now.toISOString(),
+            opened_by: r.opened_by || params.opened_by || 'Admin',
+          };
+          rpcHandledAudit = true;
+        }
+      } catch (rpcEx: any) {
+        if (
+          rpcEx.message?.includes('already OPEN') ||
+          rpcEx.message?.includes('subscription') ||
+          rpcEx.message?.includes('session') ||
+          rpcEx.message?.includes('Access denied')
+        ) {
+          throw rpcEx;
+        }
+        console.warn('open_day_register RPC fallback to direct insert:', rpcEx?.message || rpcEx);
+      }
+    }
+
+    // 5. Fallback Execution: Safe Direct Insert with All Schema Fields
+    if (!createdRegister) {
+      const newRegister: DayRegister = {
+        id: `reg-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        restaurant_id: targetRestId,
+        register_date: todayDate,
+        status: 'open',
+        opening_cash_float: cleanFloat,
+        cash_sales: 0,
+        upi_sales: 0,
+        card_sales: 0,
+        total_sales: 0,
+        expected_cash: cleanFloat,
+        notes: params.notes || undefined,
+        opened_at: now.toISOString(),
+        opened_by: params.opened_by || 'Admin',
+      };
+
+      if (isSupabaseConfigured) {
+        const insertPayload = {
           id: newRegister.id,
           restaurant_id: targetRestId,
+          register_date: newRegister.register_date,
           status: 'open',
-          opening_cash: newRegister.opening_cash_float,
+          opening_cash: cleanFloat,
+          opening_cash_float: cleanFloat,
           cash_sales: 0,
           upi_sales: 0,
           card_sales: 0,
           other_sales: 0,
           total_sales: 0,
           total_orders: 0,
-          expected_cash: newRegister.opening_cash_float,
+          expected_cash: cleanFloat,
           notes: newRegister.notes || null,
           opened_at: newRegister.opened_at,
           opened_by: newRegister.opened_by,
-        }]);
+        };
+
+        const { error: insertErr } = await supabase.from('day_registers').insert([insertPayload]);
         if (insertErr) {
-          console.warn('Supabase insert day_register error:', insertErr);
+          console.error({
+            operation: 'open_register_direct_insert',
+            code: insertErr.code,
+            message: insertErr.message,
+            details: insertErr.details,
+            hint: insertErr.hint,
+          });
+          if (insertErr.code === '23505') {
+            throw new Error('A register is already OPEN for this restaurant. Please close the active shift before opening a new register.');
+          }
+          throw new Error(`Unable to open register: ${insertErr.message || 'Database insert failed'}`);
         }
-      } catch (sbErr) {
-        console.warn('Supabase insert day_register exception:', sbErr);
       }
+
+      createdRegister = newRegister;
     }
 
-    await auditService.log({
-      action: 'REGISTER_OPENED',
-      entity_type: 'day_register',
-      entity_id: newRegister.id,
-      details: {
-        restaurant_id: targetRestId,
-        register_date: newRegister.register_date,
-        opening_cash_float: newRegister.opening_cash_float,
-        opened_by: newRegister.opened_by,
-      },
-    });
+    // 6. Update Local Persistent State
+    const updatedList = [createdRegister, ...registers.filter((r) => r.id !== createdRegister!.id)];
+    await this.saveRegisters(updatedList, targetRestId);
 
-    return newRegister;
+    // 7. Audit Logging (Only if not already recorded by RPC)
+    if (!rpcHandledAudit) {
+      await auditService.log({
+        action: 'REGISTER_OPENED',
+        entity_type: 'day_register',
+        entity_id: createdRegister.id,
+        details: {
+          restaurant_id: targetRestId,
+          register_date: createdRegister.register_date,
+          opening_cash_float: createdRegister.opening_cash_float,
+          opened_by: createdRegister.opened_by,
+        },
+      });
+    }
+
+    return createdRegister;
   },
 
   /**
@@ -336,6 +446,17 @@ export const dayRegisterService = {
     restaurant_id?: string;
   }): Promise<DayRegister> {
     const targetRestId = params.restaurant_id || (await restaurantService.getDefaultRestaurant())?.id || '';
+    if (!targetRestId) {
+      throw new Error('Unable to identify your restaurant.');
+    }
+
+    if (isSupabaseConfigured) {
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr || !sessionData?.session?.user) {
+        throw new Error('Your session has expired. Please login again.');
+      }
+    }
+
     const registers = await this.getRegisters(targetRestId);
     const index = registers.findIndex((r) => r.id === params.register_id);
 
@@ -391,26 +512,39 @@ export const dayRegisterService = {
     await this.saveRegisters(registers, targetRestId);
 
     if (isSupabaseConfigured) {
-      try {
-        const { error: updateErr } = await supabase.from('day_registers').update({
-          status: 'closed',
-          cash_sales: closedRegister.cash_sales,
-          upi_sales: closedRegister.upi_sales,
-          card_sales: closedRegister.card_sales,
-          other_sales: (closedRegister as any).other_sales || 0,
-          total_sales: closedRegister.total_sales,
-          expected_cash: closedRegister.expected_cash,
-          actual_cash: closedRegister.actual_cash_counted,
-          difference: closedRegister.cash_difference,
-          closed_at: closedRegister.closed_at,
-          closed_by: closedRegister.closed_by,
-          notes: closedRegister.notes || null,
-        }).eq('id', closedRegister.id);
-        if (updateErr) {
-          console.warn('Supabase update day_register close error:', updateErr);
-        }
-      } catch (sbCloseErr) {
-        console.warn('Supabase update day_register close exception:', sbCloseErr);
+      const updatePayload = {
+        status: 'closed',
+        cash_sales: closedRegister.cash_sales,
+        upi_sales: closedRegister.upi_sales,
+        card_sales: closedRegister.card_sales,
+        other_sales: (closedRegister as any).other_sales || 0,
+        total_sales: closedRegister.total_sales,
+        expected_cash: closedRegister.expected_cash,
+        actual_cash: closedRegister.actual_cash_counted,
+        actual_cash_counted: closedRegister.actual_cash_counted,
+        difference: closedRegister.cash_difference,
+        cash_difference: closedRegister.cash_difference,
+        closing_cash: closedRegister.actual_cash_counted,
+        closed_at: closedRegister.closed_at,
+        closed_by: closedRegister.closed_by,
+        notes: closedRegister.notes || null,
+      };
+
+      const { error: updateErr } = await supabase
+        .from('day_registers')
+        .update(updatePayload)
+        .eq('id', closedRegister.id)
+        .eq('restaurant_id', targetRestId);
+
+      if (updateErr) {
+        console.error({
+          operation: 'close_register_db_update',
+          code: updateErr.code,
+          message: updateErr.message,
+          details: updateErr.details,
+          hint: updateErr.hint,
+        });
+        throw new Error(`Failed to update register close record in database: ${updateErr.message}`);
       }
     }
 

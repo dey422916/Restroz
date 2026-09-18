@@ -502,8 +502,9 @@ export const orderService = {
 
     try {
       const {
-        data: { user },
-      } = await supabase.auth.getUser();
+        data: { session },
+      } = await supabase.auth.getSession();
+      const user = session?.user;
 
       if (!user) {
         // Unauthenticated access (e.g. initial guest load): allow only if restaurantId matches
@@ -625,8 +626,9 @@ export const orderService = {
     if (isSupabaseConfigured) {
       try {
         const {
-          data: { user },
-        } = await supabase.auth.getUser();
+          data: { session },
+        } = await supabase.auth.getSession();
+        const user = session?.user;
 
         if (user && user.id !== customerId) {
           const { data: profile } = await supabase

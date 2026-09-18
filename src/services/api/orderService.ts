@@ -105,18 +105,29 @@ export const orderService = {
           return data as string;
         }
         if (error) {
-          console.warn('get_next_order_number RPC returned error:', error);
+          console.warn('get_next_order_number RPC returned error:', {
+            code: error.code,
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+          });
           if (requireDbAtomic) {
-            throw new Error('Unable to generate invoice number. Please check your connection and retry.');
+            throw new Error('Unable to generate order number. Please try again.');
           }
         }
       } catch (err: any) {
-        console.warn('get_next_order_number RPC exception:', err);
+        console.warn('get_next_order_number RPC exception:', {
+          name: err?.name,
+          message: err?.message,
+          code: err?.code,
+          details: err?.details,
+          hint: err?.hint,
+        });
         if (requireDbAtomic) {
           throw new Error(
-            err.message?.includes('Unable to generate invoice number')
+            err.message?.includes('Unable to generate order number')
               ? err.message
-              : 'Unable to generate invoice number. Please check your connection and retry.'
+              : 'Unable to generate order number. Please try again.'
           );
         }
       }

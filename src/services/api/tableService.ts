@@ -204,24 +204,44 @@ export const tableService = {
       table.id ||
       'tbl-' + targetRestId.slice(0, 8) + '-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
     const qrHash = table.qr_code_hash || `QR_TBL_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const payload = {
-      ...table,
+    
+    // Explicitly construct payload with database schema columns only
+    const dbPayload: Record<string, any> = {
       id: tableId,
       restaurant_id: targetRestId,
       table_number: tableNumber,
       seating_capacity: seatingCapacity,
+      capacity: seatingCapacity,
       section: table.section || 'Ground Floor',
+      floor: table.section || 'Ground Floor',
       qr_code_hash: qrHash,
       status: table.status || 'available',
       is_active: table.is_active ?? true,
+      updated_at: new Date().toISOString(),
     };
+    if (table.qr_code_url) dbPayload.qr_code_url = table.qr_code_url;
+    if (table.current_order_id !== undefined) dbPayload.current_order_id = table.current_order_id;
 
     if (isSupabaseConfigured) {
       try {
         if (table.id) {
+          const updatePayload: Record<string, any> = {
+            table_number: tableNumber,
+            seating_capacity: seatingCapacity,
+            capacity: seatingCapacity,
+            section: table.section || 'Ground Floor',
+            floor: table.section || 'Ground Floor',
+            status: table.status || 'available',
+            is_active: table.is_active ?? true,
+            updated_at: new Date().toISOString(),
+          };
+          if (table.qr_code_hash) updatePayload.qr_code_hash = table.qr_code_hash;
+          if (table.qr_code_url) updatePayload.qr_code_url = table.qr_code_url;
+          if (table.current_order_id !== undefined) updatePayload.current_order_id = table.current_order_id;
+
           const { data, error } = await supabase
             .from('tables')
-            .update(payload)
+            .update(updatePayload)
             .eq('id', table.id)
             .select()
             .single();
@@ -234,7 +254,7 @@ export const tableService = {
         } else {
           const { data, error } = await supabase
             .from('tables')
-            .insert([payload])
+            .insert([dbPayload])
             .select()
             .single();
 
@@ -251,11 +271,11 @@ export const tableService = {
     }
 
     if (table.id) {
-      const updated = mockStorage.updateTable(table.id, payload);
+      const updated = mockStorage.updateTable(table.id, dbPayload);
       if (!updated) throw new Error('Table not found in local cache.');
       return updated;
     } else {
-      return mockStorage.addTable(payload as Omit<DiningTable, 'id'>);
+      return mockStorage.addTable(dbPayload as Omit<DiningTable, 'id'>);
     }
   },
 
@@ -398,11 +418,45 @@ export const tableService = {
   },
 
   async toggleTableActive(id: string, active?: boolean, restaurantId?: string): Promise<DiningTable> {
+    if (isSupabaseConfigured) {
+      const { data: current, error: fetchErr } = await supabase
+        .from('tables')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+      if (fetchErr || !current) {
+        throw new Error('Table not found.');
+      }
+
+      const targetRestId = current.restaurant_id || restaurantId;
+      const newActive = active !== undefined ? active : !current.is_active;
+
+      const { data: updated, error: updateErr } = await supabase
+        .from('tables')
+        .update({
+          is_active: newActive,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (updateErr) {
+        throw new Error(updateErr.message || 'Failed to toggle table status.');
+      }
+
+      await this.getTables(targetRestId);
+      return updated as DiningTable;
+    }
+
     const tbls = await this.getTables(restaurantId);
     const found = tbls.find((t) => t.id === id);
     if (!found) throw new Error('Table not found.');
     const newActive = active !== undefined ? active : !found.is_active;
-    return this.saveTable({ ...found, is_active: newActive }, restaurantId || found.restaurant_id);
+    const updated = mockStorage.updateTable(id, { is_active: newActive });
+    if (!updated) throw new Error('Table not found in local cache.');
+    return updated;
   },
 
   getTableQrUrl(tableId: string): string {

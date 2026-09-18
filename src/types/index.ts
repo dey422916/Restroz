@@ -141,6 +141,7 @@ export interface DiningTable {
   section: TableSection;
   is_active: boolean;
   qr_code_hash: string;
+  qr_code_url?: string;
   status: TableStatus;
   current_order_id?: string;
   active_order_ids?: string[];

@@ -753,19 +753,23 @@ export default function DeliveryCheckoutScreen() {
                   </View>
                 )}
 
-                {cart.isGstEnabled && (cart.cgst > 0 || cart.sgst > 0) ? (
-                  <>
-                    <View style={styles.summaryItemRow}>
-                      <Text style={styles.summaryLabel}>CGST ({((cart.taxRate || 5) / 2).toFixed(1)}%)</Text>
-                      <Text style={styles.summaryValue}>₹{formatPrice(cart.cgst)}</Text>
-                    </View>
+                {cart.isGstEnabled && (cart.cgst > 0 || cart.sgst > 0) ? (() => {
+                  const halfTaxRate = (cart.taxRate || 5.0) / 2;
+                  const halfTaxRateStr = halfTaxRate % 1 === 0 ? `${halfTaxRate}` : `${halfTaxRate.toFixed(1)}`;
+                  return (
+                    <>
+                      <View style={styles.summaryItemRow}>
+                        <Text style={styles.summaryLabel}>CGST ({halfTaxRateStr}%)</Text>
+                        <Text style={styles.summaryValue}>₹{formatPrice(cart.cgst)}</Text>
+                      </View>
 
-                    <View style={styles.summaryItemRow}>
-                      <Text style={styles.summaryLabel}>SGST ({((cart.taxRate || 5) / 2).toFixed(1)}%)</Text>
-                      <Text style={styles.summaryValue}>₹{formatPrice(cart.sgst)}</Text>
-                    </View>
-                  </>
-                ) : null}
+                      <View style={styles.summaryItemRow}>
+                        <Text style={styles.summaryLabel}>SGST ({halfTaxRateStr}%)</Text>
+                        <Text style={styles.summaryValue}>₹{formatPrice(cart.sgst)}</Text>
+                      </View>
+                    </>
+                  );
+                })() : null}
 
                 {/* Authoritative Delivery Fee Display */}
                 <View style={styles.summaryItemRow}>

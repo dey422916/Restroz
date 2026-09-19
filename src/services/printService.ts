@@ -482,10 +482,13 @@ export const printService = {
       taxTotal > 0 || (effectiveGstRegistered && settings.tax_invoice_enabled !== false && Boolean(settings.gstin?.trim()));
 
     const dynamicTaxRate =
-      settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
-        ? Number(settings.default_tax_rate)
-        : 5.0;
-    const halfTaxRateStr = (dynamicTaxRate / 2).toFixed(1);
+      (order as any).tax_rate !== undefined && (order as any).tax_rate !== null
+        ? Number((order as any).tax_rate)
+        : (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
+            ? Number(settings.default_tax_rate)
+            : 5.0);
+    const halfTaxRate = dynamicTaxRate / 2;
+    const halfTaxRateStr = halfTaxRate % 1 === 0 ? String(halfTaxRate) : halfTaxRate.toFixed(1);
 
     const invoiceNumber = order.invoice_number || order.order_number;
     const customerGstin = order.customer_gstin;
@@ -806,11 +809,13 @@ export const printService = {
       taxTotal > 0 || (effectiveGstRegistered && settings.tax_invoice_enabled !== false && Boolean(settings.gstin?.trim()));
 
     const dynamicTaxRate =
-      settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
-        ? Number(settings.default_tax_rate)
-        : 5.0;
+      (order as any).tax_rate !== undefined && (order as any).tax_rate !== null
+        ? Number((order as any).tax_rate)
+        : (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
+            ? Number(settings.default_tax_rate)
+            : 5.0);
     const halfTaxRate = dynamicTaxRate / 2;
-    const halfTaxRateStr = halfTaxRate.toFixed(1);
+    const halfTaxRateStr = halfTaxRate % 1 === 0 ? String(halfTaxRate) : halfTaxRate.toFixed(1);
 
     const invoiceNumber = order.invoice_number || order.order_number;
     const customerGstin = order.customer_gstin;

@@ -702,10 +702,19 @@ export const reportExportService = {
           const oInvoiceTotal = Number(o.payable_amount) || Number(o.grand_total) || 0;
           const paymentMode = (o.payment_method || (o.payment_status === 'paid' ? 'PAID' : 'PENDING')).toUpperCase();
 
-          const cgstRate = oCgst > 0 ? '2.5%' : '0%';
-          const sgstRate = oSgst > 0 ? '2.5%' : '0%';
-          const igstRate = oIgst > 0 ? '5%' : '0%';
-          const overallGstRate = oTotalGst > 0 ? (oIgst > 0 ? '5%' : '5%') : '0%';
+          const dynamicTaxRate = Number((o as any).tax_rate) > 0
+            ? Number((o as any).tax_rate)
+            : (Number(settings?.default_tax_rate) > 0
+                ? Number(settings.default_tax_rate)
+                : (oTaxable > 0 && oTotalGst > 0 ? Math.round((oTotalGst / oTaxable) * 100) : 5));
+          const halfTaxRate = dynamicTaxRate / 2;
+          const halfTaxRateStr = halfTaxRate % 1 === 0 ? `${halfTaxRate}%` : `${halfTaxRate.toFixed(1)}%`;
+          const dynamicTaxRateStr = dynamicTaxRate % 1 === 0 ? `${dynamicTaxRate}%` : `${dynamicTaxRate.toFixed(1)}%`;
+
+          const cgstRate = oCgst > 0 ? halfTaxRateStr : '0%';
+          const sgstRate = oSgst > 0 ? halfTaxRateStr : '0%';
+          const igstRate = oIgst > 0 ? dynamicTaxRateStr : '0%';
+          const overallGstRate = oTotalGst > 0 ? dynamicTaxRateStr : '0%';
 
           sumTaxable += oTaxable;
           sumCgst += oCgst;
@@ -1444,6 +1453,14 @@ export const reportExportService = {
           sumTotalGst += oTotalGst;
           sumInvoiceTotal += oInvoiceTotal;
 
+          const dynamicTaxRate = Number((o as any).tax_rate) > 0
+            ? Number((o as any).tax_rate)
+            : (Number(settings?.default_tax_rate) > 0
+                ? Number(settings.default_tax_rate)
+                : (oTaxable > 0 && oTotalGst > 0 ? Math.round((oTotalGst / oTaxable) * 100) : 5));
+          const dynamicTaxRateStr = dynamicTaxRate % 1 === 0 ? `${dynamicTaxRate}%` : `${dynamicTaxRate.toFixed(1)}%`;
+          const overallGstRate = oTotalGst > 0 ? dynamicTaxRateStr : '0%';
+
           tableBodyHtml += `
             <tr>
               <td>${d}</td>
@@ -1453,7 +1470,7 @@ export const reportExportService = {
               <td>${custName}</td>
               <td>${custGstin}</td>
               <td style="text-align: right;">${formatCurrency(oTaxable)}</td>
-              <td style="text-align: center;">5%</td>
+              <td style="text-align: center;">${overallGstRate}</td>
               <td style="text-align: right;">${formatCurrency(oCgst)}</td>
               <td style="text-align: right;">${formatCurrency(oSgst)}</td>
               <td style="text-align: right;">${formatCurrency(oIgst)}</td>

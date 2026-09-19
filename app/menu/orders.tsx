@@ -388,12 +388,23 @@ export default function CustomerOrdersScreen() {
                         </Text>
                       </View>
                     )}
-                    <View style={styles.receiptSummaryRow}>
-                      <Text style={{ fontSize: 11, color: '#64748b' }}>GST (5%)</Text>
-                      <Text style={{ fontSize: 11, fontWeight: 'bold' }}>
-                        {formatCurrency(selectedOrderDetail.cgst_amount + selectedOrderDetail.sgst_amount)}
-                      </Text>
-                    </View>
+                    {Boolean((selectedOrderDetail.cgst_amount || 0) + (selectedOrderDetail.sgst_amount || 0) > 0) && (() => {
+                      const totalTax = (selectedOrderDetail.cgst_amount || 0) + (selectedOrderDetail.sgst_amount || 0);
+                      const taxRate = Number((selectedOrderDetail as any).tax_rate) > 0
+                        ? Number((selectedOrderDetail as any).tax_rate)
+                        : (selectedOrderDetail.taxable_amount && selectedOrderDetail.taxable_amount > 0
+                            ? Math.round((totalTax / selectedOrderDetail.taxable_amount) * 100)
+                            : 5.0);
+                      const taxRateStr = taxRate % 1 === 0 ? `${taxRate}%` : `${taxRate.toFixed(1)}%`;
+                      return (
+                        <View style={styles.receiptSummaryRow}>
+                          <Text style={{ fontSize: 11, color: '#64748b' }}>GST ({taxRateStr})</Text>
+                          <Text style={{ fontSize: 11, fontWeight: 'bold' }}>
+                            {formatCurrency(totalTax)}
+                          </Text>
+                        </View>
+                      );
+                    })()}
                     <View style={[styles.receiptSummaryRow, { marginTop: 4, paddingTop: 4, borderTopWidth: 1, borderColor: '#e2e8f0' }]}>
                       <Text style={{ fontSize: 14, fontWeight: '900' }}>Grand Total</Text>
                       <Text style={{ fontSize: 14, fontWeight: '900', color: '#16a34a' }}>

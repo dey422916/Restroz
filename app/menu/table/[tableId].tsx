@@ -1546,7 +1546,7 @@ export default function CustomerDigitalMenuScreen() {
 
                 {totals.totalTax > 0 && (
                   <View style={styles.receiptSummaryRow}>
-                    <Text style={{ fontSize: 11, color: '#64748b' }}>GST ({(taxRate).toFixed(1)}%)</Text>
+                    <Text style={{ fontSize: 11, color: '#64748b' }}>GST ({taxRate % 1 === 0 ? `${taxRate}` : taxRate.toFixed(1)}%)</Text>
                     <Text style={{ fontSize: 11, fontWeight: '700' }}>
                       {formatCurrency(totals.cgstAmount + totals.sgstAmount)}
                     </Text>

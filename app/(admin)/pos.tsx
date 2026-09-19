@@ -1378,15 +1378,25 @@ export default function PosScreen() {
               <Text style={styles.summaryVal}>{formatCurrency(totals.taxableSubtotal)}</Text>
             </View>
 
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>CGST (2.5%)</Text>
-              <Text style={styles.summaryVal}>{formatCurrency(totals.cgstAmount)}</Text>
-            </View>
+            {Boolean(settings?.is_gst_enabled !== false && (totals.cgstAmount > 0 || totals.sgstAmount > 0)) && (() => {
+              const totalTaxRate = settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 5.0;
+              const halfTaxRate = totalTaxRate / 2;
+              const halfTaxRateStr = halfTaxRate % 1 === 0 ? `${halfTaxRate}` : `${halfTaxRate.toFixed(1)}`;
 
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>SGST (2.5%)</Text>
-              <Text style={styles.summaryVal}>{formatCurrency(totals.sgstAmount)}</Text>
-            </View>
+              return (
+                <>
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>CGST ({halfTaxRateStr}%)</Text>
+                    <Text style={styles.summaryVal}>{formatCurrency(totals.cgstAmount)}</Text>
+                  </View>
+
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>SGST ({halfTaxRateStr}%)</Text>
+                    <Text style={styles.summaryVal}>{formatCurrency(totals.sgstAmount)}</Text>
+                  </View>
+                </>
+              );
+            })()}
 
             {totals.roundOff !== 0 && (
               <View style={styles.summaryRow}>
@@ -2006,15 +2016,26 @@ export default function PosScreen() {
                           </Text>
                         </View>
                       )}
-                      <View style={styles.modalTotalRow}>
-                        <Text style={styles.modalTotalLabel}>CGST + SGST:</Text>
-                        <Text style={styles.modalTotalVal}>
-                          {formatCurrency(
-                            (viewTableModalData.order.cgst_amount || 0) +
-                              (viewTableModalData.order.sgst_amount || 0)
-                          )}
-                        </Text>
-                      </View>
+                      {Boolean(settings?.is_gst_enabled !== false && ((viewTableModalData.order.cgst_amount || 0) + (viewTableModalData.order.sgst_amount || 0)) > 0) && (() => {
+                        const tableOrderTaxRate = Number((viewTableModalData.order as any).tax_rate) > 0
+                          ? Number((viewTableModalData.order as any).tax_rate)
+                          : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
+                              ? Number(settings.default_tax_rate)
+                              : 5.0);
+                        const halfTaxRate = tableOrderTaxRate / 2;
+                        const halfTaxRateStr = halfTaxRate % 1 === 0 ? `${halfTaxRate}` : `${halfTaxRate.toFixed(1)}`;
+                        return (
+                          <View style={styles.modalTotalRow}>
+                            <Text style={styles.modalTotalLabel}>CGST ({halfTaxRateStr}%) + SGST ({halfTaxRateStr}%):</Text>
+                            <Text style={styles.modalTotalVal}>
+                              {formatCurrency(
+                                (viewTableModalData.order.cgst_amount || 0) +
+                                  (viewTableModalData.order.sgst_amount || 0)
+                              )}
+                            </Text>
+                          </View>
+                        );
+                      })()}
                       <View style={[styles.modalTotalRow, styles.modalGrandTotalRow]}>
                         <Text style={styles.modalGrandTotalLabel}>Grand Total:</Text>
                         <Text style={styles.modalGrandTotalVal}>

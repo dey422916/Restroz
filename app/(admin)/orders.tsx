@@ -2301,10 +2301,17 @@ export default function OrdersScreen() {
                         <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.taxableSubtotal)}</Text>
                       </View>
                     )}
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <Text style={{ fontSize: 12, color: '#64748b' }}>CGST (2.5%) + SGST (2.5%):</Text>
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.cgstAmount + editTotals.sgstAmount)}</Text>
-                    </View>
+                    {Boolean(settings?.is_gst_enabled !== false && (editTotals.cgstAmount + editTotals.sgstAmount > 0)) && (() => {
+                      const editTaxRate = settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 5.0;
+                      const editHalfRate = editTaxRate / 2;
+                      const editHalfRateStr = editHalfRate % 1 === 0 ? `${editHalfRate}` : `${editHalfRate.toFixed(1)}`;
+                      return (
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                          <Text style={{ fontSize: 12, color: '#64748b' }}>CGST ({editHalfRateStr}%) + SGST ({editHalfRateStr}%):</Text>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.cgstAmount + editTotals.sgstAmount)}</Text>
+                        </View>
+                      );
+                    })()}
                     {Boolean(editTotals.deliveryCharge) && (
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
                         <Text style={{ fontSize: 12, color: '#64748b' }}>Delivery Charge:</Text>
@@ -2883,15 +2890,26 @@ export default function OrdersScreen() {
                     <Text style={styles.billVal}>{formatCurrency(payTotals?.taxableSubtotal || paySubtotal)}</Text>
                   </View>
 
-                  <View style={styles.billRow}>
-                    <Text style={styles.billLabel}>CGST (2.5%):</Text>
-                    <Text style={styles.billVal}>{formatCurrency(payTotals?.cgstAmount || 0)}</Text>
-                  </View>
+                  {Boolean(settings?.is_gst_enabled !== false && ((payTotals?.cgstAmount || 0) > 0 || (payTotals?.sgstAmount || 0) > 0)) && (() => {
+                    const payTaxRate = (payOrderModal as any)?.tax_rate !== undefined && (payOrderModal as any)?.tax_rate !== null
+                      ? Number((payOrderModal as any).tax_rate)
+                      : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 5.0);
+                    const payHalfRate = payTaxRate / 2;
+                    const payHalfRateStr = payHalfRate % 1 === 0 ? `${payHalfRate}` : `${payHalfRate.toFixed(1)}`;
+                    return (
+                      <>
+                        <View style={styles.billRow}>
+                          <Text style={styles.billLabel}>CGST ({payHalfRateStr}%):</Text>
+                          <Text style={styles.billVal}>{formatCurrency(payTotals?.cgstAmount || 0)}</Text>
+                        </View>
 
-                  <View style={styles.billRow}>
-                    <Text style={styles.billLabel}>SGST (2.5%):</Text>
-                    <Text style={styles.billVal}>{formatCurrency(payTotals?.sgstAmount || 0)}</Text>
-                  </View>
+                        <View style={styles.billRow}>
+                          <Text style={styles.billLabel}>SGST ({payHalfRateStr}%):</Text>
+                          <Text style={styles.billVal}>{formatCurrency(payTotals?.sgstAmount || 0)}</Text>
+                        </View>
+                      </>
+                    );
+                  })()}
 
                   {Boolean(payTotals?.deliveryCharge) && (
                     <View style={styles.billRow}>
@@ -3087,8 +3105,10 @@ export default function OrdersScreen() {
            (viewOrderModal.sgst_amount || 0) > 0 ||
            (settings?.tax_invoice_enabled !== false && Boolean(settings?.gstin?.trim())));
         const invNo = viewOrderModal.invoice_number || viewOrderModal.order_number;
-        const dynamicTaxRate = Number(settings?.default_tax_rate) > 0 ? Number(settings.default_tax_rate) : 5.0;
-        const halfRate = (dynamicTaxRate / 2).toFixed(1);
+        const dynamicTaxRate = (viewOrderModal as any).tax_rate !== undefined && (viewOrderModal as any).tax_rate !== null
+          ? Number((viewOrderModal as any).tax_rate)
+          : (Number(settings?.default_tax_rate) > 0 ? Number(settings.default_tax_rate) : 5.0);
+        const halfRate = (dynamicTaxRate / 2) % 1 === 0 ? String(dynamicTaxRate / 2) : (dynamicTaxRate / 2).toFixed(1);
         const subtotalVal = getOrderSubtotal(viewOrderModal);
         const isPaid = viewOrderModal.payment_status === 'paid';
         const isCompleted = viewOrderModal.status === 'completed';

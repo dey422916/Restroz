@@ -344,19 +344,32 @@ export default function CustomerOrderDetailsScreen() {
                     </View>
                   )}
 
-                  <View style={styles.billRow}>
-                    <Text style={styles.billLabel}>CGST 2.5%</Text>
-                    <Text style={styles.billVal}>
-                      ₹{formatPrice(order.cgst_amount || 0)}
-                    </Text>
-                  </View>
+                  {Boolean((order.cgst_amount || 0) + (order.sgst_amount || 0) > 0) && (() => {
+                    const orderTaxRate = Number((order as any).tax_rate) > 0
+                      ? Number((order as any).tax_rate)
+                      : (order.cgst_amount && (order.subtotal || 0) > 0
+                          ? Math.round(((order.cgst_amount * 2) / Math.max(1, (order.subtotal || 0) - (order.discount_amount || 0) - (order.coupon_discount || 0))) * 100)
+                          : 5.0);
+                    const halfTaxRate = orderTaxRate / 2;
+                    const halfTaxRateStr = halfTaxRate % 1 === 0 ? `${halfTaxRate}` : `${halfTaxRate.toFixed(1)}`;
+                    return (
+                      <>
+                        <View style={styles.billRow}>
+                          <Text style={styles.billLabel}>CGST ({halfTaxRateStr}%)</Text>
+                          <Text style={styles.billVal}>
+                            ₹{formatPrice(order.cgst_amount || 0)}
+                          </Text>
+                        </View>
 
-                  <View style={styles.billRow}>
-                    <Text style={styles.billLabel}>SGST 2.5%</Text>
-                    <Text style={styles.billVal}>
-                      ₹{formatPrice(order.sgst_amount || 0)}
-                    </Text>
-                  </View>
+                        <View style={styles.billRow}>
+                          <Text style={styles.billLabel}>SGST ({halfTaxRateStr}%)</Text>
+                          <Text style={styles.billVal}>
+                            ₹{formatPrice(order.sgst_amount || 0)}
+                          </Text>
+                        </View>
+                      </>
+                    );
+                  })()}
 
                   <View style={styles.billRow}>
                     <Text style={styles.billLabel}>Delivery Fee</Text>

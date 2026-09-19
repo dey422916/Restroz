@@ -317,24 +317,29 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   </View>
                 )}
 
-                {totals.totalTax > 0 && (
-                  <>
-                    <View style={styles.billRow}>
-                      <Text style={styles.billLabel}>Taxable Amount:</Text>
-                      <Text style={styles.billVal}>{formatCurrency(totals.taxableSubtotal)}</Text>
-                    </View>
+                {totals.totalTax > 0 && (() => {
+                  const effectiveTaxRate = taxRate !== undefined && taxRate !== null ? Number(taxRate) : 5.0;
+                  const halfTaxRate = effectiveTaxRate / 2;
+                  const halfTaxRateStr = halfTaxRate % 1 === 0 ? `${halfTaxRate}` : `${halfTaxRate.toFixed(1)}`;
+                  return (
+                    <>
+                      <View style={styles.billRow}>
+                        <Text style={styles.billLabel}>Taxable Amount:</Text>
+                        <Text style={styles.billVal}>{formatCurrency(totals.taxableSubtotal)}</Text>
+                      </View>
 
-                    <View style={styles.billRow}>
-                      <Text style={styles.billLabel}>CGST ({(((taxRate !== undefined && taxRate !== null ? taxRate : 5.0)) / 2).toFixed(1)}%):</Text>
-                      <Text style={styles.billVal}>{formatCurrency(totals.cgstAmount)}</Text>
-                    </View>
+                      <View style={styles.billRow}>
+                        <Text style={styles.billLabel}>CGST ({halfTaxRateStr}%):</Text>
+                        <Text style={styles.billVal}>{formatCurrency(totals.cgstAmount)}</Text>
+                      </View>
 
-                    <View style={styles.billRow}>
-                      <Text style={styles.billLabel}>SGST ({(((taxRate !== undefined && taxRate !== null ? taxRate : 5.0)) / 2).toFixed(1)}%):</Text>
-                      <Text style={styles.billVal}>{formatCurrency(totals.sgstAmount)}</Text>
-                    </View>
-                  </>
-                )}
+                      <View style={styles.billRow}>
+                        <Text style={styles.billLabel}>SGST ({halfTaxRateStr}%):</Text>
+                        <Text style={styles.billVal}>{formatCurrency(totals.sgstAmount)}</Text>
+                      </View>
+                    </>
+                  );
+                })()}
 
                 {totals.deliveryCharge > 0 && (
                   <View style={styles.billRow}>

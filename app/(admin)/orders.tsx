@@ -634,6 +634,13 @@ export default function OrdersScreen() {
 
   // Open Partial Payment Modal
   const openPartialPaymentModal = (order: Order) => {
+    const src = resolveOrderSource(order);
+    const isOnline = src === 'CUSTOMER_APP' || order.order_type === 'delivery';
+    const isQr = src === 'CUSTOMER_QR';
+    if (isOnline || isQr || (order.order_type !== 'dine_in' && order.order_type !== 'takeaway')) {
+      showAlert('Not Available', 'Partial payments are available only for Dine-In and Takeaway orders.');
+      return;
+    }
     markAsSeen(order.id);
     setPartialPayModal(order);
     const payable = Number(order.payable_amount ?? order.grand_total ?? 0);
@@ -1672,6 +1679,10 @@ export default function OrdersScreen() {
                   const paidVal = Number(order.paid_amount || 0);
                   const balanceVal = Math.max(0, payableVal - paidVal);
 
+                  const isOnlineDelivery = isCustomerApp || order.order_type === 'delivery' || isOnlineDeliveryOrder(order);
+                  const isQr = isCustomerQr || isQrDigitalMenuOrder(order);
+                  const isPartialPaymentEligible = (order.order_type === 'dine_in' || order.order_type === 'takeaway') && !isOnlineDelivery && !isQr;
+
                   const isCodPay = order.payment_method === 'cod';
                   const isCardPay = order.payment_method === 'card';
                   const isCashPay = order.payment_method === 'cash';
@@ -1704,7 +1715,7 @@ export default function OrdersScreen() {
                       badgeContainerStyle = { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#86efac' } as any;
                       badgeTextStyle = { color: '#15803d' } as any;
                       badgeLabel = '📱 ONLINE • PAYMENT VERIFIED • READY TO SETTLE';
-                    } else if (paidVal > 0) {
+                    } else if (isPartialPaymentEligible && paidVal > 0) {
                       badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
                       badgeTextStyle = { color: '#1d4ed8' } as any;
                       badgeLabel = `💳 PARTIALLY PAID (BAL: ${formatCurrency(balanceVal)})`;
@@ -1731,27 +1742,36 @@ export default function OrdersScreen() {
 
                   return (
                     <>
-                      {/* Total, Paid, Balance summary */}
-                      <View style={styles.orderFinanceBox}>
-                        <View style={styles.orderFinanceCol}>
-                          <Text style={styles.orderFinanceLabel}>Total</Text>
-                          <Text style={styles.orderFinanceVal}>{formatCurrency(payableVal)}</Text>
+                      {/* Total, Paid, Balance summary for Dine-In & Takeaway, or single Total for Online/QR */}
+                      {isPartialPaymentEligible ? (
+                        <View style={styles.orderFinanceBox}>
+                          <View style={styles.orderFinanceCol}>
+                            <Text style={styles.orderFinanceLabel}>Total</Text>
+                            <Text style={styles.orderFinanceVal}>{formatCurrency(payableVal)}</Text>
+                          </View>
+                          <View style={styles.orderFinanceDivider} />
+                          <View style={styles.orderFinanceCol}>
+                            <Text style={styles.orderFinanceLabel}>Paid</Text>
+                            <Text style={[styles.orderFinanceVal, { color: paidVal > 0 ? '#15803d' : '#64748b' }]}>
+                              {formatCurrency(paidVal)}
+                            </Text>
+                          </View>
+                          <View style={styles.orderFinanceDivider} />
+                          <View style={styles.orderFinanceCol}>
+                            <Text style={styles.orderFinanceLabel}>Balance</Text>
+                            <Text style={[styles.orderFinanceVal, { color: balanceVal > 0 ? '#b45309' : '#15803d', fontWeight: '900' }]}>
+                              {formatCurrency(balanceVal)}
+                            </Text>
+                          </View>
                         </View>
-                        <View style={styles.orderFinanceDivider} />
-                        <View style={styles.orderFinanceCol}>
-                          <Text style={styles.orderFinanceLabel}>Paid</Text>
-                          <Text style={[styles.orderFinanceVal, { color: paidVal > 0 ? '#15803d' : '#64748b' }]}>
-                            {formatCurrency(paidVal)}
-                          </Text>
+                      ) : (
+                        <View style={[styles.orderFinanceBox, { paddingVertical: 5 }]}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', paddingHorizontal: 6 }}>
+                            <Text style={styles.orderFinanceLabel}>Total Amount</Text>
+                            <Text style={[styles.orderFinanceVal, { fontWeight: '800' }]}>{formatCurrency(payableVal)}</Text>
+                          </View>
                         </View>
-                        <View style={styles.orderFinanceDivider} />
-                        <View style={styles.orderFinanceCol}>
-                          <Text style={styles.orderFinanceLabel}>Balance</Text>
-                          <Text style={[styles.orderFinanceVal, { color: balanceVal > 0 ? '#b45309' : '#15803d', fontWeight: '900' }]}>
-                            {formatCurrency(balanceVal)}
-                          </Text>
-                        </View>
-                      </View>
+                      )}
 
                       {/* Payment Status Badge */}
                       <View style={[styles.payStatusBadge, badgeContainerStyle, { marginBottom: 4 }]}>
@@ -1763,10 +1783,12 @@ export default function OrdersScreen() {
                   );
                 })()}
 
-                  {/* Action Buttons based on order status: 3 up, 3 below */}
+                  {/* Action Buttons based on order status */}
                   <View style={styles.cardActionsGrid}>
                     {isActive && (() => {
                       const isOnlineDelivery = isCustomerApp || order.order_type === 'delivery' || isOnlineDeliveryOrder(order);
+                      const isQr = isCustomerQr || isQrDigitalMenuOrder(order);
+                      const isPartialPaymentEligible = (order.order_type === 'dine_in' || order.order_type === 'takeaway') && !isOnlineDelivery && !isQr;
                       const isKotDisabled = isKotButtonDisabled(order);
                       const hasKot = isKotDisabled;
                       const isDispatched = order.status === 'out_for_delivery' || ['delivered', 'completed'].includes(order.status);
@@ -1776,7 +1798,7 @@ export default function OrdersScreen() {
 
                       return (
                         <>
-                          {/* ROW 1: 3 Buttons (KOT, Dispatch/Delivered/View, Payment) */}
+                          {/* ROW 1: (KOT, Dispatch/Delivered/View, and Payment if eligible) */}
                           <View style={styles.cardActionRow}>
                             {/* BUTTON 1: KOT Action */}
                             {isKotDisabled ? (
@@ -1842,19 +1864,21 @@ export default function OrdersScreen() {
                               </TouchableOpacity>
                             )}
 
-                            {/* BUTTON 3: Payment (Record Partial/Full Payment) */}
-                            <TouchableOpacity
-                              testID={`order-payment-btn-${order.id}`}
-                              style={[
-                                styles.gridActionBtn,
-                                isFullyPaid ? { backgroundColor: '#f0fdf4', borderColor: '#86efac' } : styles.actionPaymentBg,
-                              ]}
-                              onPress={() => openPartialPaymentModal(order)}
-                            >
-                              <Text style={[styles.actionBtnTextPayment, isFullyPaid && { color: '#15803d' }]}>
-                                {isFullyPaid ? '✓ Paid' : '💳 Payment'}
-                              </Text>
-                            </TouchableOpacity>
+                            {/* BUTTON 3: Payment (Record Partial/Full Payment) - ONLY for Dine-In and Takeaway */}
+                            {isPartialPaymentEligible && (
+                              <TouchableOpacity
+                                testID={`order-payment-btn-${order.id}`}
+                                style={[
+                                  styles.gridActionBtn,
+                                  isFullyPaid ? { backgroundColor: '#f0fdf4', borderColor: '#86efac' } : styles.actionPaymentBg,
+                                ]}
+                                onPress={() => openPartialPaymentModal(order)}
+                              >
+                                <Text style={[styles.actionBtnTextPayment, isFullyPaid && { color: '#15803d' }]}>
+                                  {isFullyPaid ? '✓ Paid' : '💳 Payment'}
+                                </Text>
+                              </TouchableOpacity>
+                            )}
                           </View>
 
                           {/* ROW 2: 3 Buttons (Edit, Cancel, Settle) */}

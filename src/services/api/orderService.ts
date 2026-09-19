@@ -1526,6 +1526,22 @@ export const orderService = {
   }> {
     const { orderId, paymentMethod, amount, referenceNumber, notes, splitPayments, restaurantId } = params;
 
+    if (restaurantId) {
+      const localOrders = mockStorage.getOrders(restaurantId);
+      const targetOrder = localOrders.find((o) => o.id === orderId);
+      if (targetOrder) {
+        const src = resolveOrderSource(targetOrder);
+        if (
+          src === 'CUSTOMER_APP' ||
+          src === 'CUSTOMER_QR' ||
+          targetOrder.order_type === 'delivery' ||
+          (targetOrder.order_type !== 'dine_in' && targetOrder.order_type !== 'takeaway')
+        ) {
+          throw new Error('Partial payments are available only for Dine-In and Takeaway orders.');
+        }
+      }
+    }
+
     if (isSupabaseConfigured) {
       const { data: { session }, error: sessionErr } = await supabase.auth.getSession();
       if (sessionErr || !session) {

@@ -3161,7 +3161,7 @@ export default function OrdersScreen() {
       </Modal>
 
       {/* ============================================================ */}
-      {/* 4. VIEW FINAL BILL MODAL                                     */}
+      {/* 4. VIEW FINAL BILL / TAX INVOICE MODAL                      */}
       {/* ============================================================ */}
       {viewOrderModal && (() => {
         const isTaxInvoice =
@@ -3172,40 +3172,40 @@ export default function OrdersScreen() {
         const invNo = viewOrderModal.invoice_number || viewOrderModal.order_number;
         const dynamicTaxRate = Number(settings?.default_tax_rate) > 0 ? Number(settings.default_tax_rate) : 5.0;
         const halfRate = (dynamicTaxRate / 2).toFixed(1);
+        const subtotalVal = getOrderSubtotal(viewOrderModal);
+        const isPaid = viewOrderModal.payment_status === 'paid';
+        const isCompleted = viewOrderModal.status === 'completed';
 
         return (
           <Modal visible={Boolean(viewOrderModal)} transparent animationType="slide">
-            <View
-              style={[
-                styles.modalOverlay,
-                isMobile && { paddingHorizontal: 10, paddingVertical: 10 },
-              ]}
-            >
+            <View style={[styles.modalOverlay, isMobile && { paddingHorizontal: 8, paddingVertical: 12 }]}>
               <View
                 style={[
                   styles.modalContent,
                   isMobile && { padding: 12, borderRadius: 16 },
                   {
                     maxHeight: windowHeight * (isMobile ? 0.95 : 0.9),
-                    maxWidth: 580,
+                    maxWidth: 540,
+                    width: '100%',
                     display: 'flex',
                   },
                 ]}
               >
+                {/* Header */}
                 <View style={styles.modalHeader}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, paddingRight: 8 }}>
                     {formatLogoDataUri(activeRestaurant?.logo_url || settings.logo_url) ? (
                       <Image
                         source={{ uri: formatLogoDataUri(activeRestaurant?.logo_url || settings.logo_url) }}
-                        style={{ width: 44, height: 44, borderRadius: 6 }}
+                        style={{ width: 40, height: 40, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', flexShrink: 0 }}
                         resizeMode="contain"
                       />
                     ) : null}
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.modalTitle}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={[styles.modalTitle, { fontSize: 15 }]} numberOfLines={1}>
                         {isTaxInvoice ? 'Tax Invoice' : 'Retail Bill'} #{invNo}
                       </Text>
-                      <Text style={styles.modalSubTitle}>
+                      <Text style={[styles.modalSubTitle, { fontSize: 11 }]} numberOfLines={1}>
                         {activeRestaurant?.name || settings.name}
                         {isTaxInvoice && settings.gstin ? ` • GSTIN: ${settings.gstin}` : ''}
                       </Text>
@@ -3213,7 +3213,8 @@ export default function OrdersScreen() {
                   </View>
                   <TouchableOpacity
                     onPress={() => setViewOrderModal(null)}
-                    style={styles.modalCloseBtn}
+                    style={[styles.modalCloseBtn, { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', flexShrink: 0 }]}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   >
                     <Text style={styles.modalCloseText}>✕</Text>
                   </TouchableOpacity>
@@ -3222,204 +3223,162 @@ export default function OrdersScreen() {
                 <ScrollView
                   showsVerticalScrollIndicator={true}
                   style={{ flexShrink: 1 }}
-                  contentContainerStyle={{ paddingBottom: 24 }}
+                  contentContainerStyle={{ paddingBottom: 16 }}
                 >
-                  <View style={styles.billBreakdownBox}>
-                    <View style={styles.billRow}>
-                      <Text><Text style={{ fontWeight: '700' }}>Order Date & Time:</Text> {formatOrderDateTime(viewOrderModal.created_at)}</Text>
-                    </View>
-                    <View style={styles.billRow}>
-                      <Text><Text style={{ fontWeight: '700' }}>Order ID:</Text> {viewOrderModal.order_number}</Text>
-                      <Text><Text style={{ fontWeight: '700' }}>Type:</Text> {viewOrderModal.order_type.toUpperCase()}</Text>
-                    </View>
-                    {viewOrderModal.table_number ? (
-                      <View style={styles.billRow}>
-                        <Text><Text style={{ fontWeight: '700' }}>Table:</Text> {viewOrderModal.table_number}</Text>
+                  {/* Order Metadata Card */}
+                  <View style={styles.invoiceMetaCard}>
+                    <View style={styles.invoiceMetaRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.invoiceMetaLabel}>ORDER ID</Text>
+                        <Text style={styles.invoiceMetaVal}>#{viewOrderModal.order_number}</Text>
                       </View>
-                    ) : null}
-                    <View style={styles.billRow}>
-                      <Text><Text style={{ fontWeight: '700' }}>Customer:</Text> {viewOrderModal.customer_name || 'Walk-in Guest'}</Text>
-                      <Text><Text style={{ fontWeight: '700' }}>Phone:</Text> {viewOrderModal.customer_phone || 'N/A'}</Text>
-                    </View>
-                    {isTaxInvoice && viewOrderModal.customer_gstin ? (
-                      <View style={styles.billRow}>
-                        <Text><Text style={{ fontWeight: '700' }}>Customer GSTIN (B2B):</Text> <Text style={{ fontWeight: 'bold', color: '#1e40af' }}>{viewOrderModal.customer_gstin}</Text></Text>
-                      </View>
-                    ) : null}
-                    {isTaxInvoice ? (
-                      <View style={styles.billRow}>
-                        <Text><Text style={{ fontWeight: '700' }}>Place of Supply:</Text> {settings?.state || 'West Bengal'} ({settings?.state_code || '19'})</Text>
-                        <Text><Text style={{ fontWeight: '700' }}>Reverse Charge:</Text> No</Text>
-                      </View>
-                    ) : null}
-                    <View style={styles.billRow}>
-                      <Text><Text style={{ fontWeight: '700' }}>Status:</Text> {viewOrderModal.status.toUpperCase()}</Text>
-                      <Text>
-                        <Text style={{ fontWeight: '700' }}>Payment:</Text>{' '}
-                        <Text style={{ color: viewOrderModal.payment_status === 'paid' ? '#16a34a' : '#e11d48', fontWeight: 'bold' }}>
-                          {viewOrderModal.payment_status.toUpperCase()}
+                      <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                        <Text style={styles.invoiceMetaLabel}>TYPE</Text>
+                        <Text style={[styles.invoiceMetaVal, { color: '#2563eb' }]}>
+                          {viewOrderModal.order_type.toUpperCase()}
                         </Text>
-                      </Text>
+                      </View>
                     </View>
 
-                    {viewOrderModal.payment_method ? (
-                      <View style={styles.billRow}>
-                        <Text><Text style={{ fontWeight: '700' }}>Payment Mode:</Text> {viewOrderModal.payment_method.toUpperCase()}</Text>
-                      </View>
-                    ) : null}
+                    <View style={styles.invoiceMetaDivider} />
 
-                    {viewOrderModal.payment_proof_url ? (
-                      <View
-                        style={{
-                          marginVertical: 8,
-                          padding: 12,
-                          backgroundColor: viewOrderModal.payment_status === 'paid' ? '#f0fdf4' : '#eff6ff',
-                          borderRadius: 8,
-                          borderWidth: 1,
-                          borderColor: viewOrderModal.payment_status === 'paid' ? '#86efac' : '#bfdbfe',
-                        }}
-                      >
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
-                          <Text style={{ fontSize: 13, fontWeight: '900', color: '#0f172a' }}>
-                            📸 Customer Online Payment Proof:
-                          </Text>
-                          <View
-                            style={{
-                              backgroundColor: viewOrderModal.payment_status === 'paid' ? '#dcfce7' : Boolean(viewOrderModal.payment_verified_at) ? '#dcfce7' : (viewOrderModal.status === 'cancelled' ? '#fee2e2' : '#dbeafe'),
-                              paddingHorizontal: 8,
-                              paddingVertical: 3,
-                              borderRadius: 6,
-                              borderWidth: 1,
-                              borderColor: viewOrderModal.payment_status === 'paid' ? '#bbf7d0' : Boolean(viewOrderModal.payment_verified_at) ? '#86efac' : (viewOrderModal.status === 'cancelled' ? '#fecaca' : '#bfdbfe'),
-                            }}
-                          >
-                            <Text
-                              style={{
-                                fontSize: 10,
-                                fontWeight: '900',
-                                color: viewOrderModal.payment_status === 'paid' ? '#15803d' : Boolean(viewOrderModal.payment_verified_at) ? '#15803d' : (viewOrderModal.status === 'cancelled' ? '#dc2626' : '#2563eb'),
-                              }}
-                            >
-                              {viewOrderModal.payment_status === 'paid'
-                                ? '✓ VERIFIED & PAID'
-                                : Boolean(viewOrderModal.payment_verified_at)
-                                ? '✓ PAYMENT VERIFIED • READY TO SETTLE'
-                                : (viewOrderModal.status === 'cancelled' ? '🚫 ORDER CANCELLED' : '⚠️ PENDING VERIFICATION')}
-                            </Text>
+                    <View style={styles.invoiceMetaRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.invoiceMetaLabel}>DATE & TIME</Text>
+                        <Text style={styles.invoiceMetaVal}>{formatOrderDateTime(viewOrderModal.created_at)}</Text>
+                      </View>
+                      {viewOrderModal.table_number ? (
+                        <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                          <Text style={styles.invoiceMetaLabel}>TABLE</Text>
+                          <Text style={styles.invoiceMetaVal}>Table {viewOrderModal.table_number}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    <View style={styles.invoiceMetaDivider} />
+
+                    <View style={styles.invoiceMetaRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.invoiceMetaLabel}>CUSTOMER</Text>
+                        <Text style={styles.invoiceMetaVal}>{viewOrderModal.customer_name || 'Walk-in Guest'}</Text>
+                      </View>
+                      <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                        <Text style={styles.invoiceMetaLabel}>PHONE</Text>
+                        <Text style={styles.invoiceMetaVal}>{viewOrderModal.customer_phone || 'N/A'}</Text>
+                      </View>
+                    </View>
+
+                    {isTaxInvoice && viewOrderModal.customer_gstin ? (
+                      <>
+                        <View style={styles.invoiceMetaDivider} />
+                        <View style={styles.invoiceMetaRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.invoiceMetaLabel}>CUSTOMER GSTIN (B2B)</Text>
+                            <Text style={[styles.invoiceMetaVal, { color: '#1d4ed8' }]}>{viewOrderModal.customer_gstin}</Text>
                           </View>
                         </View>
-
-                        <Image
-                          source={{ uri: viewOrderModal.payment_proof_url }}
-                          style={{ width: '100%', height: 260, borderRadius: 6, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#e2e8f0' }}
-                          resizeMode="contain"
-                        />
-
-                        {viewOrderModal.status === 'cancelled' ? (
-                          <View
-                            style={{
-                              backgroundColor: '#fee2e2',
-                              paddingVertical: 9,
-                              paddingHorizontal: 12,
-                              borderRadius: 8,
-                              marginTop: 10,
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              borderWidth: 1,
-                              borderColor: '#fca5a5',
-                            }}
-                          >
-                            <Text style={{ color: '#991b1b', fontSize: 12, fontWeight: '800' }}>
-                              🚫 Cancelled Order • Payment Verification Disabled
-                            </Text>
-                          </View>
-                        ) : Boolean(viewOrderModal.payment_verified_at) && viewOrderModal.payment_status !== 'paid' ? (
-                          <View
-                            style={{
-                              backgroundColor: '#dcfce7',
-                              paddingVertical: 10,
-                              borderRadius: 8,
-                              marginTop: 10,
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              borderWidth: 1,
-                              borderColor: '#86efac',
-                            }}
-                          >
-                            <Text style={{ color: '#15803d', fontSize: 13, fontWeight: '900' }}>
-                              ✅ Payment Verified — Ready to Settle
-                            </Text>
-                          </View>
-                        ) : (
-                          viewOrderModal.payment_status !== 'paid' && !viewOrderModal.payment_verified_at && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
-                            <TouchableOpacity
-                              style={{
-                                backgroundColor: '#16a34a',
-                                paddingVertical: 10,
-                                borderRadius: 8,
-                                marginTop: 10,
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                              }}
-                              onPress={() => handleMarkPaymentVerified(viewOrderModal)}
-                              disabled={verifyingPaymentOrderId === viewOrderModal.id}
-                            >
-                              {verifyingPaymentOrderId === viewOrderModal.id ? (
-                                <ActivityIndicator size="small" color="#ffffff" />
-                              ) : (
-                                <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '900' }}>
-                                  ✓ Mark Payment Verified
-                                </Text>
-                              )}
-                            </TouchableOpacity>
-                          )
-                        )}
-
-                        {viewOrderModal.payment_verified_at && (
-                          <Text style={{ fontSize: 11, color: '#166534', fontWeight: '700', marginTop: 8, textAlign: 'center' }}>
-                            ✓ Verified by Admin on {formatOrderDateTime(viewOrderModal.payment_verified_at)}
-                          </Text>
-                        )}
-                      </View>
+                      </>
                     ) : null}
 
-                    <View style={{ borderTopWidth: 1, borderColor: '#cbd5e1', marginVertical: 8 }} />
+                    {isTaxInvoice ? (
+                      <>
+                        <View style={styles.invoiceMetaDivider} />
+                        <View style={styles.invoiceMetaRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.invoiceMetaLabel}>PLACE OF SUPPLY</Text>
+                            <Text style={styles.invoiceMetaVal}>{settings?.state || 'West Bengal'} ({settings?.state_code || '19'})</Text>
+                          </View>
+                          <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                            <Text style={styles.invoiceMetaLabel}>REVERSE CHARGE</Text>
+                            <Text style={styles.invoiceMetaVal}>No</Text>
+                          </View>
+                        </View>
+                      </>
+                    ) : null}
 
-                    {(viewOrderModal.items || []).map((itm, i) => (
-                      <View key={itm.id || i} style={styles.billRow}>
-                        <Text>
-                          {itm.quantity}x {itm.product_name}
+                    <View style={styles.invoiceMetaDivider} />
+
+                    <View style={styles.invoiceMetaRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.invoiceMetaLabel}>ORDER STATUS</Text>
+                        <View style={[styles.invoiceStatusPill, isCompleted ? styles.invoiceStatusCompleted : styles.invoiceStatusActive]}>
+                          <Text style={[styles.invoiceStatusPillText, isCompleted ? { color: '#15803d' } : { color: '#1d4ed8' }]}>
+                            {viewOrderModal.status.toUpperCase()}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                        <Text style={styles.invoiceMetaLabel}>PAYMENT</Text>
+                        <View style={[styles.invoiceStatusPill, isPaid ? styles.invoiceStatusPaid : styles.invoiceStatusUnpaid]}>
+                          <Text style={[styles.invoiceStatusPillText, isPaid ? { color: '#15803d' } : { color: '#dc2626' }]}>
+                            {isPaid ? `✓ PAID (${(viewOrderModal.payment_method || 'PAID').toUpperCase()})` : '⚠️ UNPAID'}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Payment Proof Banner (if present) */}
+                  {viewOrderModal.payment_proof_url ? (
+                    <View style={styles.invoiceProofCard}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#0f172a' }}>
+                          📸 Customer Online Payment Proof:
                         </Text>
-                        <Text style={{ fontWeight: 'bold' }}>
+                        <View style={{ backgroundColor: isPaid ? '#dcfce7' : '#eff6ff', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
+                          <Text style={{ fontSize: 10, fontWeight: '800', color: isPaid ? '#15803d' : '#1d4ed8' }}>
+                            {isPaid ? '✓ VERIFIED & PAID' : Boolean(viewOrderModal.payment_verified_at) ? '✓ PAYMENT VERIFIED' : 'PENDING'}
+                          </Text>
+                        </View>
+                      </View>
+                      <Image
+                        source={{ uri: viewOrderModal.payment_proof_url }}
+                        style={{ width: '100%', height: 200, borderRadius: 8, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#e2e8f0' }}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  ) : null}
+
+                  {/* Items Card */}
+                  <View style={styles.invoiceItemsCard}>
+                    <Text style={styles.invoiceSectionTitle}>ORDERED ITEMS ({viewOrderModal.items?.length || 0})</Text>
+                    {(viewOrderModal.items || []).map((itm, i) => (
+                      <View key={itm.id || i} style={styles.invoiceItemRow}>
+                        <View style={styles.invoiceQtyBadge}>
+                          <Text style={styles.invoiceQtyText}>{itm.quantity}x</Text>
+                        </View>
+                        <Text style={styles.invoiceItemName} numberOfLines={2}>{itm.product_name}</Text>
+                        <Text style={styles.invoiceItemPrice}>
                           {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
                         </Text>
                       </View>
                     ))}
+                  </View>
 
-                    <View style={{ borderTopWidth: 1, borderColor: '#cbd5e1', marginVertical: 8 }} />
-
-                    <View style={styles.billRow}>
-                      <Text>Subtotal:</Text>
-                      <Text>{formatCurrency(getOrderSubtotal(viewOrderModal))}</Text>
+                  {/* Financial Breakdown Card */}
+                  <View style={styles.invoiceTotalsCard}>
+                    <View style={styles.invoiceRow}>
+                      <Text style={styles.invoiceLabel}>Subtotal</Text>
+                      <Text style={styles.invoiceVal}>{formatCurrency(subtotalVal)}</Text>
                     </View>
 
-                    {Boolean(viewOrderModal.discount_amount) && (
-                      <View style={styles.billRow}>
-                        <Text style={{ color: '#16a34a', fontWeight: '700' }}>
-                          Discount {viewOrderModal.discount_type === 'percentage' ? `(${viewOrderModal.discount_value || ''}%)` : (viewOrderModal.discount_value ? `(₹${viewOrderModal.discount_value})` : '')}:
+                    {Boolean(viewOrderModal.discount_amount && viewOrderModal.discount_amount > 0) && (
+                      <View style={styles.invoiceRow}>
+                        <Text style={[styles.invoiceLabel, { color: '#16a34a', fontWeight: '700' }]}>
+                          Discount {viewOrderModal.discount_type === 'percentage' ? `(${viewOrderModal.discount_value || ''}%)` : (viewOrderModal.discount_value ? `(₹${viewOrderModal.discount_value})` : '')}
                         </Text>
-                        <Text style={{ color: '#16a34a', fontWeight: '800' }}>
+                        <Text style={[styles.invoiceVal, { color: '#16a34a', fontWeight: '800' }]}>
                           -{formatCurrency(viewOrderModal.discount_amount)}
                         </Text>
                       </View>
                     )}
 
-                    {Boolean(viewOrderModal.coupon_discount) && (
-                      <View style={styles.billRow}>
-                        <Text style={{ color: '#16a34a', fontWeight: '700' }}>
-                          Coupon ({viewOrderModal.coupon_code || ''}):
+                    {Boolean(viewOrderModal.coupon_discount && viewOrderModal.coupon_discount > 0) && (
+                      <View style={styles.invoiceRow}>
+                        <Text style={[styles.invoiceLabel, { color: '#16a34a', fontWeight: '700' }]}>
+                          Coupon ({viewOrderModal.coupon_code || ''})
                         </Text>
-                        <Text style={{ color: '#16a34a', fontWeight: '800' }}>
+                        <Text style={[styles.invoiceVal, { color: '#16a34a', fontWeight: '800' }]}>
                           -{formatCurrency(viewOrderModal.coupon_discount)}
                         </Text>
                       </View>
@@ -3427,70 +3386,72 @@ export default function OrdersScreen() {
 
                     {isTaxInvoice && (viewOrderModal.cgst_amount || 0) + (viewOrderModal.sgst_amount || 0) > 0 ? (
                       <>
-                        <View style={styles.billRow}>
-                          <Text>Taxable Amount:</Text>
-                          <Text>{formatCurrency(viewOrderModal.taxable_amount !== undefined && viewOrderModal.taxable_amount > 0 ? viewOrderModal.taxable_amount : Math.max(0, getOrderSubtotal(viewOrderModal) - (viewOrderModal.discount_amount || 0) - (viewOrderModal.coupon_discount || 0)))}</Text>
+                        <View style={styles.invoiceRow}>
+                          <Text style={styles.invoiceLabel}>Taxable Amount</Text>
+                          <Text style={styles.invoiceVal}>
+                            {formatCurrency(viewOrderModal.taxable_amount !== undefined && viewOrderModal.taxable_amount > 0 ? viewOrderModal.taxable_amount : Math.max(0, subtotalVal - (viewOrderModal.discount_amount || 0) - (viewOrderModal.coupon_discount || 0)))}
+                          </Text>
                         </View>
-
-                        <View style={styles.billRow}>
-                          <Text>CGST ({halfRate}%):</Text>
-                          <Text>{formatCurrency(viewOrderModal.cgst_amount)}</Text>
+                        <View style={styles.invoiceRow}>
+                          <Text style={styles.invoiceLabel}>CGST ({halfRate}%)</Text>
+                          <Text style={styles.invoiceVal}>{formatCurrency(viewOrderModal.cgst_amount || 0)}</Text>
                         </View>
-                        <View style={styles.billRow}>
-                          <Text>SGST ({halfRate}%):</Text>
-                          <Text>{formatCurrency(viewOrderModal.sgst_amount)}</Text>
+                        <View style={styles.invoiceRow}>
+                          <Text style={styles.invoiceLabel}>SGST ({halfRate}%)</Text>
+                          <Text style={styles.invoiceVal}>{formatCurrency(viewOrderModal.sgst_amount || 0)}</Text>
                         </View>
-                        {viewOrderModal.igst_amount && viewOrderModal.igst_amount > 0 ? (
-                          <View style={styles.billRow}>
-                            <Text>IGST:</Text>
-                            <Text>{formatCurrency(viewOrderModal.igst_amount)}</Text>
-                          </View>
-                        ) : null}
                       </>
                     ) : null}
 
-                    {Boolean(viewOrderModal.delivery_charge) && (
-                      <View style={styles.billRow}>
-                        <Text>Delivery Charge:</Text>
-                        <Text>{formatCurrency(viewOrderModal.delivery_charge)}</Text>
+                    {Boolean(viewOrderModal.delivery_charge && viewOrderModal.delivery_charge > 0) && (
+                      <View style={styles.invoiceRow}>
+                        <Text style={styles.invoiceLabel}>Delivery Charge</Text>
+                        <Text style={styles.invoiceVal}>{formatCurrency(viewOrderModal.delivery_charge)}</Text>
                       </View>
                     )}
 
                     {Boolean(viewOrderModal.round_off) && (
-                      <View style={styles.billRow}>
-                        <Text>Round Off:</Text>
-                        <Text>{viewOrderModal.round_off > 0 ? '+' : ''}{formatCurrency(viewOrderModal.round_off)}</Text>
+                      <View style={styles.invoiceRow}>
+                        <Text style={styles.invoiceLabel}>Round Off</Text>
+                        <Text style={styles.invoiceVal}>
+                          {viewOrderModal.round_off > 0 ? '+' : ''}{formatCurrency(viewOrderModal.round_off)}
+                        </Text>
                       </View>
                     )}
 
-                    <View style={[styles.billRow, styles.billTotalRow]}>
-                      <Text style={styles.billTotalLabel}>Grand Total:</Text>
-                      <Text style={styles.billTotalVal}>{formatCurrency(viewOrderModal.payable_amount)}</Text>
+                    {/* Grand Total Banner */}
+                    <View style={styles.invoiceGrandTotalBanner}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text style={styles.invoiceGrandTotalLabel}>Grand Total</Text>
+                        <Text style={styles.invoiceGrandTotalVal}>{formatCurrency(viewOrderModal.payable_amount)}</Text>
+                      </View>
+                      <Text style={styles.invoiceWordsText}>
+                        ({numberToWords(viewOrderModal.payable_amount || 0)})
+                      </Text>
                     </View>
-                    <Text style={styles.wordsText}>({numberToWords(viewOrderModal.payable_amount)})</Text>
                   </View>
 
                   {/* Print and Share buttons */}
-                  <View style={[{ flexDirection: isMobile ? 'column' : 'row', gap: 8, marginTop: 12 }]}>
+                  <View style={[styles.invoiceActionsRow, isMobile && styles.invoiceActionsCol]}>
                     <TouchableOpacity
-                      style={[styles.printBtnSmall, isMobile && { width: '100%', flex: 0 }]}
+                      style={[styles.invoiceActionBtn, styles.invoiceBtnThermal]}
                       onPress={() => printService.printFinalReceiptThermal(viewOrderModal, settings, user?.full_name)}
                     >
-                      <Text style={styles.printBtnSmallText}>🖨️ Thermal Bill</Text>
+                      <Text style={styles.invoiceBtnText}>🖨️ Thermal Bill</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={[styles.printKotBtnSmall, isMobile && { width: '100%', flex: 0 }]}
+                      style={[styles.invoiceActionBtn, styles.invoiceBtnKot]}
                       onPress={() => printService.printKotThermal(viewOrderModal, settings)}
                     >
-                      <Text style={styles.printKotBtnSmallText}>🖨️ KOT Slip</Text>
+                      <Text style={styles.invoiceBtnText}>🖨️ KOT Slip</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={[styles.shareBtnSmall, isMobile && { width: '100%', flex: 0 }]}
+                      style={[styles.invoiceActionBtn, styles.invoiceBtnA4]}
                       onPress={() => printService.printTaxInvoiceA4(viewOrderModal, settings)}
                     >
-                      <Text style={styles.shareBtnSmallText}>📄 Tax Invoice A4</Text>
+                      <Text style={styles.invoiceBtnText}>📄 Tax Invoice A4</Text>
                     </TouchableOpacity>
                   </View>
                 </ScrollView>
@@ -4322,8 +4283,202 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   markSeenBtnText: {
-    fontSize: 10,
-    fontWeight: '700',
     color: '#475569',
+    fontSize: 10.5,
+    fontWeight: '700',
+  },
+  invoiceMetaCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    marginBottom: 10,
+  },
+  invoiceMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  invoiceMetaDivider: {
+    height: 1,
+    backgroundColor: '#e2e8f0',
+    marginVertical: 6,
+  },
+  invoiceMetaLabel: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    marginBottom: 1,
+  },
+  invoiceMetaVal: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  invoiceStatusPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginTop: 2,
+    alignSelf: 'flex-start',
+  },
+  invoiceStatusCompleted: {
+    backgroundColor: '#dcfce7',
+  },
+  invoiceStatusActive: {
+    backgroundColor: '#dbeafe',
+  },
+  invoiceStatusPaid: {
+    backgroundColor: '#dcfce7',
+  },
+  invoiceStatusUnpaid: {
+    backgroundColor: '#fee2e2',
+  },
+  invoiceStatusPillText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+  },
+  invoiceProofCard: {
+    backgroundColor: '#eff6ff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    padding: 10,
+    marginBottom: 10,
+  },
+  invoiceItemsCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    marginBottom: 10,
+  },
+  invoiceSectionTitle: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#64748b',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  invoiceItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+    borderBottomWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  invoiceQtyBadge: {
+    backgroundColor: '#eff6ff',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginRight: 8,
+  },
+  invoiceQtyText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#2563eb',
+  },
+  invoiceItemName: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  invoiceItemPrice: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  invoiceTotalsCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    marginBottom: 10,
+  },
+  invoiceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginVertical: 2.5,
+  },
+  invoiceLabel: {
+    fontSize: 11.5,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  invoiceVal: {
+    fontSize: 12,
+    color: '#0f172a',
+    fontWeight: '700',
+  },
+  invoiceGrandTotalBanner: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#86efac',
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 8,
+  },
+  invoiceGrandTotalLabel: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#166534',
+  },
+  invoiceGrandTotalVal: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#15803d',
+  },
+  invoiceWordsText: {
+    fontSize: 9.5,
+    fontStyle: 'italic',
+    color: '#166534',
+    marginTop: 2,
+  },
+  invoiceActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  invoiceActionsCol: {
+    flexDirection: 'column',
+    gap: 8,
+  },
+  invoiceActionBtn: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  invoiceBtnThermal: {
+    backgroundColor: '#0f172a',
+  },
+  invoiceBtnKot: {
+    backgroundColor: '#ea580c',
+  },
+  invoiceBtnA4: {
+    backgroundColor: '#2563eb',
+  },
+  invoiceBtnText: {
+    color: '#ffffff',
+    fontSize: 12.5,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
 });

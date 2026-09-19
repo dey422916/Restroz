@@ -111,6 +111,13 @@ export default function OrdersScreen() {
   const isDesktopWide = (Platform.OS === 'web' && windowWidth >= 1200) || windowWidth >= 1200;
   const isTwoColumn = (Platform.OS === 'web' && windowWidth >= 680) || windowWidth >= 768;
 
+  const formatTableLabel = (rawName?: string | null): string => {
+    if (!rawName) return '';
+    const trimmed = rawName.trim();
+    if (/^table\b/i.test(trimmed)) return trimmed;
+    return `Table ${trimmed}`;
+  };
+
   const cardWidth = useMemo(() => {
     if (isDesktopWide) {
       if (Platform.OS === 'web') return 'calc(33.333% - 7px)' as any;
@@ -2494,7 +2501,7 @@ export default function OrdersScreen() {
                     💳 Record Payment #{partialPayModal?.order_number}
                   </Text>
                   <Text style={styles.modalSubTitle} numberOfLines={1}>
-                    {partialPayModal?.order_type.toUpperCase()} • {partialPayModal?.table_number ? `Table ${partialPayModal.table_number}` : partialPayModal?.customer_name || 'Walk-in'} • 🕒 {formatOrderDateTime(partialPayModal?.created_at)}
+                    {partialPayModal?.order_type.toUpperCase()} • {partialPayModal?.table_number ? formatTableLabel(partialPayModal.table_number) : partialPayModal?.customer_name || 'Walk-in'} • 🕒 {formatOrderDateTime(partialPayModal?.created_at)}
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -2781,7 +2788,7 @@ export default function OrdersScreen() {
                     Close Order & Settle Bill #{payOrderModal?.order_number}
                   </Text>
                   <Text style={styles.modalSubTitle} numberOfLines={1}>
-                    {payOrderModal?.order_type.toUpperCase()} • {payOrderModal?.table_number ? `Table ${payOrderModal.table_number}` : payOrderModal?.customer_name} • 🕒 {formatOrderDateTime(payOrderModal?.created_at)}
+                    {payOrderModal?.order_type.toUpperCase()} • {payOrderModal?.table_number ? formatTableLabel(payOrderModal.table_number) : (payOrderModal?.customer_name || 'Walk-in')} • 🕒 {formatOrderDateTime(payOrderModal?.created_at)}
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -3187,7 +3194,7 @@ export default function OrdersScreen() {
                       {viewOrderModal.table_number ? (
                         <View style={{ flex: 1, alignItems: 'flex-end' }}>
                           <Text style={styles.invoiceMetaLabel}>TABLE</Text>
-                          <Text style={styles.invoiceMetaVal}>Table {viewOrderModal.table_number}</Text>
+                          <Text style={styles.invoiceMetaVal}>{formatTableLabel(viewOrderModal.table_number)}</Text>
                         </View>
                       ) : null}
                     </View>

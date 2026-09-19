@@ -218,7 +218,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               <View>
                 <Text style={styles.title}>Close Order & Settlement</Text>
                 <Text style={styles.subTitle}>
-                  Order #{order.order_number} • {order.table_number ? `Table ${order.table_number}` : order.order_type.toUpperCase()} • 🕒 {formatOrderDateTime(order.created_at)}
+                  Order #{order.order_number} • {order.table_number ? (/^table\b/i.test(order.table_number.trim()) ? order.table_number.trim() : `Table ${order.table_number.trim()}`) : order.order_type.toUpperCase()} • 🕒 {formatOrderDateTime(order.created_at)}
                 </Text>
               </View>
               <TouchableOpacity onPress={onClose} style={styles.closeBtn}>

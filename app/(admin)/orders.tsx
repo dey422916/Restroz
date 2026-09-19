@@ -94,6 +94,18 @@ export default function OrdersScreen() {
   const [payDiscountValue, setPayDiscountValue] = useState<string>('');
   const [closingOrder, setClosingOrder] = useState<boolean>(false);
   const [verifyingPaymentOrderId, setVerifyingPaymentOrderId] = useState<string | null>(null);
+
+  // Partial Payment Modal state
+  const [partialPayModal, setPartialPayModal] = useState<Order | null>(null);
+  const [partialPayMethod, setPartialPayMethod] = useState<PaymentMethod>('cash');
+  const [partialPayAmount, setPartialPayAmount] = useState<string>('');
+  const [partialPayRef, setPartialPayRef] = useState<string>('');
+  const [partialPayNotes, setPartialPayNotes] = useState<string>('');
+  const [partialPaySplits, setPartialPaySplits] = useState<Array<{ id: string; method: PaymentMethod; amount: string; ref: string }>>([
+    { id: '1', method: 'cash', amount: '', ref: '' },
+    { id: '2', method: 'upi', amount: '', ref: '' },
+  ]);
+  const [recordingPartialPayment, setRecordingPartialPayment] = useState<boolean>(false);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isMobile = windowWidth < 768;
   const isTwoColumn = (Platform.OS === 'web' && windowWidth >= 600) || windowWidth >= 768;
@@ -606,44 +618,92 @@ export default function OrdersScreen() {
     }
   };
 
-  // Hold Order
-  const handleHoldOrder = async (order: Order) => {
-    try {
-      await orderService.holdOrder(order.id);
-      Alert.alert('Order Placed on Hold', `Order #${order.order_number} is now on hold.\nDining table remains occupied.`);
-      await loadData();
-    } catch (err: any) {
-      Alert.alert('Hold Failed', err.message);
-    }
+  // Open Partial Payment Modal
+  const openPartialPaymentModal = (order: Order) => {
+    markAsSeen(order.id);
+    setPartialPayModal(order);
+    const payable = Number(order.payable_amount ?? order.grand_total ?? 0);
+    const paid = Number(order.paid_amount ?? 0);
+    const balance = Math.max(0, payable - paid);
+    setPartialPayAmount(balance > 0 ? String(balance) : '');
+    setPartialPayMethod('cash');
+    setPartialPayRef('');
+    setPartialPayNotes('');
+    setPartialPaySplits([
+      { id: '1', method: 'cash', amount: balance > 0 ? String(balance) : '', ref: '' },
+      { id: '2', method: 'upi', amount: '', ref: '' },
+    ]);
   };
 
-  // Resume Order
-  const handleResumeOrder = async (order: Order) => {
-    try {
-      await orderService.resumeOrder(order.id);
-      Alert.alert('Order Resumed', `Order #${order.order_number} is now active.`);
-      await loadData();
-    } catch (err: any) {
-      Alert.alert('Resume Failed', err.message);
-    }
-  };
+  // Confirm Partial Payment
+  const handleConfirmPartialPayment = async () => {
+    if (!partialPayModal) return;
+    const payable = Number(partialPayModal.payable_amount ?? partialPayModal.grand_total ?? 0);
+    const paid = Number(partialPayModal.paid_amount ?? 0);
+    const balance = Math.max(0, payable - paid);
 
-  // Toggle Hold inside Edit Modal
-  const handleToggleModalHold = async () => {
-    if (!editOrderModal) return;
-    try {
-      if (editOrderModal.status === 'held') {
-        const res = await orderService.resumeOrder(editOrderModal.id);
-        setEditOrderModal({ ...editOrderModal, status: 'confirmed' });
-        Alert.alert('Order Resumed', `Order #${res.order_number} is now active.`);
-      } else {
-        const res = await orderService.holdOrder(editOrderModal.id);
-        setEditOrderModal({ ...editOrderModal, status: 'held' });
-        Alert.alert('Order Put on Hold', `Order #${res.order_number} placed on hold.\nTable remains occupied.`);
+    if (balance <= 0) {
+      showAlert('Fully Paid', 'This order is already fully paid. Click Settle to complete the order.');
+      return;
+    }
+
+    let effectiveAmount = 0;
+    let splitArray: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }> | undefined = undefined;
+
+    if (partialPayMethod === 'split') {
+      const validSplits = partialPaySplits.filter((s) => parseFloat(s.amount) > 0);
+      if (validSplits.length === 0) {
+        showAlert('Invalid Amount', 'Please enter at least one split payment amount.');
+        return;
       }
-      await loadData();
+      effectiveAmount = validSplits.reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
+      splitArray = validSplits.map((s) => ({
+        payment_method: s.method,
+        amount: parseFloat(s.amount),
+        reference_number: s.ref.trim() || undefined,
+      }));
+    } else {
+      effectiveAmount = parseFloat(partialPayAmount);
+      if (isNaN(effectiveAmount) || effectiveAmount <= 0) {
+        showAlert('Invalid Amount', 'Please enter a valid payment amount greater than zero.');
+        return;
+      }
+    }
+
+    if (effectiveAmount > balance) {
+      showAlert(
+        'Overpayment Blocked',
+        `Payment amount (${formatCurrency(effectiveAmount)}) cannot exceed remaining balance (${formatCurrency(balance)}).`
+      );
+      return;
+    }
+
+    setRecordingPartialPayment(true);
+    try {
+      const res = await orderService.recordPartialPayment({
+        orderId: partialPayModal.id,
+        paymentMethod: partialPayMethod,
+        amount: effectiveAmount,
+        referenceNumber: partialPayRef.trim() || undefined,
+        notes: partialPayNotes.trim() || undefined,
+        splitPayments: splitArray,
+        restaurantId: partialPayModal.restaurant_id || activeRestaurantId,
+      });
+
+      setOrders((prev) => prev.map((o) => (o.id === res.order.id ? res.order : o)));
+      setAllTenantOrders((prev) => prev.map((o) => (o.id === res.order.id ? res.order : o)));
+      showAlert(
+        '✓ Payment Recorded',
+        `Payment of ${formatCurrency(effectiveAmount)} recorded successfully for Order #${res.order.order_number}.\nRemaining balance: ${formatCurrency(
+          Math.max(0, Number(res.order.payable_amount ?? res.order.grand_total ?? 0) - Number(res.order.paid_amount ?? 0))
+        )}.`
+      );
+      setPartialPayModal(null);
+      await loadData(true);
     } catch (err: any) {
-      Alert.alert('Action Failed', err.message);
+      showAlert('Payment Failed', err.message || 'Failed to record payment.');
+    } finally {
+      setRecordingPartialPayment(false);
     }
   };
 
@@ -653,6 +713,15 @@ export default function OrdersScreen() {
     const finalReason = cancelCustomReason.trim() || cancelReasonPreset;
     if (!finalReason) {
       showAlert('Reason Required', 'Please select or enter a cancellation reason.');
+      return;
+    }
+
+    if (cancelOrderModal.paid_amount && Number(cancelOrderModal.paid_amount) > 0) {
+      showAlert(
+        'Cannot Cancel Order',
+        `₹${cancelOrderModal.paid_amount} has already been received. Refund/Void payment before cancelling.`
+      );
+      setCancelOrderModal(null);
       return;
     }
 
@@ -1038,10 +1107,15 @@ export default function OrdersScreen() {
 
     setClosingOrder(true);
     try {
+      const finalPayable = payTotals?.payableAmount ?? payOrderModal.payable_amount ?? 0;
+      const alreadyPaid = Number(payOrderModal.paid_amount || 0);
+      const remainingBalance = Math.max(0, finalPayable - alreadyPaid);
+
       const completed = await orderService.closeAndPayOrder({
         orderId: payOrderModal.id,
         paymentMethod: payMethod,
         paymentReceived: payReceived,
+        amountPaid: remainingBalance > 0 ? remainingBalance : 0,
         transactionReference: payTxnRef.trim() || undefined,
         discountType: payDiscountType,
         discountValue: validatedPayDiscount,
@@ -1661,87 +1735,110 @@ export default function OrdersScreen() {
                     </View>
                   )}
 
-                  {/* Bill Summary Row */}
-                  <View style={styles.summaryRow}>
-                    <View>
-                      <Text style={styles.payableLabel}>Payable Total:</Text>
-                      <Text style={styles.payableVal}>
-                        {formatCurrency(
-                          order.payable_amount !== undefined && order.payable_amount !== null
-                            ? Number(order.payable_amount)
-                            : (order.grand_total !== undefined && order.grand_total !== null
-                                ? Number(order.grand_total)
-                                : (order.items && order.items.length > 0
-                                    ? order.items.reduce((sum, item) => sum + ((Number(item.unit_price) * Number(item.quantity)) || Number(item.subtotal) || Number(item.total) || 0), 0)
-                                    : 0))
-                        )}
-                      </Text>
-                    </View>
-                    {(() => {
-                      const isCodPay = order.payment_method === 'cod';
-                      const isCardPay = order.payment_method === 'card';
-                      const isCashPay = order.payment_method === 'cash';
-                      const isRoomPay = order.payment_method === 'room';
-                      const isSplitPay = order.payment_method === 'split';
-                      const isUpiPay = order.payment_method === 'upi' || order.payment_method === 'online';
-                      const isOnlinePay = isUpiPay || Boolean(order.payment_proof_url);
-                      const isProofVerified = Boolean(order.payment_verified_at);
+                  {/* Financial Breakdown: Total, Paid, Balance */}
+                  {(() => {
+                    const payableVal =
+                      order.payable_amount !== undefined && order.payable_amount !== null
+                        ? Number(order.payable_amount)
+                        : (order.grand_total !== undefined && order.grand_total !== null
+                            ? Number(order.grand_total)
+                            : (order.items && order.items.length > 0
+                                ? order.items.reduce((sum, item) => sum + ((Number(item.unit_price) * Number(item.quantity)) || Number(item.subtotal) || Number(item.total) || 0), 0)
+                                : 0));
+                    const paidVal = Number(order.paid_amount || 0);
+                    const balanceVal = Math.max(0, payableVal - paidVal);
 
-                      let badgeContainerStyle = styles.payStatusUnpaid;
-                      let badgeTextStyle = styles.payStatusTextUnpaid;
-                      let badgeLabel = '⚠️ UNPAID';
+                    const isCodPay = order.payment_method === 'cod';
+                    const isCardPay = order.payment_method === 'card';
+                    const isCashPay = order.payment_method === 'cash';
+                    const isRoomPay = order.payment_method === 'room';
+                    const isSplitPay = order.payment_method === 'split';
+                    const isUpiPay = order.payment_method === 'upi' || order.payment_method === 'online';
+                    const isOnlinePay = isUpiPay || Boolean(order.payment_proof_url);
+                    const isProofVerified = Boolean(order.payment_verified_at);
 
-                      if (isPaid) {
-                        badgeContainerStyle = styles.payStatusPaid;
-                        badgeTextStyle = styles.payStatusTextPaid;
-                        if (isCardPay) badgeLabel = '✓ PAID (CARD)';
-                        else if (isUpiPay) badgeLabel = '✓ PAID (UPI)';
-                        else if (isOnlinePay) badgeLabel = '✓ PAID (ONLINE)';
-                        else if (isCashPay || isCodPay) badgeLabel = '✓ PAID (CASH)';
-                        else if (isRoomPay) badgeLabel = '✓ PAID (ROOM)';
-                        else if (isSplitPay) badgeLabel = '✓ PAID (SPLIT)';
-                        else badgeLabel = `✓ PAID (${(order.payment_method || 'PAID').toUpperCase()})`;
+                    let badgeContainerStyle = styles.payStatusUnpaid;
+                    let badgeTextStyle = styles.payStatusTextUnpaid;
+                    let badgeLabel = '⚠️ UNPAID';
+
+                    if (isPaid) {
+                      badgeContainerStyle = styles.payStatusPaid;
+                      badgeTextStyle = styles.payStatusTextPaid;
+                      if (isCardPay) badgeLabel = '✓ PAID (CARD)';
+                      else if (isUpiPay) badgeLabel = '✓ PAID (UPI)';
+                      else if (isOnlinePay) badgeLabel = '✓ PAID (ONLINE)';
+                      else if (isCashPay || isCodPay) badgeLabel = '✓ PAID (CASH)';
+                      else if (isRoomPay) badgeLabel = '✓ PAID (ROOM)';
+                      else if (isSplitPay) badgeLabel = '✓ PAID (SPLIT)';
+                      else badgeLabel = `✓ PAID (${(order.payment_method || 'PAID').toUpperCase()})`;
+                    } else {
+                      if (order.status === 'cancelled') {
+                        badgeContainerStyle = { backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fca5a5' } as any;
+                        badgeTextStyle = { color: '#991b1b' } as any;
+                        badgeLabel = '🚫 CANCELLED (UNPAID)';
+                      } else if (isProofVerified) {
+                        badgeContainerStyle = { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#86efac' } as any;
+                        badgeTextStyle = { color: '#15803d' } as any;
+                        badgeLabel = '📱 ONLINE • PAYMENT VERIFIED • READY TO SETTLE';
+                      } else if (paidVal > 0) {
+                        badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
+                        badgeTextStyle = { color: '#1d4ed8' } as any;
+                        badgeLabel = `💳 PARTIALLY PAID (BAL: ${formatCurrency(balanceVal)})`;
+                      } else if (isOnlinePay) {
+                        badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
+                        badgeTextStyle = { color: '#1d4ed8' } as any;
+                        badgeLabel = Boolean(order.payment_proof_url)
+                          ? '📱 ONLINE • PROOF ATTACHED • PENDING VERIFICATION'
+                          : '📱 ONLINE (PENDING VERIFICATION)';
+                      } else if (isCodPay) {
+                        badgeContainerStyle = { backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fed7aa' } as any;
+                        badgeTextStyle = { color: '#c2410c' } as any;
+                        badgeLabel = '💵 COD (PAY ON DELIVERY)';
+                      } else if (isCardPay) {
+                        badgeContainerStyle = styles.payStatusUnpaid;
+                        badgeTextStyle = styles.payStatusTextUnpaid;
+                        badgeLabel = '💳 CARD (UNPAID)';
                       } else {
-                        if (order.status === 'cancelled') {
-                          badgeContainerStyle = { backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fca5a5' } as any;
-                          badgeTextStyle = { color: '#991b1b' } as any;
-                          badgeLabel = '🚫 CANCELLED (UNPAID)';
-                        } else if (isProofVerified) {
-                          badgeContainerStyle = { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#86efac' } as any;
-                          badgeTextStyle = { color: '#15803d' } as any;
-                          badgeLabel = '📱 ONLINE • PAYMENT VERIFIED • READY TO SETTLE';
-                        } else if (isOnlinePay) {
-                          badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
-                          badgeTextStyle = { color: '#1d4ed8' } as any;
-                          badgeLabel = Boolean(order.payment_proof_url)
-                            ? '📱 ONLINE • PROOF ATTACHED • PENDING VERIFICATION'
-                            : '📱 ONLINE (PENDING VERIFICATION)';
-                        } else if (isCodPay) {
-                          badgeContainerStyle = { backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fed7aa' } as any;
-                          badgeTextStyle = { color: '#c2410c' } as any;
-                          badgeLabel = '💵 COD (PAY ON DELIVERY)';
-                        } else if (isCardPay) {
-                          badgeContainerStyle = styles.payStatusUnpaid;
-                          badgeTextStyle = styles.payStatusTextUnpaid;
-                          badgeLabel = '💳 CARD (UNPAID)';
-                        } else {
-                          badgeContainerStyle = styles.payStatusUnpaid;
-                          badgeTextStyle = styles.payStatusTextUnpaid;
-                          badgeLabel = '⚠️ UNPAID';
-                        }
+                        badgeContainerStyle = styles.payStatusUnpaid;
+                        badgeTextStyle = styles.payStatusTextUnpaid;
+                        badgeLabel = '⚠️ UNPAID';
                       }
+                    }
 
-                      return (
-                        <View style={[styles.payStatusBadge, badgeContainerStyle]}>
+                    return (
+                      <>
+                        {/* Total, Paid, Balance summary */}
+                        <View style={styles.orderFinanceBox}>
+                          <View style={styles.orderFinanceCol}>
+                            <Text style={styles.orderFinanceLabel}>Total</Text>
+                            <Text style={styles.orderFinanceVal}>{formatCurrency(payableVal)}</Text>
+                          </View>
+                          <View style={styles.orderFinanceDivider} />
+                          <View style={styles.orderFinanceCol}>
+                            <Text style={styles.orderFinanceLabel}>Paid</Text>
+                            <Text style={[styles.orderFinanceVal, { color: paidVal > 0 ? '#15803d' : '#64748b' }]}>
+                              {formatCurrency(paidVal)}
+                            </Text>
+                          </View>
+                          <View style={styles.orderFinanceDivider} />
+                          <View style={styles.orderFinanceCol}>
+                            <Text style={styles.orderFinanceLabel}>Balance</Text>
+                            <Text style={[styles.orderFinanceVal, { color: balanceVal > 0 ? '#b45309' : '#15803d', fontWeight: '900' }]}>
+                              {formatCurrency(balanceVal)}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {/* Payment Status Badge */}
+                        <View style={[styles.payStatusBadge, badgeContainerStyle, { marginBottom: 10 }]}>
                           <Text style={[styles.payStatusText, badgeTextStyle]}>
                             {badgeLabel}
                           </Text>
                         </View>
-                      );
-                    })()}
-                  </View>
+                      </>
+                    );
+                  })()}
 
-                  {/* Action Buttons based on order status: 3 up, 3 below */}
                   {/* Action Buttons based on order status: 3 up, 3 below */}
                   <View style={styles.cardActionsGrid}>
                     {isActive && (() => {
@@ -1749,10 +1846,13 @@ export default function OrdersScreen() {
                       const isKotDisabled = isKotButtonDisabled(order);
                       const hasKot = isKotDisabled;
                       const isDispatched = order.status === 'out_for_delivery' || ['delivered', 'completed'].includes(order.status);
+                      const payableVal = Number(order.payable_amount ?? order.grand_total ?? 0);
+                      const paidVal = Number(order.paid_amount || 0);
+                      const isFullyPaid = paidVal >= payableVal && payableVal > 0;
 
                       return (
                         <>
-                          {/* ROW 1: 3 Buttons (KOT, Dispatch/Delivered/View, Hold/Resume) */}
+                          {/* ROW 1: 3 Buttons (KOT, Dispatch/Delivered/View, Payment) */}
                           <View style={styles.cardActionRow}>
                             {/* BUTTON 1: KOT Action */}
                             {isKotDisabled ? (
@@ -1818,22 +1918,19 @@ export default function OrdersScreen() {
                               </TouchableOpacity>
                             )}
 
-                            {/* BUTTON 3: Hold / Resume */}
-                            {order.status === 'held' ? (
-                              <TouchableOpacity
-                                style={[styles.gridActionBtn, styles.actionResumeBg]}
-                                onPress={() => handleResumeOrder(order)}
-                              >
-                                <Text style={styles.actionBtnTextResume}>▶️ Resume</Text>
-                              </TouchableOpacity>
-                            ) : (
-                              <TouchableOpacity
-                                style={[styles.gridActionBtn, styles.actionHoldBg]}
-                                onPress={() => handleHoldOrder(order)}
-                              >
-                                <Text style={styles.actionBtnTextHold}>⏸️ Hold</Text>
-                              </TouchableOpacity>
-                            )}
+                            {/* BUTTON 3: Payment (Record Partial/Full Payment) */}
+                            <TouchableOpacity
+                              testID={`order-payment-btn-${order.id}`}
+                              style={[
+                                styles.gridActionBtn,
+                                isFullyPaid ? { backgroundColor: '#f0fdf4', borderColor: '#86efac' } : styles.actionPaymentBg,
+                              ]}
+                              onPress={() => openPartialPaymentModal(order)}
+                            >
+                              <Text style={[styles.actionBtnTextPayment, isFullyPaid && { color: '#15803d' }]}>
+                                {isFullyPaid ? '✓ Paid' : '💳 Payment'}
+                              </Text>
+                            </TouchableOpacity>
                           </View>
 
                           {/* ROW 2: 3 Buttons (Edit, Cancel, Settle) */}
@@ -1874,7 +1971,7 @@ export default function OrdersScreen() {
                               </TouchableOpacity>
                             )}
 
-                            {/* BUTTON: Cancel (Disabled once payment is verified / paid) */}
+                            {/* BUTTON: Cancel (Disabled once payment is received or completed) */}
                             {order.payment_status === 'paid' || order.status === 'completed' ? (
                               <TouchableOpacity
                                 style={[styles.gridActionBtn, styles.actionDisabledBg]}
@@ -1883,6 +1980,18 @@ export default function OrdersScreen() {
                                   showAlert(
                                     'Cancellation Locked',
                                     'Cannot cancel an order that is already completed or paid. Please use Refund / Void workflow.'
+                                  )
+                                }
+                              >
+                                <Text style={styles.actionBtnTextMuted}>🔒 Cancel</Text>
+                              </TouchableOpacity>
+                            ) : Number(order.paid_amount || 0) > 0 ? (
+                              <TouchableOpacity
+                                style={[styles.gridActionBtn, styles.actionDisabledBg]}
+                                onPress={() =>
+                                  showAlert(
+                                    'Cannot Cancel Order',
+                                    `₹${order.paid_amount} has already been received. Refund/Void payment before cancelling.`
                                   )
                                 }
                               >
@@ -2246,36 +2355,6 @@ export default function OrdersScreen() {
                   onChangeText={setEditReason}
                 />
 
-                {/* Order Hold / Resume Control */}
-                <View style={{ marginTop: 12, marginBottom: 6 }}>
-                  <Text style={styles.fieldLabel}>Hold / Resume Status:</Text>
-                  {editOrderModal?.status === 'held' ? (
-                    <TouchableOpacity
-                      style={[
-                        styles.holdActionBtn,
-                        { backgroundColor: '#ecfdf5', borderColor: '#10b981', paddingVertical: 12, borderRadius: 10, borderWidth: 1.5, alignItems: 'center' },
-                      ]}
-                      onPress={handleToggleModalHold}
-                    >
-                      <Text style={{ color: '#059669', fontWeight: '800', fontSize: 14 }}>
-                        ▶️ Resume Order (Order is Currently On Hold)
-                      </Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity
-                      style={[
-                        styles.holdActionBtn,
-                        { backgroundColor: '#fffbeb', borderColor: '#f59e0b', paddingVertical: 12, borderRadius: 10, borderWidth: 1.5, alignItems: 'center' },
-                      ]}
-                      onPress={handleToggleModalHold}
-                    >
-                      <Text style={{ color: '#d97706', fontWeight: '800', fontSize: 14 }}>
-                        ⏸️ Put Order on Hold (Keep Table Occupied)
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-
                 {/* Live Recalculated Bill Summary */}
                 {editTotals && (
                   <View style={{ backgroundColor: '#f8fafc', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', padding: 12, marginTop: 12, marginBottom: 8 }}>
@@ -2465,6 +2544,294 @@ export default function OrdersScreen() {
       </Modal>
 
       {/* ============================================================ */}
+      {/* 2.8. PARTIAL PAYMENT MODAL                                   */}
+      {/* ============================================================ */}
+      <Modal visible={Boolean(partialPayModal)} transparent animationType="slide">
+        <View
+          style={[
+            styles.modalOverlay,
+            isMobile && { paddingHorizontal: 10, paddingVertical: 10 },
+          ]}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={{
+              width: '100%',
+              maxWidth: 540,
+              maxHeight: windowHeight * (isMobile ? 0.95 : 0.9),
+              flexShrink: 1,
+            }}
+          >
+            <View style={[styles.modalContent, isMobile && { padding: 12, borderRadius: 16 }, { maxHeight: '100%', display: 'flex' }]}>
+              {/* Header */}
+              <View style={styles.modalHeader}>
+                <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
+                  <Text style={styles.modalTitle} numberOfLines={1}>
+                    💳 Record Payment #{partialPayModal?.order_number}
+                  </Text>
+                  <Text style={styles.modalSubTitle} numberOfLines={1}>
+                    {partialPayModal?.order_type.toUpperCase()} • {partialPayModal?.table_number ? `Table ${partialPayModal.table_number}` : partialPayModal?.customer_name || 'Walk-in'} • 🕒 {formatOrderDateTime(partialPayModal?.created_at)}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setPartialPayModal(null)}
+                  style={styles.modalCloseBtn}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Text style={styles.modalCloseText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView
+                showsVerticalScrollIndicator={true}
+                keyboardShouldPersistTaps="handled"
+                style={{ flexShrink: 1 }}
+                contentContainerStyle={{ paddingBottom: 20 }}
+              >
+                {/* 1. FINANCIAL SUMMARY CARD */}
+                {(() => {
+                  const payable = Number(partialPayModal?.payable_amount ?? partialPayModal?.grand_total ?? 0);
+                  const paid = Number(partialPayModal?.paid_amount ?? 0);
+                  const balance = Math.max(0, payable - paid);
+                  return (
+                    <View style={styles.orderFinanceBox}>
+                      <View style={styles.orderFinanceCol}>
+                        <Text style={styles.orderFinanceLabel}>Total Bill</Text>
+                        <Text style={styles.orderFinanceVal}>{formatCurrency(payable)}</Text>
+                      </View>
+                      <View style={styles.orderFinanceDivider} />
+                      <View style={styles.orderFinanceCol}>
+                        <Text style={styles.orderFinanceLabel}>Already Paid</Text>
+                        <Text style={[styles.orderFinanceVal, { color: paid > 0 ? '#15803d' : '#64748b' }]}>
+                          {formatCurrency(paid)}
+                        </Text>
+                      </View>
+                      <View style={styles.orderFinanceDivider} />
+                      <View style={styles.orderFinanceCol}>
+                        <Text style={styles.orderFinanceLabel}>Remaining Due</Text>
+                        <Text style={[styles.orderFinanceVal, { color: balance > 0 ? '#b45309' : '#15803d', fontWeight: '900' }]}>
+                          {formatCurrency(balance)}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })()}
+
+                {/* Info Note */}
+                <View style={{ backgroundColor: '#eff6ff', borderRadius: 8, padding: 8, marginBottom: 10, borderWidth: 1, borderColor: '#bfdbfe' }}>
+                  <Text style={{ fontSize: 11, color: '#1e40af', fontWeight: '600', lineHeight: 15 }}>
+                    💡 Money received is recorded immediately into Day Register sales. Order stays ACTIVE until final settlement.
+                  </Text>
+                </View>
+
+                {/* 2. PAYMENT METHOD SELECTION */}
+                <Text style={styles.fieldLabel}>Select Payment Mode *</Text>
+                <View style={[styles.payMethodsGrid, isMobile && { flexWrap: 'wrap', gap: 6 }]}>
+                  {[
+                    { id: 'cash', label: '💵 CASH' },
+                    { id: 'upi', label: '📱 UPI / QR' },
+                    { id: 'card', label: '💳 CARD' },
+                    { id: 'split', label: '✂️ SPLIT' },
+                  ].map((m) => (
+                    <TouchableOpacity
+                      key={m.id}
+                      style={[
+                        styles.payMethodBtn,
+                        isMobile && { width: '48%', flex: 0, flexGrow: 1, minWidth: 110 },
+                        partialPayMethod === m.id && styles.payMethodBtnActive,
+                      ]}
+                      onPress={() => setPartialPayMethod(m.id as any)}
+                    >
+                      <Text
+                        style={[
+                          styles.payMethodText,
+                          partialPayMethod === m.id && styles.payMethodTextActive,
+                        ]}
+                      >
+                        {m.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* 3. PAYMENT AMOUNT / SPLIT ENTRY */}
+                {partialPayMethod === 'split' ? (
+                  <View style={{ marginVertical: 6 }}>
+                    <Text style={styles.fieldLabel}>Split Breakdown:</Text>
+                    {partialPaySplits.map((sp, idx) => (
+                      <View key={sp.id} style={{ backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 8, marginBottom: 6 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: '#334155' }}>Split #{idx + 1}</Text>
+                          {partialPaySplits.length > 1 && (
+                            <TouchableOpacity
+                              onPress={() => setPartialPaySplits(partialPaySplits.filter((item) => item.id !== sp.id))}
+                              style={{ paddingHorizontal: 6, paddingVertical: 2 }}
+                            >
+                              <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700' }}>✕ Remove</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                        <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4 }}>
+                          {(['cash', 'upi', 'card'] as PaymentMethod[]).map((sm) => (
+                            <TouchableOpacity
+                              key={sm}
+                              style={[
+                                { flex: 1, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#cbd5e1', alignItems: 'center', backgroundColor: '#ffffff' },
+                                sp.method === sm && { backgroundColor: '#0f172a', borderColor: '#0f172a' },
+                              ]}
+                              onPress={() => {
+                                setPartialPaySplits(partialPaySplits.map((item) => (item.id === sp.id ? { ...item, method: sm } : item)));
+                              }}
+                            >
+                              <Text style={[{ fontSize: 10, fontWeight: '700', color: '#334155' }, sp.method === sm && { color: '#ffffff' }]}>
+                                {sm.toUpperCase()}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                        <View style={{ flexDirection: 'row', gap: 6 }}>
+                          <TextInput
+                            style={[styles.fieldInput, { flex: 1 }]}
+                            placeholder="Amount (₹)"
+                            placeholderTextColor="#64748b"
+                            keyboardType="numeric"
+                            value={sp.amount}
+                            onChangeText={(val) => {
+                              const clean = val.replace(/[^0-9.]/g, '');
+                              setPartialPaySplits(partialPaySplits.map((item) => (item.id === sp.id ? { ...item, amount: clean } : item)));
+                            }}
+                          />
+                          <TextInput
+                            style={[styles.fieldInput, { flex: 1.2 }]}
+                            placeholder="Ref # (optional)"
+                            placeholderTextColor="#64748b"
+                            value={sp.ref}
+                            onChangeText={(val) => {
+                              setPartialPaySplits(partialPaySplits.map((item) => (item.id === sp.id ? { ...item, ref: val } : item)));
+                            }}
+                          />
+                        </View>
+                      </View>
+                    ))}
+                    <TouchableOpacity
+                      style={{ paddingVertical: 6, alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1' }}
+                      onPress={() => {
+                        setPartialPaySplits([...partialPaySplits, { id: String(Date.now()), method: 'upi', amount: '', ref: '' }]);
+                      }}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#2563eb' }}>+ Add Another Split Method</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View style={{ marginVertical: 4 }}>
+                    <Text style={styles.fieldLabel}>Amount to Pay (₹) *</Text>
+                    <TextInput
+                      style={[styles.fieldInput, { fontSize: 15, fontWeight: '800' }]}
+                      placeholder="Enter amount"
+                      placeholderTextColor="#64748b"
+                      keyboardType="numeric"
+                      value={partialPayAmount}
+                      onChangeText={(val) => setPartialPayAmount(val.replace(/[^0-9.]/g, ''))}
+                    />
+
+                    {/* Quick Pill Buttons */}
+                    {(() => {
+                      const payable = Number(partialPayModal?.payable_amount ?? partialPayModal?.grand_total ?? 0);
+                      const paid = Number(partialPayModal?.paid_amount ?? 0);
+                      const balance = Math.max(0, payable - paid);
+                      const quickAmounts = [balance, 100, 200, 500, 1000, 2000].filter(
+                        (amt, idx, arr) => amt > 0 && amt <= balance && arr.indexOf(amt) === idx
+                      );
+                      return (
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
+                          {quickAmounts.map((amt) => (
+                            <TouchableOpacity
+                              key={amt}
+                              style={{
+                                backgroundColor: partialPayAmount === String(amt) ? '#2563eb' : '#f1f5f9',
+                                borderWidth: 1,
+                                borderColor: partialPayAmount === String(amt) ? '#1d4ed8' : '#cbd5e1',
+                                paddingHorizontal: 10,
+                                paddingVertical: 5,
+                                borderRadius: 6,
+                                marginRight: 6,
+                              }}
+                              onPress={() => setPartialPayAmount(String(amt))}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: '800',
+                                  color: partialPayAmount === String(amt) ? '#ffffff' : '#334155',
+                                }}
+                              >
+                                {amt === balance ? `Full Due (${formatCurrency(amt)})` : formatCurrency(amt)}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                      );
+                    })()}
+
+                    {/* Reference # */}
+                    <Text style={[styles.fieldLabel, { marginTop: 8 }]}>Transaction Reference # (Optional):</Text>
+                    <TextInput
+                      style={styles.fieldInput}
+                      placeholder="e.g. UPI Ref / Card Last 4 Digits"
+                      placeholderTextColor="#64748b"
+                      value={partialPayRef}
+                      onChangeText={setPartialPayRef}
+                    />
+                  </View>
+                )}
+
+                {/* Notes */}
+                <Text style={styles.fieldLabel}>Payment Notes / Remarks (Optional):</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  placeholder="e.g. Guest paid cash part upfront"
+                  placeholderTextColor="#64748b"
+                  value={partialPayNotes}
+                  onChangeText={setPartialPayNotes}
+                />
+
+                {/* Submit Partial Payment Button */}
+                {(() => {
+                  const effectiveAmount =
+                    partialPayMethod === 'split'
+                      ? partialPaySplits.reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0)
+                      : parseFloat(partialPayAmount) || 0;
+                  const payable = Number(partialPayModal?.payable_amount ?? partialPayModal?.grand_total ?? 0);
+                  const paid = Number(partialPayModal?.paid_amount ?? 0);
+                  const balance = Math.max(0, payable - paid);
+                  const isOver = effectiveAmount > balance;
+                  const isInvalid = effectiveAmount <= 0 || isOver;
+
+                  return (
+                    <TouchableOpacity
+                      style={[styles.saveModalBtn, (recordingPartialPayment || isInvalid) && styles.btnDisabled]}
+                      onPress={handleConfirmPartialPayment}
+                      disabled={recordingPartialPayment || isInvalid}
+                    >
+                      {recordingPartialPayment ? (
+                        <ActivityIndicator color="#ffffff" />
+                      ) : (
+                        <Text style={styles.saveModalBtnText}>
+                          {isOver
+                            ? `OVERPAYMENT (MAX ${formatCurrency(balance)})`
+                            : `RECORD PAYMENT OF ${formatCurrency(effectiveAmount)}`}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })()}
+              </ScrollView>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      {/* ============================================================ */}
       {/* 3. CLOSE ORDER & PAYMENT SETTLEMENT MODAL                    */}
       {/* ============================================================ */}
       <Modal visible={Boolean(payOrderModal)} transparent animationType="slide">
@@ -2624,54 +2991,98 @@ export default function OrdersScreen() {
                   </View>
 
                   <View style={[styles.billRow, styles.billTotalRow]}>
-                    <Text style={styles.billTotalLabel}>Payable Grand Total:</Text>
+                    <Text style={styles.billTotalLabel}>Total Order Amount:</Text>
                     <Text style={styles.billTotalVal}>{formatCurrency(payTotals?.payableAmount || 0)}</Text>
                   </View>
                   <Text style={styles.wordsText}>
                     ({numberToWords(payTotals?.payableAmount || 0)})
                   </Text>
+
+                  {/* Partial Payments Accounting in Settlement Modal */}
+                  {(() => {
+                    const finalPayable = payTotals?.payableAmount ?? payOrderModal?.payable_amount ?? 0;
+                    const alreadyPaid = Number(payOrderModal?.paid_amount || 0);
+                    const remainingBalance = Math.max(0, finalPayable - alreadyPaid);
+
+                    if (alreadyPaid > 0) {
+                      return (
+                        <View style={{ marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderColor: '#cbd5e1', backgroundColor: '#f0fdf4', padding: 8, borderRadius: 8 }}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#166534' }}>Already Collected (Paid):</Text>
+                            <Text style={{ fontSize: 11, fontWeight: '900', color: '#15803d' }}>{formatCurrency(alreadyPaid)}</Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                            <Text style={{ fontSize: 12, fontWeight: '900', color: remainingBalance > 0 ? '#b45309' : '#15803d' }}>
+                              Remaining Balance to Settle:
+                            </Text>
+                            <Text style={{ fontSize: 13, fontWeight: '900', color: remainingBalance > 0 ? '#b45309' : '#15803d' }}>
+                              {formatCurrency(remainingBalance)}
+                            </Text>
+                          </View>
+                          {remainingBalance <= 0 && (
+                            <Text style={{ fontSize: 10, color: '#15803d', fontWeight: '700', marginTop: 4 }}>
+                              ✓ Order fully paid beforehand. Settle will complete the order and release table.
+                            </Text>
+                          )}
+                        </View>
+                      );
+                    }
+                    return null;
+                  })()}
                 </View>
 
-                {/* Payment Method Selector */}
-                <Text style={styles.fieldLabel}>Payment Mode *</Text>
-                <View style={[styles.payMethodsGrid, isMobile && { flexWrap: 'wrap', gap: 6 }]}>
-                  {[
-                    { id: 'cash', label: '💵 CASH' },
-                    { id: 'upi', label: '📱 UPI / QR' },
-                    { id: 'card', label: '💳 CARD' },
-                    { id: 'split', label: '✂️ SPLIT' },
-                  ].map((m) => (
-                    <TouchableOpacity
-                      key={m.id}
-                      style={[
-                        styles.payMethodBtn,
-                        isMobile && { width: '48%', flex: 0, flexGrow: 1, minWidth: 120 },
-                        payMethod === m.id && styles.payMethodBtnActive,
-                      ]}
-                      onPress={() => setPayMethod(m.id as any)}
-                    >
-                      <Text
-                        style={[
-                          styles.payMethodText,
-                          payMethod === m.id && styles.payMethodTextActive,
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {m.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                {/* Payment Method Selector (For any remaining balance) */}
+                {(() => {
+                  const finalPayable = payTotals?.payableAmount ?? payOrderModal?.payable_amount ?? 0;
+                  const alreadyPaid = Number(payOrderModal?.paid_amount || 0);
+                  const remainingBalance = Math.max(0, finalPayable - alreadyPaid);
+
+                  if (remainingBalance <= 0) return null;
+
+                  return (
+                    <>
+                      <Text style={styles.fieldLabel}>Payment Mode for Remaining Balance ({formatCurrency(remainingBalance)}) *</Text>
+                      <View style={[styles.payMethodsGrid, isMobile && { flexWrap: 'wrap', gap: 6 }]}>
+                        {[
+                          { id: 'cash', label: '💵 CASH' },
+                          { id: 'upi', label: '📱 UPI / QR' },
+                          { id: 'card', label: '💳 CARD' },
+                          { id: 'split', label: '✂️ SPLIT' },
+                        ].map((m) => (
+                          <TouchableOpacity
+                            key={m.id}
+                            style={[
+                              styles.payMethodBtn,
+                              isMobile && { width: '48%', flex: 0, flexGrow: 1, minWidth: 120 },
+                              payMethod === m.id && styles.payMethodBtnActive,
+                            ]}
+                            onPress={() => setPayMethod(m.id as any)}
+                          >
+                            <Text
+                              style={[
+                                styles.payMethodText,
+                                payMethod === m.id && styles.payMethodTextActive,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {m.label}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </>
+                  );
+                })()}
 
                 {/* Payment Received Toggle (Yes/No) */}
-                <Text style={styles.fieldLabel}>Payment Received? *</Text>
+                <Text style={styles.fieldLabel}>Payment Status *</Text>
                 <View style={[{ flexDirection: isMobile ? 'column' : 'row', gap: 8, marginBottom: 10 }]}>
                   <TouchableOpacity
                     style={[styles.recBtn, isMobile && { width: '100%', flex: 0 }, payReceived && styles.recBtnActive]}
                     onPress={() => setPayReceived(true)}
                   >
                     <Text style={[styles.recBtnText, payReceived && styles.recBtnTextActive]}>
-                      ✓ YES (Paid in Full)
+                      ✓ Settled & Paid in Full
                     </Text>
                   </TouchableOpacity>
 
@@ -2680,7 +3091,7 @@ export default function OrdersScreen() {
                     onPress={() => setPayReceived(false)}
                   >
                     <Text style={[styles.recBtnText, !payReceived && styles.recBtnTextActive]}>
-                      ⚠️ NO (Delivery COD / Unpaid)
+                      ⚠️ Delivery COD / Unpaid
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -2720,19 +3131,29 @@ export default function OrdersScreen() {
                 )}
 
                 {/* Confirm Close Button */}
-                <TouchableOpacity
-                  style={[styles.saveModalBtn, (closingOrder || !payGstinValidation.isValid) && styles.btnDisabled]}
-                  onPress={handleConfirmCloseAndPay}
-                  disabled={closingOrder || !payGstinValidation.isValid}
-                >
-                  {closingOrder ? (
-                    <ActivityIndicator color="#ffffff" />
-                  ) : (
-                    <Text style={styles.saveModalBtnText}>
-                      CONFIRM PAYMENT & GENERATE FINAL BILL
-                    </Text>
-                  )}
-                </TouchableOpacity>
+                {(() => {
+                  const finalPayable = payTotals?.payableAmount ?? payOrderModal?.payable_amount ?? 0;
+                  const alreadyPaid = Number(payOrderModal?.paid_amount || 0);
+                  const remainingBalance = Math.max(0, finalPayable - alreadyPaid);
+
+                  return (
+                    <TouchableOpacity
+                      style={[styles.saveModalBtn, (closingOrder || !payGstinValidation.isValid) && styles.btnDisabled]}
+                      onPress={handleConfirmCloseAndPay}
+                      disabled={closingOrder || !payGstinValidation.isValid}
+                    >
+                      {closingOrder ? (
+                        <ActivityIndicator color="#ffffff" />
+                      ) : (
+                        <Text style={styles.saveModalBtnText}>
+                          {remainingBalance <= 0
+                            ? 'SETTLE ORDER & RELEASE TABLE (₹0 DUE)'
+                            : `COLLECT ${formatCurrency(remainingBalance)} & SETTLE BILL`}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })()}
               </ScrollView>
             </View>
           </KeyboardAvoidingView>
@@ -3420,6 +3841,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#eff6ff',
     borderColor: '#bfdbfe',
   },
+  actionPaymentBg: {
+    backgroundColor: '#eff6ff',
+    borderColor: '#93c5fd',
+  },
   actionCancelBg: {
     backgroundColor: '#fff1f2',
     borderColor: '#fecdd3',
@@ -3444,6 +3869,7 @@ const styles = StyleSheet.create({
   actionBtnTextKot: { color: '#c2410c', fontSize: 11, fontWeight: '800' },
   actionBtnTextDispatch: { color: '#c2410c', fontSize: 11, fontWeight: '800' },
   actionBtnTextDelivered: { color: '#15803d', fontSize: 11, fontWeight: '800' },
+  actionBtnTextPayment: { color: '#1d4ed8', fontSize: 11, fontWeight: '800' },
   actionBtnTextHold: { color: '#d97706', fontSize: 11, fontWeight: '800' },
   actionBtnTextResume: { color: '#059669', fontSize: 11, fontWeight: '800' },
   actionBtnTextBlue: { color: '#1d4ed8', fontSize: 11, fontWeight: '800' },
@@ -3452,6 +3878,38 @@ const styles = StyleSheet.create({
   actionBtnTextWhite: { color: '#ffffff', fontSize: 11, fontWeight: '800' },
   actionBtnTextDark: { color: '#334155', fontSize: 11, fontWeight: '800' },
   actionBtnTextMuted: { color: '#94a3b8', fontSize: 10, fontWeight: '800' },
+  orderFinanceBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    marginBottom: 8,
+  },
+  orderFinanceCol: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  orderFinanceDivider: {
+    width: 1,
+    height: 22,
+    backgroundColor: '#cbd5e1',
+  },
+  orderFinanceLabel: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#64748b',
+    textTransform: 'uppercase',
+  },
+  orderFinanceVal: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginTop: 1,
+  },
   cardActions: {
     flexDirection: 'row',
     gap: 6,

@@ -529,28 +529,11 @@ export default function PosScreen() {
     }
   };
 
-  const handleHoldCurrentOrder = async () => {
-    try {
-      if (createdOrder && createdOrder.id) {
-        await holdOrder(createdOrder.id);
-      } else {
-        await holdCurrentOrder();
-      }
-      setCreatedOrder(null);
-      setSelectedTable(null);
-      setIsKotDispatched(false);
-      setHasUnsentItems(false);
-      clearCart();
-      setPosStep('choose_type');
-      setMobileTab('menu');
+  const handlePaymentAction = () => {
+    if (createdOrder && createdOrder.id) {
+      router.push({ pathname: '/(admin)/orders', params: { openOrderId: createdOrder.id } } as any);
+    } else {
       router.push('/(admin)/orders' as any);
-    } catch (e: any) {
-      if (e instanceof RegisterClosedError || e?.code === 'REGISTER_CLOSED' || e?.message?.includes('CLOSED')) {
-        setShowRegisterClosedModal(true);
-      } else {
-        if (Platform.OS === 'web') window.alert(e.message || 'Hold failed.');
-        else Alert.alert('Hold Failed', e.message);
-      }
     }
   };
 
@@ -1473,13 +1456,13 @@ export default function PosScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                testID="pos-hold-order-btn"
-                style={[styles.opBtn, styles.opBtnHold, !isKotDispatched && styles.opBtnDisabled]}
-                onPress={handleHoldCurrentOrder}
+                testID="pos-payment-btn"
+                style={[styles.opBtn, { backgroundColor: '#eff6ff', borderColor: '#93c5fd' }, !isKotDispatched && styles.opBtnDisabled]}
+                onPress={handlePaymentAction}
                 disabled={!isKotDispatched}
               >
-                <Text style={[styles.opBtnText, !isKotDispatched && styles.opBtnTextDisabled]}>
-                  ⏸️ Hold
+                <Text style={[{ fontSize: 11, fontWeight: '800', color: '#1d4ed8' }, !isKotDispatched && styles.opBtnTextDisabled]}>
+                  💳 Payment
                 </Text>
               </TouchableOpacity>
 

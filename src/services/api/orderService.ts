@@ -1506,6 +1506,89 @@ export const orderService = {
   },
 
   /**
+   * Record Partial / Advance Payment for an active Dine-In or Takeaway Order:
+   * - Atomically locks order and open day register via record_partial_payment RPC.
+   * - Inserts completed payment record(s) and updates Day Register sales totals immediately.
+   * - Keeps order ACTIVE and table OCCUPIED.
+   */
+  async recordPartialPayment(params: {
+    orderId: string;
+    paymentMethod: PaymentMethod;
+    amount: number;
+    referenceNumber?: string;
+    notes?: string;
+    splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;
+    restaurantId?: string;
+  }): Promise<{
+    success: boolean;
+    order: Order;
+    payments: any[];
+  }> {
+    const { orderId, paymentMethod, amount, referenceNumber, notes, splitPayments, restaurantId } = params;
+
+    if (isSupabaseConfigured) {
+      const { data: { session }, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr || !session) {
+        throw new Error('Your session has expired. Please login again.');
+      }
+
+      const normalizedPaymentMethod: PaymentMethod =
+        paymentMethod === 'online' || (paymentMethod as any) === 'upi'
+          ? 'upi'
+          : (paymentMethod as any) === 'cod'
+          ? 'cash'
+          : paymentMethod;
+
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('record_partial_payment', {
+        p_order_id: orderId,
+        p_payment_method: normalizedPaymentMethod,
+        p_amount: amount,
+        p_reference_number: referenceNumber || null,
+        p_notes: notes || null,
+        p_split_payments: splitPayments && splitPayments.length > 0 ? splitPayments : null,
+        p_restaurant_id: restaurantId || null,
+      });
+
+      if (rpcErr) {
+        console.error('Supabase record_partial_payment RPC failed:', rpcErr);
+        throw new Error(rpcErr.message || 'Failed to record payment on database');
+      }
+
+      const updatedOrder = rpcRes?.order as Order;
+      if (!updatedOrder) {
+        throw new Error('Database did not return updated order record.');
+      }
+
+      clearOrdersCache(updatedOrder.restaurant_id);
+      const localOrders = mockStorage.getOrders(updatedOrder.restaurant_id);
+      const orderIndex = localOrders.findIndex((o) => o.id === orderId);
+      const fullUpdatedOrder: Order = {
+        ...updatedOrder,
+        items: rpcRes?.items || updatedOrder.items || [],
+        payments: rpcRes?.payments || [],
+        order_source: resolveOrderSource(updatedOrder),
+        subtotal: getOrderSubtotal(updatedOrder),
+      };
+
+      if (orderIndex !== -1) {
+        localOrders[orderIndex] = fullUpdatedOrder;
+      } else {
+        localOrders.unshift(fullUpdatedOrder);
+      }
+      mockStorage.saveOrders(localOrders, updatedOrder.restaurant_id);
+      await this.getOrders(updatedOrder.restaurant_id, true);
+
+      return {
+        success: true,
+        order: fullUpdatedOrder,
+        payments: rpcRes?.payments || [],
+      };
+    }
+
+    throw new Error('Supabase client is not configured.');
+  },
+
+  /**
    * Put an active order on Hold.
    * - Sets status = 'held'.
    * - Does NOT release dining table (table remains OCCUPIED).

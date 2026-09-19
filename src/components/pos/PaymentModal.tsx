@@ -147,15 +147,18 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     });
   }, [order, discountType, validatedDiscount, isGstEnabled, taxRate]);
 
-  const [tendered, setTendered] = useState<string>(totals.payableAmount.toString());
+  const alreadyPaid = Number(order?.paid_amount || 0);
+  const remainingBalance = Math.max(0, totals.payableAmount - alreadyPaid);
 
-  // Keep tendered synchronized with recalculated total unless manually customized
+  const [tendered, setTendered] = useState<string>(remainingBalance.toString());
+
+  // Keep tendered synchronized with recalculated remaining balance unless manually customized
   useEffect(() => {
-    setTendered(totals.payableAmount.toString());
-  }, [totals.payableAmount]);
+    setTendered(remainingBalance.toString());
+  }, [remainingBalance]);
 
   const numTendered = parseFloat(tendered) || 0;
-  const isEnough = numTendered >= totals.payableAmount;
+  const isEnough = remainingBalance <= 0 || numTendered >= remainingBalance;
   const isGstinValid = gstinValidation.isValid;
 
   const handleSubmit = async () => {
@@ -164,7 +167,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       setIsProcessing(true);
       await onProcessPayment(
         paymentMethod,
-        Math.min(numTendered, totals.payableAmount),
+        remainingBalance > 0 ? Math.min(numTendered, remainingBalance) : 0,
         refNo,
         {
           discount_type: discountType,
@@ -355,44 +358,65 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 <Text style={styles.wordsText}>
                   ({numberToWords(totals.payableAmount)})
                 </Text>
+
+                {alreadyPaid > 0 && (
+                  <View style={{ marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderColor: '#cbd5e1', backgroundColor: '#f0fdf4', padding: 8, borderRadius: 8 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#166534' }}>Already Paid:</Text>
+                      <Text style={{ fontSize: 11, fontWeight: '900', color: '#15803d' }}>{formatCurrency(alreadyPaid)}</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ fontSize: 12, fontWeight: '900', color: remainingBalance > 0 ? '#b45309' : '#15803d' }}>
+                        Remaining Due:
+                      </Text>
+                      <Text style={{ fontSize: 13, fontWeight: '900', color: remainingBalance > 0 ? '#b45309' : '#15803d' }}>
+                        {formatCurrency(remainingBalance)}
+                      </Text>
+                    </View>
+                  </View>
+                )}
               </View>
 
               {/* 3. PAYMENT MODE SELECTION */}
-              <Text style={styles.fieldLabel}>Select Payment Mode *</Text>
-              <View style={styles.methodRow}>
-                {methods.map((m) => (
-                  <TouchableOpacity
-                    key={m.method}
-                    style={[styles.mBtn, paymentMethod === m.method && styles.mBtnActive]}
-                    onPress={() => setPaymentMethod(m.method)}
-                  >
-                    <Text style={[styles.mText, paymentMethod === m.method && styles.mTextActive]}>
-                      {m.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* 4. TENDERED / REFERENCE AMOUNT */}
-              <Text style={styles.fieldLabel}>Tendered Amount (₹)</Text>
-              <TextInput
-                style={styles.input}
-                value={tendered}
-                onChangeText={setTendered}
-                placeholderTextColor="#64748b"
-                keyboardType="numeric"
-              />
-
-              {paymentMethod !== 'cash' && (
+              {remainingBalance > 0 && (
                 <>
-                  <Text style={styles.fieldLabel}>Transaction / Reference # (Optional)</Text>
+                  <Text style={styles.fieldLabel}>Select Payment Mode *</Text>
+                  <View style={styles.methodRow}>
+                    {methods.map((m) => (
+                      <TouchableOpacity
+                        key={m.method}
+                        style={[styles.mBtn, paymentMethod === m.method && styles.mBtnActive]}
+                        onPress={() => setPaymentMethod(m.method)}
+                      >
+                        <Text style={[styles.mText, paymentMethod === m.method && styles.mTextActive]}>
+                          {m.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {/* 4. TENDERED / REFERENCE AMOUNT */}
+                  <Text style={styles.fieldLabel}>Tendered Amount (₹)</Text>
                   <TextInput
                     style={styles.input}
-                    value={refNo}
-                    onChangeText={setRefNo}
-                    placeholder="e.g. UPI-998811 or Card Auth #4411"
+                    value={tendered}
+                    onChangeText={setTendered}
                     placeholderTextColor="#64748b"
+                    keyboardType="numeric"
                   />
+
+                  {paymentMethod !== 'cash' && (
+                    <>
+                      <Text style={styles.fieldLabel}>Transaction / Reference # (Optional)</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={refNo}
+                        onChangeText={setRefNo}
+                        placeholder="e.g. UPI-998811 or Card Auth #4411"
+                        placeholderTextColor="#64748b"
+                      />
+                    </>
+                  )}
                 </>
               )}
 
@@ -428,7 +452,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 onPress={handleSubmit}
               >
                 <Text style={styles.payBtnText}>
-                  COLLECT {formatCurrency(Math.min(numTendered, totals.payableAmount))} & CLOSE ORDER
+                  {remainingBalance <= 0
+                    ? 'SETTLE ORDER & RELEASE TABLE (₹0 DUE)'
+                    : `COLLECT ${formatCurrency(Math.min(numTendered, remainingBalance))} & CLOSE ORDER`}
                 </Text>
               </TouchableOpacity>
             </ScrollView>

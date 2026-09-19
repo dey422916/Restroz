@@ -1568,7 +1568,7 @@ export const orderService = {
   /**
    * Mark Online / UPI Order Payment Verified (Admin / Super Admin Only):
    * - Calls server-side role-guarded mark_order_payment_verified RPC.
-   * - Verifies payment proof and marks payment_status = 'paid'.
+   * - Verifies payment proof, keeping order active and ready to settle.
    * - Records payment_verified_at and payment_verified_by.
    * - Idempotent, tenant-isolated, preserves order items, totals, KOT.
    */
@@ -1579,6 +1579,7 @@ export const orderService = {
     success: boolean;
     order_id: string;
     order_number?: string;
+    status: string;
     payment_status: string;
     already_verified: boolean;
     payment_verified_at?: string;
@@ -1594,6 +1595,9 @@ export const orderService = {
     if (!targetOrder) throw new Error('Order not found');
     if (targetOrder.status === 'cancelled') {
       throw new Error('Cannot verify payment for a cancelled order.');
+    }
+    if (targetOrder.payment_verified_at) {
+      throw new Error('Payment has already been verified.');
     }
     const restId = restaurantId || targetOrder.restaurant_id;
 
@@ -1611,10 +1615,10 @@ export const orderService = {
       clearOrdersCache(restId);
       const updated = await this.getOrderById(orderId, restId);
       if (updated) {
-        await auditService.log('VERIFY_PAYMENT', {
+        await auditService.log('PAYMENT_VERIFIED', {
           order_id: orderId,
           order_number: updated.order_number,
-          payment_status: 'paid',
+          payment_verified_at: rpcData?.payment_verified_at || new Date().toISOString(),
         });
       }
 
@@ -1624,9 +1628,6 @@ export const orderService = {
       if (idx !== -1) {
         localOrders[idx] = {
           ...localOrders[idx],
-          status: 'completed',
-          payment_status: 'paid',
-          paid_amount: localOrders[idx].payable_amount || localOrders[idx].grand_total,
           payment_verified_at: rpcData?.payment_verified_at || new Date().toISOString(),
           payment_verified_by: rpcData?.payment_verified_by,
         };

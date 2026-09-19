@@ -894,9 +894,6 @@ export default function OrdersScreen() {
             o.id === order.id
               ? {
                   ...o,
-                  status: 'completed',
-                  payment_status: 'paid',
-                  paid_amount: o.payable_amount || o.grand_total,
                   payment_verified_at: res.payment_verified_at || new Date().toISOString(),
                   payment_verified_by: res.payment_verified_by || user?.id,
                 }
@@ -909,9 +906,6 @@ export default function OrdersScreen() {
             o.id === order.id
               ? {
                   ...o,
-                  status: 'completed',
-                  payment_status: 'paid',
-                  paid_amount: o.payable_amount || o.grand_total,
                   payment_verified_at: res.payment_verified_at || new Date().toISOString(),
                   payment_verified_by: res.payment_verified_by || user?.id,
                 }
@@ -923,16 +917,13 @@ export default function OrdersScreen() {
           prev && prev.id === order.id
             ? {
                 ...prev,
-                status: 'completed',
-                payment_status: 'paid',
-                paid_amount: prev.payable_amount || prev.grand_total,
                 payment_verified_at: res.payment_verified_at || new Date().toISOString(),
                 payment_verified_by: res.payment_verified_by || user?.id,
               }
             : prev
         );
 
-        Alert.alert('✓ Payment Verified', `Payment for Order #${order.order_number} has been verified and marked as PAID.`);
+        Alert.alert('✓ Payment Verified', `Payment proof for Order #${order.order_number} has been verified.\nThe order remains active and is ready to settle.`);
         await loadData(true);
       } catch (err: any) {
         Alert.alert('Verification Failed', err.message || 'Could not verify payment.');
@@ -1487,9 +1478,9 @@ export default function OrdersScreen() {
                   {Boolean(order.payment_proof_url) && (
                     <View
                       style={{
-                        backgroundColor: order.payment_status === 'paid' ? '#f0fdf4' : '#eff6ff',
+                        backgroundColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#f0fdf4' : '#eff6ff',
                         borderWidth: 1,
-                        borderColor: order.payment_status === 'paid' ? '#86efac' : '#93c5fd',
+                        borderColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#86efac' : '#93c5fd',
                         borderRadius: 10,
                         padding: 10,
                         marginBottom: 10,
@@ -1514,37 +1505,43 @@ export default function OrdersScreen() {
                               width: 32,
                               height: 32,
                               borderRadius: 16,
-                              backgroundColor: order.payment_status === 'paid' ? '#dcfce7' : '#dbeafe',
+                              backgroundColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#dcfce7' : '#dbeafe',
                               alignItems: 'center',
                               justifyContent: 'center',
                               borderWidth: 1,
-                              borderColor: order.payment_status === 'paid' ? '#bbf7d0' : '#bfdbfe',
+                              borderColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#bbf7d0' : '#bfdbfe',
                               flexShrink: 0,
                             }}
                           >
-                            <Text style={{ fontSize: 14 }}>{order.payment_status === 'paid' ? '✓' : '📷'}</Text>
+                            <Text style={{ fontSize: 14 }}>{(order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '✓' : '📷'}</Text>
                           </View>
                           <View style={{ flex: 1, minWidth: 0 }}>
                             <Text
                               style={{
                                 fontSize: 12,
                                 fontWeight: '800',
-                                color: order.payment_status === 'paid' ? '#166534' : '#1e40af',
-                              }}
-                              numberOfLines={1}
-                            >
-                              {order.payment_status === 'paid' ? 'Payment Verified & Confirmed' : 'Payment Proof Attached'}
-                            </Text>
-                            <Text
-                              style={{
-                                fontSize: 11,
-                                color: order.payment_status === 'paid' ? '#15803d' : '#3b82f6',
-                                marginTop: 1,
+                                color: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#166534' : '#1e40af',
                               }}
                               numberOfLines={1}
                             >
                               {order.payment_status === 'paid'
-                                ? (order.payment_verified_at ? `Verified at ${formatOrderDateTime(order.payment_verified_at)}` : 'Verified by Admin')
+                                ? 'Payment Verified & Settled'
+                                : Boolean(order.payment_verified_at)
+                                ? 'Payment Verified • Ready to Settle'
+                                : 'Payment Proof Attached'}
+                            </Text>
+                            <Text
+                              style={{
+                                fontSize: 11,
+                                color: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#15803d' : '#3b82f6',
+                                marginTop: 1,
+                              }}
+                              numberOfLines={1}
+                            >
+                              {order.payment_verified_at
+                                ? `Verified at ${formatOrderDateTime(order.payment_verified_at)}`
+                                : order.payment_status === 'paid'
+                                ? 'Verified by Admin'
                                 : 'Online Payment Screenshot'}
                             </Text>
                           </View>
@@ -1557,9 +1554,9 @@ export default function OrdersScreen() {
                             setViewOrderModal(order);
                           }}
                           style={{
-                            backgroundColor: order.payment_status === 'paid' ? '#ffffff' : '#2563eb',
-                            borderWidth: order.payment_status === 'paid' ? 1.5 : 0,
-                            borderColor: order.payment_status === 'paid' ? '#86efac' : 'transparent',
+                            backgroundColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#ffffff' : '#2563eb',
+                            borderWidth: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? 1.5 : 0,
+                            borderColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#86efac' : 'transparent',
                             height: 32,
                             paddingHorizontal: 12,
                             borderRadius: 7,
@@ -1570,14 +1567,14 @@ export default function OrdersScreen() {
                             alignSelf: 'center',
                             shadowColor: '#000',
                             shadowOffset: { width: 0, height: 1 },
-                            shadowOpacity: order.payment_status === 'paid' ? 0.05 : 0.2,
+                            shadowOpacity: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? 0.05 : 0.2,
                             shadowRadius: 2,
                             elevation: 1,
                           }}
                         >
                           <Text
                             style={{
-                              color: order.payment_status === 'paid' ? '#15803d' : '#ffffff',
+                              color: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#15803d' : '#ffffff',
                               fontSize: 11.5,
                               fontWeight: '800',
                             }}
@@ -1588,7 +1585,7 @@ export default function OrdersScreen() {
                         </TouchableOpacity>
                       </View>
 
-                      {/* Immediate Verify Button on card for unverified online orders */}
+                      {/* Immediate Verify Button / Verified Indicator on card */}
                       {order.status === 'cancelled' ? (
                         <View
                           style={{
@@ -1609,8 +1606,28 @@ export default function OrdersScreen() {
                             🚫 Cancelled Order • Verification Disabled
                           </Text>
                         </View>
+                      ) : Boolean(order.payment_verified_at) && order.payment_status !== 'paid' ? (
+                        <View
+                          style={{
+                            backgroundColor: '#dcfce7',
+                            paddingVertical: 8,
+                            paddingHorizontal: 12,
+                            borderRadius: 7,
+                            marginTop: 8,
+                            alignItems: 'center',
+                            flexDirection: 'row',
+                            justifyContent: 'center',
+                            gap: 5,
+                            borderWidth: 1,
+                            borderColor: '#86efac',
+                          }}
+                        >
+                          <Text style={{ color: '#15803d', fontSize: 12, fontWeight: '900' }}>
+                            ✅ Payment Verified — Ready to Settle
+                          </Text>
+                        </View>
                       ) : (
-                        order.payment_status !== 'paid' && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
+                        order.payment_status !== 'paid' && !order.payment_verified_at && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
                           <TouchableOpacity
                             style={{
                               backgroundColor: '#16a34a',
@@ -1668,6 +1685,7 @@ export default function OrdersScreen() {
                       const isSplitPay = order.payment_method === 'split';
                       const isUpiPay = order.payment_method === 'upi' || order.payment_method === 'online';
                       const isOnlinePay = isUpiPay || Boolean(order.payment_proof_url);
+                      const isProofVerified = Boolean(order.payment_verified_at);
 
                       let badgeContainerStyle = styles.payStatusUnpaid;
                       let badgeTextStyle = styles.payStatusTextUnpaid;
@@ -1678,7 +1696,7 @@ export default function OrdersScreen() {
                         badgeTextStyle = styles.payStatusTextPaid;
                         if (isCardPay) badgeLabel = '✓ PAID (CARD)';
                         else if (isUpiPay) badgeLabel = '✓ PAID (UPI)';
-                        else if (isOnlinePay) badgeLabel = '✓ PAYMENT VERIFIED';
+                        else if (isOnlinePay) badgeLabel = '✓ PAID (ONLINE)';
                         else if (isCashPay || isCodPay) badgeLabel = '✓ PAID (CASH)';
                         else if (isRoomPay) badgeLabel = '✓ PAID (ROOM)';
                         else if (isSplitPay) badgeLabel = '✓ PAID (SPLIT)';
@@ -1688,6 +1706,10 @@ export default function OrdersScreen() {
                           badgeContainerStyle = { backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fca5a5' } as any;
                           badgeTextStyle = { color: '#991b1b' } as any;
                           badgeLabel = '🚫 CANCELLED (UNPAID)';
+                        } else if (isProofVerified) {
+                          badgeContainerStyle = { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#86efac' } as any;
+                          badgeTextStyle = { color: '#15803d' } as any;
+                          badgeLabel = '📱 ONLINE • PAYMENT VERIFIED • READY TO SETTLE';
                         } else if (isOnlinePay) {
                           badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
                           badgeTextStyle = { color: '#1d4ed8' } as any;
@@ -2836,28 +2858,32 @@ export default function OrdersScreen() {
                           borderColor: viewOrderModal.payment_status === 'paid' ? '#86efac' : '#bfdbfe',
                         }}
                       >
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                          <Text style={{ fontSize: 12, fontWeight: '800', color: viewOrderModal.payment_status === 'paid' ? '#166534' : (viewOrderModal.status === 'cancelled' ? '#991b1b' : '#1e40af') }}>
-                            📷 Payment Screenshot:
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+                          <Text style={{ fontSize: 13, fontWeight: '900', color: '#0f172a' }}>
+                            📸 Customer Online Payment Proof:
                           </Text>
                           <View
                             style={{
-                              backgroundColor: viewOrderModal.payment_status === 'paid' ? '#dcfce7' : (viewOrderModal.status === 'cancelled' ? '#fee2e2' : '#eff6ff'),
+                              backgroundColor: viewOrderModal.payment_status === 'paid' ? '#dcfce7' : Boolean(viewOrderModal.payment_verified_at) ? '#dcfce7' : (viewOrderModal.status === 'cancelled' ? '#fee2e2' : '#dbeafe'),
                               paddingHorizontal: 8,
-                              paddingVertical: 4,
+                              paddingVertical: 3,
                               borderRadius: 6,
                               borderWidth: 1,
-                              borderColor: viewOrderModal.payment_status === 'paid' ? '#bbf7d0' : (viewOrderModal.status === 'cancelled' ? '#fecaca' : '#bfdbfe'),
+                              borderColor: viewOrderModal.payment_status === 'paid' ? '#bbf7d0' : Boolean(viewOrderModal.payment_verified_at) ? '#86efac' : (viewOrderModal.status === 'cancelled' ? '#fecaca' : '#bfdbfe'),
                             }}
                           >
                             <Text
                               style={{
                                 fontSize: 10,
                                 fontWeight: '900',
-                                color: viewOrderModal.payment_status === 'paid' ? '#15803d' : (viewOrderModal.status === 'cancelled' ? '#dc2626' : '#2563eb'),
+                                color: viewOrderModal.payment_status === 'paid' ? '#15803d' : Boolean(viewOrderModal.payment_verified_at) ? '#15803d' : (viewOrderModal.status === 'cancelled' ? '#dc2626' : '#2563eb'),
                               }}
                             >
-                              {viewOrderModal.payment_status === 'paid' ? '✓ VERIFIED & PAID' : (viewOrderModal.status === 'cancelled' ? '🚫 ORDER CANCELLED' : '⚠️ PENDING VERIFICATION')}
+                              {viewOrderModal.payment_status === 'paid'
+                                ? '✓ VERIFIED & PAID'
+                                : Boolean(viewOrderModal.payment_verified_at)
+                                ? '✓ PAYMENT VERIFIED • READY TO SETTLE'
+                                : (viewOrderModal.status === 'cancelled' ? '🚫 ORDER CANCELLED' : '⚠️ PENDING VERIFICATION')}
                             </Text>
                           </View>
                         </View>
@@ -2886,8 +2912,25 @@ export default function OrdersScreen() {
                               🚫 Cancelled Order • Payment Verification Disabled
                             </Text>
                           </View>
+                        ) : Boolean(viewOrderModal.payment_verified_at) && viewOrderModal.payment_status !== 'paid' ? (
+                          <View
+                            style={{
+                              backgroundColor: '#dcfce7',
+                              paddingVertical: 10,
+                              borderRadius: 8,
+                              marginTop: 10,
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              borderWidth: 1,
+                              borderColor: '#86efac',
+                            }}
+                          >
+                            <Text style={{ color: '#15803d', fontSize: 13, fontWeight: '900' }}>
+                              ✅ Payment Verified — Ready to Settle
+                            </Text>
+                          </View>
                         ) : (
-                          viewOrderModal.payment_status !== 'paid' && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
+                          viewOrderModal.payment_status !== 'paid' && !viewOrderModal.payment_verified_at && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
                             <TouchableOpacity
                               style={{
                                 backgroundColor: '#16a34a',
@@ -2911,7 +2954,7 @@ export default function OrdersScreen() {
                           )
                         )}
 
-                        {viewOrderModal.payment_status === 'paid' && viewOrderModal.payment_verified_at && (
+                        {viewOrderModal.payment_verified_at && (
                           <Text style={{ fontSize: 11, color: '#166534', fontWeight: '700', marginTop: 8, textAlign: 'center' }}>
                             ✓ Verified by Admin on {formatOrderDateTime(viewOrderModal.payment_verified_at)}
                           </Text>

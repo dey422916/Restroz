@@ -76,7 +76,9 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         name: activeRestaurantRef.current?.name || s.name || prev.name || 'Restaurant POS',
         legal_name: s.legal_name || activeRestaurantRef.current?.legal_name || s.name || activeRestaurantRef.current?.name || prev.legal_name || '',
         email: s.email || activeRestaurantRef.current?.email || prev.email || '',
-        logo_url: activeRestaurantRef.current?.logo_url || s.logo_url || prev.logo_url || '',
+        logo_url: activeRestaurantRef.current?.logo_url !== undefined
+          ? (activeRestaurantRef.current.logo_url || '')
+          : (s.logo_url || ''),
         phone: activeRestaurantRef.current?.phone || s.phone || prev.phone || '',
         address: activeRestaurantRef.current?.address || s.address || prev.address || '',
         banner_url: s.banner_url || prev.banner_url || '',

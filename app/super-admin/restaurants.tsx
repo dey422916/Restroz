@@ -539,47 +539,49 @@ export default function SuperAdminRestaurantsScreen() {
                     )}
 
                     {/* Action Buttons */}
-                    <View style={styles.mobileActionRow}>
+                    <View style={styles.mobileActionContainer}>
                       <TouchableOpacity
-                        style={[styles.mobileViewBtn, { backgroundColor: '#0284C7' }]}
+                        style={styles.mobilePrimaryActionBtn}
                         onPress={async () => {
                           await setActiveRestaurantId(r.id);
                           router.push('/(admin)/pos' as any);
                         }}
                         activeOpacity={0.8}
                       >
-                        <Text style={[styles.mobileViewBtnText, { color: '#FFFFFF' }]}>🖥️ Manage POS</Text>
+                        <Text style={styles.mobilePrimaryActionBtnText}>🖥️ Manage POS Terminal</Text>
                       </TouchableOpacity>
 
-                      <TouchableOpacity
-                        style={styles.mobileViewBtn}
-                        onPress={() => router.push(`/super-admin/restaurant/${r.id}` as any)}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.mobileViewBtnText}>👁️ Details</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={[
-                          styles.mobileToggleBtn,
-                          r.status === 'ACTIVE'
-                            ? styles.mobileToggleBtnWarn
-                            : styles.mobileToggleBtnSuccess,
-                        ]}
-                        onPress={() => handleToggleStatus(r)}
-                        activeOpacity={0.8}
-                      >
-                        <Text
-                          style={[
-                            styles.mobileToggleBtnText,
-                            r.status === 'ACTIVE'
-                              ? styles.mobileToggleBtnTextWarn
-                              : styles.mobileToggleBtnTextSuccess,
-                          ]}
+                      <View style={styles.mobileSecondaryActionRow}>
+                        <TouchableOpacity
+                          style={styles.mobileSecondaryBtn}
+                          onPress={() => router.push(`/super-admin/restaurant/${r.id}` as any)}
+                          activeOpacity={0.8}
                         >
-                          {r.status === 'ACTIVE' ? '🚫 Suspend' : '✅ Activate'}
-                        </Text>
-                      </TouchableOpacity>
+                          <Text style={styles.mobileSecondaryBtnText}>👁️ Details</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[
+                            styles.mobileToggleBtn,
+                            r.status === 'ACTIVE'
+                              ? styles.mobileToggleBtnWarn
+                              : styles.mobileToggleBtnSuccess,
+                          ]}
+                          onPress={() => handleToggleStatus(r)}
+                          activeOpacity={0.8}
+                        >
+                          <Text
+                            style={[
+                              styles.mobileToggleBtnText,
+                              r.status === 'ACTIVE'
+                                ? styles.mobileToggleBtnTextWarn
+                                : styles.mobileToggleBtnTextSuccess,
+                            ]}
+                          >
+                            {r.status === 'ACTIVE' ? '🚫 Suspend' : '✅ Activate'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   </View>
                 );
@@ -1185,10 +1187,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     marginBottom: 16,
+    alignItems: 'center',
   },
   searchBarMobile: {
     flexDirection: 'column',
     gap: 10,
+    width: '100%',
   },
   searchInputWrap: {
     flex: 1,
@@ -1196,37 +1200,44 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    height: 42,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    minHeight: 46,
+    height: 46,
     gap: 8,
+    width: '100%',
   },
   searchInput: {
     flex: 1,
     fontSize: 14,
     color: '#0F172A',
+    height: '100%',
+    paddingVertical: 0,
   },
   filterPillsScroll: {
     flexDirection: 'row',
     gap: 8,
-    paddingVertical: 2,
+    paddingVertical: 4,
+    alignItems: 'center',
   },
   filterPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
     backgroundColor: '#FFFFFF',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   filterPillActive: {
     backgroundColor: colors.primary,
     borderColor: colors.primary,
   },
   filterPillText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 11.5,
+    fontWeight: '700',
     color: '#64748B',
   },
   filterPillTextActive: {
@@ -1239,7 +1250,7 @@ const styles = StyleSheet.create({
   mobileCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    padding: 16,
+    padding: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     shadowColor: '#000',
@@ -1251,7 +1262,7 @@ const styles = StyleSheet.create({
   mobileCardTop: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
   },
   mobileMetaGrid: {
     flexDirection: 'row',
@@ -1276,42 +1287,77 @@ const styles = StyleSheet.create({
     color: '#0F172A',
   },
   mobileContactRow: {
-    marginBottom: 12,
+    marginBottom: 10,
   },
   mobileContactText: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: '#64748B',
   },
-  mobileActionRow: {
-    flexDirection: 'row',
+  mobileActionContainer: {
+    flexDirection: 'column',
     gap: 8,
+    marginTop: 2,
   },
-  mobileViewBtn: {
-    flex: 1,
-    backgroundColor: '#EEF2F6',
-    paddingVertical: 8,
+  mobilePrimaryActionBtn: {
+    width: '100%',
+    backgroundColor: '#0284C7',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#0284C7',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 1,
   },
-  mobileViewBtnText: {
+  mobilePrimaryActionBtnText: {
     fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.2,
+  },
+  mobileSecondaryActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    width: '100%',
+  },
+  mobileSecondaryBtn: {
+    flex: 1,
+    backgroundColor: '#EEF2F6',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mobileSecondaryBtnText: {
+    fontSize: 12,
     fontWeight: '700',
     color: colors.primary,
   },
   mobileToggleBtn: {
-    paddingHorizontal: 14,
+    flex: 1,
+    paddingHorizontal: 8,
     paddingVertical: 8,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
   },
   mobileToggleBtnWarn: {
     backgroundColor: '#FEE2E2',
+    borderColor: '#FECDD3',
   },
   mobileToggleBtnSuccess: {
     backgroundColor: '#DCFCE7',
+    borderColor: '#BBF7D0',
   },
   mobileToggleBtnText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
   },
   mobileToggleBtnTextWarn: {

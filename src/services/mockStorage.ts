@@ -31,7 +31,7 @@ export const DEFAULT_SETTINGS: RestaurantSettings = {
   email: 'contact@ratnadeepfoods.com',
   gstin: '36AAAAA0000A1Z5',
   state: 'Telangana',
-  logo_url: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=200&q=80',
+  logo_url: '',
   invoice_prefix: 'INV-',
   kot_prefix: 'KOT-',
   default_tax_rate: 5.0,

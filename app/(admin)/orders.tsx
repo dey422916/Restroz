@@ -108,13 +108,20 @@ export default function OrdersScreen() {
   const [recordingPartialPayment, setRecordingPartialPayment] = useState<boolean>(false);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isMobile = windowWidth < 768;
-  const isTwoColumn = (Platform.OS === 'web' && windowWidth >= 600) || windowWidth >= 768;
+  const isDesktopWide = (Platform.OS === 'web' && windowWidth >= 1200) || windowWidth >= 1200;
+  const isTwoColumn = (Platform.OS === 'web' && windowWidth >= 680) || windowWidth >= 768;
 
   const cardWidth = useMemo(() => {
-    if (!isTwoColumn) return '100%';
-    if (Platform.OS === 'web') return 'calc(50% - 7px)' as any;
-    return Math.floor((windowWidth - 28 - 14) / 2);
-  }, [isTwoColumn, windowWidth]);
+    if (isDesktopWide) {
+      if (Platform.OS === 'web') return 'calc(33.333% - 7px)' as any;
+      return Math.floor((windowWidth - 28 - 20) / 3);
+    }
+    if (isTwoColumn) {
+      if (Platform.OS === 'web') return 'calc(50% - 5px)' as any;
+      return Math.floor((windowWidth - 28 - 10) / 2);
+    }
+    return '100%';
+  }, [isDesktopWide, isTwoColumn, windowWidth]);
 
   const showAlert = (title: string, message?: string) => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -1200,7 +1207,7 @@ export default function OrdersScreen() {
               setTabFilter('active');
             }}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 5 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 4 }}>
               <Text style={[styles.categoryTabText, categoryTab === 'online' && styles.categoryTabTextActive]}>
                 🌐 Online Orders
               </Text>
@@ -1222,7 +1229,7 @@ export default function OrdersScreen() {
               setTabFilter('active');
             }}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 5 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 4 }}>
               <Text style={[styles.categoryTabText, categoryTab === 'qr' && styles.categoryTabTextActive]}>
                 📱 QR Orders
               </Text>
@@ -1237,33 +1244,35 @@ export default function OrdersScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Search */}
-        <TextInput
-          style={styles.search}
-          placeholder="Search all orders by Order #, Customer, Phone, Table..."
-          placeholderTextColor="#64748b"
-          value={search}
-          onChangeText={setSearch}
-        />
+        {/* Search & Status Filters in compact toolbar */}
+        <View style={[styles.toolbarRow, isMobile && styles.toolbarRowMobile]}>
+          <TextInput
+            style={[styles.search, !isMobile && { flex: 1, marginBottom: 0 }]}
+            placeholder="Search by Order #, Customer, Phone, Table..."
+            placeholderTextColor="#64748b"
+            value={search}
+            onChangeText={setSearch}
+          />
 
-        {/* Status Sub-filter Pills */}
-        <View style={styles.tabRow}>
-          {[
-            { id: 'active', label: '🔥 Active' },
-            { id: 'completed', label: '✓ Completed' },
-            { id: 'cancelled', label: '✕ Cancelled' },
-            { id: 'all', label: 'All Orders' },
-          ].map((tab) => (
-            <TouchableOpacity
-              key={tab.id}
-              style={[styles.tabBtn, tabFilter === tab.id && styles.tabBtnActive]}
-              onPress={() => setTabFilter(tab.id as any)}
-            >
-              <Text style={[styles.tabText, tabFilter === tab.id && styles.tabTextActive]}>
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
+          {/* Status Sub-filter Pills */}
+          <View style={styles.tabRow}>
+            {[
+              { id: 'active', label: '🔥 Active' },
+              { id: 'completed', label: '✓ Completed' },
+              { id: 'cancelled', label: '✕ Cancelled' },
+              { id: 'all', label: 'All Orders' },
+            ].map((tab) => (
+              <TouchableOpacity
+                key={tab.id}
+                style={[styles.tabBtn, tabFilter === tab.id && styles.tabBtnActive]}
+                onPress={() => setTabFilter(tab.id as any)}
+              >
+                <Text style={[styles.tabText, tabFilter === tab.id && styles.tabTextActive]}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
       </View>
 
@@ -1461,383 +1470,291 @@ export default function OrdersScreen() {
                 </View>
               </View>
 
-                {/* Customer & Floor Information */}
+                {/* Customer & Floor Information - Compact Single Row */}
                 <View style={styles.metaRow}>
-                  <Text style={styles.custText}>
-                    👤 <Text style={{ fontWeight: '800', color: '#0f172a' }}>{order.customer_name || 'Walk-in Guest'}</Text> {order.customer_phone ? `(${order.customer_phone})` : ''}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 5, flex: 1 }}>
+                    <Text style={styles.custText}>
+                      👤 <Text style={{ fontWeight: '800', color: '#0f172a' }}>{order.customer_name || 'Walk-in Guest'}</Text>
+                      {order.customer_phone ? ` (${order.customer_phone})` : ''}
+                    </Text>
+                    {Boolean(isCustomerQr && tableDisplayName) ? (
+                      <Text style={styles.tableTextInline}>
+                        • 📱 <Text style={{ fontWeight: '800', color: '#7c3aed' }}>{formatTableLabel(tableDisplayName)}</Text>
+                      </Text>
+                    ) : Boolean(order.order_type === 'dine_in' && tableDisplayName) ? (
+                      <Text style={styles.tableTextInline}>
+                        • 🪑 <Text style={{ fontWeight: '800', color: '#0f172a' }}>{formatTableLabel(tableDisplayName)}</Text>
+                      </Text>
+                    ) : order.order_type === 'takeaway' ? (
+                      <Text style={styles.tableTextInline}>
+                        • 🥡 <Text style={{ fontWeight: '800', color: '#d97706' }}>Takeaway</Text>
+                      </Text>
+                    ) : null}
+                  </View>
                   <Text style={styles.timeText}>🕒 {createdTime}</Text>
                 </View>
 
-                {/* Dining table or QR scanned table or Takeaway or Delivery address */}
-                {Boolean(isCustomerQr && tableDisplayName) ? (
-                  <Text style={styles.tableText}>
-                    📱 Scanned Table QR: <Text style={{ fontWeight: '800', color: '#7c3aed' }}>{formatTableLabel(tableDisplayName)}</Text>
-                  </Text>
-                ) : Boolean(order.order_type === 'dine_in' && tableDisplayName) ? (
-                  <Text style={styles.tableText}>
-                    🪑 Dining Table: <Text style={{ fontWeight: '800', color: '#0f172a' }}>{formatTableLabel(tableDisplayName)}</Text>
-                  </Text>
-                ) : order.order_type === 'takeaway' ? (
-                  <Text style={styles.tableText}>
-                    🥡 Order Type: <Text style={{ fontWeight: '800', color: '#d97706' }}>Counter Takeaway</Text>
-                  </Text>
-                ) : null}
-
                 {Boolean(order.delivery_address) && (
-                  <Text style={styles.addressText} numberOfLines={2}>
-                    📍 Delivery Address: <Text style={{ fontWeight: '800', color: '#0f172a' }}>{order.delivery_address}</Text> {order.delivery_landmark ? `(Near: ${order.delivery_landmark})` : ''}
+                  <Text style={styles.addressText} numberOfLines={1}>
+                    📍 <Text style={{ fontWeight: '800', color: '#0f172a' }}>{order.delivery_address}</Text> {order.delivery_landmark ? `(Near: ${order.delivery_landmark})` : ''}
                   </Text>
                 )}
 
-                  {/* Items List */}
-                  <View style={styles.itemsBox}>
-                    <Text style={styles.itemsTitle}>Items ({order.items?.length || 0}):</Text>
-                    {(order.items || []).map((i) => (
-                      <View key={i.id} style={styles.itemRow}>
-                        <Text style={styles.itemQty}>{i.quantity}x</Text>
-                        <Text style={styles.itemName} numberOfLines={1}>{i.product_name}</Text>
-                        <Text style={styles.itemPrice}>
-                          {formatCurrency((Number(i.unit_price) && Number(i.quantity)) ? (Number(i.unit_price) * Number(i.quantity)) : (Number(i.subtotal) || Number(i.total) || 0))}
+                {/* Items List - Compact Container */}
+                <View style={styles.itemsBox}>
+                  <Text style={styles.itemsTitle}>Items ({order.items?.length || 0}):</Text>
+                  {(order.items || []).map((i) => (
+                    <View key={i.id} style={styles.itemRow}>
+                      <Text style={styles.itemQty}>{i.quantity}x</Text>
+                      <Text style={styles.itemName} numberOfLines={1}>{i.product_name}</Text>
+                      <Text style={styles.itemPrice}>
+                        {formatCurrency((Number(i.unit_price) && Number(i.quantity)) ? (Number(i.unit_price) * Number(i.quantity)) : (Number(i.subtotal) || Number(i.total) || 0))}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+
+                {/* Order Notes / Instructions / Source info */}
+                {(() => {
+                  const displayNotes = cleanCustomerOrderNotes(order.notes);
+                  if (displayNotes) {
+                    return (
+                      <View style={styles.notesBox}>
+                        <Text style={styles.notesText}>📝 {displayNotes}</Text>
+                      </View>
+                    );
+                  }
+                  if (isCustomerQr) {
+                    return (
+                      <View style={[styles.notesBox, { backgroundColor: '#f5f3ff', borderColor: '#ddd6fe' }]}>
+                        <Text style={[styles.notesText, { color: '#6d28d9' }]}>📱 Table QR Order</Text>
+                      </View>
+                    );
+                  }
+                  return null;
+                })()}
+
+                {/* Applied Coupon Banner if any */}
+                {Boolean(order.coupon_code && order.coupon_discount) && (
+                  <View style={{ backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#A7F3D0', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2.5, marginBottom: 4, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#065F46' }}>
+                      🏷️ Coupon: {order.coupon_code}
+                    </Text>
+                    <Text style={{ fontSize: 10, fontWeight: '900', color: '#059669' }}>
+                      -{formatCurrency(order.coupon_discount || 0)}
+                    </Text>
+                  </View>
+                )}
+
+                {/* Applied Discount Banner if any */}
+                {Boolean(order.discount_amount && order.discount_amount > 0) && (
+                  <View style={{ backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2.5, marginBottom: 4, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#92400E' }}>
+                      🏷️ Discount ({order.discount_type === 'percentage' ? `${order.discount_value}%` : 'Flat ₹'}):
+                    </Text>
+                    <Text style={{ fontSize: 10, fontWeight: '900', color: '#B45309' }}>
+                      -{formatCurrency(order.discount_amount || 0)}
+                    </Text>
+                  </View>
+                )}
+
+                {/* Payment Screenshot Proof Banner - Compact Inline Strip */}
+                {Boolean(order.payment_proof_url) && (
+                  <View
+                    style={{
+                      backgroundColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#f0fdf4' : '#eff6ff',
+                      borderWidth: 1,
+                      borderColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#86efac' : '#bfdbfe',
+                      borderRadius: 7,
+                      paddingHorizontal: 8,
+                      paddingVertical: 5,
+                      marginBottom: 4,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 6,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+                      <Text style={{ fontSize: 13 }}>{(order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '✅' : '📷'}</Text>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text
+                          style={{
+                            fontSize: 11,
+                            fontWeight: '800',
+                            color: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#166534' : '#1e40af',
+                          }}
+                          numberOfLines={1}
+                        >
+                          {order.payment_status === 'paid'
+                            ? 'Proof Verified & Settled'
+                            : Boolean(order.payment_verified_at)
+                            ? 'Proof Verified • Ready'
+                            : 'Proof Attached'}
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: 9.5,
+                            color: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#15803d' : '#3b82f6',
+                          }}
+                          numberOfLines={1}
+                        >
+                          {order.payment_verified_at
+                            ? `Verified ${formatOrderDateTime(order.payment_verified_at)}`
+                            : 'Online Payment Screenshot'}
                         </Text>
                       </View>
-                    ))}
-                  </View>
-
-                  {/* Order Notes / Instructions / Source info */}
-                  {(() => {
-                    const displayNotes = cleanCustomerOrderNotes(order.notes);
-                    if (displayNotes) {
-                      return (
-                        <View style={styles.notesBox}>
-                          <Text style={styles.notesText}>📝 {displayNotes}</Text>
-                        </View>
-                      );
-                    }
-                    if (isCustomerQr) {
-                      return (
-                        <View style={[styles.notesBox, { backgroundColor: '#f5f3ff', borderColor: '#ddd6fe' }]}>
-                          <Text style={[styles.notesText, { color: '#6d28d9' }]}>📱 Placed via Table QR Digital Menu</Text>
-                        </View>
-                      );
-                    }
-                    return null;
-                  })()}
-
-                  {/* Applied Coupon Banner if any */}
-                  {Boolean(order.coupon_code && order.coupon_discount) && (
-                    <View style={{ backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#A7F3D0', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#065F46' }}>
-                        🏷️ Coupon: {order.coupon_code}
-                      </Text>
-                      <Text style={{ fontSize: 11, fontWeight: '900', color: '#059669' }}>
-                        -{formatCurrency(order.coupon_discount || 0)}
-                      </Text>
                     </View>
-                  )}
 
-                  {/* Applied Discount Banner if any */}
-                  {Boolean(order.discount_amount && order.discount_amount > 0) && (
-                    <View style={{ backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#92400E' }}>
-                        🏷️ Discount ({order.discount_type === 'percentage' ? `${order.discount_value}%` : 'Flat ₹'}):
-                      </Text>
-                      <Text style={{ fontSize: 11, fontWeight: '900', color: '#B45309' }}>
-                        -{formatCurrency(order.discount_amount || 0)}
-                      </Text>
-                    </View>
-                  )}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => {
+                          markAsSeen(order.id);
+                          setViewOrderModal(order);
+                        }}
+                        style={{
+                          backgroundColor: '#ffffff',
+                          borderWidth: 1,
+                          borderColor: '#93c5fd',
+                          paddingHorizontal: 7,
+                          paddingVertical: 3.5,
+                          borderRadius: 6,
+                        }}
+                      >
+                        <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#2563eb' }}>🔍 Proof</Text>
+                      </TouchableOpacity>
 
-                  {/* Payment Screenshot Proof Banner for Online / Table QR Orders */}
-                  {Boolean(order.payment_proof_url) && (
-                    <View
-                      style={{
-                        backgroundColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#f0fdf4' : '#eff6ff',
-                        borderWidth: 1,
-                        borderColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#86efac' : '#93c5fd',
-                        borderRadius: 10,
-                        padding: 10,
-                        marginBottom: 10,
-                        shadowColor: '#000',
-                        shadowOffset: { width: 0, height: 1 },
-                        shadowOpacity: 0.04,
-                        shadowRadius: 2,
-                        elevation: 1,
-                      }}
-                    >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                      {order.status !== 'cancelled' && order.payment_status !== 'paid' && !order.payment_verified_at && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
                         <TouchableOpacity
-                          activeOpacity={0.7}
-                          onPress={() => {
-                            markAsSeen(order.id);
-                            setViewOrderModal(order);
+                          style={{
+                            backgroundColor: '#16a34a',
+                            paddingHorizontal: 8,
+                            paddingVertical: 3.5,
+                            borderRadius: 6,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 3,
                           }}
-                          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 160 }}
+                          onPress={() => handleMarkPaymentVerified(order)}
+                          disabled={verifyingPaymentOrderId === order.id}
                         >
-                          <View
-                            style={{
-                              width: 32,
-                              height: 32,
-                              borderRadius: 16,
-                              backgroundColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#dcfce7' : '#dbeafe',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              borderWidth: 1,
-                              borderColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#bbf7d0' : '#bfdbfe',
-                              flexShrink: 0,
-                            }}
-                          >
-                            <Text style={{ fontSize: 14 }}>{(order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '✓' : '📷'}</Text>
-                          </View>
-                          <View style={{ flex: 1, minWidth: 0 }}>
-                            <Text
-                              style={{
-                                fontSize: 12,
-                                fontWeight: '800',
-                                color: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#166534' : '#1e40af',
-                              }}
-                              numberOfLines={1}
-                            >
-                              {order.payment_status === 'paid'
-                                ? 'Payment Verified & Settled'
-                                : Boolean(order.payment_verified_at)
-                                ? 'Payment Verified • Ready to Settle'
-                                : 'Payment Proof Attached'}
+                          {verifyingPaymentOrderId === order.id ? (
+                            <ActivityIndicator size="small" color="#ffffff" />
+                          ) : (
+                            <Text style={{ color: '#ffffff', fontSize: 10.5, fontWeight: '900' }}>
+                              ✓ Verify
                             </Text>
-                            <Text
-                              style={{
-                                fontSize: 11,
-                                color: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#15803d' : '#3b82f6',
-                                marginTop: 1,
-                              }}
-                              numberOfLines={1}
-                            >
-                              {order.payment_verified_at
-                                ? `Verified at ${formatOrderDateTime(order.payment_verified_at)}`
-                                : order.payment_status === 'paid'
-                                ? 'Verified by Admin'
-                                : 'Online Payment Screenshot'}
-                            </Text>
-                          </View>
+                          )}
                         </TouchableOpacity>
-
-                        <TouchableOpacity
-                          activeOpacity={0.8}
-                          onPress={() => {
-                            markAsSeen(order.id);
-                            setViewOrderModal(order);
-                          }}
-                          style={{
-                            backgroundColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#ffffff' : '#2563eb',
-                            borderWidth: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? 1.5 : 0,
-                            borderColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#86efac' : 'transparent',
-                            height: 32,
-                            paddingHorizontal: 12,
-                            borderRadius: 7,
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 4,
-                            alignSelf: 'center',
-                            shadowColor: '#000',
-                            shadowOffset: { width: 0, height: 1 },
-                            shadowOpacity: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? 0.05 : 0.2,
-                            shadowRadius: 2,
-                            elevation: 1,
-                          }}
-                        >
-                          <Text
-                            style={{
-                              color: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#15803d' : '#ffffff',
-                              fontSize: 11.5,
-                              fontWeight: '800',
-                            }}
-                            numberOfLines={1}
-                          >
-                            🔍 View Proof
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-
-                      {/* Immediate Verify Button / Verified Indicator on card */}
-                      {order.status === 'cancelled' ? (
-                        <View
-                          style={{
-                            backgroundColor: '#fee2e2',
-                            paddingVertical: 7,
-                            paddingHorizontal: 10,
-                            borderRadius: 7,
-                            marginTop: 8,
-                            alignItems: 'center',
-                            flexDirection: 'row',
-                            justifyContent: 'center',
-                            gap: 5,
-                            borderWidth: 1,
-                            borderColor: '#fca5a5',
-                          }}
-                        >
-                          <Text style={{ color: '#991b1b', fontSize: 11.5, fontWeight: '800' }}>
-                            🚫 Cancelled Order • Verification Disabled
-                          </Text>
-                        </View>
-                      ) : Boolean(order.payment_verified_at) && order.payment_status !== 'paid' ? (
-                        <View
-                          style={{
-                            backgroundColor: '#dcfce7',
-                            paddingVertical: 8,
-                            paddingHorizontal: 12,
-                            borderRadius: 7,
-                            marginTop: 8,
-                            alignItems: 'center',
-                            flexDirection: 'row',
-                            justifyContent: 'center',
-                            gap: 5,
-                            borderWidth: 1,
-                            borderColor: '#86efac',
-                          }}
-                        >
-                          <Text style={{ color: '#15803d', fontSize: 12, fontWeight: '900' }}>
-                            ✅ Payment Verified — Ready to Settle
-                          </Text>
-                        </View>
-                      ) : (
-                        order.payment_status !== 'paid' && !order.payment_verified_at && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
-                          <TouchableOpacity
-                            style={{
-                              backgroundColor: '#16a34a',
-                              paddingVertical: 8,
-                              paddingHorizontal: 12,
-                              borderRadius: 7,
-                              marginTop: 8,
-                              alignItems: 'center',
-                              flexDirection: 'row',
-                              justifyContent: 'center',
-                              gap: 5,
-                              shadowColor: '#16a34a',
-                              shadowOffset: { width: 0, height: 1 },
-                              shadowOpacity: 0.2,
-                              shadowRadius: 2,
-                              elevation: 2,
-                            }}
-                            onPress={() => handleMarkPaymentVerified(order)}
-                            disabled={verifyingPaymentOrderId === order.id}
-                          >
-                            {verifyingPaymentOrderId === order.id ? (
-                              <ActivityIndicator size="small" color="#ffffff" />
-                            ) : (
-                              <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '900' }}>
-                                ✓ Mark Payment Verified
-                              </Text>
-                            )}
-                          </TouchableOpacity>
-                        )
                       )}
                     </View>
-                  )}
+                  </View>
+                )}
 
-                  {/* Financial Breakdown: Total, Paid, Balance */}
-                  {(() => {
-                    const payableVal =
-                      order.payable_amount !== undefined && order.payable_amount !== null
-                        ? Number(order.payable_amount)
-                        : (order.grand_total !== undefined && order.grand_total !== null
-                            ? Number(order.grand_total)
-                            : (order.items && order.items.length > 0
-                                ? order.items.reduce((sum, item) => sum + ((Number(item.unit_price) * Number(item.quantity)) || Number(item.subtotal) || Number(item.total) || 0), 0)
-                                : 0));
-                    const paidVal = Number(order.paid_amount || 0);
-                    const balanceVal = Math.max(0, payableVal - paidVal);
+                {/* Financial Breakdown: Total, Paid, Balance */}
+                {(() => {
+                  const payableVal =
+                    order.payable_amount !== undefined && order.payable_amount !== null
+                      ? Number(order.payable_amount)
+                      : (order.grand_total !== undefined && order.grand_total !== null
+                          ? Number(order.grand_total)
+                          : (order.items && order.items.length > 0
+                              ? order.items.reduce((sum, item) => sum + ((Number(item.unit_price) * Number(item.quantity)) || Number(item.subtotal) || Number(item.total) || 0), 0)
+                              : 0));
+                  const paidVal = Number(order.paid_amount || 0);
+                  const balanceVal = Math.max(0, payableVal - paidVal);
 
-                    const isCodPay = order.payment_method === 'cod';
-                    const isCardPay = order.payment_method === 'card';
-                    const isCashPay = order.payment_method === 'cash';
-                    const isRoomPay = order.payment_method === 'room';
-                    const isSplitPay = order.payment_method === 'split';
-                    const isUpiPay = order.payment_method === 'upi' || order.payment_method === 'online';
-                    const isOnlinePay = isUpiPay || Boolean(order.payment_proof_url);
-                    const isProofVerified = Boolean(order.payment_verified_at);
+                  const isCodPay = order.payment_method === 'cod';
+                  const isCardPay = order.payment_method === 'card';
+                  const isCashPay = order.payment_method === 'cash';
+                  const isRoomPay = order.payment_method === 'room';
+                  const isSplitPay = order.payment_method === 'split';
+                  const isUpiPay = order.payment_method === 'upi' || order.payment_method === 'online';
+                  const isOnlinePay = isUpiPay || Boolean(order.payment_proof_url);
+                  const isProofVerified = Boolean(order.payment_verified_at);
 
-                    let badgeContainerStyle = styles.payStatusUnpaid;
-                    let badgeTextStyle = styles.payStatusTextUnpaid;
-                    let badgeLabel = '⚠️ UNPAID';
+                  let badgeContainerStyle = styles.payStatusUnpaid;
+                  let badgeTextStyle = styles.payStatusTextUnpaid;
+                  let badgeLabel = '⚠️ UNPAID';
 
-                    if (isPaid) {
-                      badgeContainerStyle = styles.payStatusPaid;
-                      badgeTextStyle = styles.payStatusTextPaid;
-                      if (isCardPay) badgeLabel = '✓ PAID (CARD)';
-                      else if (isUpiPay) badgeLabel = '✓ PAID (UPI)';
-                      else if (isOnlinePay) badgeLabel = '✓ PAID (ONLINE)';
-                      else if (isCashPay || isCodPay) badgeLabel = '✓ PAID (CASH)';
-                      else if (isRoomPay) badgeLabel = '✓ PAID (ROOM)';
-                      else if (isSplitPay) badgeLabel = '✓ PAID (SPLIT)';
-                      else badgeLabel = `✓ PAID (${(order.payment_method || 'PAID').toUpperCase()})`;
+                  if (isPaid) {
+                    badgeContainerStyle = styles.payStatusPaid;
+                    badgeTextStyle = styles.payStatusTextPaid;
+                    if (isCardPay) badgeLabel = '✓ PAID (CARD)';
+                    else if (isUpiPay) badgeLabel = '✓ PAID (UPI)';
+                    else if (isOnlinePay) badgeLabel = '✓ PAID (ONLINE)';
+                    else if (isCashPay || isCodPay) badgeLabel = '✓ PAID (CASH)';
+                    else if (isRoomPay) badgeLabel = '✓ PAID (ROOM)';
+                    else if (isSplitPay) badgeLabel = '✓ PAID (SPLIT)';
+                    else badgeLabel = `✓ PAID (${(order.payment_method || 'PAID').toUpperCase()})`;
+                  } else {
+                    if (order.status === 'cancelled') {
+                      badgeContainerStyle = { backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fca5a5' } as any;
+                      badgeTextStyle = { color: '#991b1b' } as any;
+                      badgeLabel = '🚫 CANCELLED (UNPAID)';
+                    } else if (isProofVerified) {
+                      badgeContainerStyle = { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#86efac' } as any;
+                      badgeTextStyle = { color: '#15803d' } as any;
+                      badgeLabel = '📱 ONLINE • PAYMENT VERIFIED • READY TO SETTLE';
+                    } else if (paidVal > 0) {
+                      badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
+                      badgeTextStyle = { color: '#1d4ed8' } as any;
+                      badgeLabel = `💳 PARTIALLY PAID (BAL: ${formatCurrency(balanceVal)})`;
+                    } else if (isOnlinePay) {
+                      badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
+                      badgeTextStyle = { color: '#1d4ed8' } as any;
+                      badgeLabel = Boolean(order.payment_proof_url)
+                        ? '📱 ONLINE • PROOF ATTACHED'
+                        : '📱 ONLINE (PENDING VERIFICATION)';
+                    } else if (isCodPay) {
+                      badgeContainerStyle = { backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fed7aa' } as any;
+                      badgeTextStyle = { color: '#c2410c' } as any;
+                      badgeLabel = '💵 COD (PAY ON DELIVERY)';
+                    } else if (isCardPay) {
+                      badgeContainerStyle = styles.payStatusUnpaid;
+                      badgeTextStyle = styles.payStatusTextUnpaid;
+                      badgeLabel = '💳 CARD (UNPAID)';
                     } else {
-                      if (order.status === 'cancelled') {
-                        badgeContainerStyle = { backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fca5a5' } as any;
-                        badgeTextStyle = { color: '#991b1b' } as any;
-                        badgeLabel = '🚫 CANCELLED (UNPAID)';
-                      } else if (isProofVerified) {
-                        badgeContainerStyle = { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#86efac' } as any;
-                        badgeTextStyle = { color: '#15803d' } as any;
-                        badgeLabel = '📱 ONLINE • PAYMENT VERIFIED • READY TO SETTLE';
-                      } else if (paidVal > 0) {
-                        badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
-                        badgeTextStyle = { color: '#1d4ed8' } as any;
-                        badgeLabel = `💳 PARTIALLY PAID (BAL: ${formatCurrency(balanceVal)})`;
-                      } else if (isOnlinePay) {
-                        badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
-                        badgeTextStyle = { color: '#1d4ed8' } as any;
-                        badgeLabel = Boolean(order.payment_proof_url)
-                          ? '📱 ONLINE • PROOF ATTACHED • PENDING VERIFICATION'
-                          : '📱 ONLINE (PENDING VERIFICATION)';
-                      } else if (isCodPay) {
-                        badgeContainerStyle = { backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fed7aa' } as any;
-                        badgeTextStyle = { color: '#c2410c' } as any;
-                        badgeLabel = '💵 COD (PAY ON DELIVERY)';
-                      } else if (isCardPay) {
-                        badgeContainerStyle = styles.payStatusUnpaid;
-                        badgeTextStyle = styles.payStatusTextUnpaid;
-                        badgeLabel = '💳 CARD (UNPAID)';
-                      } else {
-                        badgeContainerStyle = styles.payStatusUnpaid;
-                        badgeTextStyle = styles.payStatusTextUnpaid;
-                        badgeLabel = '⚠️ UNPAID';
-                      }
+                      badgeContainerStyle = styles.payStatusUnpaid;
+                      badgeTextStyle = styles.payStatusTextUnpaid;
+                      badgeLabel = '⚠️ UNPAID';
                     }
+                  }
 
-                    return (
-                      <>
-                        {/* Total, Paid, Balance summary */}
-                        <View style={styles.orderFinanceBox}>
-                          <View style={styles.orderFinanceCol}>
-                            <Text style={styles.orderFinanceLabel}>Total</Text>
-                            <Text style={styles.orderFinanceVal}>{formatCurrency(payableVal)}</Text>
-                          </View>
-                          <View style={styles.orderFinanceDivider} />
-                          <View style={styles.orderFinanceCol}>
-                            <Text style={styles.orderFinanceLabel}>Paid</Text>
-                            <Text style={[styles.orderFinanceVal, { color: paidVal > 0 ? '#15803d' : '#64748b' }]}>
-                              {formatCurrency(paidVal)}
-                            </Text>
-                          </View>
-                          <View style={styles.orderFinanceDivider} />
-                          <View style={styles.orderFinanceCol}>
-                            <Text style={styles.orderFinanceLabel}>Balance</Text>
-                            <Text style={[styles.orderFinanceVal, { color: balanceVal > 0 ? '#b45309' : '#15803d', fontWeight: '900' }]}>
-                              {formatCurrency(balanceVal)}
-                            </Text>
-                          </View>
+                  return (
+                    <>
+                      {/* Total, Paid, Balance summary */}
+                      <View style={styles.orderFinanceBox}>
+                        <View style={styles.orderFinanceCol}>
+                          <Text style={styles.orderFinanceLabel}>Total</Text>
+                          <Text style={styles.orderFinanceVal}>{formatCurrency(payableVal)}</Text>
                         </View>
-
-                        {/* Payment Status Badge */}
-                        <View style={[styles.payStatusBadge, badgeContainerStyle, { marginBottom: 10 }]}>
-                          <Text style={[styles.payStatusText, badgeTextStyle]}>
-                            {badgeLabel}
+                        <View style={styles.orderFinanceDivider} />
+                        <View style={styles.orderFinanceCol}>
+                          <Text style={styles.orderFinanceLabel}>Paid</Text>
+                          <Text style={[styles.orderFinanceVal, { color: paidVal > 0 ? '#15803d' : '#64748b' }]}>
+                            {formatCurrency(paidVal)}
                           </Text>
                         </View>
-                      </>
-                    );
-                  })()}
+                        <View style={styles.orderFinanceDivider} />
+                        <View style={styles.orderFinanceCol}>
+                          <Text style={styles.orderFinanceLabel}>Balance</Text>
+                          <Text style={[styles.orderFinanceVal, { color: balanceVal > 0 ? '#b45309' : '#15803d', fontWeight: '900' }]}>
+                            {formatCurrency(balanceVal)}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Payment Status Badge */}
+                      <View style={[styles.payStatusBadge, badgeContainerStyle, { marginBottom: 4 }]}>
+                        <Text style={[styles.payStatusText, badgeTextStyle]}>
+                          {badgeLabel}
+                        </Text>
+                      </View>
+                    </>
+                  );
+                })()}
 
                   {/* Action Buttons based on order status: 3 up, 3 below */}
                   <View style={styles.cardActionsGrid}>
@@ -3470,9 +3387,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc',
   },
   header: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 6,
     backgroundColor: '#ffffff',
     borderBottomWidth: 1,
     borderColor: '#e2e8f0',
@@ -3481,7 +3398,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   refreshHeaderBtn: {
     flexDirection: 'row',
@@ -3489,13 +3406,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#eff6ff',
     borderWidth: 1.5,
     borderColor: '#bfdbfe',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 7,
     gap: 4,
   },
   refreshHeaderBtnText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
     color: '#2563eb',
   },
@@ -3514,37 +3431,37 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   title: {
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '900',
     color: '#0f172a',
   },
   subTitle: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#64748b',
-    marginTop: 2,
+    marginTop: 1,
   },
   search: {
     backgroundColor: '#ffffff',
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1.5,
     borderColor: '#94a3b8',
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    marginBottom: 8,
-    fontSize: 13,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    height: 32,
+    fontSize: 12,
     color: '#0f172a',
     fontWeight: '500',
   },
   categoryTabRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 10,
+    gap: 6,
+    marginBottom: 6,
   },
   categoryTabBtn: {
     flex: 1,
-    paddingVertical: 9,
-    paddingHorizontal: 8,
-    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+    borderRadius: 8,
     backgroundColor: '#ffffff',
     borderWidth: 1.5,
     borderColor: '#cbd5e1',
@@ -3556,12 +3473,12 @@ const styles = StyleSheet.create({
     borderColor: '#1d4ed8',
     elevation: 2,
     shadowColor: '#2563eb',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
   },
   categoryTabText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
     color: '#475569',
     textAlign: 'center',
@@ -3570,14 +3487,24 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '900',
   },
-  tabRow: {
+  toolbarRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  toolbarRowMobile: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
     gap: 6,
   },
+  tabRow: {
+    flexDirection: 'row',
+    gap: 4,
+  },
   tabBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
     backgroundColor: '#f1f5f9',
     borderWidth: 1,
     borderColor: '#e2e8f0',
@@ -3587,7 +3514,7 @@ const styles = StyleSheet.create({
     borderColor: '#0f172a',
   },
   tabText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
     color: '#475569',
   },
@@ -3620,26 +3547,26 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   list: {
-    padding: 14,
-    gap: 12,
+    padding: 10,
+    gap: 10,
   },
   listGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'flex-start',
-    gap: 14,
+    gap: 10,
   },
   card: {
     backgroundColor: '#ffffff',
-    borderRadius: 18,
-    padding: 14,
+    borderRadius: 12,
+    padding: 10,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     elevation: 2,
     shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
   },
   cardCompleted: {
     borderColor: '#cbd5e1',
@@ -3654,31 +3581,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 4,
     flexWrap: 'wrap',
-    gap: 6,
+    gap: 4,
   },
   cardHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
     flexWrap: 'wrap',
     flexShrink: 1,
   },
   orderNum: {
-    fontSize: 15,
+    fontSize: 13.5,
     fontWeight: '900',
     color: '#0f172a',
   },
   typeBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
     borderWidth: 1,
     alignSelf: 'center',
   },
   typeBadgeText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '800',
   },
   qrSource: {
@@ -3698,9 +3625,9 @@ const styles = StyleSheet.create({
     borderColor: '#fde68a',
   },
   statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
     alignSelf: 'center',
   },
   statusConfirmed: { backgroundColor: '#eff6ff' },
@@ -3710,66 +3637,72 @@ const styles = StyleSheet.create({
   statusCompleted: { backgroundColor: '#f1f5f9' },
   statusCancelled: { backgroundColor: '#fee2e2' },
   statusOutForDelivery: { backgroundColor: '#ffedd5' },
-  statusBadgeText: { fontSize: 10, fontWeight: '900' },
+  statusBadgeText: { fontSize: 9.5, fontWeight: '900' },
   metaRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginVertical: 3,
+    marginVertical: 2,
     flexWrap: 'wrap',
     gap: 4,
   },
-  custText: { fontSize: 12, color: '#334155' },
-  timeText: { fontSize: 11, color: '#64748b' },
-  tableText: { fontSize: 12, fontWeight: '700', color: '#0f172a', marginVertical: 2 },
-  addressText: { fontSize: 11, color: '#64748b', marginVertical: 2 },
+  custText: { fontSize: 11.5, color: '#334155' },
+  timeText: { fontSize: 10.5, color: '#64748b' },
+  tableTextInline: { fontSize: 11.5, color: '#334155' },
+  tableText: { fontSize: 11.5, fontWeight: '700', color: '#0f172a', marginVertical: 1 },
+  addressText: { fontSize: 10.5, color: '#64748b', marginVertical: 1 },
   itemsBox: {
     backgroundColor: '#f8fafc',
-    borderRadius: 10,
-    padding: 10,
-    marginVertical: 8,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginVertical: 4,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
   },
-  itemsTitle: { fontSize: 10, fontWeight: '800', color: '#64748b', marginBottom: 4, textTransform: 'uppercase' },
-  itemRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 2 },
-  itemQty: { width: 25, fontSize: 12, fontWeight: '900', color: '#2563eb' },
-  itemName: { flex: 1, fontSize: 12, fontWeight: '700', color: '#0f172a' },
-  itemPrice: { fontSize: 12, fontWeight: '800', color: '#334155' },
+  itemsTitle: { fontSize: 9.5, fontWeight: '800', color: '#64748b', marginBottom: 2, textTransform: 'uppercase' },
+  itemRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 1, paddingVertical: 1 },
+  itemQty: { width: 20, fontSize: 11, fontWeight: '900', color: '#2563eb' },
+  itemName: { flex: 1, fontSize: 11.5, fontWeight: '700', color: '#0f172a' },
+  itemPrice: { fontSize: 11.5, fontWeight: '800', color: '#334155' },
   notesBox: {
     backgroundColor: '#fffbeb',
-    padding: 6,
-    borderRadius: 6,
-    marginBottom: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 5,
+    marginBottom: 4,
   },
-  notesText: { fontSize: 11, color: '#b45309', fontWeight: '600' },
+  notesText: { fontSize: 10.5, color: '#b45309', fontWeight: '600' },
   summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     borderTopWidth: 1,
     borderColor: '#f1f5f9',
-    paddingTop: 8,
-    marginBottom: 10,
+    paddingTop: 6,
+    marginBottom: 6,
   },
-  payableLabel: { fontSize: 10, color: '#64748b', fontWeight: '700' },
-  payableVal: { fontSize: 16, fontWeight: '900', color: '#16a34a' },
-  payStatusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  payableLabel: { fontSize: 9.5, color: '#64748b', fontWeight: '700' },
+  payableVal: { fontSize: 15, fontWeight: '900', color: '#16a34a' },
+  payStatusBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5, alignSelf: 'stretch', alignItems: 'center' },
   payStatusPaid: { backgroundColor: '#dcfce7' },
   payStatusUnpaid: { backgroundColor: '#fee2e2' },
-  payStatusText: { fontSize: 10, fontWeight: '900' },
+  payStatusText: { fontSize: 9.5, fontWeight: '900' },
   payStatusTextPaid: { color: '#15803d' },
   payStatusTextUnpaid: { color: '#b91c1c' },
   cardActionsGrid: {
-    marginTop: 4,
+    marginTop: 2,
   },
   cardActionRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 5,
   },
   gridActionBtn: {
     flex: 1,
-    paddingVertical: 9,
-    paddingHorizontal: 4,
-    borderRadius: 8,
+    paddingVertical: 5.5,
+    paddingHorizontal: 3,
+    minHeight: 29,
+    borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -3827,18 +3760,18 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     opacity: 0.7,
   },
-  actionBtnTextKot: { color: '#c2410c', fontSize: 11, fontWeight: '800' },
-  actionBtnTextDispatch: { color: '#c2410c', fontSize: 11, fontWeight: '800' },
-  actionBtnTextDelivered: { color: '#15803d', fontSize: 11, fontWeight: '800' },
-  actionBtnTextPayment: { color: '#1d4ed8', fontSize: 11, fontWeight: '800' },
-  actionBtnTextHold: { color: '#d97706', fontSize: 11, fontWeight: '800' },
-  actionBtnTextResume: { color: '#059669', fontSize: 11, fontWeight: '800' },
-  actionBtnTextBlue: { color: '#1d4ed8', fontSize: 11, fontWeight: '800' },
-  actionBtnTextRed: { color: '#e11d48', fontSize: 11, fontWeight: '800' },
-  actionBtnTextGreen: { color: '#ffffff', fontSize: 11, fontWeight: '900' },
-  actionBtnTextWhite: { color: '#ffffff', fontSize: 11, fontWeight: '800' },
-  actionBtnTextDark: { color: '#334155', fontSize: 11, fontWeight: '800' },
-  actionBtnTextMuted: { color: '#94a3b8', fontSize: 10, fontWeight: '800' },
+  actionBtnTextKot: { color: '#c2410c', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextDispatch: { color: '#c2410c', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextDelivered: { color: '#15803d', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextPayment: { color: '#1d4ed8', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextHold: { color: '#d97706', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextResume: { color: '#059669', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextBlue: { color: '#1d4ed8', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextRed: { color: '#e11d48', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextGreen: { color: '#ffffff', fontSize: 10.5, fontWeight: '900' },
+  actionBtnTextWhite: { color: '#ffffff', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextDark: { color: '#334155', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextMuted: { color: '#94a3b8', fontSize: 9.5, fontWeight: '800' },
   orderFinanceBox: {
     flexDirection: 'row',
     alignItems: 'center',

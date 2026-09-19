@@ -179,7 +179,7 @@ export const tableService = {
     if (!table.id) {
       const limitCheck = await subscriptionGuardService.checkPlanLimit(targetRestId, 'TABLES', 1);
       if (!limitCheck.allowed) {
-        throw new Error(limitCheck.message || 'Table limit reached for your current plan. Please upgrade to add more tables.');
+        throw new Error(limitCheck.message || 'Table limit reached. Your current subscription plan allows a maximum of tables.');
       }
     }
     const tableNumber = (table.table_number || '').trim();
@@ -394,7 +394,7 @@ export const tableService = {
     // Check bulk table plan limit upfront
     const limitCheck = await subscriptionGuardService.checkPlanLimit(restaurantId, 'TABLES', count);
     if (!limitCheck.allowed) {
-      throw new Error(limitCheck.message || `Your plan does not permit adding ${count} more tables. Please upgrade your subscription.`);
+      throw new Error(limitCheck.message || 'Table limit reached. Your current subscription plan allows a maximum of tables.');
     }
 
     const created: DiningTable[] = [];

@@ -193,18 +193,29 @@ export const subscriptionGuardService = {
             }
           }
         } else if (resourceType === 'TABLES') {
-          const maxTables = plan?.max_tables !== null && plan?.max_tables !== undefined && plan.max_tables > 0 ? plan.max_tables : null;
+          const maxTables = (subData as any)?.custom_limits?.max_tables !== undefined && (subData as any)?.custom_limits?.max_tables !== null
+            ? Number((subData as any).custom_limits.max_tables)
+            : (plan?.max_tables !== null && plan?.max_tables !== undefined && Number(plan.max_tables) > 0 ? Number(plan.max_tables) : null);
+
           if (maxTables !== null) {
             const { count } = await supabase
               .from('tables')
               .select('*', { count: 'exact', head: true })
-              .eq('restaurant_id', restaurantId)
-              .eq('is_active', true);
+              .eq('restaurant_id', restaurantId);
 
-            if ((count || 0) + requestedCount > maxTables) {
+            const currentCount = count || 0;
+            if (currentCount + requestedCount > maxTables) {
+              const remaining = Math.max(0, maxTables - currentCount);
+              let message: string;
+              if (remaining === 0 || requestedCount <= 1) {
+                message = `Table limit reached. Your current subscription plan allows a maximum of ${maxTables} tables.`;
+              } else {
+                const tableWord = remaining === 1 ? 'more table' : 'more tables';
+                message = `You can create only ${remaining} ${tableWord}. Your current subscription plan allows a maximum of ${maxTables} tables.`;
+              }
               return {
                 allowed: false,
-                message: 'Plan limit reached. Please upgrade or contact Super Admin.',
+                message,
               };
             }
           }

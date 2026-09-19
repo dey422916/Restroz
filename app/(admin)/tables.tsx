@@ -106,8 +106,8 @@ export default function TablesScreen() {
       const limitCheck = await subscriptionGuardService.checkPlanLimit(activeRestaurantId, 'TABLES', 1);
       if (!limitCheck.allowed) {
         Alert.alert(
-          'Plan Limit Reached',
-          'Plan limit reached. Please upgrade or contact Super Admin.',
+          'Table Limit Reached',
+          limitCheck.message || 'Table limit reached. Your current subscription plan allows a maximum of tables.',
           [
             { text: 'Upgrade Plan', onPress: () => router.push('/(admin)/my-plan' as any) },
             { text: 'OK', style: 'cancel' }
@@ -136,8 +136,8 @@ export default function TablesScreen() {
       const limitCheck = await subscriptionGuardService.checkPlanLimit(activeRestaurantId, 'TABLES', 1);
       if (!limitCheck.allowed) {
         Alert.alert(
-          'Plan Limit Reached',
-          'Plan limit reached. Please upgrade or contact Super Admin.',
+          'Table Limit Reached',
+          limitCheck.message || 'Table limit reached. Your current subscription plan allows a maximum of tables.',
           [
             { text: 'Upgrade Plan', onPress: () => router.push('/(admin)/my-plan' as any) },
             { text: 'OK', style: 'cancel' }
@@ -174,6 +174,21 @@ export default function TablesScreen() {
 
     setSavingSingle(true);
     try {
+      if (!editingTable) {
+        const limitCheck = await subscriptionGuardService.checkPlanLimit(activeRestaurantId, 'TABLES', 1);
+        if (!limitCheck.allowed) {
+          Alert.alert(
+            'Table Limit Reached',
+            limitCheck.message || 'Table limit reached. Your current subscription plan allows a maximum of tables.',
+            [
+              { text: 'Upgrade Plan', onPress: () => router.push('/(admin)/my-plan' as any) },
+              { text: 'OK', style: 'cancel' }
+            ]
+          );
+          return;
+        }
+      }
+
       await tableService.saveTable(
         {
           id: editingTable?.id,
@@ -195,7 +210,7 @@ export default function TablesScreen() {
       setShowSingleModal(false);
       await loadTables();
     } catch (err: any) {
-      Alert.alert('Save Failed', err.message);
+      Alert.alert('Table Limit Reached', err.message);
     } finally {
       setSavingSingle(false);
     }
@@ -221,6 +236,19 @@ export default function TablesScreen() {
 
     setSavingBulk(true);
     try {
+      const limitCheck = await subscriptionGuardService.checkPlanLimit(activeRestaurantId, 'TABLES', count);
+      if (!limitCheck.allowed) {
+        Alert.alert(
+          'Table Limit Reached',
+          limitCheck.message || 'Table limit reached. Your current subscription plan allows a maximum of tables.',
+          [
+            { text: 'Upgrade Plan', onPress: () => router.push('/(admin)/my-plan' as any) },
+            { text: 'OK', style: 'cancel' }
+          ]
+        );
+        return;
+      }
+
       const res = await tableService.createBulkTables(
         {
           startingNumber: start,
@@ -238,7 +266,7 @@ export default function TablesScreen() {
       setShowBulkModal(false);
       await loadTables();
     } catch (err: any) {
-      Alert.alert('Bulk Creation Failed', err.message);
+      Alert.alert('Table Limit Reached', err.message);
     } finally {
       setSavingBulk(false);
     }

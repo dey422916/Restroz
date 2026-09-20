@@ -94,6 +94,7 @@ export default function OrdersScreen() {
   const [payDiscountValue, setPayDiscountValue] = useState<string>('');
   const [closingOrder, setClosingOrder] = useState<boolean>(false);
   const [verifyingPaymentOrderId, setVerifyingPaymentOrderId] = useState<string | null>(null);
+  const [fullScreenProofOrder, setFullScreenProofOrder] = useState<Order | null>(null);
 
   // Partial Payment Modal state
   const [partialPayModal, setPartialPayModal] = useState<Order | null>(null);
@@ -108,13 +109,27 @@ export default function OrdersScreen() {
   const [recordingPartialPayment, setRecordingPartialPayment] = useState<boolean>(false);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isMobile = windowWidth < 768;
-  const isTwoColumn = (Platform.OS === 'web' && windowWidth >= 600) || windowWidth >= 768;
+  const isDesktopWide = (Platform.OS === 'web' && windowWidth >= 1200) || windowWidth >= 1200;
+  const isTwoColumn = (Platform.OS === 'web' && windowWidth >= 680) || windowWidth >= 768;
+
+  const formatTableLabel = (rawName?: string | null): string => {
+    if (!rawName) return '';
+    const trimmed = rawName.trim();
+    if (/^table\b/i.test(trimmed)) return trimmed;
+    return `Table ${trimmed}`;
+  };
 
   const cardWidth = useMemo(() => {
-    if (!isTwoColumn) return '100%';
-    if (Platform.OS === 'web') return 'calc(50% - 7px)' as any;
-    return Math.floor((windowWidth - 28 - 14) / 2);
-  }, [isTwoColumn, windowWidth]);
+    if (isDesktopWide) {
+      if (Platform.OS === 'web') return 'calc(33.333% - 7px)' as any;
+      return Math.floor((windowWidth - 28 - 20) / 3);
+    }
+    if (isTwoColumn) {
+      if (Platform.OS === 'web') return 'calc(50% - 5px)' as any;
+      return Math.floor((windowWidth - 28 - 10) / 2);
+    }
+    return '100%';
+  }, [isDesktopWide, isTwoColumn, windowWidth]);
 
   const showAlert = (title: string, message?: string) => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -620,6 +635,13 @@ export default function OrdersScreen() {
 
   // Open Partial Payment Modal
   const openPartialPaymentModal = (order: Order) => {
+    const src = resolveOrderSource(order);
+    const isOnline = src === 'CUSTOMER_APP' || order.order_type === 'delivery';
+    const isQr = src === 'CUSTOMER_QR';
+    if (isOnline || isQr || (order.order_type !== 'dine_in' && order.order_type !== 'takeaway')) {
+      showAlert('Not Available', 'Partial payments are available only for Dine-In and Takeaway orders.');
+      return;
+    }
     markAsSeen(order.id);
     setPartialPayModal(order);
     const payable = Number(order.payable_amount ?? order.grand_total ?? 0);
@@ -992,6 +1014,16 @@ export default function OrdersScreen() {
             : prev
         );
 
+        setFullScreenProofOrder((prev) =>
+          prev && prev.id === order.id
+            ? {
+                ...prev,
+                payment_verified_at: res.payment_verified_at || new Date().toISOString(),
+                payment_verified_by: res.payment_verified_by || user?.id,
+              }
+            : prev
+        );
+
         Alert.alert('✓ Payment Verified', `Payment proof for Order #${order.order_number} has been verified.\nThe order remains active and is ready to settle.`);
         await loadData(true);
       } catch (err: any) {
@@ -1200,7 +1232,7 @@ export default function OrdersScreen() {
               setTabFilter('active');
             }}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 5 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 4 }}>
               <Text style={[styles.categoryTabText, categoryTab === 'online' && styles.categoryTabTextActive]}>
                 🌐 Online Orders
               </Text>
@@ -1222,7 +1254,7 @@ export default function OrdersScreen() {
               setTabFilter('active');
             }}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 5 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 4 }}>
               <Text style={[styles.categoryTabText, categoryTab === 'qr' && styles.categoryTabTextActive]}>
                 📱 QR Orders
               </Text>
@@ -1237,33 +1269,35 @@ export default function OrdersScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Search */}
-        <TextInput
-          style={styles.search}
-          placeholder="Search all orders by Order #, Customer, Phone, Table..."
-          placeholderTextColor="#64748b"
-          value={search}
-          onChangeText={setSearch}
-        />
+        {/* Search & Status Filters in compact toolbar */}
+        <View style={[styles.toolbarRow, isMobile && styles.toolbarRowMobile]}>
+          <TextInput
+            style={[styles.search, !isMobile && { flex: 1, marginBottom: 0 }]}
+            placeholder="Search by Order #, Customer, Phone, Table..."
+            placeholderTextColor="#64748b"
+            value={search}
+            onChangeText={setSearch}
+          />
 
-        {/* Status Sub-filter Pills */}
-        <View style={styles.tabRow}>
-          {[
-            { id: 'active', label: '🔥 Active' },
-            { id: 'completed', label: '✓ Completed' },
-            { id: 'cancelled', label: '✕ Cancelled' },
-            { id: 'all', label: 'All Orders' },
-          ].map((tab) => (
-            <TouchableOpacity
-              key={tab.id}
-              style={[styles.tabBtn, tabFilter === tab.id && styles.tabBtnActive]}
-              onPress={() => setTabFilter(tab.id as any)}
-            >
-              <Text style={[styles.tabText, tabFilter === tab.id && styles.tabTextActive]}>
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
+          {/* Status Sub-filter Pills */}
+          <View style={styles.tabRow}>
+            {[
+              { id: 'active', label: '🔥 Active' },
+              { id: 'completed', label: '✓ Completed' },
+              { id: 'cancelled', label: '✕ Cancelled' },
+              { id: 'all', label: 'All Orders' },
+            ].map((tab) => (
+              <TouchableOpacity
+                key={tab.id}
+                style={[styles.tabBtn, tabFilter === tab.id && styles.tabBtnActive]}
+                onPress={() => setTabFilter(tab.id as any)}
+              >
+                <Text style={[styles.tabText, tabFilter === tab.id && styles.tabTextActive]}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
       </View>
 
@@ -1461,353 +1495,275 @@ export default function OrdersScreen() {
                 </View>
               </View>
 
-                {/* Customer & Floor Information */}
+                {/* Customer & Floor Information - Compact Single Row */}
                 <View style={styles.metaRow}>
-                  <Text style={styles.custText}>
-                    👤 <Text style={{ fontWeight: '800', color: '#0f172a' }}>{order.customer_name || 'Walk-in Guest'}</Text> {order.customer_phone ? `(${order.customer_phone})` : ''}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 5, flex: 1 }}>
+                    <Text style={styles.custText}>
+                      👤 <Text style={{ fontWeight: '800', color: '#0f172a' }}>{order.customer_name || 'Walk-in Guest'}</Text>
+                      {order.customer_phone ? ` (${order.customer_phone})` : ''}
+                    </Text>
+                    {Boolean(isCustomerQr && tableDisplayName) ? (
+                      <Text style={styles.tableTextInline}>
+                        • 📱 <Text style={{ fontWeight: '800', color: '#7c3aed' }}>{formatTableLabel(tableDisplayName)}</Text>
+                      </Text>
+                    ) : Boolean(order.order_type === 'dine_in' && tableDisplayName) ? (
+                      <Text style={styles.tableTextInline}>
+                        • 🪑 <Text style={{ fontWeight: '800', color: '#0f172a' }}>{formatTableLabel(tableDisplayName)}</Text>
+                      </Text>
+                    ) : order.order_type === 'takeaway' ? (
+                      <Text style={styles.tableTextInline}>
+                        • 🥡 <Text style={{ fontWeight: '800', color: '#d97706' }}>Takeaway</Text>
+                      </Text>
+                    ) : null}
+                  </View>
                   <Text style={styles.timeText}>🕒 {createdTime}</Text>
                 </View>
 
-                {/* Dining table or QR scanned table or Takeaway or Delivery address */}
-                {Boolean(isCustomerQr && tableDisplayName) ? (
-                  <Text style={styles.tableText}>
-                    📱 Scanned Table QR: <Text style={{ fontWeight: '800', color: '#7c3aed' }}>{formatTableLabel(tableDisplayName)}</Text>
-                  </Text>
-                ) : Boolean(order.order_type === 'dine_in' && tableDisplayName) ? (
-                  <Text style={styles.tableText}>
-                    🪑 Dining Table: <Text style={{ fontWeight: '800', color: '#0f172a' }}>{formatTableLabel(tableDisplayName)}</Text>
-                  </Text>
-                ) : order.order_type === 'takeaway' ? (
-                  <Text style={styles.tableText}>
-                    🥡 Order Type: <Text style={{ fontWeight: '800', color: '#d97706' }}>Counter Takeaway</Text>
-                  </Text>
-                ) : null}
-
                 {Boolean(order.delivery_address) && (
-                  <Text style={styles.addressText} numberOfLines={2}>
-                    📍 Delivery Address: <Text style={{ fontWeight: '800', color: '#0f172a' }}>{order.delivery_address}</Text> {order.delivery_landmark ? `(Near: ${order.delivery_landmark})` : ''}
+                  <Text style={styles.addressText} numberOfLines={1}>
+                    📍 <Text style={{ fontWeight: '800', color: '#0f172a' }}>{order.delivery_address}</Text> {order.delivery_landmark ? `(Near: ${order.delivery_landmark})` : ''}
                   </Text>
                 )}
 
-                  {/* Items List */}
-                  <View style={styles.itemsBox}>
-                    <Text style={styles.itemsTitle}>Items ({order.items?.length || 0}):</Text>
-                    {(order.items || []).map((i) => (
-                      <View key={i.id} style={styles.itemRow}>
-                        <Text style={styles.itemQty}>{i.quantity}x</Text>
-                        <Text style={styles.itemName} numberOfLines={1}>{i.product_name}</Text>
-                        <Text style={styles.itemPrice}>
-                          {formatCurrency((Number(i.unit_price) && Number(i.quantity)) ? (Number(i.unit_price) * Number(i.quantity)) : (Number(i.subtotal) || Number(i.total) || 0))}
+                {/* Items List - Compact Container */}
+                <View style={styles.itemsBox}>
+                  <Text style={styles.itemsTitle}>Items ({order.items?.length || 0}):</Text>
+                  {(order.items || []).map((i) => (
+                    <View key={i.id} style={styles.itemRow}>
+                      <Text style={styles.itemQty}>{i.quantity}x</Text>
+                      <Text style={styles.itemName} numberOfLines={1}>{i.product_name}</Text>
+                      <Text style={styles.itemPrice}>
+                        {formatCurrency((Number(i.unit_price) && Number(i.quantity)) ? (Number(i.unit_price) * Number(i.quantity)) : (Number(i.subtotal) || Number(i.total) || 0))}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+
+                {/* Order Notes / Instructions / Source info */}
+                {(() => {
+                  const displayNotes = cleanCustomerOrderNotes(order.notes);
+                  if (displayNotes) {
+                    return (
+                      <View style={styles.notesBox}>
+                        <Text style={styles.notesText}>📝 {displayNotes}</Text>
+                      </View>
+                    );
+                  }
+                  if (isCustomerQr) {
+                    return (
+                      <View style={[styles.notesBox, { backgroundColor: '#f5f3ff', borderColor: '#ddd6fe' }]}>
+                        <Text style={[styles.notesText, { color: '#6d28d9' }]}>📱 Table QR Order</Text>
+                      </View>
+                    );
+                  }
+                  return null;
+                })()}
+
+                {/* Applied Coupon Banner if any */}
+                {Boolean(order.coupon_code && order.coupon_discount) && (
+                  <View style={{ backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#A7F3D0', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2.5, marginBottom: 4, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#065F46' }}>
+                      🏷️ Coupon: {order.coupon_code}
+                    </Text>
+                    <Text style={{ fontSize: 10, fontWeight: '900', color: '#059669' }}>
+                      -{formatCurrency(order.coupon_discount || 0)}
+                    </Text>
+                  </View>
+                )}
+
+                {/* Applied Discount Banner if any */}
+                {Boolean(order.discount_amount && order.discount_amount > 0) && (
+                  <View style={{ backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2.5, marginBottom: 4, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#92400E' }}>
+                      🏷️ Discount ({order.discount_type === 'percentage' ? `${order.discount_value}%` : 'Flat ₹'}):
+                    </Text>
+                    <Text style={{ fontSize: 10, fontWeight: '900', color: '#B45309' }}>
+                      -{formatCurrency(order.discount_amount || 0)}
+                    </Text>
+                  </View>
+                )}
+
+                {/* Payment Screenshot Proof Banner - Compact Inline Strip */}
+                {Boolean(order.payment_proof_url) && (
+                  <View
+                    style={{
+                      backgroundColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#f0fdf4' : '#eff6ff',
+                      borderWidth: 1,
+                      borderColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#86efac' : '#bfdbfe',
+                      borderRadius: 8,
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      marginBottom: 6,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flex: 1, minWidth: 0 }}>
+                      <Text style={{ fontSize: 14 }}>{(order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '✅' : '📷'}</Text>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text
+                          style={{
+                            fontSize: 11.5,
+                            fontWeight: '800',
+                            color: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#166534' : '#1e40af',
+                          }}
+                          numberOfLines={1}
+                        >
+                          {order.payment_status === 'paid'
+                            ? 'Proof Verified & Settled'
+                            : Boolean(order.payment_verified_at)
+                            ? 'Proof Verified • Ready'
+                            : 'Proof Attached'}
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: 9.5,
+                            color: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#15803d' : '#3b82f6',
+                          }}
+                          numberOfLines={1}
+                        >
+                          {order.payment_verified_at
+                            ? `Verified ${formatOrderDateTime(order.payment_verified_at)}`
+                            : 'Online Payment Screenshot'}
                         </Text>
                       </View>
-                    ))}
-                  </View>
-
-                  {/* Order Notes / Instructions / Source info */}
-                  {(() => {
-                    const displayNotes = cleanCustomerOrderNotes(order.notes);
-                    if (displayNotes) {
-                      return (
-                        <View style={styles.notesBox}>
-                          <Text style={styles.notesText}>📝 {displayNotes}</Text>
-                        </View>
-                      );
-                    }
-                    if (isCustomerQr) {
-                      return (
-                        <View style={[styles.notesBox, { backgroundColor: '#f5f3ff', borderColor: '#ddd6fe' }]}>
-                          <Text style={[styles.notesText, { color: '#6d28d9' }]}>📱 Placed via Table QR Digital Menu</Text>
-                        </View>
-                      );
-                    }
-                    return null;
-                  })()}
-
-                  {/* Applied Coupon Banner if any */}
-                  {Boolean(order.coupon_code && order.coupon_discount) && (
-                    <View style={{ backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#A7F3D0', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#065F46' }}>
-                        🏷️ Coupon: {order.coupon_code}
-                      </Text>
-                      <Text style={{ fontSize: 11, fontWeight: '900', color: '#059669' }}>
-                        -{formatCurrency(order.coupon_discount || 0)}
-                      </Text>
                     </View>
-                  )}
 
-                  {/* Applied Discount Banner if any */}
-                  {Boolean(order.discount_amount && order.discount_amount > 0) && (
-                    <View style={{ backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#92400E' }}>
-                        🏷️ Discount ({order.discount_type === 'percentage' ? `${order.discount_value}%` : 'Flat ₹'}):
-                      </Text>
-                      <Text style={{ fontSize: 11, fontWeight: '900', color: '#B45309' }}>
-                        -{formatCurrency(order.discount_amount || 0)}
-                      </Text>
-                    </View>
-                  )}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => {
+                          markAsSeen(order.id);
+                          setFullScreenProofOrder(order);
+                        }}
+                        style={{
+                          backgroundColor: '#ffffff',
+                          borderWidth: 1.5,
+                          borderColor: '#3b82f6',
+                          paddingHorizontal: 10,
+                          paddingVertical: 5,
+                          borderRadius: 6,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 4,
+                          minWidth: 70,
+                        }}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '800', color: '#1d4ed8', textAlign: 'center' }}>
+                          🔍 Proof
+                        </Text>
+                      </TouchableOpacity>
 
-                  {/* Payment Screenshot Proof Banner for Online / Table QR Orders */}
-                  {Boolean(order.payment_proof_url) && (
-                    <View
-                      style={{
-                        backgroundColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#f0fdf4' : '#eff6ff',
-                        borderWidth: 1,
-                        borderColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#86efac' : '#93c5fd',
-                        borderRadius: 10,
-                        padding: 10,
-                        marginBottom: 10,
-                        shadowColor: '#000',
-                        shadowOffset: { width: 0, height: 1 },
-                        shadowOpacity: 0.04,
-                        shadowRadius: 2,
-                        elevation: 1,
-                      }}
-                    >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                      {order.status !== 'cancelled' && order.payment_status !== 'paid' && !order.payment_verified_at && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
                         <TouchableOpacity
-                          activeOpacity={0.7}
-                          onPress={() => {
-                            markAsSeen(order.id);
-                            setViewOrderModal(order);
-                          }}
-                          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 160 }}
-                        >
-                          <View
-                            style={{
-                              width: 32,
-                              height: 32,
-                              borderRadius: 16,
-                              backgroundColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#dcfce7' : '#dbeafe',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              borderWidth: 1,
-                              borderColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#bbf7d0' : '#bfdbfe',
-                              flexShrink: 0,
-                            }}
-                          >
-                            <Text style={{ fontSize: 14 }}>{(order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '✓' : '📷'}</Text>
-                          </View>
-                          <View style={{ flex: 1, minWidth: 0 }}>
-                            <Text
-                              style={{
-                                fontSize: 12,
-                                fontWeight: '800',
-                                color: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#166534' : '#1e40af',
-                              }}
-                              numberOfLines={1}
-                            >
-                              {order.payment_status === 'paid'
-                                ? 'Payment Verified & Settled'
-                                : Boolean(order.payment_verified_at)
-                                ? 'Payment Verified • Ready to Settle'
-                                : 'Payment Proof Attached'}
-                            </Text>
-                            <Text
-                              style={{
-                                fontSize: 11,
-                                color: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#15803d' : '#3b82f6',
-                                marginTop: 1,
-                              }}
-                              numberOfLines={1}
-                            >
-                              {order.payment_verified_at
-                                ? `Verified at ${formatOrderDateTime(order.payment_verified_at)}`
-                                : order.payment_status === 'paid'
-                                ? 'Verified by Admin'
-                                : 'Online Payment Screenshot'}
-                            </Text>
-                          </View>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          activeOpacity={0.8}
-                          onPress={() => {
-                            markAsSeen(order.id);
-                            setViewOrderModal(order);
-                          }}
                           style={{
-                            backgroundColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#ffffff' : '#2563eb',
-                            borderWidth: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? 1.5 : 0,
-                            borderColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#86efac' : 'transparent',
-                            height: 32,
-                            paddingHorizontal: 12,
-                            borderRadius: 7,
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 4,
-                            alignSelf: 'center',
-                            shadowColor: '#000',
-                            shadowOffset: { width: 0, height: 1 },
-                            shadowOpacity: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? 0.05 : 0.2,
-                            shadowRadius: 2,
-                            elevation: 1,
-                          }}
-                        >
-                          <Text
-                            style={{
-                              color: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#15803d' : '#ffffff',
-                              fontSize: 11.5,
-                              fontWeight: '800',
-                            }}
-                            numberOfLines={1}
-                          >
-                            🔍 View Proof
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-
-                      {/* Immediate Verify Button / Verified Indicator on card */}
-                      {order.status === 'cancelled' ? (
-                        <View
-                          style={{
-                            backgroundColor: '#fee2e2',
-                            paddingVertical: 7,
+                            backgroundColor: '#16a34a',
                             paddingHorizontal: 10,
-                            borderRadius: 7,
-                            marginTop: 8,
-                            alignItems: 'center',
+                            paddingVertical: 5,
+                            borderRadius: 6,
                             flexDirection: 'row',
-                            justifyContent: 'center',
-                            gap: 5,
-                            borderWidth: 1,
-                            borderColor: '#fca5a5',
-                          }}
-                        >
-                          <Text style={{ color: '#991b1b', fontSize: 11.5, fontWeight: '800' }}>
-                            🚫 Cancelled Order • Verification Disabled
-                          </Text>
-                        </View>
-                      ) : Boolean(order.payment_verified_at) && order.payment_status !== 'paid' ? (
-                        <View
-                          style={{
-                            backgroundColor: '#dcfce7',
-                            paddingVertical: 8,
-                            paddingHorizontal: 12,
-                            borderRadius: 7,
-                            marginTop: 8,
                             alignItems: 'center',
-                            flexDirection: 'row',
                             justifyContent: 'center',
-                            gap: 5,
-                            borderWidth: 1,
-                            borderColor: '#86efac',
+                            gap: 3,
+                            minWidth: 64,
                           }}
+                          onPress={() => handleMarkPaymentVerified(order)}
+                          disabled={verifyingPaymentOrderId === order.id}
                         >
-                          <Text style={{ color: '#15803d', fontSize: 12, fontWeight: '900' }}>
-                            ✅ Payment Verified — Ready to Settle
-                          </Text>
-                        </View>
-                      ) : (
-                        order.payment_status !== 'paid' && !order.payment_verified_at && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
-                          <TouchableOpacity
-                            style={{
-                              backgroundColor: '#16a34a',
-                              paddingVertical: 8,
-                              paddingHorizontal: 12,
-                              borderRadius: 7,
-                              marginTop: 8,
-                              alignItems: 'center',
-                              flexDirection: 'row',
-                              justifyContent: 'center',
-                              gap: 5,
-                              shadowColor: '#16a34a',
-                              shadowOffset: { width: 0, height: 1 },
-                              shadowOpacity: 0.2,
-                              shadowRadius: 2,
-                              elevation: 2,
-                            }}
-                            onPress={() => handleMarkPaymentVerified(order)}
-                            disabled={verifyingPaymentOrderId === order.id}
-                          >
-                            {verifyingPaymentOrderId === order.id ? (
-                              <ActivityIndicator size="small" color="#ffffff" />
-                            ) : (
-                              <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '900' }}>
-                                ✓ Mark Payment Verified
-                              </Text>
-                            )}
-                          </TouchableOpacity>
-                        )
+                          {verifyingPaymentOrderId === order.id ? (
+                            <ActivityIndicator size="small" color="#ffffff" />
+                          ) : (
+                            <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '900', textAlign: 'center' }}>
+                              ✓ Verify
+                            </Text>
+                          )}
+                        </TouchableOpacity>
                       )}
                     </View>
-                  )}
+                  </View>
+                )}
 
-                  {/* Financial Breakdown: Total, Paid, Balance */}
-                  {(() => {
-                    const payableVal =
-                      order.payable_amount !== undefined && order.payable_amount !== null
-                        ? Number(order.payable_amount)
-                        : (order.grand_total !== undefined && order.grand_total !== null
-                            ? Number(order.grand_total)
-                            : (order.items && order.items.length > 0
-                                ? order.items.reduce((sum, item) => sum + ((Number(item.unit_price) * Number(item.quantity)) || Number(item.subtotal) || Number(item.total) || 0), 0)
-                                : 0));
-                    const paidVal = Number(order.paid_amount || 0);
-                    const balanceVal = Math.max(0, payableVal - paidVal);
+                {/* Financial Breakdown: Total, Paid, Balance */}
+                {(() => {
+                  const payableVal =
+                    order.payable_amount !== undefined && order.payable_amount !== null
+                      ? Number(order.payable_amount)
+                      : (order.grand_total !== undefined && order.grand_total !== null
+                          ? Number(order.grand_total)
+                          : (order.items && order.items.length > 0
+                              ? order.items.reduce((sum, item) => sum + ((Number(item.unit_price) * Number(item.quantity)) || Number(item.subtotal) || Number(item.total) || 0), 0)
+                              : 0));
+                  const paidVal = Number(order.paid_amount || 0);
+                  const balanceVal = Math.max(0, payableVal - paidVal);
 
-                    const isCodPay = order.payment_method === 'cod';
-                    const isCardPay = order.payment_method === 'card';
-                    const isCashPay = order.payment_method === 'cash';
-                    const isRoomPay = order.payment_method === 'room';
-                    const isSplitPay = order.payment_method === 'split';
-                    const isUpiPay = order.payment_method === 'upi' || order.payment_method === 'online';
-                    const isOnlinePay = isUpiPay || Boolean(order.payment_proof_url);
-                    const isProofVerified = Boolean(order.payment_verified_at);
+                  const isOnlineDelivery = isCustomerApp || order.order_type === 'delivery' || isOnlineDeliveryOrder(order);
+                  const isQr = isCustomerQr || isQrDigitalMenuOrder(order);
+                  const isPartialPaymentEligible = (order.order_type === 'dine_in' || order.order_type === 'takeaway') && !isOnlineDelivery && !isQr;
 
-                    let badgeContainerStyle = styles.payStatusUnpaid;
-                    let badgeTextStyle = styles.payStatusTextUnpaid;
-                    let badgeLabel = '⚠️ UNPAID';
+                  const isCodPay = order.payment_method === 'cod';
+                  const isCardPay = order.payment_method === 'card';
+                  const isCashPay = order.payment_method === 'cash';
+                  const isRoomPay = order.payment_method === 'room';
+                  const isSplitPay = order.payment_method === 'split';
+                  const isUpiPay = order.payment_method === 'upi' || order.payment_method === 'online';
+                  const isOnlinePay = isUpiPay || Boolean(order.payment_proof_url);
+                  const isProofVerified = Boolean(order.payment_verified_at);
 
-                    if (isPaid) {
-                      badgeContainerStyle = styles.payStatusPaid;
-                      badgeTextStyle = styles.payStatusTextPaid;
-                      if (isCardPay) badgeLabel = '✓ PAID (CARD)';
-                      else if (isUpiPay) badgeLabel = '✓ PAID (UPI)';
-                      else if (isOnlinePay) badgeLabel = '✓ PAID (ONLINE)';
-                      else if (isCashPay || isCodPay) badgeLabel = '✓ PAID (CASH)';
-                      else if (isRoomPay) badgeLabel = '✓ PAID (ROOM)';
-                      else if (isSplitPay) badgeLabel = '✓ PAID (SPLIT)';
-                      else badgeLabel = `✓ PAID (${(order.payment_method || 'PAID').toUpperCase()})`;
+                  let badgeContainerStyle = styles.payStatusUnpaid;
+                  let badgeTextStyle = styles.payStatusTextUnpaid;
+                  let badgeLabel = '⚠️ UNPAID';
+
+                  if (isPaid) {
+                    badgeContainerStyle = styles.payStatusPaid;
+                    badgeTextStyle = styles.payStatusTextPaid;
+                    if (isCardPay) badgeLabel = '✓ PAID (CARD)';
+                    else if (isUpiPay) badgeLabel = '✓ PAID (UPI)';
+                    else if (isOnlinePay) badgeLabel = '✓ PAID (ONLINE)';
+                    else if (isCashPay || isCodPay) badgeLabel = '✓ PAID (CASH)';
+                    else if (isRoomPay) badgeLabel = '✓ PAID (ROOM)';
+                    else if (isSplitPay) badgeLabel = '✓ PAID (SPLIT)';
+                    else badgeLabel = `✓ PAID (${(order.payment_method || 'PAID').toUpperCase()})`;
+                  } else {
+                    if (order.status === 'cancelled') {
+                      badgeContainerStyle = { backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fca5a5' } as any;
+                      badgeTextStyle = { color: '#991b1b' } as any;
+                      badgeLabel = '🚫 CANCELLED (UNPAID)';
+                    } else if (isProofVerified) {
+                      badgeContainerStyle = { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#86efac' } as any;
+                      badgeTextStyle = { color: '#15803d' } as any;
+                      badgeLabel = '📱 ONLINE • PAYMENT VERIFIED • READY TO SETTLE';
+                    } else if (isPartialPaymentEligible && paidVal > 0) {
+                      badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
+                      badgeTextStyle = { color: '#1d4ed8' } as any;
+                      badgeLabel = `💳 PARTIALLY PAID (BAL: ${formatCurrency(balanceVal)})`;
+                    } else if (isOnlinePay) {
+                      badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
+                      badgeTextStyle = { color: '#1d4ed8' } as any;
+                      badgeLabel = Boolean(order.payment_proof_url)
+                        ? '📱 ONLINE • PROOF ATTACHED'
+                        : '📱 ONLINE (PENDING VERIFICATION)';
+                    } else if (isCodPay) {
+                      badgeContainerStyle = { backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fed7aa' } as any;
+                      badgeTextStyle = { color: '#c2410c' } as any;
+                      badgeLabel = '💵 COD (PAY ON DELIVERY)';
+                    } else if (isCardPay) {
+                      badgeContainerStyle = styles.payStatusUnpaid;
+                      badgeTextStyle = styles.payStatusTextUnpaid;
+                      badgeLabel = '💳 CARD (UNPAID)';
                     } else {
-                      if (order.status === 'cancelled') {
-                        badgeContainerStyle = { backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fca5a5' } as any;
-                        badgeTextStyle = { color: '#991b1b' } as any;
-                        badgeLabel = '🚫 CANCELLED (UNPAID)';
-                      } else if (isProofVerified) {
-                        badgeContainerStyle = { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#86efac' } as any;
-                        badgeTextStyle = { color: '#15803d' } as any;
-                        badgeLabel = '📱 ONLINE • PAYMENT VERIFIED • READY TO SETTLE';
-                      } else if (paidVal > 0) {
-                        badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
-                        badgeTextStyle = { color: '#1d4ed8' } as any;
-                        badgeLabel = `💳 PARTIALLY PAID (BAL: ${formatCurrency(balanceVal)})`;
-                      } else if (isOnlinePay) {
-                        badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
-                        badgeTextStyle = { color: '#1d4ed8' } as any;
-                        badgeLabel = Boolean(order.payment_proof_url)
-                          ? '📱 ONLINE • PROOF ATTACHED • PENDING VERIFICATION'
-                          : '📱 ONLINE (PENDING VERIFICATION)';
-                      } else if (isCodPay) {
-                        badgeContainerStyle = { backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fed7aa' } as any;
-                        badgeTextStyle = { color: '#c2410c' } as any;
-                        badgeLabel = '💵 COD (PAY ON DELIVERY)';
-                      } else if (isCardPay) {
-                        badgeContainerStyle = styles.payStatusUnpaid;
-                        badgeTextStyle = styles.payStatusTextUnpaid;
-                        badgeLabel = '💳 CARD (UNPAID)';
-                      } else {
-                        badgeContainerStyle = styles.payStatusUnpaid;
-                        badgeTextStyle = styles.payStatusTextUnpaid;
-                        badgeLabel = '⚠️ UNPAID';
-                      }
+                      badgeContainerStyle = styles.payStatusUnpaid;
+                      badgeTextStyle = styles.payStatusTextUnpaid;
+                      badgeLabel = '⚠️ UNPAID';
                     }
+                  }
 
-                    return (
-                      <>
-                        {/* Total, Paid, Balance summary */}
+                  return (
+                    <>
+                      {/* Total, Paid, Balance summary for Dine-In & Takeaway, or single Total for Online/QR */}
+                      {isPartialPaymentEligible ? (
                         <View style={styles.orderFinanceBox}>
                           <View style={styles.orderFinanceCol}>
                             <Text style={styles.orderFinanceLabel}>Total</Text>
@@ -1828,21 +1784,31 @@ export default function OrdersScreen() {
                             </Text>
                           </View>
                         </View>
-
-                        {/* Payment Status Badge */}
-                        <View style={[styles.payStatusBadge, badgeContainerStyle, { marginBottom: 10 }]}>
-                          <Text style={[styles.payStatusText, badgeTextStyle]}>
-                            {badgeLabel}
-                          </Text>
+                      ) : (
+                        <View style={[styles.orderFinanceBox, { paddingVertical: 5 }]}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', paddingHorizontal: 6 }}>
+                            <Text style={styles.orderFinanceLabel}>Total Amount</Text>
+                            <Text style={[styles.orderFinanceVal, { fontWeight: '800' }]}>{formatCurrency(payableVal)}</Text>
+                          </View>
                         </View>
-                      </>
-                    );
-                  })()}
+                      )}
 
-                  {/* Action Buttons based on order status: 3 up, 3 below */}
+                      {/* Payment Status Badge */}
+                      <View style={[styles.payStatusBadge, badgeContainerStyle, { marginBottom: 4 }]}>
+                        <Text style={[styles.payStatusText, badgeTextStyle]}>
+                          {badgeLabel}
+                        </Text>
+                      </View>
+                    </>
+                  );
+                })()}
+
+                  {/* Action Buttons based on order status */}
                   <View style={styles.cardActionsGrid}>
                     {isActive && (() => {
                       const isOnlineDelivery = isCustomerApp || order.order_type === 'delivery' || isOnlineDeliveryOrder(order);
+                      const isQr = isCustomerQr || isQrDigitalMenuOrder(order);
+                      const isPartialPaymentEligible = (order.order_type === 'dine_in' || order.order_type === 'takeaway') && !isOnlineDelivery && !isQr;
                       const isKotDisabled = isKotButtonDisabled(order);
                       const hasKot = isKotDisabled;
                       const isDispatched = order.status === 'out_for_delivery' || ['delivered', 'completed'].includes(order.status);
@@ -1852,7 +1818,7 @@ export default function OrdersScreen() {
 
                       return (
                         <>
-                          {/* ROW 1: 3 Buttons (KOT, Dispatch/Delivered/View, Payment) */}
+                          {/* ROW 1: (KOT, Dispatch/Delivered/View, and Payment if eligible) */}
                           <View style={styles.cardActionRow}>
                             {/* BUTTON 1: KOT Action */}
                             {isKotDisabled ? (
@@ -1918,19 +1884,21 @@ export default function OrdersScreen() {
                               </TouchableOpacity>
                             )}
 
-                            {/* BUTTON 3: Payment (Record Partial/Full Payment) */}
-                            <TouchableOpacity
-                              testID={`order-payment-btn-${order.id}`}
-                              style={[
-                                styles.gridActionBtn,
-                                isFullyPaid ? { backgroundColor: '#f0fdf4', borderColor: '#86efac' } : styles.actionPaymentBg,
-                              ]}
-                              onPress={() => openPartialPaymentModal(order)}
-                            >
-                              <Text style={[styles.actionBtnTextPayment, isFullyPaid && { color: '#15803d' }]}>
-                                {isFullyPaid ? '✓ Paid' : '💳 Payment'}
-                              </Text>
-                            </TouchableOpacity>
+                            {/* BUTTON 3: Payment (Record Partial/Full Payment) - ONLY for Dine-In and Takeaway */}
+                            {isPartialPaymentEligible && (
+                              <TouchableOpacity
+                                testID={`order-payment-btn-${order.id}`}
+                                style={[
+                                  styles.gridActionBtn,
+                                  isFullyPaid ? { backgroundColor: '#f0fdf4', borderColor: '#86efac' } : styles.actionPaymentBg,
+                                ]}
+                                onPress={() => openPartialPaymentModal(order)}
+                              >
+                                <Text style={[styles.actionBtnTextPayment, isFullyPaid && { color: '#15803d' }]}>
+                                  {isFullyPaid ? '✓ Paid' : '💳 Payment'}
+                                </Text>
+                              </TouchableOpacity>
+                            )}
                           </View>
 
                           {/* ROW 2: 3 Buttons (Edit, Cancel, Settle) */}
@@ -2384,10 +2352,17 @@ export default function OrdersScreen() {
                         <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.taxableSubtotal)}</Text>
                       </View>
                     )}
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <Text style={{ fontSize: 12, color: '#64748b' }}>CGST (2.5%) + SGST (2.5%):</Text>
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.cgstAmount + editTotals.sgstAmount)}</Text>
-                    </View>
+                    {Boolean(settings?.is_gst_enabled !== false && (editTotals.cgstAmount + editTotals.sgstAmount > 0)) && (() => {
+                      const editTaxRate = settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 5.0;
+                      const editHalfRate = editTaxRate / 2;
+                      const editHalfRateStr = editHalfRate % 1 === 0 ? `${editHalfRate}` : `${editHalfRate.toFixed(1)}`;
+                      return (
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                          <Text style={{ fontSize: 12, color: '#64748b' }}>CGST ({editHalfRateStr}%) + SGST ({editHalfRateStr}%):</Text>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.cgstAmount + editTotals.sgstAmount)}</Text>
+                        </View>
+                      );
+                    })()}
                     {Boolean(editTotals.deliveryCharge) && (
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
                         <Text style={{ fontSize: 12, color: '#64748b' }}>Delivery Charge:</Text>
@@ -2570,7 +2545,7 @@ export default function OrdersScreen() {
                     💳 Record Payment #{partialPayModal?.order_number}
                   </Text>
                   <Text style={styles.modalSubTitle} numberOfLines={1}>
-                    {partialPayModal?.order_type.toUpperCase()} • {partialPayModal?.table_number ? `Table ${partialPayModal.table_number}` : partialPayModal?.customer_name || 'Walk-in'} • 🕒 {formatOrderDateTime(partialPayModal?.created_at)}
+                    {partialPayModal?.order_type.toUpperCase()} • {partialPayModal?.table_number ? formatTableLabel(partialPayModal.table_number) : partialPayModal?.customer_name || 'Walk-in'} • 🕒 {formatOrderDateTime(partialPayModal?.created_at)}
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -2857,7 +2832,7 @@ export default function OrdersScreen() {
                     Close Order & Settle Bill #{payOrderModal?.order_number}
                   </Text>
                   <Text style={styles.modalSubTitle} numberOfLines={1}>
-                    {payOrderModal?.order_type.toUpperCase()} • {payOrderModal?.table_number ? `Table ${payOrderModal.table_number}` : payOrderModal?.customer_name} • 🕒 {formatOrderDateTime(payOrderModal?.created_at)}
+                    {payOrderModal?.order_type.toUpperCase()} • {payOrderModal?.table_number ? formatTableLabel(payOrderModal.table_number) : (payOrderModal?.customer_name || 'Walk-in')} • 🕒 {formatOrderDateTime(payOrderModal?.created_at)}
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -2966,15 +2941,26 @@ export default function OrdersScreen() {
                     <Text style={styles.billVal}>{formatCurrency(payTotals?.taxableSubtotal || paySubtotal)}</Text>
                   </View>
 
-                  <View style={styles.billRow}>
-                    <Text style={styles.billLabel}>CGST (2.5%):</Text>
-                    <Text style={styles.billVal}>{formatCurrency(payTotals?.cgstAmount || 0)}</Text>
-                  </View>
+                  {Boolean(settings?.is_gst_enabled !== false && ((payTotals?.cgstAmount || 0) > 0 || (payTotals?.sgstAmount || 0) > 0)) && (() => {
+                    const payTaxRate = (payOrderModal as any)?.tax_rate !== undefined && (payOrderModal as any)?.tax_rate !== null
+                      ? Number((payOrderModal as any).tax_rate)
+                      : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 5.0);
+                    const payHalfRate = payTaxRate / 2;
+                    const payHalfRateStr = payHalfRate % 1 === 0 ? `${payHalfRate}` : `${payHalfRate.toFixed(1)}`;
+                    return (
+                      <>
+                        <View style={styles.billRow}>
+                          <Text style={styles.billLabel}>CGST ({payHalfRateStr}%):</Text>
+                          <Text style={styles.billVal}>{formatCurrency(payTotals?.cgstAmount || 0)}</Text>
+                        </View>
 
-                  <View style={styles.billRow}>
-                    <Text style={styles.billLabel}>SGST (2.5%):</Text>
-                    <Text style={styles.billVal}>{formatCurrency(payTotals?.sgstAmount || 0)}</Text>
-                  </View>
+                        <View style={styles.billRow}>
+                          <Text style={styles.billLabel}>SGST ({payHalfRateStr}%):</Text>
+                          <Text style={styles.billVal}>{formatCurrency(payTotals?.sgstAmount || 0)}</Text>
+                        </View>
+                      </>
+                    );
+                  })()}
 
                   {Boolean(payTotals?.deliveryCharge) && (
                     <View style={styles.billRow}>
@@ -3161,7 +3147,7 @@ export default function OrdersScreen() {
       </Modal>
 
       {/* ============================================================ */}
-      {/* 4. VIEW FINAL BILL MODAL                                     */}
+      {/* 4. VIEW FINAL BILL / TAX INVOICE MODAL                      */}
       {/* ============================================================ */}
       {viewOrderModal && (() => {
         const isTaxInvoice =
@@ -3170,42 +3156,44 @@ export default function OrdersScreen() {
            (viewOrderModal.sgst_amount || 0) > 0 ||
            (settings?.tax_invoice_enabled !== false && Boolean(settings?.gstin?.trim())));
         const invNo = viewOrderModal.invoice_number || viewOrderModal.order_number;
-        const dynamicTaxRate = Number(settings?.default_tax_rate) > 0 ? Number(settings.default_tax_rate) : 5.0;
-        const halfRate = (dynamicTaxRate / 2).toFixed(1);
+        const dynamicTaxRate = (viewOrderModal as any).tax_rate !== undefined && (viewOrderModal as any).tax_rate !== null
+          ? Number((viewOrderModal as any).tax_rate)
+          : (Number(settings?.default_tax_rate) > 0 ? Number(settings.default_tax_rate) : 5.0);
+        const halfRate = (dynamicTaxRate / 2) % 1 === 0 ? String(dynamicTaxRate / 2) : (dynamicTaxRate / 2).toFixed(1);
+        const subtotalVal = getOrderSubtotal(viewOrderModal);
+        const isPaid = viewOrderModal.payment_status === 'paid';
+        const isCompleted = viewOrderModal.status === 'completed';
 
         return (
           <Modal visible={Boolean(viewOrderModal)} transparent animationType="slide">
-            <View
-              style={[
-                styles.modalOverlay,
-                isMobile && { paddingHorizontal: 10, paddingVertical: 10 },
-              ]}
-            >
+            <View style={[styles.modalOverlay, isMobile && { paddingHorizontal: 8, paddingVertical: 12 }]}>
               <View
                 style={[
                   styles.modalContent,
                   isMobile && { padding: 12, borderRadius: 16 },
                   {
                     maxHeight: windowHeight * (isMobile ? 0.95 : 0.9),
-                    maxWidth: 580,
+                    maxWidth: 540,
+                    width: '100%',
                     display: 'flex',
                   },
                 ]}
               >
+                {/* Header */}
                 <View style={styles.modalHeader}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, paddingRight: 8 }}>
                     {formatLogoDataUri(activeRestaurant?.logo_url || settings.logo_url) ? (
                       <Image
                         source={{ uri: formatLogoDataUri(activeRestaurant?.logo_url || settings.logo_url) }}
-                        style={{ width: 44, height: 44, borderRadius: 6 }}
+                        style={{ width: 40, height: 40, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', flexShrink: 0 }}
                         resizeMode="contain"
                       />
                     ) : null}
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.modalTitle}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={[styles.modalTitle, { fontSize: 15 }]} numberOfLines={1}>
                         {isTaxInvoice ? 'Tax Invoice' : 'Retail Bill'} #{invNo}
                       </Text>
-                      <Text style={styles.modalSubTitle}>
+                      <Text style={[styles.modalSubTitle, { fontSize: 11 }]} numberOfLines={1}>
                         {activeRestaurant?.name || settings.name}
                         {isTaxInvoice && settings.gstin ? ` • GSTIN: ${settings.gstin}` : ''}
                       </Text>
@@ -3213,7 +3201,8 @@ export default function OrdersScreen() {
                   </View>
                   <TouchableOpacity
                     onPress={() => setViewOrderModal(null)}
-                    style={styles.modalCloseBtn}
+                    style={[styles.modalCloseBtn, { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', flexShrink: 0 }]}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   >
                     <Text style={styles.modalCloseText}>✕</Text>
                   </TouchableOpacity>
@@ -3222,204 +3211,180 @@ export default function OrdersScreen() {
                 <ScrollView
                   showsVerticalScrollIndicator={true}
                   style={{ flexShrink: 1 }}
-                  contentContainerStyle={{ paddingBottom: 24 }}
+                  contentContainerStyle={{ paddingBottom: 16 }}
                 >
-                  <View style={styles.billBreakdownBox}>
-                    <View style={styles.billRow}>
-                      <Text><Text style={{ fontWeight: '700' }}>Order Date & Time:</Text> {formatOrderDateTime(viewOrderModal.created_at)}</Text>
-                    </View>
-                    <View style={styles.billRow}>
-                      <Text><Text style={{ fontWeight: '700' }}>Order ID:</Text> {viewOrderModal.order_number}</Text>
-                      <Text><Text style={{ fontWeight: '700' }}>Type:</Text> {viewOrderModal.order_type.toUpperCase()}</Text>
-                    </View>
-                    {viewOrderModal.table_number ? (
-                      <View style={styles.billRow}>
-                        <Text><Text style={{ fontWeight: '700' }}>Table:</Text> {viewOrderModal.table_number}</Text>
+                  {/* Order Metadata Card */}
+                  <View style={styles.invoiceMetaCard}>
+                    <View style={styles.invoiceMetaRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.invoiceMetaLabel}>ORDER ID</Text>
+                        <Text style={styles.invoiceMetaVal}>#{viewOrderModal.order_number}</Text>
                       </View>
-                    ) : null}
-                    <View style={styles.billRow}>
-                      <Text><Text style={{ fontWeight: '700' }}>Customer:</Text> {viewOrderModal.customer_name || 'Walk-in Guest'}</Text>
-                      <Text><Text style={{ fontWeight: '700' }}>Phone:</Text> {viewOrderModal.customer_phone || 'N/A'}</Text>
-                    </View>
-                    {isTaxInvoice && viewOrderModal.customer_gstin ? (
-                      <View style={styles.billRow}>
-                        <Text><Text style={{ fontWeight: '700' }}>Customer GSTIN (B2B):</Text> <Text style={{ fontWeight: 'bold', color: '#1e40af' }}>{viewOrderModal.customer_gstin}</Text></Text>
-                      </View>
-                    ) : null}
-                    {isTaxInvoice ? (
-                      <View style={styles.billRow}>
-                        <Text><Text style={{ fontWeight: '700' }}>Place of Supply:</Text> {settings?.state || 'West Bengal'} ({settings?.state_code || '19'})</Text>
-                        <Text><Text style={{ fontWeight: '700' }}>Reverse Charge:</Text> No</Text>
-                      </View>
-                    ) : null}
-                    <View style={styles.billRow}>
-                      <Text><Text style={{ fontWeight: '700' }}>Status:</Text> {viewOrderModal.status.toUpperCase()}</Text>
-                      <Text>
-                        <Text style={{ fontWeight: '700' }}>Payment:</Text>{' '}
-                        <Text style={{ color: viewOrderModal.payment_status === 'paid' ? '#16a34a' : '#e11d48', fontWeight: 'bold' }}>
-                          {viewOrderModal.payment_status.toUpperCase()}
+                      <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                        <Text style={styles.invoiceMetaLabel}>TYPE</Text>
+                        <Text style={[styles.invoiceMetaVal, { color: '#2563eb' }]}>
+                          {viewOrderModal.order_type.toUpperCase()}
                         </Text>
-                      </Text>
+                      </View>
                     </View>
 
-                    {viewOrderModal.payment_method ? (
-                      <View style={styles.billRow}>
-                        <Text><Text style={{ fontWeight: '700' }}>Payment Mode:</Text> {viewOrderModal.payment_method.toUpperCase()}</Text>
+                    <View style={styles.invoiceMetaDivider} />
+
+                    <View style={styles.invoiceMetaRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.invoiceMetaLabel}>DATE & TIME</Text>
+                        <Text style={styles.invoiceMetaVal}>{formatOrderDateTime(viewOrderModal.created_at)}</Text>
                       </View>
+                      {viewOrderModal.table_number ? (
+                        <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                          <Text style={styles.invoiceMetaLabel}>TABLE</Text>
+                          <Text style={styles.invoiceMetaVal}>{formatTableLabel(viewOrderModal.table_number)}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    <View style={styles.invoiceMetaDivider} />
+
+                    <View style={styles.invoiceMetaRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.invoiceMetaLabel}>CUSTOMER</Text>
+                        <Text style={styles.invoiceMetaVal}>{viewOrderModal.customer_name || 'Walk-in Guest'}</Text>
+                      </View>
+                      <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                        <Text style={styles.invoiceMetaLabel}>PHONE</Text>
+                        <Text style={styles.invoiceMetaVal}>{viewOrderModal.customer_phone || 'N/A'}</Text>
+                      </View>
+                    </View>
+
+                    {isTaxInvoice && viewOrderModal.customer_gstin ? (
+                      <>
+                        <View style={styles.invoiceMetaDivider} />
+                        <View style={styles.invoiceMetaRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.invoiceMetaLabel}>CUSTOMER GSTIN (B2B)</Text>
+                            <Text style={[styles.invoiceMetaVal, { color: '#1d4ed8' }]}>{viewOrderModal.customer_gstin}</Text>
+                          </View>
+                        </View>
+                      </>
                     ) : null}
 
-                    {viewOrderModal.payment_proof_url ? (
-                      <View
-                        style={{
-                          marginVertical: 8,
-                          padding: 12,
-                          backgroundColor: viewOrderModal.payment_status === 'paid' ? '#f0fdf4' : '#eff6ff',
-                          borderRadius: 8,
-                          borderWidth: 1,
-                          borderColor: viewOrderModal.payment_status === 'paid' ? '#86efac' : '#bfdbfe',
-                        }}
-                      >
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
-                          <Text style={{ fontSize: 13, fontWeight: '900', color: '#0f172a' }}>
-                            📸 Customer Online Payment Proof:
+                    {isTaxInvoice ? (
+                      <>
+                        <View style={styles.invoiceMetaDivider} />
+                        <View style={styles.invoiceMetaRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.invoiceMetaLabel}>PLACE OF SUPPLY</Text>
+                            <Text style={styles.invoiceMetaVal}>{settings?.state || 'West Bengal'} ({settings?.state_code || '19'})</Text>
+                          </View>
+                          <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                            <Text style={styles.invoiceMetaLabel}>REVERSE CHARGE</Text>
+                            <Text style={styles.invoiceMetaVal}>No</Text>
+                          </View>
+                        </View>
+                      </>
+                    ) : null}
+
+                    <View style={styles.invoiceMetaDivider} />
+
+                    <View style={styles.invoiceMetaRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.invoiceMetaLabel}>ORDER STATUS</Text>
+                        <View style={[styles.invoiceStatusPill, isCompleted ? styles.invoiceStatusCompleted : styles.invoiceStatusActive]}>
+                          <Text style={[styles.invoiceStatusPillText, isCompleted ? { color: '#15803d' } : { color: '#1d4ed8' }]}>
+                            {viewOrderModal.status.toUpperCase()}
                           </Text>
-                          <View
+                        </View>
+                      </View>
+                      <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                        <Text style={styles.invoiceMetaLabel}>PAYMENT</Text>
+                        <View style={[styles.invoiceStatusPill, isPaid ? styles.invoiceStatusPaid : styles.invoiceStatusUnpaid]}>
+                          <Text style={[styles.invoiceStatusPillText, isPaid ? { color: '#15803d' } : { color: '#dc2626' }]}>
+                            {isPaid ? `✓ PAID (${(viewOrderModal.payment_method || 'PAID').toUpperCase()})` : '⚠️ UNPAID'}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Payment Proof Banner (if present) */}
+                  {viewOrderModal.payment_proof_url ? (
+                    <View style={styles.invoiceProofCard}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#0f172a' }}>
+                          📸 Customer Online Payment Proof:
+                        </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={{ backgroundColor: isPaid ? '#dcfce7' : '#eff6ff', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '800', color: isPaid ? '#15803d' : '#1d4ed8' }}>
+                              {isPaid ? '✓ VERIFIED & PAID' : Boolean(viewOrderModal.payment_verified_at) ? '✓ PAYMENT VERIFIED' : 'PENDING'}
+                            </Text>
+                          </View>
+                          <TouchableOpacity
+                            onPress={() => setFullScreenProofOrder(viewOrderModal)}
                             style={{
-                              backgroundColor: viewOrderModal.payment_status === 'paid' ? '#dcfce7' : Boolean(viewOrderModal.payment_verified_at) ? '#dcfce7' : (viewOrderModal.status === 'cancelled' ? '#fee2e2' : '#dbeafe'),
+                              backgroundColor: '#2563eb',
                               paddingHorizontal: 8,
                               paddingVertical: 3,
                               borderRadius: 6,
-                              borderWidth: 1,
-                              borderColor: viewOrderModal.payment_status === 'paid' ? '#bbf7d0' : Boolean(viewOrderModal.payment_verified_at) ? '#86efac' : (viewOrderModal.status === 'cancelled' ? '#fecaca' : '#bfdbfe'),
                             }}
                           >
-                            <Text
-                              style={{
-                                fontSize: 10,
-                                fontWeight: '900',
-                                color: viewOrderModal.payment_status === 'paid' ? '#15803d' : Boolean(viewOrderModal.payment_verified_at) ? '#15803d' : (viewOrderModal.status === 'cancelled' ? '#dc2626' : '#2563eb'),
-                              }}
-                            >
-                              {viewOrderModal.payment_status === 'paid'
-                                ? '✓ VERIFIED & PAID'
-                                : Boolean(viewOrderModal.payment_verified_at)
-                                ? '✓ PAYMENT VERIFIED • READY TO SETTLE'
-                                : (viewOrderModal.status === 'cancelled' ? '🚫 ORDER CANCELLED' : '⚠️ PENDING VERIFICATION')}
-                            </Text>
-                          </View>
+                            <Text style={{ color: '#ffffff', fontSize: 10, fontWeight: '800' }}>🔍 Full Screen</Text>
+                          </TouchableOpacity>
                         </View>
-
+                      </View>
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => setFullScreenProofOrder(viewOrderModal)}
+                      >
                         <Image
                           source={{ uri: viewOrderModal.payment_proof_url }}
-                          style={{ width: '100%', height: 260, borderRadius: 6, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#e2e8f0' }}
+                          style={{ width: '100%', height: 200, borderRadius: 8, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#e2e8f0' }}
                           resizeMode="contain"
                         />
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
 
-                        {viewOrderModal.status === 'cancelled' ? (
-                          <View
-                            style={{
-                              backgroundColor: '#fee2e2',
-                              paddingVertical: 9,
-                              paddingHorizontal: 12,
-                              borderRadius: 8,
-                              marginTop: 10,
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              borderWidth: 1,
-                              borderColor: '#fca5a5',
-                            }}
-                          >
-                            <Text style={{ color: '#991b1b', fontSize: 12, fontWeight: '800' }}>
-                              🚫 Cancelled Order • Payment Verification Disabled
-                            </Text>
-                          </View>
-                        ) : Boolean(viewOrderModal.payment_verified_at) && viewOrderModal.payment_status !== 'paid' ? (
-                          <View
-                            style={{
-                              backgroundColor: '#dcfce7',
-                              paddingVertical: 10,
-                              borderRadius: 8,
-                              marginTop: 10,
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              borderWidth: 1,
-                              borderColor: '#86efac',
-                            }}
-                          >
-                            <Text style={{ color: '#15803d', fontSize: 13, fontWeight: '900' }}>
-                              ✅ Payment Verified — Ready to Settle
-                            </Text>
-                          </View>
-                        ) : (
-                          viewOrderModal.payment_status !== 'paid' && !viewOrderModal.payment_verified_at && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
-                            <TouchableOpacity
-                              style={{
-                                backgroundColor: '#16a34a',
-                                paddingVertical: 10,
-                                borderRadius: 8,
-                                marginTop: 10,
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                              }}
-                              onPress={() => handleMarkPaymentVerified(viewOrderModal)}
-                              disabled={verifyingPaymentOrderId === viewOrderModal.id}
-                            >
-                              {verifyingPaymentOrderId === viewOrderModal.id ? (
-                                <ActivityIndicator size="small" color="#ffffff" />
-                              ) : (
-                                <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '900' }}>
-                                  ✓ Mark Payment Verified
-                                </Text>
-                              )}
-                            </TouchableOpacity>
-                          )
-                        )}
-
-                        {viewOrderModal.payment_verified_at && (
-                          <Text style={{ fontSize: 11, color: '#166534', fontWeight: '700', marginTop: 8, textAlign: 'center' }}>
-                            ✓ Verified by Admin on {formatOrderDateTime(viewOrderModal.payment_verified_at)}
-                          </Text>
-                        )}
-                      </View>
-                    ) : null}
-
-                    <View style={{ borderTopWidth: 1, borderColor: '#cbd5e1', marginVertical: 8 }} />
-
+                  {/* Items Card */}
+                  <View style={styles.invoiceItemsCard}>
+                    <Text style={styles.invoiceSectionTitle}>ORDERED ITEMS ({viewOrderModal.items?.length || 0})</Text>
                     {(viewOrderModal.items || []).map((itm, i) => (
-                      <View key={itm.id || i} style={styles.billRow}>
-                        <Text>
-                          {itm.quantity}x {itm.product_name}
-                        </Text>
-                        <Text style={{ fontWeight: 'bold' }}>
+                      <View key={itm.id || i} style={styles.invoiceItemRow}>
+                        <View style={styles.invoiceQtyBadge}>
+                          <Text style={styles.invoiceQtyText}>{itm.quantity}x</Text>
+                        </View>
+                        <Text style={styles.invoiceItemName} numberOfLines={2}>{itm.product_name}</Text>
+                        <Text style={styles.invoiceItemPrice}>
                           {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
                         </Text>
                       </View>
                     ))}
+                  </View>
 
-                    <View style={{ borderTopWidth: 1, borderColor: '#cbd5e1', marginVertical: 8 }} />
-
-                    <View style={styles.billRow}>
-                      <Text>Subtotal:</Text>
-                      <Text>{formatCurrency(getOrderSubtotal(viewOrderModal))}</Text>
+                  {/* Financial Breakdown Card */}
+                  <View style={styles.invoiceTotalsCard}>
+                    <View style={styles.invoiceRow}>
+                      <Text style={styles.invoiceLabel}>Subtotal</Text>
+                      <Text style={styles.invoiceVal}>{formatCurrency(subtotalVal)}</Text>
                     </View>
 
-                    {Boolean(viewOrderModal.discount_amount) && (
-                      <View style={styles.billRow}>
-                        <Text style={{ color: '#16a34a', fontWeight: '700' }}>
-                          Discount {viewOrderModal.discount_type === 'percentage' ? `(${viewOrderModal.discount_value || ''}%)` : (viewOrderModal.discount_value ? `(₹${viewOrderModal.discount_value})` : '')}:
+                    {Boolean(viewOrderModal.discount_amount && viewOrderModal.discount_amount > 0) && (
+                      <View style={styles.invoiceRow}>
+                        <Text style={[styles.invoiceLabel, { color: '#16a34a', fontWeight: '700' }]}>
+                          Discount {viewOrderModal.discount_type === 'percentage' ? `(${viewOrderModal.discount_value || ''}%)` : (viewOrderModal.discount_value ? `(₹${viewOrderModal.discount_value})` : '')}
                         </Text>
-                        <Text style={{ color: '#16a34a', fontWeight: '800' }}>
+                        <Text style={[styles.invoiceVal, { color: '#16a34a', fontWeight: '800' }]}>
                           -{formatCurrency(viewOrderModal.discount_amount)}
                         </Text>
                       </View>
                     )}
 
-                    {Boolean(viewOrderModal.coupon_discount) && (
-                      <View style={styles.billRow}>
-                        <Text style={{ color: '#16a34a', fontWeight: '700' }}>
-                          Coupon ({viewOrderModal.coupon_code || ''}):
+                    {Boolean(viewOrderModal.coupon_discount && viewOrderModal.coupon_discount > 0) && (
+                      <View style={styles.invoiceRow}>
+                        <Text style={[styles.invoiceLabel, { color: '#16a34a', fontWeight: '700' }]}>
+                          Coupon ({viewOrderModal.coupon_code || ''})
                         </Text>
-                        <Text style={{ color: '#16a34a', fontWeight: '800' }}>
+                        <Text style={[styles.invoiceVal, { color: '#16a34a', fontWeight: '800' }]}>
                           -{formatCurrency(viewOrderModal.coupon_discount)}
                         </Text>
                       </View>
@@ -3427,70 +3392,72 @@ export default function OrdersScreen() {
 
                     {isTaxInvoice && (viewOrderModal.cgst_amount || 0) + (viewOrderModal.sgst_amount || 0) > 0 ? (
                       <>
-                        <View style={styles.billRow}>
-                          <Text>Taxable Amount:</Text>
-                          <Text>{formatCurrency(viewOrderModal.taxable_amount !== undefined && viewOrderModal.taxable_amount > 0 ? viewOrderModal.taxable_amount : Math.max(0, getOrderSubtotal(viewOrderModal) - (viewOrderModal.discount_amount || 0) - (viewOrderModal.coupon_discount || 0)))}</Text>
+                        <View style={styles.invoiceRow}>
+                          <Text style={styles.invoiceLabel}>Taxable Amount</Text>
+                          <Text style={styles.invoiceVal}>
+                            {formatCurrency(viewOrderModal.taxable_amount !== undefined && viewOrderModal.taxable_amount > 0 ? viewOrderModal.taxable_amount : Math.max(0, subtotalVal - (viewOrderModal.discount_amount || 0) - (viewOrderModal.coupon_discount || 0)))}
+                          </Text>
                         </View>
-
-                        <View style={styles.billRow}>
-                          <Text>CGST ({halfRate}%):</Text>
-                          <Text>{formatCurrency(viewOrderModal.cgst_amount)}</Text>
+                        <View style={styles.invoiceRow}>
+                          <Text style={styles.invoiceLabel}>CGST ({halfRate}%)</Text>
+                          <Text style={styles.invoiceVal}>{formatCurrency(viewOrderModal.cgst_amount || 0)}</Text>
                         </View>
-                        <View style={styles.billRow}>
-                          <Text>SGST ({halfRate}%):</Text>
-                          <Text>{formatCurrency(viewOrderModal.sgst_amount)}</Text>
+                        <View style={styles.invoiceRow}>
+                          <Text style={styles.invoiceLabel}>SGST ({halfRate}%)</Text>
+                          <Text style={styles.invoiceVal}>{formatCurrency(viewOrderModal.sgst_amount || 0)}</Text>
                         </View>
-                        {viewOrderModal.igst_amount && viewOrderModal.igst_amount > 0 ? (
-                          <View style={styles.billRow}>
-                            <Text>IGST:</Text>
-                            <Text>{formatCurrency(viewOrderModal.igst_amount)}</Text>
-                          </View>
-                        ) : null}
                       </>
                     ) : null}
 
-                    {Boolean(viewOrderModal.delivery_charge) && (
-                      <View style={styles.billRow}>
-                        <Text>Delivery Charge:</Text>
-                        <Text>{formatCurrency(viewOrderModal.delivery_charge)}</Text>
+                    {Boolean(viewOrderModal.delivery_charge && viewOrderModal.delivery_charge > 0) && (
+                      <View style={styles.invoiceRow}>
+                        <Text style={styles.invoiceLabel}>Delivery Charge</Text>
+                        <Text style={styles.invoiceVal}>{formatCurrency(viewOrderModal.delivery_charge)}</Text>
                       </View>
                     )}
 
                     {Boolean(viewOrderModal.round_off) && (
-                      <View style={styles.billRow}>
-                        <Text>Round Off:</Text>
-                        <Text>{viewOrderModal.round_off > 0 ? '+' : ''}{formatCurrency(viewOrderModal.round_off)}</Text>
+                      <View style={styles.invoiceRow}>
+                        <Text style={styles.invoiceLabel}>Round Off</Text>
+                        <Text style={styles.invoiceVal}>
+                          {viewOrderModal.round_off > 0 ? '+' : ''}{formatCurrency(viewOrderModal.round_off)}
+                        </Text>
                       </View>
                     )}
 
-                    <View style={[styles.billRow, styles.billTotalRow]}>
-                      <Text style={styles.billTotalLabel}>Grand Total:</Text>
-                      <Text style={styles.billTotalVal}>{formatCurrency(viewOrderModal.payable_amount)}</Text>
+                    {/* Grand Total Banner */}
+                    <View style={styles.invoiceGrandTotalBanner}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text style={styles.invoiceGrandTotalLabel}>Grand Total</Text>
+                        <Text style={styles.invoiceGrandTotalVal}>{formatCurrency(viewOrderModal.payable_amount)}</Text>
+                      </View>
+                      <Text style={styles.invoiceWordsText}>
+                        ({numberToWords(viewOrderModal.payable_amount || 0)})
+                      </Text>
                     </View>
-                    <Text style={styles.wordsText}>({numberToWords(viewOrderModal.payable_amount)})</Text>
                   </View>
 
                   {/* Print and Share buttons */}
-                  <View style={[{ flexDirection: isMobile ? 'column' : 'row', gap: 8, marginTop: 12 }]}>
+                  <View style={[styles.invoiceActionsRow, isMobile && styles.invoiceActionsCol]}>
                     <TouchableOpacity
-                      style={[styles.printBtnSmall, isMobile && { width: '100%', flex: 0 }]}
+                      style={[styles.invoiceActionBtn, styles.invoiceBtnThermal]}
                       onPress={() => printService.printFinalReceiptThermal(viewOrderModal, settings, user?.full_name)}
                     >
-                      <Text style={styles.printBtnSmallText}>🖨️ Thermal Bill</Text>
+                      <Text style={styles.invoiceBtnText}>🖨️ Thermal Bill</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={[styles.printKotBtnSmall, isMobile && { width: '100%', flex: 0 }]}
+                      style={[styles.invoiceActionBtn, styles.invoiceBtnKot]}
                       onPress={() => printService.printKotThermal(viewOrderModal, settings)}
                     >
-                      <Text style={styles.printKotBtnSmallText}>🖨️ KOT Slip</Text>
+                      <Text style={styles.invoiceBtnText}>🖨️ KOT Slip</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={[styles.shareBtnSmall, isMobile && { width: '100%', flex: 0 }]}
+                      style={[styles.invoiceActionBtn, styles.invoiceBtnA4]}
                       onPress={() => printService.printTaxInvoiceA4(viewOrderModal, settings)}
                     >
-                      <Text style={styles.shareBtnSmallText}>📄 Tax Invoice A4</Text>
+                      <Text style={styles.invoiceBtnText}>📄 Tax Invoice A4</Text>
                     </TouchableOpacity>
                   </View>
                 </ScrollView>
@@ -3499,6 +3466,165 @@ export default function OrdersScreen() {
           </Modal>
         );
       })()}
+
+      {/* Full Screen Payment Proof Modal */}
+      {Boolean(fullScreenProofOrder) && fullScreenProofOrder?.payment_proof_url ? (
+        <Modal
+          visible={Boolean(fullScreenProofOrder)}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setFullScreenProofOrder(null)}
+        >
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: 'rgba(15, 23, 42, 0.96)',
+              justifyContent: 'space-between',
+            }}
+          >
+            {/* Modal Header */}
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingHorizontal: 16,
+                paddingTop: Platform.OS === 'ios' ? 54 : 20,
+                paddingBottom: 14,
+                backgroundColor: 'rgba(30, 41, 59, 0.95)',
+                borderBottomWidth: 1,
+                borderColor: '#334155',
+              }}
+            >
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <Text style={{ color: '#ffffff', fontSize: 16, fontWeight: '800' }}>
+                    📸 Payment Screenshot Proof
+                  </Text>
+                  <View
+                    style={{
+                      backgroundColor:
+                        fullScreenProofOrder.payment_status === 'paid' || Boolean(fullScreenProofOrder.payment_verified_at)
+                          ? '#166534'
+                          : '#1e3a8a',
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: 6,
+                    }}
+                  >
+                    <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '800' }}>
+                      {fullScreenProofOrder.payment_status === 'paid' || Boolean(fullScreenProofOrder.payment_verified_at)
+                        ? '✓ VERIFIED'
+                        : 'PENDING VERIFICATION'}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>
+                  Order #{fullScreenProofOrder.order_number} •{' '}
+                  {formatCurrency(fullScreenProofOrder.payable_amount ?? fullScreenProofOrder.grand_total ?? 0)}
+                  {(() => {
+                    const linkedTable = tables.find(
+                      (t) => t.id === fullScreenProofOrder.table_id || t.table_number === fullScreenProofOrder.table_number
+                    );
+                    const tDisplayName = linkedTable
+                      ? (linkedTable.section ? `${linkedTable.table_number} (${linkedTable.section})` : linkedTable.table_number)
+                      : fullScreenProofOrder.table_number || '';
+                    return tDisplayName ? ` • ${formatTableLabel(tDisplayName)}` : '';
+                  })()}
+                  {fullScreenProofOrder.customer_name ? ` • ${fullScreenProofOrder.customer_name}` : ''}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                onPress={() => setFullScreenProofOrder(null)}
+                style={{
+                  backgroundColor: '#334155',
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                  marginLeft: 10,
+                }}
+              >
+                <Text style={{ color: '#f8fafc', fontSize: 13, fontWeight: '800' }}>✕ Close</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Modal Body - Full View Image */}
+            <View
+              style={{
+                flex: 1,
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 12,
+              }}
+            >
+              <Image
+                source={{ uri: fullScreenProofOrder.payment_proof_url }}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  maxWidth: 800,
+                }}
+                resizeMode="contain"
+              />
+            </View>
+
+            {/* Modal Bottom Actions */}
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 12,
+                paddingHorizontal: 16,
+                paddingVertical: 14,
+                backgroundColor: 'rgba(30, 41, 59, 0.95)',
+                borderTopWidth: 1,
+                borderColor: '#334155',
+              }}
+            >
+              {fullScreenProofOrder.status !== 'cancelled' &&
+                fullScreenProofOrder.payment_status !== 'paid' &&
+                !fullScreenProofOrder.payment_verified_at &&
+                (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#16a34a',
+                      paddingHorizontal: 18,
+                      paddingVertical: 10,
+                      borderRadius: 8,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                    onPress={() => handleMarkPaymentVerified(fullScreenProofOrder)}
+                    disabled={verifyingPaymentOrderId === fullScreenProofOrder.id}
+                  >
+                    {verifyingPaymentOrderId === fullScreenProofOrder.id ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '800' }}>
+                        ✓ Verify Payment
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+
+              <TouchableOpacity
+                onPress={() => setFullScreenProofOrder(null)}
+                style={{
+                  backgroundColor: '#475569',
+                  paddingHorizontal: 18,
+                  paddingVertical: 10,
+                  borderRadius: 8,
+                }}
+              >
+                <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '800' }}>Close Fullscreen</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
     </View>
   );
 }
@@ -3509,9 +3635,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc',
   },
   header: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 6,
     backgroundColor: '#ffffff',
     borderBottomWidth: 1,
     borderColor: '#e2e8f0',
@@ -3520,7 +3646,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   refreshHeaderBtn: {
     flexDirection: 'row',
@@ -3528,13 +3654,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#eff6ff',
     borderWidth: 1.5,
     borderColor: '#bfdbfe',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 7,
     gap: 4,
   },
   refreshHeaderBtnText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
     color: '#2563eb',
   },
@@ -3553,37 +3679,37 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   title: {
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '900',
     color: '#0f172a',
   },
   subTitle: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#64748b',
-    marginTop: 2,
+    marginTop: 1,
   },
   search: {
     backgroundColor: '#ffffff',
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1.5,
     borderColor: '#94a3b8',
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    marginBottom: 8,
-    fontSize: 13,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    height: 32,
+    fontSize: 12,
     color: '#0f172a',
     fontWeight: '500',
   },
   categoryTabRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 10,
+    gap: 6,
+    marginBottom: 6,
   },
   categoryTabBtn: {
     flex: 1,
-    paddingVertical: 9,
-    paddingHorizontal: 8,
-    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+    borderRadius: 8,
     backgroundColor: '#ffffff',
     borderWidth: 1.5,
     borderColor: '#cbd5e1',
@@ -3595,12 +3721,12 @@ const styles = StyleSheet.create({
     borderColor: '#1d4ed8',
     elevation: 2,
     shadowColor: '#2563eb',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
   },
   categoryTabText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
     color: '#475569',
     textAlign: 'center',
@@ -3609,14 +3735,24 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '900',
   },
-  tabRow: {
+  toolbarRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  toolbarRowMobile: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
     gap: 6,
   },
+  tabRow: {
+    flexDirection: 'row',
+    gap: 4,
+  },
   tabBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
     backgroundColor: '#f1f5f9',
     borderWidth: 1,
     borderColor: '#e2e8f0',
@@ -3626,7 +3762,7 @@ const styles = StyleSheet.create({
     borderColor: '#0f172a',
   },
   tabText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
     color: '#475569',
   },
@@ -3659,26 +3795,26 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   list: {
-    padding: 14,
-    gap: 12,
+    padding: 10,
+    gap: 10,
   },
   listGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'flex-start',
-    gap: 14,
+    gap: 10,
   },
   card: {
     backgroundColor: '#ffffff',
-    borderRadius: 18,
-    padding: 14,
+    borderRadius: 12,
+    padding: 10,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     elevation: 2,
     shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
   },
   cardCompleted: {
     borderColor: '#cbd5e1',
@@ -3693,31 +3829,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 4,
     flexWrap: 'wrap',
-    gap: 6,
+    gap: 4,
   },
   cardHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
     flexWrap: 'wrap',
     flexShrink: 1,
   },
   orderNum: {
-    fontSize: 15,
+    fontSize: 13.5,
     fontWeight: '900',
     color: '#0f172a',
   },
   typeBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
     borderWidth: 1,
     alignSelf: 'center',
   },
   typeBadgeText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '800',
   },
   qrSource: {
@@ -3737,9 +3873,9 @@ const styles = StyleSheet.create({
     borderColor: '#fde68a',
   },
   statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
     alignSelf: 'center',
   },
   statusConfirmed: { backgroundColor: '#eff6ff' },
@@ -3749,66 +3885,72 @@ const styles = StyleSheet.create({
   statusCompleted: { backgroundColor: '#f1f5f9' },
   statusCancelled: { backgroundColor: '#fee2e2' },
   statusOutForDelivery: { backgroundColor: '#ffedd5' },
-  statusBadgeText: { fontSize: 10, fontWeight: '900' },
+  statusBadgeText: { fontSize: 9.5, fontWeight: '900' },
   metaRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginVertical: 3,
+    marginVertical: 2,
     flexWrap: 'wrap',
     gap: 4,
   },
-  custText: { fontSize: 12, color: '#334155' },
-  timeText: { fontSize: 11, color: '#64748b' },
-  tableText: { fontSize: 12, fontWeight: '700', color: '#0f172a', marginVertical: 2 },
-  addressText: { fontSize: 11, color: '#64748b', marginVertical: 2 },
+  custText: { fontSize: 11.5, color: '#334155' },
+  timeText: { fontSize: 10.5, color: '#64748b' },
+  tableTextInline: { fontSize: 11.5, color: '#334155' },
+  tableText: { fontSize: 11.5, fontWeight: '700', color: '#0f172a', marginVertical: 1 },
+  addressText: { fontSize: 10.5, color: '#64748b', marginVertical: 1 },
   itemsBox: {
     backgroundColor: '#f8fafc',
-    borderRadius: 10,
-    padding: 10,
-    marginVertical: 8,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginVertical: 4,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
   },
-  itemsTitle: { fontSize: 10, fontWeight: '800', color: '#64748b', marginBottom: 4, textTransform: 'uppercase' },
-  itemRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 2 },
-  itemQty: { width: 25, fontSize: 12, fontWeight: '900', color: '#2563eb' },
-  itemName: { flex: 1, fontSize: 12, fontWeight: '700', color: '#0f172a' },
-  itemPrice: { fontSize: 12, fontWeight: '800', color: '#334155' },
+  itemsTitle: { fontSize: 9.5, fontWeight: '800', color: '#64748b', marginBottom: 2, textTransform: 'uppercase' },
+  itemRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 1, paddingVertical: 1 },
+  itemQty: { width: 20, fontSize: 11, fontWeight: '900', color: '#2563eb' },
+  itemName: { flex: 1, fontSize: 11.5, fontWeight: '700', color: '#0f172a' },
+  itemPrice: { fontSize: 11.5, fontWeight: '800', color: '#334155' },
   notesBox: {
     backgroundColor: '#fffbeb',
-    padding: 6,
-    borderRadius: 6,
-    marginBottom: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 5,
+    marginBottom: 4,
   },
-  notesText: { fontSize: 11, color: '#b45309', fontWeight: '600' },
+  notesText: { fontSize: 10.5, color: '#b45309', fontWeight: '600' },
   summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     borderTopWidth: 1,
     borderColor: '#f1f5f9',
-    paddingTop: 8,
-    marginBottom: 10,
+    paddingTop: 6,
+    marginBottom: 6,
   },
-  payableLabel: { fontSize: 10, color: '#64748b', fontWeight: '700' },
-  payableVal: { fontSize: 16, fontWeight: '900', color: '#16a34a' },
-  payStatusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  payableLabel: { fontSize: 9.5, color: '#64748b', fontWeight: '700' },
+  payableVal: { fontSize: 15, fontWeight: '900', color: '#16a34a' },
+  payStatusBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5, alignSelf: 'stretch', alignItems: 'center' },
   payStatusPaid: { backgroundColor: '#dcfce7' },
   payStatusUnpaid: { backgroundColor: '#fee2e2' },
-  payStatusText: { fontSize: 10, fontWeight: '900' },
+  payStatusText: { fontSize: 9.5, fontWeight: '900' },
   payStatusTextPaid: { color: '#15803d' },
   payStatusTextUnpaid: { color: '#b91c1c' },
   cardActionsGrid: {
-    marginTop: 4,
+    marginTop: 2,
   },
   cardActionRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 5,
   },
   gridActionBtn: {
     flex: 1,
-    paddingVertical: 9,
-    paddingHorizontal: 4,
-    borderRadius: 8,
+    paddingVertical: 5.5,
+    paddingHorizontal: 3,
+    minHeight: 29,
+    borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -3866,18 +4008,18 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     opacity: 0.7,
   },
-  actionBtnTextKot: { color: '#c2410c', fontSize: 11, fontWeight: '800' },
-  actionBtnTextDispatch: { color: '#c2410c', fontSize: 11, fontWeight: '800' },
-  actionBtnTextDelivered: { color: '#15803d', fontSize: 11, fontWeight: '800' },
-  actionBtnTextPayment: { color: '#1d4ed8', fontSize: 11, fontWeight: '800' },
-  actionBtnTextHold: { color: '#d97706', fontSize: 11, fontWeight: '800' },
-  actionBtnTextResume: { color: '#059669', fontSize: 11, fontWeight: '800' },
-  actionBtnTextBlue: { color: '#1d4ed8', fontSize: 11, fontWeight: '800' },
-  actionBtnTextRed: { color: '#e11d48', fontSize: 11, fontWeight: '800' },
-  actionBtnTextGreen: { color: '#ffffff', fontSize: 11, fontWeight: '900' },
-  actionBtnTextWhite: { color: '#ffffff', fontSize: 11, fontWeight: '800' },
-  actionBtnTextDark: { color: '#334155', fontSize: 11, fontWeight: '800' },
-  actionBtnTextMuted: { color: '#94a3b8', fontSize: 10, fontWeight: '800' },
+  actionBtnTextKot: { color: '#c2410c', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextDispatch: { color: '#c2410c', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextDelivered: { color: '#15803d', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextPayment: { color: '#1d4ed8', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextHold: { color: '#d97706', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextResume: { color: '#059669', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextBlue: { color: '#1d4ed8', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextRed: { color: '#e11d48', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextGreen: { color: '#ffffff', fontSize: 10.5, fontWeight: '900' },
+  actionBtnTextWhite: { color: '#ffffff', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextDark: { color: '#334155', fontSize: 10.5, fontWeight: '800' },
+  actionBtnTextMuted: { color: '#94a3b8', fontSize: 9.5, fontWeight: '800' },
   orderFinanceBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -4322,8 +4464,202 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   markSeenBtnText: {
-    fontSize: 10,
-    fontWeight: '700',
     color: '#475569',
+    fontSize: 10.5,
+    fontWeight: '700',
+  },
+  invoiceMetaCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    marginBottom: 10,
+  },
+  invoiceMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  invoiceMetaDivider: {
+    height: 1,
+    backgroundColor: '#e2e8f0',
+    marginVertical: 6,
+  },
+  invoiceMetaLabel: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    marginBottom: 1,
+  },
+  invoiceMetaVal: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  invoiceStatusPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginTop: 2,
+    alignSelf: 'flex-start',
+  },
+  invoiceStatusCompleted: {
+    backgroundColor: '#dcfce7',
+  },
+  invoiceStatusActive: {
+    backgroundColor: '#dbeafe',
+  },
+  invoiceStatusPaid: {
+    backgroundColor: '#dcfce7',
+  },
+  invoiceStatusUnpaid: {
+    backgroundColor: '#fee2e2',
+  },
+  invoiceStatusPillText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+  },
+  invoiceProofCard: {
+    backgroundColor: '#eff6ff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    padding: 10,
+    marginBottom: 10,
+  },
+  invoiceItemsCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    marginBottom: 10,
+  },
+  invoiceSectionTitle: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#64748b',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  invoiceItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+    borderBottomWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  invoiceQtyBadge: {
+    backgroundColor: '#eff6ff',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginRight: 8,
+  },
+  invoiceQtyText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#2563eb',
+  },
+  invoiceItemName: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  invoiceItemPrice: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  invoiceTotalsCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    marginBottom: 10,
+  },
+  invoiceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginVertical: 2.5,
+  },
+  invoiceLabel: {
+    fontSize: 11.5,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  invoiceVal: {
+    fontSize: 12,
+    color: '#0f172a',
+    fontWeight: '700',
+  },
+  invoiceGrandTotalBanner: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#86efac',
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 8,
+  },
+  invoiceGrandTotalLabel: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#166534',
+  },
+  invoiceGrandTotalVal: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#15803d',
+  },
+  invoiceWordsText: {
+    fontSize: 9.5,
+    fontStyle: 'italic',
+    color: '#166534',
+    marginTop: 2,
+  },
+  invoiceActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  invoiceActionsCol: {
+    flexDirection: 'column',
+    gap: 8,
+  },
+  invoiceActionBtn: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  invoiceBtnThermal: {
+    backgroundColor: '#0f172a',
+  },
+  invoiceBtnKot: {
+    backgroundColor: '#ea580c',
+  },
+  invoiceBtnA4: {
+    backgroundColor: '#2563eb',
+  },
+  invoiceBtnText: {
+    color: '#ffffff',
+    fontSize: 12.5,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
 });

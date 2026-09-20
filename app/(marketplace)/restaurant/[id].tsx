@@ -462,7 +462,7 @@ export default function RestaurantMenuScreen() {
                 const catName = getCategoryName(p.category_id);
                 const tagStyle = getTagColor(catName || p.name);
                 const isVeg = p.food_type === 'veg';
-                const isAvailable = p.is_available && (p.stock_quantity === null || p.stock_quantity > 0);
+                const isAvailable = p.is_active !== false && p.is_available !== false && (p.stock_quantity === null || p.stock_quantity === undefined || p.stock_quantity > 0);
 
                 const handleCardPress = () => {
                   if (!isOpen || !isAvailable) return;
@@ -484,7 +484,7 @@ export default function RestaurantMenuScreen() {
                 return (
                   <TouchableOpacity
                     key={p.id}
-                    style={[styles.imageCard, getCardWidthStyle()]}
+                    style={[styles.imageCard, getCardWidthStyle(), !isAvailable && { opacity: 0.88, backgroundColor: '#fffafb' }]}
                     onPress={handleCardPress}
                     activeOpacity={0.92}
                     disabled={!isOpen || !isAvailable}
@@ -495,11 +495,11 @@ export default function RestaurantMenuScreen() {
                         <OptimizedImage
                           source={p.image_url}
                           type="product"
-                          style={styles.cardImage}
+                          style={[styles.cardImage, !isAvailable && { opacity: 0.6 }]}
                           contentFit="cover"
                         />
                       ) : (
-                        <View style={styles.cardPlaceholderWrap}>
+                        <View style={[styles.cardPlaceholderWrap, !isAvailable && { opacity: 0.6 }]}>
                           <Text style={{ fontSize: 32 }}>🍲</Text>
                         </View>
                       )}
@@ -514,7 +514,7 @@ export default function RestaurantMenuScreen() {
                       {/* Unavailable / Sold Out Banner */}
                       {!isAvailable && (
                         <View style={styles.cardSoldOutBadge}>
-                          <Text style={styles.cardSoldOutText}>Sold Out</Text>
+                          <Text style={styles.cardSoldOutText}>OUT OF STOCK</Text>
                         </View>
                       )}
                     </View>
@@ -522,7 +522,7 @@ export default function RestaurantMenuScreen() {
                     {/* Card Body Info */}
                     <View style={styles.cardBody}>
                       {/* Item Name */}
-                      <Text style={styles.cardTitle} numberOfLines={2}>
+                      <Text style={[styles.cardTitle, !isAvailable && { color: '#64748b' }]} numberOfLines={2}>
                         {p.name}
                       </Text>
 
@@ -568,7 +568,7 @@ export default function RestaurantMenuScreen() {
                       {/* Price & Action Row */}
                       <View style={styles.cardFooter}>
                         <View style={styles.priceWrap}>
-                          <Text style={styles.cardPrice}>
+                          <Text style={[styles.cardPrice, !isAvailable && { color: '#94a3b8' }]}>
                             ₹{p.discounted_price || p.price}
                           </Text>
                           {p.discounted_price && p.discounted_price < p.price ? (
@@ -616,6 +616,12 @@ export default function RestaurantMenuScreen() {
                                 <Text style={styles.gridAddBtnText}>ADD +</Text>
                               </TouchableOpacity>
                             )}
+                          </View>
+                        ) : !isAvailable ? (
+                          <View style={styles.actionWrap}>
+                            <View style={[styles.gridAddBtn, { backgroundColor: '#fee2e2', borderColor: '#fca5a5' }]}>
+                              <Text style={[styles.gridAddBtnText, { color: '#dc2626', fontSize: 10, fontWeight: '800' }]}>OUT OF STOCK</Text>
+                            </View>
                           </View>
                         ) : null}
                       </View>

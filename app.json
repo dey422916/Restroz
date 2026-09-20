@@ -24,12 +24,19 @@
       "output": "single",
       "favicon": "./assets/icon.png"
     },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/b432a10d-95f1-4958-a858-7322d8591bb0"
+    },
     "plugins": [
       "expo-router",
       "expo-image",
       "expo-sharing",
       "expo-font",
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-updates"
     ],
     "extra": {
       "router": {},

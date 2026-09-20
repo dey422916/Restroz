@@ -27,6 +27,72 @@ interface TableQRModalProps {
   restaurantLogo?: string;
 }
 
+/**
+ * Ensures the QR image is written as a real local PNG file inside the Expo app cache directory.
+ */
+async function getLocalQrFileUri(tableId: string, base64OrUrl: string): Promise<string> {
+  const sanitizedId = tableId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const fileName = `table-qr-${sanitizedId}.png`;
+
+  // 1. If it's a remote URL (https:// or http://), download it to local app cache
+  if (base64OrUrl.startsWith('http://') || base64OrUrl.startsWith('https://')) {
+    try {
+      const LegacyFS = await import('expo-file-system/legacy');
+      const cacheDir = LegacyFS.cacheDirectory || LegacyFS.documentDirectory || '';
+      const localTarget = `${cacheDir}${fileName}`;
+      const res = await LegacyFS.downloadAsync(base64OrUrl, localTarget);
+      return res.uri;
+    } catch (downloadErr) {
+      console.warn('downloadAsync failed, attempting fetch fallback:', downloadErr);
+      const res = await fetch(base64OrUrl);
+      const blob = await res.blob();
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onloadend = () => {
+          if (typeof reader.result === 'string') resolve(reader.result);
+          else reject(new Error('Failed to convert downloaded QR to base64'));
+        };
+        reader.onerror = reject;
+      });
+      reader.readAsDataURL(blob);
+      base64OrUrl = await base64Promise;
+    }
+  }
+
+  // 2. Strip data URI prefix if present
+  const rawBase64 = base64OrUrl.replace(/^data:image\/[a-zA-Z]+;base64,/, '').trim();
+
+  // 3. Write raw base64 to local PNG file in Expo cache
+  try {
+    const LegacyFS = await import('expo-file-system/legacy');
+    const cacheDir = LegacyFS.cacheDirectory || LegacyFS.documentDirectory || '';
+    const localTarget = `${cacheDir}${fileName}`;
+    await LegacyFS.writeAsStringAsync(localTarget, rawBase64, {
+      encoding: LegacyFS.EncodingType.Base64,
+    });
+    return localTarget;
+  } catch (legacyErr) {
+    console.warn('Legacy writeAsStringAsync failed, trying modern File API:', legacyErr);
+  }
+
+  try {
+    const { File, Paths } = await import('expo-file-system');
+    if (typeof File === 'function' && Paths && Paths.cache) {
+      const file = new File(Paths.cache, fileName);
+      if (file.exists) {
+        file.delete();
+      }
+      file.create();
+      file.write(rawBase64, { encoding: 'base64' as any });
+      return file.uri;
+    }
+  } catch (modernErr) {
+    console.warn('Modern File API failed:', modernErr);
+  }
+
+  throw new Error('Could not create local QR image file in cache');
+}
+
 export const TableQRModal: React.FC<TableQRModalProps> = ({
   isOpen,
   onClose,
@@ -142,7 +208,7 @@ export const TableQRModal: React.FC<TableQRModalProps> = ({
     </html>
   `;
 
-  // Download Single QR as Image / PDF
+  // Download Single QR as Image
   const handleDownloadQr = async () => {
     try {
       const base64Data = await getQrBase64();
@@ -158,20 +224,28 @@ export const TableQRModal: React.FC<TableQRModalProps> = ({
         document.body.removeChild(link);
         Alert.alert('Download Complete', `${fileName} downloaded successfully.`);
       } else {
-        const html = generateHtmlCard(base64Data);
-        const { uri } = await Print.printToFileAsync({ html });
+        const localFileUri = await getLocalQrFileUri(table.id, base64Data);
         if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(uri, {
-            mimeType: 'application/pdf',
-            dialogTitle: `Download ${table.table_number} QR Card`,
-            UTI: '.pdf',
+          await Sharing.shareAsync(localFileUri, {
+            mimeType: 'image/png',
+            dialogTitle: `Download / Save ${table.table_number} QR Image`,
+            UTI: 'public.png',
           });
         } else {
-          Alert.alert('Saved', `QR Code exported to: ${uri}`);
+          Alert.alert('Download Ready', `QR Code image saved to: ${localFileUri}`);
         }
       }
     } catch (err: any) {
-      Alert.alert('Download Failed', err.message || 'Could not export QR code image.');
+      const errMsg = err?.message || String(err || '');
+      if (
+        errMsg.toLowerCase().includes('cancel') ||
+        errMsg.toLowerCase().includes('dismiss') ||
+        errMsg.toLowerCase().includes('abort')
+      ) {
+        return;
+      }
+      console.warn('Download QR failed:', err);
+      Alert.alert('Download Failed', 'Unable to download QR code image. Please try again.');
     }
   };
 
@@ -214,27 +288,64 @@ export const TableQRModal: React.FC<TableQRModalProps> = ({
     }
   };
 
-  // Share Table QR Link
+  // Share Table QR Link / PNG Image
   const handleShareQr = async () => {
     try {
-      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.share) {
-        await navigator.share({
-          title: `RestroZ - ${table.table_number} QR`,
-          text: `Scan to open digital menu for ${table.table_number} (${table.section})`,
-          url: qrUrl,
-        });
-      } else if (await Sharing.isAvailableAsync()) {
-        const base64Data = await getQrBase64();
-        const html = generateHtmlCard(base64Data);
-        const { uri } = await Print.printToFileAsync({ html });
-        await Sharing.shareAsync(uri, {
-          dialogTitle: `Share ${table.table_number} QR Code`,
-        });
-      } else {
-        Alert.alert('Table QR Link', qrUrl);
+      if (Platform.OS === 'web') {
+        if (typeof navigator !== 'undefined' && navigator.share) {
+          await navigator.share({
+            title: `RestroZ - ${table.table_number} QR`,
+            text: `Scan to open digital menu for ${table.table_number} (${table.section})`,
+            url: qrUrl,
+          });
+        } else {
+          Alert.alert('Table QR Link', qrUrl);
+        }
+        return;
       }
+
+      const available = await Sharing.isAvailableAsync();
+      if (!available) {
+        Alert.alert('Sharing Unavailable', 'Sharing is not available on this device.');
+        return;
+      }
+
+      // 1. Get QR image data (base64 from rendered QR SVG or fallback to table.qr_code_url)
+      let qrSource = '';
+      try {
+        qrSource = await getQrBase64();
+      } catch (e) {
+        qrSource = table.qr_code_url || '';
+      }
+
+      if (!qrSource) {
+        qrSource = table.qr_code_url || '';
+      }
+
+      if (!qrSource) {
+        throw new Error('QR image data is not ready');
+      }
+
+      // 2. Ensure QR image exists as a real local PNG file inside Expo app cache
+      const localFileUri = await getLocalQrFileUri(table.id, qrSource);
+
+      // 3. Share local PNG file via system share sheet
+      await Sharing.shareAsync(localFileUri, {
+        mimeType: 'image/png',
+        dialogTitle: 'Share Table QR Code',
+        UTI: 'public.png',
+      });
     } catch (err: any) {
-      console.warn('Share cancelled or failed:', err);
+      const errMsg = err?.message || String(err || '');
+      if (
+        errMsg.toLowerCase().includes('cancel') ||
+        errMsg.toLowerCase().includes('dismiss') ||
+        errMsg.toLowerCase().includes('abort')
+      ) {
+        return;
+      }
+      console.warn('Share QR failed:', err);
+      Alert.alert('Share Failed', 'Unable to share QR code. Please try again.');
     }
   };
 

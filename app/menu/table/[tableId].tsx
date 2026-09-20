@@ -37,6 +37,13 @@ import { useAuth } from '../../../src/context/AuthContext';
 import { useSettings } from '../../../src/context/SettingsContext';
 import { supabase, isSupabaseConfigured } from '../../../src/services/supabase';
 
+const isProductAvailable = (p?: Partial<Product> | null): boolean => {
+  if (!p) return false;
+  if (p.is_available === false || p.is_active === false) return false;
+  if (p.stock_quantity !== null && p.stock_quantity !== undefined && p.stock_quantity <= 0) return false;
+  return true;
+};
+
 export default function CustomerDigitalMenuScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -49,13 +56,18 @@ export default function CustomerDigitalMenuScreen() {
   const [restaurantInfo, setRestaurantInfo] = useState<{ name: string; logo_url?: string } | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [restSettingsData, setRestSettingsData] = useState<any>(null);
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   const [search, setSearch] = useState<string>('');
-
-  // Cart state
   const [cartItems, setCartItems] = useState<OrderItem[]>([]);
-  const [custName, setCustName] = useState<string>(user?.full_name || '');
-  const [custPhone, setCustPhone] = useState<string>(user?.phone || '');
+  const [showCart, setShowCart] = useState<boolean>(false);
+  const [submittingOrder, setSubmittingOrder] = useState<boolean>(false);
+  const isSubmittingOrderRef = React.useRef<boolean>(false);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+
+  // Dine-in / Delivery Customer details
+  const [custName, setCustName] = useState<string>('');
+  const [custPhone, setCustPhone] = useState<string>('');
   const [deliveryAddress, setDeliveryAddress] = useState<string>('');
   const [deliveryLandmark, setDeliveryLandmark] = useState<string>('');
   const [deliveryNotes, setDeliveryNotes] = useState<string>('');
@@ -89,13 +101,8 @@ export default function CustomerDigitalMenuScreen() {
   // Customer Active & History Orders from Supabase
   const [customerOrders, setCustomerOrders] = useState<Order[]>([]);
   const [loadingOrders, setLoadingOrders] = useState<boolean>(false);
-  const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [submittingOrder, setSubmittingOrder] = useState<boolean>(false);
-  const isSubmittingOrderRef = React.useRef<boolean>(false);
-  const [restSettingsData, setRestSettingsData] = useState<any>(null);
 
   // Modals
-  const [showCart, setShowCart] = useState<boolean>(false);
   const [showOrdersModal, setShowOrdersModal] = useState<boolean>(false);
   const [ordersModalTab, setOrdersModalTab] = useState<'active' | 'history'>('active');
   const [selectedOrderDetail, setSelectedOrderDetail] = useState<Order | null>(null);
@@ -266,6 +273,15 @@ export default function CustomerDigitalMenuScreen() {
   const isTableOccupied = Boolean(isTableQrOrder && table && table.status === 'occupied');
 
   const addToCart = (product: Product) => {
+    if (!isProductAvailable(product)) {
+      const msg = `"${product.name}" is currently out of stock.`;
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`🚫 Out of Stock: ${msg}`);
+      } else {
+        Alert.alert('🚫 Out of Stock', msg);
+      }
+      return;
+    }
     if (isTableOccupied) {
       const msg = `Table ${table?.table_number || ''} currently has an active ongoing order. New Digital QR orders cannot be placed while the table is occupied. Please ask restaurant staff.`;
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -318,6 +334,16 @@ export default function CustomerDigitalMenuScreen() {
     }
     if (quantity <= 0) {
       setCartItems((prev) => prev.filter((i) => i.product_id !== productId));
+      return;
+    }
+    const prod = products.find((p) => p.id === productId);
+    if (prod && !isProductAvailable(prod)) {
+      const msg = `"${prod.name}" is currently out of stock.`;
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`🚫 Out of Stock: ${msg}`);
+      } else {
+        Alert.alert('🚫 Out of Stock', msg);
+      }
       return;
     }
     setCartItems((prev) =>
@@ -515,6 +541,24 @@ export default function CustomerDigitalMenuScreen() {
       isSubmittingOrderRef.current = false;
       setSubmittingOrder(false);
       Alert.alert('Delivery Address Required', 'Please enter or select a delivery address to place your online delivery order.');
+      return;
+    }
+
+    // Out of Stock / Unavailable Item Verification
+    const outOfStockInCart = cartItems.filter((i) => {
+      const prod = products.find((p) => p.id === i.product_id);
+      return prod && !isProductAvailable(prod);
+    });
+    if (outOfStockInCart.length > 0) {
+      isSubmittingOrderRef.current = false;
+      setSubmittingOrder(false);
+      const names = outOfStockInCart.map((i) => `"${i.product_name}"`).join(', ');
+      const msg = `The following item(s) are currently out of stock:\n${names}\n\nPlease remove them from your cart to proceed.`;
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`🚫 Out of Stock: ${msg}`);
+      } else {
+        Alert.alert('🚫 Out of Stock', msg);
+      }
       return;
     }
 
@@ -914,28 +958,37 @@ export default function CustomerDigitalMenuScreen() {
             const inCart = cartItems.find((i) => i.product_id === prod.id);
             const qty = inCart ? inCart.quantity : 0;
             const cardWidth = getResponsiveCardWidth();
+            const isAvailable = isProductAvailable(prod);
 
             return (
               <TouchableOpacity
                 key={prod.id}
-                style={[styles.productCard, { width: cardWidth }]}
+                style={[
+                  styles.productCard,
+                  { width: cardWidth },
+                  !isAvailable && styles.productCardOutOfStock,
+                ]}
                 onPress={() => {
-                  if (prod.is_available === false) return;
+                  if (!isAvailable) return;
                   if (qty > 0) {
                     updateQuantity(prod.id, qty + 1);
                   } else {
                     addToCart(prod);
                   }
                 }}
-                activeOpacity={0.92}
-                disabled={prod.is_available === false}
+                activeOpacity={isAvailable ? 0.92 : 1}
+                disabled={!isAvailable}
               >
                 {/* Image Container with Badges */}
                 <View style={styles.imgContainer}>
                   {prod.image_url ? (
-                    <Image source={{ uri: prod.image_url }} style={styles.productImg} resizeMode="cover" />
+                    <Image
+                      source={{ uri: prod.image_url }}
+                      style={[styles.productImg, !isAvailable && styles.productImgOutOfStock]}
+                      resizeMode="cover"
+                    />
                   ) : (
-                    <View style={[styles.productImg, { backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' }]}>
+                    <View style={[styles.productImg, { backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' }, !isAvailable && styles.productImgOutOfStock]}>
                       <Text style={{ fontSize: 24 }}>🍽️</Text>
                     </View>
                   )}
@@ -971,11 +1024,18 @@ export default function CustomerDigitalMenuScreen() {
                     </View>
                   </View>
 
-                  {/* In-Cart Quantity Count Badge */}
-                  {qty > 0 && (
-                    <View style={styles.qtyBadge}>
-                      <Text style={styles.qtyBadgeText}>{qty}</Text>
+                  {/* Out of Stock Overlay / Badge on Image */}
+                  {!isAvailable ? (
+                    <View style={styles.soldOutBadgeOverlay}>
+                      <Text style={styles.soldOutBadgeText}>OUT OF STOCK</Text>
                     </View>
+                  ) : (
+                    /* In-Cart Quantity Count Badge */
+                    qty > 0 && (
+                      <View style={styles.qtyBadge}>
+                        <Text style={styles.qtyBadgeText}>{qty}</Text>
+                      </View>
+                    )
                   )}
                 </View>
 
@@ -984,16 +1044,20 @@ export default function CustomerDigitalMenuScreen() {
                   <Text style={styles.prodSku} numberOfLines={1}>
                     {prod.sku || 'DISH'}
                   </Text>
-                  <Text style={styles.prodName} numberOfLines={2}>
+                  <Text style={[styles.prodName, !isAvailable && styles.prodNameOutOfStock]} numberOfLines={2}>
                     {prod.name}
                   </Text>
 
                   <View style={styles.cardBottomRow}>
-                    <Text style={styles.prodPrice}>
+                    <Text style={[styles.prodPrice, !isAvailable && styles.prodPriceOutOfStock]}>
                       {formatCurrency(prod.discounted_price || prod.price)}
                     </Text>
 
-                    {qty === 0 ? (
+                    {!isAvailable ? (
+                      <View style={[styles.addBtn, styles.addBtnOutOfStock]}>
+                        <Text style={styles.addBtnTextOutOfStock}>OUT OF STOCK</Text>
+                      </View>
+                    ) : qty === 0 ? (
                       <TouchableOpacity
                         style={[styles.addBtn, isTableOccupied && styles.addBtnDisabled]}
                         onPress={() => addToCart(prod)}
@@ -1068,21 +1132,64 @@ export default function CustomerDigitalMenuScreen() {
               <Text style={{ fontSize: 11, fontWeight: '900', color: '#64748b', marginBottom: 4 }}>
                 ORDER ITEMS ({totalCartCount})
               </Text>
-              {cartItems.map((item) => (
-                <View key={item.product_id} style={styles.cartModalRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#0f172a' }}>
-                      {item.product_name}
-                    </Text>
-                    <Text style={{ fontSize: 11, color: '#64748b' }}>
-                      {item.quantity} × {formatCurrency(item.unit_price)}
-                    </Text>
-                  </View>
-                  <Text style={{ fontSize: 13, fontWeight: '900', color: '#0f172a' }}>
-                    {formatCurrency(item.subtotal)}
+              {cartItems.some((i) => {
+                const prod = products.find((p) => p.id === i.product_id);
+                return prod && !isProductAvailable(prod);
+              }) && (
+                <View style={styles.outOfStockAlertBanner}>
+                  <Text style={styles.outOfStockAlertBannerText}>
+                    ⚠️ Some items in your cart are currently out of stock. Please remove them to proceed with checkout.
                   </Text>
                 </View>
-              ))}
+              )}
+              {cartItems.map((item) => {
+                const prod = products.find((p) => p.id === item.product_id);
+                const isItemAvailable = prod ? isProductAvailable(prod) : true;
+
+                return (
+                  <View
+                    key={item.product_id}
+                    style={[styles.cartModalRow, !isItemAvailable && styles.cartModalRowOutOfStock]}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={[
+                          { fontSize: 12, fontWeight: 'bold', color: '#0f172a' },
+                          !isItemAvailable && { color: '#dc2626' },
+                        ]}
+                      >
+                        {item.product_name} {!isItemAvailable && '• (OUT OF STOCK)'}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#64748b' }}>
+                        {item.quantity} × {formatCurrency(item.unit_price)}
+                      </Text>
+                      {!isItemAvailable && (
+                        <Text style={{ fontSize: 10, color: '#dc2626', fontWeight: '700', marginTop: 2 }}>
+                          Item is sold out. Please remove to order.
+                        </Text>
+                      )}
+                    </View>
+                    <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                      <Text
+                        style={[
+                          { fontSize: 13, fontWeight: '900', color: '#0f172a' },
+                          !isItemAvailable && { color: '#dc2626' },
+                        ]}
+                      >
+                        {formatCurrency(item.subtotal)}
+                      </Text>
+                      {!isItemAvailable && (
+                        <TouchableOpacity
+                          onPress={() => updateQuantity(item.product_id, 0)}
+                          style={styles.cartRemoveItemBtn}
+                        >
+                          <Text style={styles.cartRemoveItemText}>Remove ✕</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                );
+              })}
 
               {/* Coupon Applicator */}
               <View style={styles.custDetailsBox}>
@@ -2275,6 +2382,91 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '900',
     color: '#1d4ed8',
+  },
+  productCardOutOfStock: {
+    opacity: 0.88,
+    borderColor: '#fecaca',
+    backgroundColor: '#fffafb',
+  },
+  productImgOutOfStock: {
+    opacity: 0.55,
+  },
+  soldOutBadgeOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    zIndex: 10,
+  },
+  soldOutBadgeText: {
+    backgroundColor: '#dc2626',
+    color: '#ffffff',
+    fontSize: 9.5,
+    fontWeight: '900',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    overflow: 'hidden',
+  },
+  prodNameOutOfStock: {
+    color: '#64748b',
+  },
+  prodPriceOutOfStock: {
+    color: '#94a3b8',
+  },
+  addBtnOutOfStock: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  addBtnTextOutOfStock: {
+    fontSize: 9.5,
+    fontWeight: '900',
+    color: '#dc2626',
+    textTransform: 'uppercase',
+  },
+  outOfStockAlertBanner: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 8,
+  },
+  outOfStockAlertBannerText: {
+    color: '#dc2626',
+    fontSize: 11,
+    fontWeight: '700',
+    lineHeight: 15,
+  },
+  cartModalRowOutOfStock: {
+    backgroundColor: '#fff1f2',
+    borderColor: '#fecaca',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 8,
+    marginVertical: 4,
+  },
+  cartRemoveItemBtn: {
+    backgroundColor: '#fee2e2',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+  },
+  cartRemoveItemText: {
+    color: '#dc2626',
+    fontSize: 10,
+    fontWeight: '800',
   },
   stepper: {
     flexDirection: 'row',

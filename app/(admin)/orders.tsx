@@ -94,6 +94,7 @@ export default function OrdersScreen() {
   const [payDiscountValue, setPayDiscountValue] = useState<string>('');
   const [closingOrder, setClosingOrder] = useState<boolean>(false);
   const [verifyingPaymentOrderId, setVerifyingPaymentOrderId] = useState<string | null>(null);
+  const [fullScreenProofOrder, setFullScreenProofOrder] = useState<Order | null>(null);
 
   // Partial Payment Modal state
   const [partialPayModal, setPartialPayModal] = useState<Order | null>(null);
@@ -1013,6 +1014,16 @@ export default function OrdersScreen() {
             : prev
         );
 
+        setFullScreenProofOrder((prev) =>
+          prev && prev.id === order.id
+            ? {
+                ...prev,
+                payment_verified_at: res.payment_verified_at || new Date().toISOString(),
+                payment_verified_by: res.payment_verified_by || user?.id,
+              }
+            : prev
+        );
+
         Alert.alert('✓ Payment Verified', `Payment proof for Order #${order.order_number} has been verified.\nThe order remains active and is ready to settle.`);
         await loadData(true);
       } catch (err: any) {
@@ -1579,22 +1590,22 @@ export default function OrdersScreen() {
                       backgroundColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#f0fdf4' : '#eff6ff',
                       borderWidth: 1,
                       borderColor: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#86efac' : '#bfdbfe',
-                      borderRadius: 7,
-                      paddingHorizontal: 8,
-                      paddingVertical: 5,
-                      marginBottom: 4,
+                      borderRadius: 8,
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      marginBottom: 6,
                       flexDirection: 'row',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      gap: 6,
+                      gap: 8,
                     }}
                   >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
-                      <Text style={{ fontSize: 13 }}>{(order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '✅' : '📷'}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flex: 1, minWidth: 0 }}>
+                      <Text style={{ fontSize: 14 }}>{(order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '✅' : '📷'}</Text>
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text
                           style={{
-                            fontSize: 11,
+                            fontSize: 11.5,
                             fontWeight: '800',
                             color: (order.payment_status === 'paid' || Boolean(order.payment_verified_at)) ? '#166534' : '#1e40af',
                           }}
@@ -1620,35 +1631,44 @@ export default function OrdersScreen() {
                       </View>
                     </View>
 
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                       <TouchableOpacity
                         activeOpacity={0.8}
                         onPress={() => {
                           markAsSeen(order.id);
-                          setViewOrderModal(order);
+                          setFullScreenProofOrder(order);
                         }}
                         style={{
                           backgroundColor: '#ffffff',
-                          borderWidth: 1,
-                          borderColor: '#93c5fd',
-                          paddingHorizontal: 7,
-                          paddingVertical: 3.5,
+                          borderWidth: 1.5,
+                          borderColor: '#3b82f6',
+                          paddingHorizontal: 10,
+                          paddingVertical: 5,
                           borderRadius: 6,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 4,
+                          minWidth: 70,
                         }}
                       >
-                        <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#2563eb' }}>🔍 Proof</Text>
+                        <Text style={{ fontSize: 11, fontWeight: '800', color: '#1d4ed8', textAlign: 'center' }}>
+                          🔍 Proof
+                        </Text>
                       </TouchableOpacity>
 
                       {order.status !== 'cancelled' && order.payment_status !== 'paid' && !order.payment_verified_at && (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
                         <TouchableOpacity
                           style={{
                             backgroundColor: '#16a34a',
-                            paddingHorizontal: 8,
-                            paddingVertical: 3.5,
+                            paddingHorizontal: 10,
+                            paddingVertical: 5,
                             borderRadius: 6,
                             flexDirection: 'row',
                             alignItems: 'center',
+                            justifyContent: 'center',
                             gap: 3,
+                            minWidth: 64,
                           }}
                           onPress={() => handleMarkPaymentVerified(order)}
                           disabled={verifyingPaymentOrderId === order.id}
@@ -1656,7 +1676,7 @@ export default function OrdersScreen() {
                           {verifyingPaymentOrderId === order.id ? (
                             <ActivityIndicator size="small" color="#ffffff" />
                           ) : (
-                            <Text style={{ color: '#ffffff', fontSize: 10.5, fontWeight: '900' }}>
+                            <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '900', textAlign: 'center' }}>
                               ✓ Verify
                             </Text>
                           )}
@@ -3293,17 +3313,35 @@ export default function OrdersScreen() {
                         <Text style={{ fontSize: 12, fontWeight: '800', color: '#0f172a' }}>
                           📸 Customer Online Payment Proof:
                         </Text>
-                        <View style={{ backgroundColor: isPaid ? '#dcfce7' : '#eff6ff', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
-                          <Text style={{ fontSize: 10, fontWeight: '800', color: isPaid ? '#15803d' : '#1d4ed8' }}>
-                            {isPaid ? '✓ VERIFIED & PAID' : Boolean(viewOrderModal.payment_verified_at) ? '✓ PAYMENT VERIFIED' : 'PENDING'}
-                          </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={{ backgroundColor: isPaid ? '#dcfce7' : '#eff6ff', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '800', color: isPaid ? '#15803d' : '#1d4ed8' }}>
+                              {isPaid ? '✓ VERIFIED & PAID' : Boolean(viewOrderModal.payment_verified_at) ? '✓ PAYMENT VERIFIED' : 'PENDING'}
+                            </Text>
+                          </View>
+                          <TouchableOpacity
+                            onPress={() => setFullScreenProofOrder(viewOrderModal)}
+                            style={{
+                              backgroundColor: '#2563eb',
+                              paddingHorizontal: 8,
+                              paddingVertical: 3,
+                              borderRadius: 6,
+                            }}
+                          >
+                            <Text style={{ color: '#ffffff', fontSize: 10, fontWeight: '800' }}>🔍 Full Screen</Text>
+                          </TouchableOpacity>
                         </View>
                       </View>
-                      <Image
-                        source={{ uri: viewOrderModal.payment_proof_url }}
-                        style={{ width: '100%', height: 200, borderRadius: 8, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#e2e8f0' }}
-                        resizeMode="contain"
-                      />
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => setFullScreenProofOrder(viewOrderModal)}
+                      >
+                        <Image
+                          source={{ uri: viewOrderModal.payment_proof_url }}
+                          style={{ width: '100%', height: 200, borderRadius: 8, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#e2e8f0' }}
+                          resizeMode="contain"
+                        />
+                      </TouchableOpacity>
                     </View>
                   ) : null}
 
@@ -3428,6 +3466,165 @@ export default function OrdersScreen() {
           </Modal>
         );
       })()}
+
+      {/* Full Screen Payment Proof Modal */}
+      {Boolean(fullScreenProofOrder) && fullScreenProofOrder?.payment_proof_url ? (
+        <Modal
+          visible={Boolean(fullScreenProofOrder)}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setFullScreenProofOrder(null)}
+        >
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: 'rgba(15, 23, 42, 0.96)',
+              justifyContent: 'space-between',
+            }}
+          >
+            {/* Modal Header */}
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingHorizontal: 16,
+                paddingTop: Platform.OS === 'ios' ? 54 : 20,
+                paddingBottom: 14,
+                backgroundColor: 'rgba(30, 41, 59, 0.95)',
+                borderBottomWidth: 1,
+                borderColor: '#334155',
+              }}
+            >
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <Text style={{ color: '#ffffff', fontSize: 16, fontWeight: '800' }}>
+                    📸 Payment Screenshot Proof
+                  </Text>
+                  <View
+                    style={{
+                      backgroundColor:
+                        fullScreenProofOrder.payment_status === 'paid' || Boolean(fullScreenProofOrder.payment_verified_at)
+                          ? '#166534'
+                          : '#1e3a8a',
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: 6,
+                    }}
+                  >
+                    <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '800' }}>
+                      {fullScreenProofOrder.payment_status === 'paid' || Boolean(fullScreenProofOrder.payment_verified_at)
+                        ? '✓ VERIFIED'
+                        : 'PENDING VERIFICATION'}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>
+                  Order #{fullScreenProofOrder.order_number} •{' '}
+                  {formatCurrency(fullScreenProofOrder.payable_amount ?? fullScreenProofOrder.grand_total ?? 0)}
+                  {(() => {
+                    const linkedTable = tables.find(
+                      (t) => t.id === fullScreenProofOrder.table_id || t.table_number === fullScreenProofOrder.table_number
+                    );
+                    const tDisplayName = linkedTable
+                      ? (linkedTable.section ? `${linkedTable.table_number} (${linkedTable.section})` : linkedTable.table_number)
+                      : fullScreenProofOrder.table_number || '';
+                    return tDisplayName ? ` • ${formatTableLabel(tDisplayName)}` : '';
+                  })()}
+                  {fullScreenProofOrder.customer_name ? ` • ${fullScreenProofOrder.customer_name}` : ''}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                onPress={() => setFullScreenProofOrder(null)}
+                style={{
+                  backgroundColor: '#334155',
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                  marginLeft: 10,
+                }}
+              >
+                <Text style={{ color: '#f8fafc', fontSize: 13, fontWeight: '800' }}>✕ Close</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Modal Body - Full View Image */}
+            <View
+              style={{
+                flex: 1,
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 12,
+              }}
+            >
+              <Image
+                source={{ uri: fullScreenProofOrder.payment_proof_url }}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  maxWidth: 800,
+                }}
+                resizeMode="contain"
+              />
+            </View>
+
+            {/* Modal Bottom Actions */}
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 12,
+                paddingHorizontal: 16,
+                paddingVertical: 14,
+                backgroundColor: 'rgba(30, 41, 59, 0.95)',
+                borderTopWidth: 1,
+                borderColor: '#334155',
+              }}
+            >
+              {fullScreenProofOrder.status !== 'cancelled' &&
+                fullScreenProofOrder.payment_status !== 'paid' &&
+                !fullScreenProofOrder.payment_verified_at &&
+                (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#16a34a',
+                      paddingHorizontal: 18,
+                      paddingVertical: 10,
+                      borderRadius: 8,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                    onPress={() => handleMarkPaymentVerified(fullScreenProofOrder)}
+                    disabled={verifyingPaymentOrderId === fullScreenProofOrder.id}
+                  >
+                    {verifyingPaymentOrderId === fullScreenProofOrder.id ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '800' }}>
+                        ✓ Verify Payment
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+
+              <TouchableOpacity
+                onPress={() => setFullScreenProofOrder(null)}
+                style={{
+                  backgroundColor: '#475569',
+                  paddingHorizontal: 18,
+                  paddingVertical: 10,
+                  borderRadius: 8,
+                }}
+              >
+                <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '800' }}>Close Fullscreen</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
     </View>
   );
 }

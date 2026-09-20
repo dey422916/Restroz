@@ -430,6 +430,13 @@ export default function PosScreen() {
   // CART / PRODUCT ACTIONS
   // ----------------------------------------------------
   const handleProductCardPress = async (item: Product) => {
+    const isItemAvailable = item.is_active !== false && item.is_available !== false && (item.stock_quantity === null || item.stock_quantity === undefined || item.stock_quantity > 0);
+    if (!isItemAvailable) {
+      const msg = `"${item.name}" is currently out of stock.`;
+      if (Platform.OS === 'web') window.alert(`🚫 Out of Stock: ${msg}`);
+      else Alert.alert('🚫 Out of Stock', msg);
+      return;
+    }
     const targetRestId = activeRestaurantId || settings.restaurant_id;
     if (targetRestId) {
       const isOpen = await dayRegisterService.isRegisterOpen(targetRestId);
@@ -1665,24 +1672,25 @@ export default function PosScreen() {
                   item.name.toLowerCase().includes('vodka') ||
                   item.name.toLowerCase().includes('rum') ||
                   item.name.toLowerCase().includes('whisky');
+                const isItemAvailable = item.is_active !== false && item.is_available !== false && (item.stock_quantity === null || item.stock_quantity === undefined || item.stock_quantity > 0);
 
                 return (
                   <TouchableOpacity
                     testID={`pos-product-${item.id}`}
-                    style={[styles.productCard, cardWidthStyle, inCart && styles.productCardInCart]}
+                    style={[styles.productCard, cardWidthStyle, inCart && styles.productCardInCart, !isItemAvailable && { opacity: 0.85, backgroundColor: '#fffafb', borderColor: '#fecaca' }]}
                     onPress={() => handleProductCardPress(item)}
-                    activeOpacity={0.8}
+                    activeOpacity={isItemAvailable ? 0.8 : 1}
                   >
                     {/* Item Image with Fallbacks */}
                     <View style={styles.productImageContainer}>
                       {item.image_url ? (
                         <Image
                           source={{ uri: item.image_url }}
-                          style={styles.productImage}
+                          style={[styles.productImage, !isItemAvailable && { opacity: 0.6 }]}
                           resizeMode="cover"
                         />
                       ) : (
-                        <View style={[styles.productImageFallback, isBeverage && { backgroundColor: '#fef2f2' }]}>
+                        <View style={[styles.productImageFallback, isBeverage && { backgroundColor: '#fef2f2' }, !isItemAvailable && { opacity: 0.6 }]}>
                           <Text style={styles.productImageFallbackEmoji}>
                             {isBeverage ? '🍷' : isVeg ? '🥗' : '🍗'}
                           </Text>
@@ -1712,11 +1720,45 @@ export default function PosScreen() {
                           <Text style={styles.inCartBadgeText}>{inCart?.quantity} in cart</Text>
                         </View>
                       )}
+
+                      {/* Out of Stock Overlay Badge */}
+                      {!isItemAvailable && (
+                        <View
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            backgroundColor: 'rgba(15, 23, 42, 0.45)',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            paddingHorizontal: 4,
+                          }}
+                        >
+                          <Text
+                            style={{
+                              backgroundColor: '#dc2626',
+                              color: '#ffffff',
+                              fontSize: 9.5,
+                              fontWeight: '900',
+                              paddingHorizontal: 6,
+                              paddingVertical: 2,
+                              borderRadius: 4,
+                              textTransform: 'uppercase',
+                              letterSpacing: 0.5,
+                              overflow: 'hidden',
+                            }}
+                          >
+                            OUT OF STOCK
+                          </Text>
+                        </View>
+                      )}
                     </View>
 
                     {/* Content Section */}
                     <View style={styles.productInfo}>
-                      <Text style={styles.productName} numberOfLines={2}>
+                      <Text style={[styles.productName, !isItemAvailable && { color: '#64748b' }]} numberOfLines={2}>
                         {item.name}
                       </Text>
                       <Text style={styles.productSku} numberOfLines={1}>
@@ -1724,10 +1766,14 @@ export default function PosScreen() {
                       </Text>
 
                       <View style={styles.productBottomRow}>
-                        <Text style={styles.productPrice}>
+                        <Text style={[styles.productPrice, !isItemAvailable && { color: '#94a3b8' }]}>
                           {formatCurrency(item.discounted_price || item.price)}
                         </Text>
-                        {inCart && inCart.quantity > 0 ? (
+                        {!isItemAvailable ? (
+                          <View style={[styles.quickAddBtn, { backgroundColor: '#fee2e2', borderColor: '#fca5a5' }]}>
+                            <Text style={[styles.quickAddBtnText, { color: '#dc2626', fontSize: 10, fontWeight: '800' }]}>OUT OF STOCK</Text>
+                          </View>
+                        ) : inCart && inCart.quantity > 0 ? (
                           <View style={styles.cardStepper}>
                             <TouchableOpacity
                               style={styles.cardStepBtnMinus}

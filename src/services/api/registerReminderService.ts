@@ -1,5 +1,7 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants, { ExecutionEnvironment, AppOwnership } from 'expo-constants';
+import { isRunningInExpoGo } from 'expo';
 import { supabase, isSupabaseConfigured } from '../supabase';
 
 const DISMISSED_SLOT_STORAGE_KEY = '@restroz_dismissed_register_slot_';
@@ -14,6 +16,31 @@ export interface OverdueRegisterReminder {
   slot_key?: string;
   title?: string;
   message?: string;
+}
+
+/**
+ * Returns true if running inside the Expo Go app.
+ * In Expo SDK 53+, remote push notifications are unsupported in Expo Go on Android.
+ */
+export function isExpoGoEnvironment(): boolean {
+  try {
+    if (typeof isRunningInExpoGo === 'function' && isRunningInExpoGo()) {
+      return true;
+    }
+  } catch {}
+
+  try {
+    const appOwnership = (Constants as any)?.appOwnership;
+    if (appOwnership === AppOwnership.Expo || appOwnership === 'expo') {
+      return true;
+    }
+    const executionEnv = (Constants as any)?.executionEnvironment;
+    if (executionEnv === ExecutionEnvironment.StoreClient || executionEnv === 'storeClient') {
+      return true;
+    }
+  } catch {}
+
+  return false;
 }
 
 export const registerReminderService = {
@@ -181,6 +208,7 @@ export const registerReminderService = {
   /**
    * Automatically request permissions & register Expo Push Token on native mobile (iOS/Android)
    * Strictly skipped on Web and blocked for CUSTOMER accounts.
+   * On Android inside Expo Go, remote push notifications are unsupported (SDK 53+) and skipped safely.
    */
   async registerMobileDevicePushToken(restaurantId: string, role?: string): Promise<boolean> {
     const normalizedRole = (role || '').toUpperCase();
@@ -196,9 +224,19 @@ export const registerReminderService = {
       return false;
     }
 
+    // Android Push notifications (remote notifications) functionality provided by expo-notifications
+    // was removed from Expo Go with the release of SDK 53.
+    // In Expo Go on Android, do NOT import expo-notifications or attempt remote push token registration.
+    if (Platform.OS === 'android' && isExpoGoEnvironment()) {
+      if (__DEV__) {
+        console.log('[PUSH] Push notifications skipped in Expo Go. Use a development build to test push notifications.');
+      }
+      return false;
+    }
+
     try {
+      // Guarded dynamic import: Only executed in real development / production native builds (or iOS)
       const Notifications = await import('expo-notifications');
-      const Constants = (await import('expo-constants')).default;
 
       // Check / request notification permissions
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
@@ -248,7 +286,9 @@ export const registerReminderService = {
 
       return success;
     } catch (e: any) {
-      console.warn('registerMobileDevicePushToken encountered error:', e?.message || e);
+      if (__DEV__) {
+        console.log('[PUSH] registerMobileDevicePushToken error:', e?.message || e);
+      }
       return false;
     }
   },

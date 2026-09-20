@@ -163,7 +163,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (restaurantId && (profileRole === 'ADMIN' || profileRole === 'STAFF' || profileRole === 'SUPER_ADMIN')) {
         console.log('[AUTH] Triggering mobile push token registration for role:', profileRole);
         registerReminderService.registerMobileDevicePushToken(restaurantId, profileRole).catch((err) => {
-          console.warn('[AUTH] Push registration error caught:', err?.message || err);
+          console.log('[AUTH] Push registration error caught:', err?.message || err);
         });
       }
     } catch (e: any) {

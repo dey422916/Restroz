@@ -1588,14 +1588,30 @@ export const orderService = {
           ? 'cash'
           : paymentMethod;
 
+      const cleanRestaurantId = (restaurantId && restaurantId.trim() !== '') ? restaurantId.trim() : null;
+      const cleanRefNumber = (referenceNumber && referenceNumber.trim() !== '') ? referenceNumber.trim() : null;
+      const cleanNotes = (notes && notes.trim() !== '') ? notes.trim() : null;
+      const cleanSplitPayments = (splitPayments && splitPayments.length > 0)
+        ? splitPayments.map((s) => ({
+            payment_method:
+              s.payment_method === 'online' || (s.payment_method as any) === 'upi'
+                ? 'upi'
+                : (s.payment_method as any) === 'cod'
+                ? 'cash'
+                : s.payment_method,
+            amount: s.amount,
+            reference_number: (s.reference_number && s.reference_number.trim() !== '') ? s.reference_number.trim() : null,
+          }))
+        : null;
+
       const { data: rpcRes, error: rpcErr } = await supabase.rpc('record_partial_payment', {
         p_order_id: orderId,
         p_payment_method: normalizedPaymentMethod,
         p_amount: amount,
-        p_reference_number: referenceNumber || null,
-        p_notes: notes || null,
-        p_split_payments: splitPayments && splitPayments.length > 0 ? splitPayments : null,
-        p_restaurant_id: restaurantId || null,
+        p_reference_number: cleanRefNumber,
+        p_notes: cleanNotes,
+        p_split_payments: cleanSplitPayments,
+        p_restaurant_id: cleanRestaurantId,
       });
 
       if (rpcErr) {

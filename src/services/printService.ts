@@ -476,7 +476,7 @@ export const printService = {
   ): Promise<{ direct: boolean; printerName?: string }> {
     const html = this.generateKotHtml(order, settings, kot, isReprint);
 
-    if (Platform.OS === 'web' && !options?.forceBrowser) {
+    if (Platform.OS === 'web' && settings.auto_print_kot && !options?.forceBrowser) {
       const kotNum = kot?.kot_number || (order.kots && order.kots[0]?.kot_number) || order.order_number;
       const targetPrinter = resolveKotPrinterName(settings);
       const result = await directPrintService.printKotDirect(html, {
@@ -486,7 +486,8 @@ export const printService = {
       return { direct: true, printerName: result.printerName };
     }
 
-    // Native or forceBrowser fallback
+    // When auto_print_kot is disabled, or native platform, or forceBrowser fallback:
+    // Uses standard browser / native printing without connecting to QZ Tray
     await executeIsolatedPrint(html);
     return { direct: false };
   },

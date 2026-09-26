@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { RestaurantSettings } from '../types';
+import { supabase, SUPABASE_ANON_KEY, SUPABASE_URL } from './supabase';
 
 export const DEFAULT_KOT_PRINTER_NAME = 'POS80';
 
@@ -34,8 +35,8 @@ export class DirectPrintError extends Error {
 
 /**
  * Public X.509 Digital Certificate for RestroZ POS Printing System.
- * Note: Digital certificates contain only the public key and identity metadata (Common Name: RestroZ POS, Organization: RestroZ Technologies).
- * It is completely safe to distribute publicly.
+ * Note: Digital certificates contain ONLY the public key and identity metadata (Common Name: RestroZ POS, Organization: RestroZ Technologies).
+ * It is completely safe to distribute in frontend bundles.
  */
 export const RESTROZ_PUBLIC_CERTIFICATE = `-----BEGIN CERTIFICATE-----
 MIIDoTCCAomgAwIBAgIUOBiazfCjA53dg+oaFSyDyRZcQXYwDQYJKoZIhvcNAQEL
@@ -61,6 +62,13 @@ GXZZ7xhCVM0mse4TVg7c2KX6mUBP
 -----END CERTIFICATE-----`;
 
 /**
+ * Checks whether the application is running in development mode
+ */
+function isDevEnvironment(): boolean {
+  return (typeof __DEV__ !== 'undefined' && Boolean(__DEV__)) || process.env.NODE_ENV === 'development';
+}
+
+/**
  * Resolves the server-side signing endpoint URL.
  * In production: calls Supabase Edge Function `/functions/v1/sign-qz-tray` or configured `EXPO_PUBLIC_QZ_SIGN_ENDPOINT`.
  * In development: falls back to local dev signing server if configured.
@@ -69,11 +77,14 @@ export function resolveSigningEndpoint(): string {
   if (process.env.EXPO_PUBLIC_QZ_SIGN_ENDPOINT) {
     return process.env.EXPO_PUBLIC_QZ_SIGN_ENDPOINT;
   }
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-  if (supabaseUrl) {
-    return `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/sign-qz-tray`;
+  const baseUrl = SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+  if (baseUrl) {
+    return `${baseUrl.replace(/\/+$/, '')}/functions/v1/sign-qz-tray`;
   }
-  return 'http://localhost:8183';
+  if (isDevEnvironment()) {
+    return 'http://localhost:8183';
+  }
+  throw new Error('[directPrintService] Supabase URL is not configured for production QZ signing.');
 }
 
 /**
@@ -100,15 +111,27 @@ function setupQzSecurity(qz: any): void {
 
   // 3. Signature Promise: Dispatches to secure server-side signing endpoint
   qz.security.setSignaturePromise((toSign: string) => {
-    return (resolve: (sig: string) => void, reject: (err: any) => void) => {
+    return async (resolve: (sig: string) => void, reject: (err: any) => void) => {
       const signingUrl = resolveSigningEndpoint();
-      const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+      const anonKey = SUPABASE_ANON_KEY || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+
+      // Retrieve active user authentication session token if available
+      let authHeaderValue = `Bearer ${anonKey}`;
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session?.access_token) {
+          authHeaderValue = `Bearer ${sessionData.session.access_token}`;
+        }
+      } catch (authErr) {
+        console.warn('[directPrintService] Could not retrieve session for signing:', authErr);
+      }
 
       fetch(signingUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(anonKey ? { apikey: anonKey, Authorization: `Bearer ${anonKey}` } : {}),
+          ...(anonKey ? { apikey: anonKey } : {}),
+          Authorization: authHeaderValue,
         },
         body: JSON.stringify({ request: toSign }),
       })
@@ -130,8 +153,8 @@ function setupQzSecurity(qz: any): void {
         })
         .catch((err) => {
           console.error('[directPrintService] QZ signature request failed:', err);
-          // If remote signing endpoint is unreachable during local testing, attempt local dev signer
-          if (signingUrl !== 'http://localhost:8183') {
+          // Development-only fallback: only attempt local signer if in dev environment
+          if (isDevEnvironment() && signingUrl !== 'http://localhost:8183') {
             fetch('http://localhost:8183', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -141,6 +164,7 @@ function setupQzSecurity(qz: any): void {
               .then((d) => resolve(d.signature))
               .catch(() => reject(err));
           } else {
+            // Production: strictly reject, never attempt localhost
             reject(err);
           }
         });

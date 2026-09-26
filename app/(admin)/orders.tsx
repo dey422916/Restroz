@@ -702,6 +702,7 @@ export default function OrdersScreen() {
         amount: effectiveAmount,
         referenceNumber: partialPayRef.trim() || undefined,
         notes: partialPayNotes.trim() || undefined,
+        splitPayments: splitArray,
         restaurantId:
           partialPayModal.restaurant_id && partialPayModal.restaurant_id.trim() !== ''
             ? partialPayModal.restaurant_id.trim()

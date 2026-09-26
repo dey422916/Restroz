@@ -977,7 +977,17 @@ export const orderService = {
           }
         }
 
-        const { items, payments, kots, order_source, ...orderRecord } = newOrder;
+        const {
+          items,
+          payments,
+          kots,
+          order_source,
+          taxable_amount,
+          customer_gstin,
+          invoice_number,
+          final_amount,
+          ...orderRecord
+        } = newOrder;
         let dbPayload: any = {
           ...orderRecord,
           restaurant_id: targetRestaurantId,

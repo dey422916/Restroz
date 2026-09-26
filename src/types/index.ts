@@ -395,6 +395,81 @@ export interface DaySalesSummary {
   average_order_value: number;
 }
 
+export interface LoyaltyRewardSettings {
+  id?: string;
+  restaurant_id: string;
+  is_enabled: boolean;
+  spend_amount: number;
+  reward_amount: number;
+  min_redeem_balance: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CustomerWallet {
+  id: string;
+  restaurant_id: string;
+  customer_mobile: string;
+  balance: number;
+  total_earned: number;
+  total_redeemed: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type WalletTransactionType = 'earn' | 'redeem' | 'refund' | 'adjustment';
+
+export interface CustomerWalletTransaction {
+  id: string;
+  restaurant_id: string;
+  restaurant_name?: string;
+  customer_mobile: string;
+  order_id?: string;
+  transaction_type: WalletTransactionType;
+  amount: number;
+  balance_after: number;
+  created_at: string;
+  notes?: string;
+}
+
+export interface CustomerWalletInfo {
+  is_enabled: boolean;
+  spend_amount: number;
+  reward_amount: number;
+  min_redeem_balance: number;
+  customer_mobile: string | null;
+  balance: number;
+  total_earned: number;
+  total_redeemed: number;
+  can_redeem: boolean;
+}
+
+export interface CustomerMarketplaceWalletsResponse {
+  wallets: Array<{
+    id: string;
+    restaurant_id: string;
+    restaurant_name: string;
+    customer_mobile: string;
+    balance: number;
+    total_earned: number;
+    total_redeemed: number;
+    min_redeem_balance: number;
+    is_enabled: boolean;
+  }>;
+  transactions: Array<{
+    id: string;
+    restaurant_id: string;
+    restaurant_name: string;
+    order_id?: string;
+    transaction_type: WalletTransactionType;
+    amount: number;
+    balance_after: number;
+    created_at: string;
+    notes?: string;
+  }>;
+}
+
 export * from './saas';
 export * from './marketplace';
 export * from './permissions';
+

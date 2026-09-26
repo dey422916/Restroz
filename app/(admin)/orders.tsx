@@ -1219,9 +1219,12 @@ export default function OrdersScreen() {
         return prev;
       });
 
+      const rewardMsg = completed.reward_earned && completed.reward_earned > 0
+        ? `\n🎁 ₹${completed.reward_earned.toFixed(2)} reward credited to Customer Wallet (Balance: ₹${Number(completed.new_wallet_balance).toFixed(2)}).`
+        : '';
       Alert.alert(
         'Order Settled & Closed',
-        `Order #${completed.order_number} marked as ${payReceived ? 'PAID & COMPLETED' : 'UNPAID (DELIVERY COD)'}.\nTable released.`
+        `Order #${completed.order_number} marked as ${payReceived ? 'PAID & COMPLETED' : 'UNPAID (DELIVERY COD)'}.\nTable released.${rewardMsg}`
       );
       setPayOrderModal(null);
       setViewOrderModal(completed);

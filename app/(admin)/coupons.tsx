@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { couponService } from '../../src/services/api/couponService';
+import { loyaltyService } from '../../src/services/api/loyaltyService';
 import { useAuth } from '../../src/context/AuthContext';
 import { Coupon, DiscountType } from '../../src/types';
 import { formatCurrency } from '../../src/utils/currency';
@@ -24,15 +25,27 @@ export default function CouponsScreen() {
   const isMobile = width < 768;
   const { user, role, isAdmin: authIsAdmin, isSuperAdmin, activeRestaurantId } = useAuth();
 
+  // Tab State: 'coupons' | 'rewards'
+  const [activeTab, setActiveTab] = useState<'coupons' | 'rewards'>('coupons');
+
+  // Coupons State
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // Modal State
+  // Rewards Program State
+  const [rewardsEnabled, setRewardsEnabled] = useState(false);
+  const [spendAmount, setSpendAmount] = useState('100');
+  const [rewardAmount, setRewardAmount] = useState('1');
+  const [minRedeemBalance, setMinRedeemBalance] = useState('50');
+  const [loadingRewards, setLoadingRewards] = useState(false);
+  const [savingRewards, setSavingRewards] = useState(false);
+
+  // Coupon Modal State
   const [modalVisible, setModalVisible] = useState(false);
   const [editingCoupon, setEditingCoupon] = useState<Coupon | null>(null);
 
-  // Form Fields
+  // Coupon Form Fields
   const [code, setCode] = useState('');
   const [description, setDescription] = useState('');
   const [discountType, setDiscountType] = useState<DiscountType>('percentage');
@@ -61,10 +74,27 @@ export default function CouponsScreen() {
     }
   }, [activeRestaurantId]);
 
+  const loadRewardsSettings = useCallback(async () => {
+    if (!activeRestaurantId) return;
+    try {
+      setLoadingRewards(true);
+      const settings = await loyaltyService.getLoyaltySettings(activeRestaurantId);
+      setRewardsEnabled(settings.is_enabled);
+      setSpendAmount(String(settings.spend_amount));
+      setRewardAmount(String(settings.reward_amount));
+      setMinRedeemBalance(String(settings.min_redeem_balance));
+    } catch (e: any) {
+      console.warn('Error loading rewards settings:', e);
+    } finally {
+      setLoadingRewards(false);
+    }
+  }, [activeRestaurantId]);
+
   useFocusEffect(
     useCallback(() => {
       loadCoupons();
-    }, [loadCoupons])
+      loadRewardsSettings();
+    }, [loadCoupons, loadRewardsSettings])
   );
 
   const openCreateModal = () => {
@@ -151,18 +181,58 @@ export default function CouponsScreen() {
     }
   };
 
+  const handleSaveRewards = async () => {
+    if (!activeRestaurantId) return;
+    const spend = parseFloat(spendAmount);
+    const reward = parseFloat(rewardAmount);
+    const minRedeem = parseFloat(minRedeemBalance);
+
+    if (isNaN(spend) || spend <= 0) {
+      Alert.alert('Validation Error', 'Spend amount must be greater than 0.');
+      return;
+    }
+    if (isNaN(reward) || reward < 0) {
+      Alert.alert('Validation Error', 'Reward amount cannot be negative.');
+      return;
+    }
+    if (isNaN(minRedeem) || minRedeem < 0) {
+      Alert.alert('Validation Error', 'Minimum redeem balance cannot be negative.');
+      return;
+    }
+
+    setSavingRewards(true);
+    try {
+      await loyaltyService.saveLoyaltySettings({
+        restaurant_id: activeRestaurantId,
+        is_enabled: rewardsEnabled,
+        spend_amount: spend,
+        reward_amount: reward,
+        min_redeem_balance: minRedeem,
+      });
+      Alert.alert('Success', 'Loyalty Rewards program settings saved successfully!');
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to save rewards settings.');
+    } finally {
+      setSavingRewards(false);
+    }
+  };
+
   const handleToggleActive = async (cpn: Coupon) => {
     try {
       await couponService.saveCoupon(
         {
-          ...cpn,
+          id: cpn.id,
+          restaurant_id: cpn.restaurant_id,
+          code: cpn.code,
+          discount_type: cpn.discount_type,
+          discount_value: cpn.discount_value,
           is_active: !cpn.is_active,
         },
         activeRestaurantId || undefined
       );
       loadCoupons();
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to update coupon status.');
+      Alert.alert('Error', e.message || 'Failed to toggle coupon status.');
     }
   };
 
@@ -170,21 +240,21 @@ export default function CouponsScreen() {
     const isArchiving = (cpn.used_count || 0) > 0;
     const title = isArchiving ? 'Archive Coupon' : 'Delete Coupon';
     const message = isArchiving
-      ? `Coupon "${cpn.code}" has been used ${cpn.used_count} time(s). It will be deactivated and archived to preserve order history.`
+      ? `Coupon "${cpn.code}" has been redeemed ${cpn.used_count} time(s). It will be archived and deactivated.`
       : `Are you sure you want to permanently delete coupon "${cpn.code}"?`;
 
     const doDelete = async () => {
       try {
         await couponService.deleteCoupon(cpn.id, activeRestaurantId || undefined);
+        Alert.alert('Success', isArchiving ? `Coupon "${cpn.code}" archived.` : `Coupon "${cpn.code}" deleted.`);
         loadCoupons();
       } catch (e: any) {
-        Alert.alert('Error', e.message || 'Failed to remove coupon.');
+        Alert.alert('Error', e.message || 'Failed to delete coupon.');
       }
     };
 
     if (Platform.OS === 'web') {
-      const confirmed = typeof window !== 'undefined' ? window.confirm(message) : true;
-      if (confirmed) {
+      if (typeof window !== 'undefined' && window.confirm(`${title}\n\n${message}`)) {
         doDelete();
       }
       return;
@@ -211,291 +281,438 @@ export default function CouponsScreen() {
           <Text style={{ fontSize: 44 }}>🔒</Text>
           <Text style={styles.restrictedTitle}>Admin Access Required</Text>
           <Text style={styles.restrictedSub}>
-            Only Restaurant Admins and Super Admins can manage coupon discounts.
+            Only Restaurant Admins and Super Admins can manage coupon discounts and loyalty rewards.
           </Text>
         </View>
       </View>
     );
   }
 
+  // Example Calculation for Preview
+  const numSpend = parseFloat(spendAmount) || 100;
+  const numReward = parseFloat(rewardAmount) || 1;
+  const previewExampleSpend = 550;
+  const previewCalculatedReward = numSpend > 0 ? ((previewExampleSpend / numSpend) * numReward).toFixed(2) : '0.00';
+
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Header & Tabs */}
       <View style={[styles.header, isMobile && styles.headerMobile]}>
         <View style={styles.headerTitleWrap}>
-          <Text style={styles.title}>Coupons & Deals ({coupons.length})</Text>
-          <Text style={styles.subTitle}>Manage promo codes, usage limits & marketplace offers</Text>
+          <Text style={styles.title}>Coupons & Loyalty Rewards</Text>
+          <Text style={styles.subTitle}>Manage promo deals, discount coupons & customer wallet cashbacks</Text>
         </View>
+
+        {activeTab === 'coupons' && (
+          <TouchableOpacity
+            style={[styles.createBtn, isMobile && styles.createBtnMobile]}
+            onPress={openCreateModal}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.createBtnText}>+ Create Coupon</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Segmented Tab Navigation */}
+      <View style={styles.tabNavRow}>
         <TouchableOpacity
-          style={[styles.createBtn, isMobile && styles.createBtnMobile]}
-          onPress={openCreateModal}
+          style={[styles.tabNavItem, activeTab === 'coupons' && styles.tabNavItemActive]}
+          onPress={() => setActiveTab('coupons')}
           activeOpacity={0.8}
         >
-          <Text style={styles.createBtnText}>+ Create Coupon</Text>
+          <Text style={[styles.tabNavText, activeTab === 'coupons' && styles.tabNavTextActive]}>
+            🎟️ Coupons ({coupons.length})
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.tabNavItem, activeTab === 'rewards' && styles.tabNavItemActive]}
+          onPress={() => setActiveTab('rewards')}
+          activeOpacity={0.8}
+        >
+          <Text style={[styles.tabNavText, activeTab === 'rewards' && styles.tabNavTextActive]}>
+            🎁 Loyalty Rewards & Wallet {rewardsEnabled ? '• ON' : ''}
+          </Text>
         </TouchableOpacity>
       </View>
 
-      {/* Main List */}
-      {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color="#2563EB" />
-          <Text style={{ marginTop: 10, color: '#64748B' }}>Loading coupons...</Text>
-        </View>
-      ) : coupons.length === 0 ? (
-        <View style={styles.emptyWrap}>
-          <Text style={{ fontSize: 44 }}>🏷️</Text>
-          <Text style={styles.emptyTitle}>No Coupons Created Yet</Text>
-          <Text style={styles.emptySub}>
-            Create flat or percentage discount coupons to delight customers and drive orders.
-          </Text>
-          <TouchableOpacity style={styles.createBtnEmpty} onPress={openCreateModal}>
-            <Text style={styles.createBtnText}>+ Create First Coupon</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <ScrollView contentContainerStyle={[styles.list, { paddingBottom: 40 }]}>
-          {coupons.map((c) => {
-            const now = new Date();
-            const isExpired = c.expiry_date && new Date(c.expiry_date) < now;
-            const notStarted = c.start_date && new Date(c.start_date) > now;
-            const isExhausted = c.usage_limit !== undefined && c.usage_limit !== null && (c.used_count || 0) >= c.usage_limit;
+      {/* TAB CONTENT: COUPONS */}
+      {activeTab === 'coupons' && (
+        <>
+          {loading ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="large" color="#2563EB" />
+              <Text style={{ marginTop: 10, color: '#64748B' }}>Loading coupons...</Text>
+            </View>
+          ) : coupons.length === 0 ? (
+            <View style={styles.emptyWrap}>
+              <Text style={{ fontSize: 44 }}>🏷️</Text>
+              <Text style={styles.emptyTitle}>No Coupons Created Yet</Text>
+              <Text style={styles.emptySub}>
+                Create flat or percentage discount coupons to delight customers and drive orders.
+              </Text>
+              <TouchableOpacity style={styles.createBtnEmpty} onPress={openCreateModal}>
+                <Text style={styles.createBtnText}>+ Create First Coupon</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <ScrollView contentContainerStyle={[styles.list, { paddingBottom: 40 }]}>
+              {coupons.map((c) => {
+                const now = new Date();
+                const isExpired = c.expiry_date && new Date(c.expiry_date) < now;
+                const notStarted = c.start_date && new Date(c.start_date) > now;
+                const isExhausted = c.usage_limit !== undefined && c.usage_limit !== null && (c.used_count || 0) >= c.usage_limit;
 
-            let statusLabel = 'ACTIVE';
-            let statusBg = '#DCFCE7';
-            let statusColor = '#15803D';
+                let statusLabel = 'ACTIVE';
+                let statusBg = '#DCFCE7';
+                let statusColor = '#15803D';
 
-            if (!c.is_active) {
-              statusLabel = 'INACTIVE';
-              statusBg = '#F1F5F9';
-              statusColor = '#64748B';
-            } else if (isExpired) {
-              statusLabel = 'EXPIRED';
-              statusBg = '#FEE2E2';
-              statusColor = '#B91C1C';
-            } else if (isExhausted) {
-              statusLabel = 'EXHAUSTED';
-              statusBg = '#FFEDD5';
-              statusColor = '#C2410C';
-            } else if (notStarted) {
-              statusLabel = 'SCHEDULED';
-              statusBg = '#EFF6FF';
-              statusColor = '#1D4ED8';
-            }
+                if (!c.is_active) {
+                  statusLabel = 'INACTIVE';
+                  statusBg = '#F1F5F9';
+                  statusColor = '#64748B';
+                } else if (isExpired) {
+                  statusLabel = 'EXPIRED';
+                  statusBg = '#FEE2E2';
+                  statusColor = '#B91C1C';
+                } else if (notStarted) {
+                  statusLabel = 'UPCOMING';
+                  statusBg = '#FEF3C7';
+                  statusColor = '#B45309';
+                } else if (isExhausted) {
+                  statusLabel = 'EXHAUSTED';
+                  statusBg = '#F3E8FF';
+                  statusColor = '#7E22CE';
+                }
 
-            return (
-              <View key={c.id} style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <View style={styles.codeRow}>
-                    <Text style={styles.codeText}>{c.code}</Text>
-                    <View style={[styles.statusBadge, { backgroundColor: statusBg }]}>
-                      <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+                return (
+                  <View key={c.id} style={styles.card}>
+                    <View style={styles.cardHeader}>
+                      <View style={styles.codeBadge}>
+                        <Text style={styles.codeText}>{c.code}</Text>
+                      </View>
+                      <View style={[styles.statusBadge, { backgroundColor: statusBg }]}>
+                        <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+                      </View>
                     </View>
-                  </View>
 
-                  <View style={styles.discountBadge}>
-                    <Text style={styles.discountBadgeText}>
+                    <Text style={styles.discountHighlight}>
                       {c.discount_type === 'percentage'
                         ? `${c.discount_value}% OFF`
                         : `₹${c.discount_value} FLAT OFF`}
                     </Text>
-                  </View>
-                </View>
 
-                {c.description ? <Text style={styles.descText}>{c.description}</Text> : null}
+                    {c.description ? <Text style={styles.descText}>{c.description}</Text> : null}
 
-                {/* Details Grid */}
-                <View style={styles.metaGrid}>
-                  <View style={styles.metaItem}>
-                    <Text style={styles.metaLabel}>MIN. ORDER</Text>
-                    <Text style={styles.metaVal}>{formatCurrency(c.min_order_value || 0)}</Text>
-                  </View>
-
-                  {c.discount_type === 'percentage' && c.max_discount ? (
-                    <View style={styles.metaItem}>
-                      <Text style={styles.metaLabel}>MAX DISCOUNT</Text>
-                      <Text style={styles.metaVal}>₹{c.max_discount}</Text>
+                    <View style={styles.metaRow}>
+                      {c.min_order_value ? (
+                        <Text style={styles.metaText}>Min Order: {formatCurrency(c.min_order_value)}</Text>
+                      ) : null}
+                      {c.max_discount ? (
+                        <Text style={styles.metaText}>Max Disc: {formatCurrency(c.max_discount)}</Text>
+                      ) : null}
+                      {c.usage_limit ? (
+                        <Text style={styles.metaText}>
+                          Usage: {c.used_count || 0} / {c.usage_limit}
+                        </Text>
+                      ) : (
+                        <Text style={styles.metaText}>Used: {c.used_count || 0} times</Text>
+                      )}
                     </View>
-                  ) : null}
 
-                  <View style={styles.metaItem}>
-                    <Text style={styles.metaLabel}>REDEMPTIONS</Text>
-                    <Text style={styles.metaVal}>
-                      {c.used_count || 0} {c.usage_limit ? `/ ${c.usage_limit} limit` : 'used'}
-                    </Text>
+                    {c.expiry_date && (
+                      <Text style={styles.expiryText}>
+                        Expires: {new Date(c.expiry_date).toLocaleDateString()}
+                      </Text>
+                    )}
+
+                    <View style={styles.actionsRow}>
+                      <TouchableOpacity
+                        style={[styles.toggleBtn, c.is_active ? styles.toggleBtnActive : styles.toggleBtnInactive]}
+                        onPress={() => handleToggleActive(c)}
+                      >
+                        <Text style={c.is_active ? styles.toggleTextActive : styles.toggleTextInactive}>
+                          {c.is_active ? 'Active' : 'Inactive'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity style={styles.editBtn} onPress={() => openEditModal(c)}>
+                        <Text style={styles.editBtnText}>Edit</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(c)}>
+                        <Text style={styles.deleteBtnText}>
+                          {(c.used_count || 0) > 0 ? 'Archive' : 'Delete'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                </View>
+                );
+              })}
+            </ScrollView>
+          )}
+        </>
+      )}
 
-                {/* Dates Row */}
-                <View style={styles.dateRow}>
-                  <Text style={styles.dateText}>
-                    📅 {c.start_date ? new Date(c.start_date).toLocaleDateString() : 'Immediate'} →{' '}
-                    {c.expiry_date ? new Date(c.expiry_date).toLocaleDateString() : 'No expiry'}
+      {/* TAB CONTENT: REWARDS SETTINGS */}
+      {activeTab === 'rewards' && (
+        <ScrollView contentContainerStyle={[styles.rewardsContainer, { paddingBottom: 60 }]}>
+          {loadingRewards ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="large" color="#2563EB" />
+              <Text style={{ marginTop: 10, color: '#64748B' }}>Loading rewards configuration...</Text>
+            </View>
+          ) : (
+            <View style={styles.rewardsCard}>
+              <View style={styles.rewardsCardHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rewardsTitle}>🎁 Loyalty Cashback & Customer Wallet</Text>
+                  <Text style={styles.rewardsSubtitle}>
+                    Automatically reward repeat customers with wallet cash balance on every settled order.
                   </Text>
                 </View>
-
-                {/* Card Actions */}
-                <View style={styles.actionsRow}>
-                  <TouchableOpacity
-                    style={[styles.toggleBtn, c.is_active ? styles.toggleBtnActive : styles.toggleBtnInactive]}
-                    onPress={() => handleToggleActive(c)}
-                  >
-                    <Text style={c.is_active ? styles.toggleTextActive : styles.toggleTextInactive}>
-                      {c.is_active ? 'Active' : 'Inactive'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.editBtn} onPress={() => openEditModal(c)}>
-                    <Text style={styles.editBtnText}>✏️ Edit</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(c)}>
-                    <Text style={styles.deleteBtnText}>🗑️</Text>
-                  </TouchableOpacity>
+                <View style={styles.rewardsSwitchWrap}>
+                  <Text style={[styles.rewardsSwitchLabel, rewardsEnabled && styles.rewardsSwitchLabelActive]}>
+                    {rewardsEnabled ? 'ENABLED' : 'DISABLED'}
+                  </Text>
+                  <Switch
+                    value={rewardsEnabled}
+                    onValueChange={setRewardsEnabled}
+                    trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                    thumbColor={rewardsEnabled ? '#2563EB' : '#FFFFFF'}
+                  />
                 </View>
               </View>
-            );
-          })}
+
+              <View style={styles.rewardsDivider} />
+
+              {/* Earn Rule Inputs */}
+              <Text style={styles.rewardsSectionTitle}>💰 Cashback Earning Rule</Text>
+              <Text style={styles.rewardsSectionSub}>
+                Set how much a customer must spend to earn wallet cashback on settled orders.
+              </Text>
+
+              <View style={[styles.rewardsInputGrid, isMobile && styles.rewardsInputGridMobile]}>
+                <View style={styles.rewardsInputCol}>
+                  <Text style={styles.rewardsInputLabel}>Spend Amount (₹)</Text>
+                  <View style={styles.currencyInputWrap}>
+                    <Text style={styles.currencyPrefix}>₹</Text>
+                    <TextInput
+                      style={styles.currencyInput}
+                      value={spendAmount}
+                      onChangeText={setSpendAmount}
+                      keyboardType="numeric"
+                      placeholder="100"
+                    />
+                  </View>
+                  <Text style={styles.rewardsInputHint}>Base spend benchmark</Text>
+                </View>
+
+                <View style={styles.rewardsInputCol}>
+                  <Text style={styles.rewardsInputLabel}>Earn Reward Amount (₹)</Text>
+                  <View style={styles.currencyInputWrap}>
+                    <Text style={styles.currencyPrefix}>₹</Text>
+                    <TextInput
+                      style={styles.currencyInput}
+                      value={rewardAmount}
+                      onChangeText={setRewardAmount}
+                      keyboardType="numeric"
+                      placeholder="1"
+                    />
+                  </View>
+                  <Text style={styles.rewardsInputHint}>Wallet credit earned per spend</Text>
+                </View>
+              </View>
+
+              <View style={styles.rewardsDivider} />
+
+              {/* Redemption Rule */}
+              <Text style={styles.rewardsSectionTitle}>💳 Wallet Balance Redemption Rule</Text>
+              <Text style={styles.rewardsSectionSub}>
+                Customer can redeem their accumulated wallet balance at POS checkout once they meet this threshold.
+              </Text>
+
+              <View style={[styles.rewardsInputGrid, isMobile && styles.rewardsInputGridMobile]}>
+                <View style={styles.rewardsInputCol}>
+                  <Text style={styles.rewardsInputLabel}>Minimum Wallet Balance to Redeem (₹)</Text>
+                  <View style={styles.currencyInputWrap}>
+                    <Text style={styles.currencyPrefix}>₹</Text>
+                    <TextInput
+                      style={styles.currencyInput}
+                      value={minRedeemBalance}
+                      onChangeText={setMinRedeemBalance}
+                      keyboardType="numeric"
+                      placeholder="50"
+                    />
+                  </View>
+                  <Text style={styles.rewardsInputHint}>
+                    Prevents tiny partial redemptions before loyalty threshold is reached
+                  </Text>
+                </View>
+              </View>
+
+              {/* Live Rule Simulation Box */}
+              <View style={styles.previewBox}>
+                <Text style={styles.previewTitle}>🔍 Live Rule Simulation</Text>
+                <Text style={styles.previewText}>
+                  • Customer spends <Text style={styles.previewBold}>₹{previewExampleSpend}</Text> on a meal.
+                </Text>
+                <Text style={styles.previewText}>
+                  • Reward earned: <Text style={styles.previewBold}>₹{previewCalculatedReward}</Text> added to their wallet upon settlement.
+                </Text>
+                <Text style={styles.previewText}>
+                  • Redemption unlocked when wallet balance reaches <Text style={styles.previewBold}>₹{minRedeemBalance || '0'}</Text>.
+                </Text>
+                <Text style={styles.previewSubtext}>
+                  * Customer is uniquely identified across visits by their normalized 10-digit mobile number.
+                </Text>
+              </View>
+
+              {/* Save Button */}
+              <TouchableOpacity
+                style={[styles.saveRewardsBtn, savingRewards && styles.saveRewardsBtnDisabled]}
+                onPress={handleSaveRewards}
+                disabled={savingRewards}
+                activeOpacity={0.8}
+              >
+                {savingRewards ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.saveRewardsBtnText}>💾 Save Rewards Settings</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
         </ScrollView>
       )}
 
-      {/* Create / Edit Modal */}
-      <Modal visible={modalVisible} transparent animationType="slide">
+      {/* CREATE / EDIT COUPON MODAL */}
+      <Modal visible={modalVisible} transparent animationType="fade" onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {editingCoupon ? `Edit Coupon #${editingCoupon.code}` : 'Create New Coupon'}
+                {editingCoupon ? `Edit Coupon: ${editingCoupon.code}` : 'Create New Coupon'}
               </Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.closeBtn}>
-                <Text style={{ fontSize: 18, color: '#64748B' }}>✕</Text>
+              <TouchableOpacity style={styles.closeBtn} onPress={() => setModalVisible(false)}>
+                <Text style={{ fontSize: 18, color: '#64748B', fontWeight: 'bold' }}>✕</Text>
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalForm} showsVerticalScrollIndicator={false}>
+            <ScrollView contentContainerStyle={styles.modalForm}>
               <Text style={styles.label}>Coupon Code *</Text>
               <TextInput
                 style={styles.input}
-                placeholder="e.g. FESTIVE20"
-                placeholderTextColor="#64748b"
                 value={code}
                 onChangeText={(t) => setCode(t.toUpperCase())}
+                placeholder="e.g. FLAT50, FESTIVE10"
                 autoCapitalize="characters"
               />
 
               <Text style={styles.label}>Description</Text>
               <TextInput
                 style={styles.input}
-                placeholder="e.g. 20% off on all items above ₹500"
-                placeholderTextColor="#64748b"
                 value={description}
                 onChangeText={setDescription}
+                placeholder="e.g. Special flat discount for weekend diners"
               />
 
-              {/* Discount Type Selector */}
-              <Text style={styles.label}>Discount Type *</Text>
+              <Text style={styles.label}>Discount Type</Text>
               <View style={styles.typeSelectorRow}>
                 <TouchableOpacity
                   style={[styles.typeBtn, discountType === 'percentage' && styles.typeBtnSelected]}
                   onPress={() => setDiscountType('percentage')}
                 >
                   <Text style={[styles.typeBtnText, discountType === 'percentage' && styles.typeBtnTextSelected]}>
-                    Percentage (%)
+                    % Percentage
                   </Text>
                 </TouchableOpacity>
-
                 <TouchableOpacity
                   style={[styles.typeBtn, discountType === 'fixed' && styles.typeBtnSelected]}
                   onPress={() => setDiscountType('fixed')}
                 >
                   <Text style={[styles.typeBtnText, discountType === 'fixed' && styles.typeBtnTextSelected]}>
-                    Flat Amount (₹)
+                    ₹ Flat Amount
                   </Text>
                 </TouchableOpacity>
               </View>
 
-              <View style={styles.formRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>
-                    {discountType === 'percentage' ? 'Discount Percentage (%) *' : 'Flat Discount (₹) *'}
-                  </Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g. 20"
-                    placeholderTextColor="#64748b"
-                    keyboardType="numeric"
-                    value={discountValue}
-                    onChangeText={setDiscountValue}
-                  />
-                </View>
-
-                {discountType === 'percentage' ? (
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.label}>Max Cap (₹)</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="e.g. 150 (Optional)"
-                      placeholderTextColor="#64748b"
-                      keyboardType="numeric"
-                      value={maxDiscount}
-                      onChangeText={setMaxDiscount}
-                    />
-                  </View>
-                ) : null}
-              </View>
+              <Text style={styles.label}>
+                {discountType === 'percentage' ? 'Discount Percentage (%) *' : 'Discount Amount (₹) *'}
+              </Text>
+              <TextInput
+                style={styles.input}
+                value={discountValue}
+                onChangeText={setDiscountValue}
+                keyboardType="numeric"
+                placeholder={discountType === 'percentage' ? '10' : '50'}
+              />
 
               <View style={styles.formRow}>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, marginRight: 8 }}>
                   <Text style={styles.label}>Min Order Value (₹)</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="0 for no minimum"
-                    placeholderTextColor="#64748b"
-                    keyboardType="numeric"
                     value={minOrderValue}
                     onChangeText={setMinOrderValue}
+                    keyboardType="numeric"
+                    placeholder="0"
                   />
                 </View>
 
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={styles.label}>Max Total Coupons</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g. 100 (Optional)"
-                    placeholderTextColor="#64748b"
-                    keyboardType="numeric"
-                    value={usageLimit}
-                    onChangeText={setUsageLimit}
-                  />
-                </View>
+                {discountType === 'percentage' && (
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.label}>Max Cap (₹)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={maxDiscount}
+                      onChangeText={setMaxDiscount}
+                      keyboardType="numeric"
+                      placeholder="Optional"
+                    />
+                  </View>
+                )}
               </View>
 
+              <Text style={styles.label}>Total Usage Limit</Text>
+              <TextInput
+                style={styles.input}
+                value={usageLimit}
+                onChangeText={setUsageLimit}
+                keyboardType="numeric"
+                placeholder="Leave blank for unlimited"
+              />
+
               <View style={styles.formRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Start Date (YYYY-MM-DD)</Text>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.label}>Start Date</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#64748b"
                     value={startDate}
                     onChangeText={setStartDate}
+                    placeholder="YYYY-MM-DD"
                   />
                 </View>
-
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={styles.label}>Expiry Date (YYYY-MM-DD)</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>Expiry Date</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#64748b"
                     value={expiryDate}
                     onChangeText={setExpiryDate}
+                    placeholder="YYYY-MM-DD"
                   />
                 </View>
               </View>
 
               <View style={styles.switchRow}>
-                <Text style={styles.switchLabel}>Active & Redeemable</Text>
-                <Switch value={isActive} onValueChange={setIsActive} trackColor={{ true: '#2563EB', false: '#CBD5E1' }} />
+                <Text style={styles.switchLabel}>Active Status</Text>
+                <Switch
+                  value={isActive}
+                  onValueChange={setIsActive}
+                  trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                  thumbColor={isActive ? '#2563EB' : '#FFFFFF'}
+                />
               </View>
 
               <TouchableOpacity
@@ -506,9 +723,7 @@ export default function CouponsScreen() {
                 {saving ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
-                  <Text style={styles.saveBtnText}>
-                    {editingCoupon ? 'Update Coupon' : 'Save & Publish Coupon'}
-                  </Text>
+                  <Text style={styles.saveBtnText}>{editingCoupon ? 'Update Coupon' : 'Create Coupon'}</Text>
                 )}
               </TouchableOpacity>
             </ScrollView>
@@ -522,69 +737,107 @@ export default function CouponsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
   header: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderColor: '#E2E8F0',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 12,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
-  headerMobile: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
-    gap: 10,
-  },
-  headerTitleWrap: {
-    flex: 1,
-    minWidth: 0,
-  },
-  title: { fontSize: 18, fontWeight: '900', color: '#0F172A' },
-  subTitle: { fontSize: 11, color: '#64748B', marginTop: 2, lineHeight: 16 },
+  headerMobile: { flexDirection: 'column', alignItems: 'flex-start', gap: 12 },
+  headerTitleWrap: { flex: 1 },
+  title: { fontSize: 20, fontWeight: '900', color: '#0F172A' },
+  subTitle: { fontSize: 13, color: '#64748B', marginTop: 2 },
   createBtn: {
     backgroundColor: '#2563EB',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  createBtnMobile: {
-    width: '100%',
+    paddingHorizontal: 16,
     paddingVertical: 10,
+    borderRadius: 8,
   },
+  createBtnMobile: { width: '100%', alignItems: 'center' },
+  createBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 13 },
+  tabNavRow: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    gap: 12,
+  },
+  tabNavItem: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  tabNavItemActive: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#3B82F6',
+  },
+  tabNavText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  tabNavTextActive: {
+    color: '#1D4ED8',
+    fontWeight: '800',
+  },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
+  restrictedBox: {
+    backgroundColor: '#FFFFFF',
+    margin: 20,
+    padding: 30,
+    borderRadius: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  restrictedTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginTop: 12 },
+  restrictedSub: { fontSize: 13, color: '#64748B', textAlign: 'center', marginTop: 6, maxWidth: 360 },
+  emptyWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 30,
+    backgroundColor: '#FFFFFF',
+    margin: 20,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  emptyTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginTop: 12 },
+  emptySub: { fontSize: 13, color: '#64748B', textAlign: 'center', marginTop: 6, maxWidth: 380 },
   createBtnEmpty: {
     backgroundColor: '#2563EB',
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 8,
     marginTop: 16,
-    alignItems: 'center',
   },
-  createBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
-  emptyTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginTop: 12 },
-  emptySub: { fontSize: 13, color: '#64748B', textAlign: 'center', marginTop: 6, lineHeight: 18 },
-  restrictedBox: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
-  restrictedTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginTop: 12 },
-  restrictedSub: { fontSize: 13, color: '#64748B', textAlign: 'center', marginTop: 6 },
-  list: { padding: 16 },
+  list: {
+    padding: 16,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 14,
+    borderRadius: 12,
+    padding: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    marginBottom: 12,
+    width: Platform.OS === 'web' ? 340 : '100%',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 1,
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -592,31 +845,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
-  codeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  codeText: { fontSize: 16, fontWeight: '900', color: '#0F172A', letterSpacing: 0.5 },
-  statusBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 },
-  statusText: { fontSize: 10, fontWeight: '800' },
-  discountBadge: {
-    backgroundColor: '#DCFCE7',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+  codeBadge: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
   },
-  discountBadgeText: { fontSize: 12, fontWeight: '900', color: '#15803D' },
-  descText: { fontSize: 12, color: '#475569', marginBottom: 10, lineHeight: 16 },
-  metaGrid: {
-    flexDirection: 'row',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 8,
-    padding: 8,
-    gap: 12,
-    marginBottom: 8,
-  },
-  metaItem: { flex: 1 },
-  metaLabel: { fontSize: 9, fontWeight: '700', color: '#64748B' },
-  metaVal: { fontSize: 12, fontWeight: '800', color: '#0F172A', marginTop: 2 },
-  dateRow: { marginBottom: 12 },
-  dateText: { fontSize: 11, color: '#64748B' },
+  codeText: { fontSize: 13, fontWeight: '900', color: '#1D4ED8', letterSpacing: 0.5 },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  statusText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  discountHighlight: { fontSize: 18, fontWeight: '900', color: '#0F172A', marginBottom: 4 },
+  descText: { fontSize: 12, color: '#64748B', marginBottom: 8 },
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
+  metaText: { fontSize: 11, color: '#475569', backgroundColor: '#F8FAFC', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  expiryText: { fontSize: 11, color: '#94A3B8', marginBottom: 12 },
   actionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -653,6 +897,158 @@ const styles = StyleSheet.create({
     borderColor: '#FECDD3',
   },
   deleteBtnText: { fontSize: 11, fontWeight: '800', color: '#E11D48' },
+  rewardsContainer: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  rewardsCard: {
+    width: '100%',
+    maxWidth: 680,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  rewardsCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 16,
+  },
+  rewardsTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  rewardsSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+    marginTop: 4,
+  },
+  rewardsSwitchWrap: {
+    alignItems: 'center',
+  },
+  rewardsSwitchLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#94A3B8',
+    marginBottom: 4,
+  },
+  rewardsSwitchLabelActive: {
+    color: '#2563EB',
+  },
+  rewardsDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 20,
+  },
+  rewardsSectionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#1E293B',
+  },
+  rewardsSectionSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+    marginBottom: 14,
+  },
+  rewardsInputGrid: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  rewardsInputGridMobile: {
+    flexDirection: 'column',
+  },
+  rewardsInputCol: {
+    flex: 1,
+  },
+  rewardsInputLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  currencyInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+  },
+  currencyPrefix: {
+    paddingLeft: 12,
+    paddingRight: 6,
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#64748B',
+  },
+  currencyInput: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingRight: 12,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  rewardsInputHint: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 4,
+  },
+  previewBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginTop: 20,
+    marginBottom: 24,
+  },
+  previewTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 8,
+  },
+  previewText: {
+    fontSize: 13,
+    color: '#334155',
+    lineHeight: 20,
+    marginBottom: 4,
+  },
+  previewBold: {
+    fontWeight: '800',
+    color: '#2563EB',
+  },
+  previewSubtext: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 8,
+    fontStyle: 'italic',
+  },
+  saveRewardsBtn: {
+    backgroundColor: '#2563EB',
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  saveRewardsBtnDisabled: {
+    opacity: 0.6,
+  },
+  saveRewardsBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -723,4 +1119,3 @@ const styles = StyleSheet.create({
   },
   saveBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
 });
-

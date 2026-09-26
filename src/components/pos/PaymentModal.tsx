@@ -13,13 +13,14 @@ import {
   Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Order, PaymentMethod } from '../../types';
+import { Order, PaymentMethod, CustomerWalletInfo } from '../../types';
 import { formatCurrency, numberToWords } from '../../utils/currency';
 import { calculateOrderTotals, getOrderSubtotal } from '../../utils/gst';
 import { formatOrderDateTime } from '../../utils/dateUtils';
 import { validateGSTIN } from '../../utils/validators';
 import { useSettings } from '../../context/SettingsContext';
 import { resolveOrderDiscounts } from '../../services/api/orderService';
+import { loyaltyService } from '../../services/api/loyaltyService';
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -40,6 +41,7 @@ interface PaymentModalProps {
       round_off: number;
       payable_amount: number;
       customer_gstin?: string;
+      wallet_redeem_amount?: number;
     }
   ) => Promise<void>;
 }
@@ -81,6 +83,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [refNo, setRefNo] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
+  // Customer Loyalty Wallet State
+  const [walletInfo, setWalletInfo] = useState<CustomerWalletInfo | null>(null);
+  const [isRedeemWallet, setIsRedeemWallet] = useState<boolean>(false);
+
   useEffect(() => {
     if (order) {
       setPaymentMethod(
@@ -98,8 +104,19 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       setDiscountInput(
         resolvedModalDiscounts.discount_value > 0 ? String(resolvedModalDiscounts.discount_value) : ''
       );
+
+      // Fetch customer wallet info if customer mobile and restaurant are available
+      if (order.restaurant_id && order.customer_phone) {
+        loyaltyService
+          .getCustomerWallet(order.restaurant_id, order.customer_phone)
+          .then((info) => setWalletInfo(info))
+          .catch((e) => console.warn('[PaymentModal] Error loading wallet info:', e));
+      } else {
+        setWalletInfo(null);
+        setIsRedeemWallet(false);
+      }
     }
-  }, [order?.id]);
+  }, [order?.id, order?.restaurant_id, order?.customer_phone]);
 
   // Centralized real-time calculation
   const subtotal = useMemo(() => getOrderSubtotal(order), [order]);
@@ -145,15 +162,28 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const alreadyPaid = Number(order?.paid_amount || 0);
   const remainingBalance = Math.max(0, totals.payableAmount - alreadyPaid);
 
-  const [tendered, setTendered] = useState<string>(remainingBalance.toString());
+  // Wallet redemption calculation
+  const walletBalance = walletInfo?.balance || 0;
+  const minRequired = walletInfo?.min_redeem_balance || 50;
+  const isRewardsEnabled = Boolean(walletInfo?.is_enabled);
+  const canRedeem = Boolean(isRewardsEnabled && walletBalance >= minRequired && walletBalance > 0);
 
-  // Keep tendered synchronized with recalculated remaining balance unless manually customized
+  const walletRedeemAmount = useMemo(() => {
+    if (!isRedeemWallet || !canRedeem) return 0;
+    return Math.min(walletBalance, remainingBalance);
+  }, [isRedeemWallet, canRedeem, walletBalance, remainingBalance]);
+
+  const netPayable = Math.max(0, remainingBalance - walletRedeemAmount);
+
+  const [tendered, setTendered] = useState<string>(netPayable.toString());
+
+  // Keep tendered synchronized with recalculated net payable balance
   useEffect(() => {
-    setTendered(remainingBalance.toString());
-  }, [remainingBalance]);
+    setTendered(netPayable.toString());
+  }, [netPayable]);
 
   const numTendered = parseFloat(tendered) || 0;
-  const isEnough = remainingBalance <= 0 || numTendered >= remainingBalance;
+  const isEnough = netPayable <= 0 || numTendered >= netPayable;
   const isGstinValid = gstinValidation.isValid;
 
   const handleSubmit = async () => {
@@ -161,8 +191,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     try {
       setIsProcessing(true);
       await onProcessPayment(
-        paymentMethod,
-        remainingBalance > 0 ? Math.min(numTendered, remainingBalance) : 0,
+        netPayable > 0 ? paymentMethod : 'cash',
+        netPayable > 0 ? Math.min(numTendered, netPayable) : 0,
         refNo,
         {
           discount_type: discountType,
@@ -175,6 +205,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           round_off: totals.roundOff,
           payable_amount: totals.payableAmount,
           customer_gstin: customerGstinInput.trim().toUpperCase() || undefined,
+          wallet_redeem_amount: walletRedeemAmount,
         }
       );
       onClose();
@@ -377,10 +408,95 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 )}
               </View>
 
-              {/* 3. PAYMENT MODE SELECTION */}
-              {remainingBalance > 0 && (
+              {/* 3. CUSTOMER LOYALTY WALLET REDEMPTION SECTION */}
+              {isRewardsEnabled && order.customer_phone ? (
+                <View style={styles.walletSectionBox}>
+                  <View style={styles.walletHeaderRow}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={{ fontSize: 16 }}>🎁</Text>
+                      <Text style={styles.walletHeaderTitle}>Customer Loyalty Wallet</Text>
+                    </View>
+                    <View style={styles.walletBalanceBadge}>
+                      <Text style={styles.walletBalanceBadgeText}>
+                        Balance: {formatCurrency(walletBalance)}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.walletCheckboxRow, !canRedeem && styles.walletCheckboxRowDisabled]}
+                    disabled={!canRedeem}
+                    onPress={() => setIsRedeemWallet(!isRedeemWallet)}
+                    activeOpacity={0.8}
+                  >
+                    <View
+                      style={[
+                        styles.checkboxBox,
+                        isRedeemWallet && styles.checkboxBoxChecked,
+                        !canRedeem && styles.checkboxBoxDisabled,
+                      ]}
+                    >
+                      {isRedeemWallet && <Text style={styles.checkboxCheck}>✓</Text>}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.checkboxLabel, !canRedeem && styles.checkboxLabelDisabled]}>
+                        Redeem Wallet Balance
+                      </Text>
+                      {!canRedeem && (
+                        <Text style={styles.walletHintText}>
+                          {walletBalance > 0
+                            ? `Minimum ${formatCurrency(minRequired)} wallet balance required for redemption.`
+                            : `Customer has ₹0.00 wallet balance.`}
+                        </Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+
+                  {isRedeemWallet && canRedeem && (
+                    <View style={styles.walletBreakdownBox}>
+                      <View style={styles.walletBreakdownRow}>
+                        <Text style={styles.walletBreakdownLabel}>Wallet Available:</Text>
+                        <Text style={styles.walletBreakdownVal}>{formatCurrency(walletBalance)}</Text>
+                      </View>
+                      <View style={styles.walletBreakdownRow}>
+                        <Text style={styles.walletBreakdownLabel}>Order Due:</Text>
+                        <Text style={styles.walletBreakdownVal}>{formatCurrency(remainingBalance)}</Text>
+                      </View>
+                      <View style={styles.walletBreakdownRow}>
+                        <Text style={[styles.walletBreakdownLabel, { color: '#059669', fontWeight: '800' }]}>
+                          Wallet Used:
+                        </Text>
+                        <Text style={[styles.walletBreakdownVal, { color: '#059669', fontWeight: '900' }]}>
+                          - {formatCurrency(walletRedeemAmount)}
+                        </Text>
+                      </View>
+                      <View
+                        style={[
+                          styles.walletBreakdownRow,
+                          { borderTopWidth: 1, borderTopColor: '#CBD5E1', paddingTop: 4, marginTop: 2 },
+                        ]}
+                      >
+                        <Text style={[styles.walletBreakdownLabel, { fontWeight: '900', color: '#0F172A' }]}>
+                          Remaining to Pay:
+                        </Text>
+                        <Text
+                          style={[
+                            styles.walletBreakdownVal,
+                            { fontWeight: '900', color: '#2563EB', fontSize: 14 },
+                          ]}
+                        >
+                          {formatCurrency(netPayable)}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              ) : null}
+
+              {/* 4. PAYMENT MODE SELECTION */}
+              {netPayable > 0 && (
                 <>
-                  <Text style={styles.fieldLabel}>Select Payment Mode *</Text>
+                  <Text style={styles.fieldLabel}>Select Payment Mode for Remaining Due *</Text>
                   <View style={styles.methodRow}>
                     {methods.map((m) => (
                       <TouchableOpacity
@@ -395,7 +511,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                     ))}
                   </View>
 
-                  {/* 4. TENDERED / REFERENCE AMOUNT */}
+                  {/* 5. TENDERED / REFERENCE AMOUNT */}
                   <Text style={styles.fieldLabel}>Tendered Amount (₹)</Text>
                   <TextInput
                     style={styles.input}
@@ -422,7 +538,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
               {/* B2B Customer GSTIN (Optional) */}
               {isGstEnabled && (
-                <View style={{ marginBottom: 8 }}>
+                <View style={{ marginBottom: 8, marginTop: netPayable <= 0 ? 12 : 0 }}>
                   <Text style={styles.fieldLabel}>Customer GSTIN (Optional for B2B Invoice)</Text>
                   <TextInput
                     style={[
@@ -444,7 +560,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 </View>
               )}
 
-              {/* 5. SUBMIT ACTION */}
+              {/* 6. SUBMIT ACTION */}
               <TouchableOpacity
                 testID="payment-modal-submit-btn"
                 disabled={!isEnough || isProcessing}
@@ -452,8 +568,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 onPress={handleSubmit}
               >
                 <Text style={styles.payBtnText}>
-                  {remainingBalance <= 0
-                    ? 'SETTLE ORDER & RELEASE TABLE (₹0 DUE)'
+                  {remainingBalance <= 0 || (walletRedeemAmount > 0 && netPayable <= 0)
+                    ? walletRedeemAmount > 0
+                      ? `SETTLE ORDER WITH WALLET (${formatCurrency(walletRedeemAmount)})`
+                      : 'SETTLE ORDER & RELEASE TABLE (₹0 DUE)'
+                    : walletRedeemAmount > 0
+                    ? `REDEEM ${formatCurrency(walletRedeemAmount)} + COLLECT ${formatCurrency(Math.min(numTendered, netPayable))}`
                     : `COLLECT ${formatCurrency(Math.min(numTendered, remainingBalance))} & CLOSE ORDER`}
                 </Text>
               </TouchableOpacity>
@@ -468,7 +588,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 16,
@@ -476,34 +596,35 @@ const styles = StyleSheet.create({
   content: {
     backgroundColor: '#ffffff',
     borderRadius: 20,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    elevation: 8,
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
+    padding: 20,
+    width: '100%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 10,
+    maxHeight: '100%',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-    paddingBottom: 10,
+    alignItems: 'flex-start',
+    marginBottom: 16,
+    paddingBottom: 12,
     borderBottomWidth: 1,
-    borderColor: '#e2e8f0',
+    borderBottomColor: '#f1f5f9',
   },
   title: {
-    fontSize: 17,
-    fontWeight: '900',
+    fontSize: 18,
+    fontWeight: '800',
     color: '#0f172a',
+    letterSpacing: -0.3,
   },
   subTitle: {
-    fontSize: 11,
+    fontSize: 12,
+    fontWeight: '600',
     color: '#64748b',
     marginTop: 2,
-    fontWeight: '600',
   },
   closeBtn: {
     padding: 6,
@@ -512,7 +633,7 @@ const styles = StyleSheet.create({
   },
   close: {
     fontSize: 14,
-    fontWeight: 'bold',
+    fontWeight: '700',
     color: '#64748b',
   },
   sectionBox: {
@@ -521,115 +642,225 @@ const styles = StyleSheet.create({
     padding: 12,
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    marginBottom: 12,
+    marginBottom: 14,
   },
   sectionLabel: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#334155',
+    color: '#475569',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 8,
   },
   discountTypeRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
   },
   discTypeBtn: {
     flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
     borderRadius: 8,
     backgroundColor: '#ffffff',
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: '#cbd5e1',
     alignItems: 'center',
   },
   discTypeBtnActive: {
-    backgroundColor: '#2563eb',
-    borderColor: '#1d4ed8',
+    backgroundColor: '#eff6ff',
+    borderColor: '#3b82f6',
   },
   discTypeText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#475569',
+    color: '#64748b',
   },
   discTypeTextActive: {
-    color: '#ffffff',
-    fontWeight: '900',
+    color: '#2563eb',
+    fontWeight: '800',
   },
   discInputWrapper: {
     marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
   },
   discInputLabel: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '700',
-    color: '#64748b',
+    color: '#334155',
     marginBottom: 4,
   },
   discInput: {
     backgroundColor: '#ffffff',
-    borderWidth: 1.5,
-    borderColor: '#93c5fd',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
     borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     fontSize: 13,
     fontWeight: '700',
     color: '#0f172a',
   },
   billBreakdownBox: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#ffffff',
     borderRadius: 12,
     padding: 12,
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    marginBottom: 12,
+    marginBottom: 14,
   },
   billRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginVertical: 2,
+    alignItems: 'center',
+    paddingVertical: 3,
   },
   billLabel: {
-    fontSize: 11,
+    fontSize: 12,
+    fontWeight: '600',
     color: '#64748b',
   },
   billVal: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
-    color: '#0f172a',
+    color: '#334155',
   },
   billTotalRow: {
+    marginTop: 6,
+    paddingTop: 8,
     borderTopWidth: 1,
-    borderColor: '#cbd5e1',
-    paddingTop: 6,
-    marginTop: 4,
-    alignItems: 'center',
+    borderTopColor: '#e2e8f0',
   },
   billTotalLabel: {
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: '800',
     color: '#0f172a',
   },
   billTotalVal: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '900',
-    color: '#16a34a',
+    color: '#2563eb',
   },
   wordsText: {
     fontSize: 10,
+    fontWeight: '600',
+    color: '#94a3b8',
     fontStyle: 'italic',
-    color: '#64748b',
-    marginTop: 3,
+    marginTop: 2,
     textAlign: 'right',
+  },
+  walletSectionBox: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    marginBottom: 14,
+  },
+  walletHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  walletHeaderTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  walletBalanceBadge: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+  },
+  walletBalanceBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#166534',
+  },
+  walletCheckboxRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginTop: 4,
+  },
+  walletCheckboxRowDisabled: {
+    opacity: 0.7,
+  },
+  checkboxBox: {
+    width: 20,
+    height: 20,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: '#16A34A',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  checkboxBoxChecked: {
+    backgroundColor: '#16A34A',
+    borderColor: '#16A34A',
+  },
+  checkboxBoxDisabled: {
+    borderColor: '#94A3B8',
+    backgroundColor: '#F1F5F9',
+  },
+  checkboxCheck: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  checkboxLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  checkboxLabelDisabled: {
+    color: '#64748B',
+  },
+  walletHintText: {
+    fontSize: 11,
+    color: '#DC2626',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  walletBreakdownBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+    marginTop: 10,
+    gap: 4,
+  },
+  walletBreakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  walletBreakdownLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  walletBreakdownVal: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1E293B',
   },
   fieldLabel: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#334155',
+    color: '#475569',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
     marginBottom: 6,
-    marginTop: 2,
+    marginTop: 4,
   },
   methodRow: {
     flexDirection: 'row',
@@ -638,55 +869,61 @@ const styles = StyleSheet.create({
   },
   mBtn: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 9,
+    paddingHorizontal: 4,
     borderRadius: 10,
-    backgroundColor: '#f1f5f9',
-    alignItems: 'center',
+    backgroundColor: '#f8fafc',
     borderWidth: 1,
     borderColor: '#e2e8f0',
+    alignItems: 'center',
   },
   mBtnActive: {
-    backgroundColor: '#0f172a',
-    borderColor: '#0f172a',
+    backgroundColor: '#eff6ff',
+    borderColor: '#3b82f6',
   },
   mText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#475569',
+    color: '#64748b',
   },
   mTextActive: {
-    color: '#ffffff',
-    fontWeight: '900',
+    color: '#2563eb',
+    fontWeight: '800',
   },
   input: {
     backgroundColor: '#f8fafc',
     borderWidth: 1,
     borderColor: '#cbd5e1',
-    borderRadius: 8,
+    borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 12,
+    paddingVertical: 9,
+    fontSize: 14,
+    fontWeight: '700',
     color: '#0f172a',
     marginBottom: 12,
   },
   payBtn: {
     backgroundColor: '#16a34a',
-    paddingVertical: 13,
+    paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
-    marginTop: 4,
-    marginBottom: 6,
-    elevation: 3,
+    marginTop: 10,
+    marginBottom: 8,
+    shadowColor: '#16a34a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
   },
   payBtnDisabled: {
-    backgroundColor: '#cbd5e1',
+    backgroundColor: '#94a3b8',
+    shadowOpacity: 0,
     elevation: 0,
-    opacity: 0.6,
   },
   payBtnText: {
     color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '900',
+    fontSize: 14,
+    fontWeight: '800',
     letterSpacing: 0.5,
   },
 });

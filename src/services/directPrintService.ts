@@ -33,10 +33,122 @@ export class DirectPrintError extends Error {
 }
 
 /**
+ * Public X.509 Digital Certificate for RestroZ POS Printing System.
+ * Note: Digital certificates contain only the public key and identity metadata (Common Name: RestroZ POS, Organization: RestroZ Technologies).
+ * It is completely safe to distribute publicly.
+ */
+export const RESTROZ_PUBLIC_CERTIFICATE = `-----BEGIN CERTIFICATE-----
+MIIDoTCCAomgAwIBAgIUOBiazfCjA53dg+oaFSyDyRZcQXYwDQYJKoZIhvcNAQEL
+BQAwYDEUMBIGA1UEAwwLUmVzdHJvWiBQT1MxHTAbBgNVBAoMFFJlc3Ryb1ogVGVj
+aG5vbG9naWVzMRwwGgYDVQQLDBNQT1MgUHJpbnRpbmcgU3lzdGVtMQswCQYDVQQG
+EwJJTjAeFw0yNjA5MjYyMzIzMjVaFw0zNjA5MjMyMzIzMjVaMGAxFDASBgNVBAMM
+C1Jlc3Ryb1ogUE9TMR0wGwYDVQQKDBRSZXN0cm9aIFRlY2hub2xvZ2llczEcMBoG
+A1UECwwTUE9TIFByaW50aW5nIFN5c3RlbTELMAkGA1UEBhMCSU4wggEiMA0GCSqG
+SIb3DQEBAQUAA4IBDwAwggEKAoIBAQDnCWo/jjz2odnstyP7VEDrr1RjiIgTYDZF
+cExo1W1nT7VBr/AmT+dMAnmRtPIF1s2pQnyWlaBp1wAWuwdr9e7I9QEq3XHZBqDp
+gzxFXxKNptMN04uKG+RCAgZ5HyZGPyqXR8ksT4hDZ6/8ORxc29y7kkTPr2U/jxHX
+YWOzQdsLbfYOxYpwdwAHw0fwNOm3UAwZuKJConqhOLj7oXj5OiCfCHUQK104Gdiy
+ft1x0mWq59EEK/+/m3hidRTm7k4XHsXAwXh251Sl1LMeWDwoBggK+ZznRspF39NT
+lxud5+s+u7H25JrUk36lkkDlGCYgMQnETx6rLNc7H6lapLM18PTLAgMBAAGjUzBR
+MB0GA1UdDgQWBBR2TY1deR8hXuukLzTlYmR+3O87sDAfBgNVHSMEGDAWgBR2TY1d
+eR8hXuukLzTlYmR+3O87sDAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUA
+A4IBAQAJFif4qzMNkKAvDlbRIAmdHnZo6g2tK4rnJ+6PzSJ2brhk0nL5DW67RkPw
+ugz0CGENf7LcnZBFtlAR+urABil4Ur/KgmbiUurHlvZcxj3bsMYslBfxZbpXrwkk
+FrGfJMS8Mc/xvfQbrsHRYWQ3+TbAAdmRkvh5RMKa951gBYeniwIz1IagN7EkEhME
+bSIP91mmRuLch4fTwwmH1hNJ0YR6kY5lTEMQPRP1qh2+CZxXdNaOBJw/B6KI/ziA
+ONeto3C/FEx656ChdLlbM2luU2peQskDkivkH6IhyW4wqIFvoy1oxcTGWK077/fa
+GXZZ7xhCVM0mse4TVg7c2KX6mUBP
+-----END CERTIFICATE-----`;
+
+/**
+ * Resolves the server-side signing endpoint URL.
+ * In production: calls Supabase Edge Function `/functions/v1/sign-qz-tray` or configured `EXPO_PUBLIC_QZ_SIGN_ENDPOINT`.
+ * In development: falls back to local dev signing server if configured.
+ */
+export function resolveSigningEndpoint(): string {
+  if (process.env.EXPO_PUBLIC_QZ_SIGN_ENDPOINT) {
+    return process.env.EXPO_PUBLIC_QZ_SIGN_ENDPOINT;
+  }
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+  if (supabaseUrl) {
+    return `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/sign-qz-tray`;
+  }
+  return 'http://localhost:8183';
+}
+
+/**
  * Singleton state for QZ Tray instance and duplicate protection mutex
  */
 let qzModuleCache: any = null;
 let isKotPrintingLock = false;
+let isSecurityConfigured = false;
+
+/**
+ * Configures QZ Tray certificatePromise and signaturePromise
+ */
+function setupQzSecurity(qz: any): void {
+  if (isSecurityConfigured) return;
+
+  // 1. Certificate Promise: Delivers public certificate to QZ Tray
+  qz.security.setCertificatePromise((resolve: (cert: string) => void) => {
+    const cert = process.env.EXPO_PUBLIC_QZ_CERTIFICATE || RESTROZ_PUBLIC_CERTIFICATE;
+    resolve(cert);
+  });
+
+  // 2. Signature Algorithm: SHA512 (Official standard)
+  qz.security.setSignatureAlgorithm('SHA512');
+
+  // 3. Signature Promise: Dispatches to secure server-side signing endpoint
+  qz.security.setSignaturePromise((toSign: string) => {
+    return (resolve: (sig: string) => void, reject: (err: any) => void) => {
+      const signingUrl = resolveSigningEndpoint();
+      const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+
+      fetch(signingUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(anonKey ? { apikey: anonKey, Authorization: `Bearer ${anonKey}` } : {}),
+        },
+        body: JSON.stringify({ request: toSign }),
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Signing server returned HTTP ${response.status}: ${errText}`);
+          }
+          const contentType = response.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const data = await response.json();
+            if (data.signature) {
+              resolve(data.signature);
+              return;
+            }
+          }
+          const rawText = await response.text();
+          resolve(rawText.trim());
+        })
+        .catch((err) => {
+          console.error('[directPrintService] QZ signature request failed:', err);
+          // If remote signing endpoint is unreachable during local testing, attempt local dev signer
+          if (signingUrl !== 'http://localhost:8183') {
+            fetch('http://localhost:8183', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ request: toSign }),
+            })
+              .then((res) => res.json())
+              .then((d) => resolve(d.signature))
+              .catch(() => reject(err));
+          } else {
+            reject(err);
+          }
+        });
+    };
+  });
+
+  isSecurityConfigured = true;
+}
 
 /**
  * Helper to dynamically load qz-tray without breaking native builds
@@ -68,10 +180,13 @@ async function getQzInstance(): Promise<any> {
 }
 
 /**
- * Connects to QZ Tray if not already connected
+ * Connects to QZ Tray if not already connected and initializes security callbacks
  */
 async function ensureConnection(): Promise<any> {
   const qz = await getQzInstance();
+
+  // Ensure certificate and signature promises are configured before connecting
+  setupQzSecurity(qz);
 
   if (qz.websocket && qz.websocket.isActive()) {
     return qz;
@@ -230,7 +345,7 @@ export const directPrintService = {
     isKotPrintingLock = true;
 
     try {
-      // 2. Connect to QZ Tray
+      // 2. Connect to QZ Tray (with certificate and signature setup)
       const qz = await ensureConnection();
 
       // 3. Locate configured POS80 printer

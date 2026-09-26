@@ -87,6 +87,38 @@ export interface PaginatedOrdersResult {
 import { inMemoryOrdersCache, ORDERS_CACHE_TTL, clearOrdersCache } from './ordersCache';
 export { clearOrdersCache };
 
+
+export function resolveOrderDiscounts(ord: Partial<Order>): {
+  discount_type: 'none' | 'fixed' | 'percentage';
+  discount_value: number;
+  discount_amount: number;
+} {
+  const disc = extractDiscountFromNotes(ord.notes);
+  const discountAmount = Number(ord.discount_amount) || 0;
+
+  let discount_type: 'none' | 'fixed' | 'percentage' = 'none';
+  if (ord.discount_type && ord.discount_type !== 'none') {
+    discount_type = ord.discount_type as 'fixed' | 'percentage';
+  } else if (disc?.discount_type && disc.discount_type !== 'none') {
+    discount_type = disc.discount_type;
+  } else if (discountAmount > 0) {
+    discount_type = 'fixed';
+  }
+
+  let discount_value = 0;
+  if (ord.discount_value !== undefined && ord.discount_value !== null && Number(ord.discount_value) > 0) {
+    discount_value = Number(ord.discount_value);
+  } else if (disc?.discount_value !== undefined && Number(disc.discount_value) > 0) {
+    discount_value = Number(disc.discount_value);
+  } else if (discount_type === 'percentage' && ord.subtotal && discountAmount > 0) {
+    discount_value = Number(((discountAmount / Number(ord.subtotal)) * 100).toFixed(2));
+  } else if (discountAmount > 0) {
+    discount_value = discountAmount;
+  }
+
+  return { discount_type, discount_value, discount_amount: discountAmount };
+}
+
 export const orderService = {
   clearOrdersCache,
 
@@ -201,8 +233,8 @@ export const orderService = {
               status: normalizeOrderStatus(ord),
               kots: resolvedKots,
               subtotal: getOrderSubtotal(ord),
-              discount_type: ord.discount_type || disc?.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none'),
-              discount_value: ord.discount_value !== undefined ? ord.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (ord.discount_amount || 0)),
+              discount_type: resolveOrderDiscounts(ord).discount_type,
+              discount_value: resolveOrderDiscounts(ord).discount_value,
               customer_gstin: ord.customer_gstin || gstin || undefined,
               invoice_number: ord.invoice_number || ord.order_number,
             };
@@ -235,8 +267,8 @@ export const orderService = {
           status: normalizeOrderStatus(ord),
           kots: resolvedKots,
           subtotal: getOrderSubtotal(ord),
-          discount_type: ord.discount_type || disc?.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none'),
-          discount_value: ord.discount_value !== undefined ? ord.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (ord.discount_amount || 0)),
+          discount_type: resolveOrderDiscounts(ord).discount_type,
+              discount_value: resolveOrderDiscounts(ord).discount_value,
           customer_gstin: ord.customer_gstin || gstin || undefined,
           invoice_number: ord.invoice_number || ord.order_number,
         };
@@ -347,8 +379,8 @@ export const orderService = {
               status: normalizeOrderStatus(ord),
               kots: resolvedKots,
               subtotal: getOrderSubtotal(ord),
-              discount_type: ord.discount_type || disc?.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none'),
-              discount_value: ord.discount_value !== undefined ? ord.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (ord.discount_amount || 0)),
+              discount_type: resolveOrderDiscounts(ord).discount_type,
+              discount_value: resolveOrderDiscounts(ord).discount_value,
               customer_gstin: ord.customer_gstin || gstin || undefined,
               invoice_number: ord.invoice_number || ord.order_number,
             };
@@ -470,8 +502,8 @@ export const orderService = {
         order_source: resolveOrderSource(ord),
         status: normalizeOrderStatus(ord),
         subtotal: getOrderSubtotal(ord),
-        discount_type: ord.discount_type || disc?.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none'),
-        discount_value: ord.discount_value !== undefined ? ord.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (ord.discount_amount || 0)),
+        discount_type: resolveOrderDiscounts(ord).discount_type,
+              discount_value: resolveOrderDiscounts(ord).discount_value,
         customer_gstin: ord.customer_gstin || gstin || undefined,
         invoice_number: ord.invoice_number || ord.order_number,
       };
@@ -597,8 +629,8 @@ export const orderService = {
             order_source: resolveOrderSource(ord),
             status: normalizeOrderStatus(ord),
             subtotal: getOrderSubtotal(ord),
-            discount_type: ord.discount_type || disc?.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none'),
-            discount_value: ord.discount_value !== undefined ? ord.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (ord.discount_amount || 0)),
+            discount_type: resolveOrderDiscounts(ord).discount_type,
+              discount_value: resolveOrderDiscounts(ord).discount_value,
             customer_gstin: ord.customer_gstin || gstin || undefined,
             invoice_number: ord.invoice_number || ord.order_number,
           };
@@ -621,8 +653,8 @@ export const orderService = {
         order_source: resolveOrderSource(found),
         status: normalizeOrderStatus(found),
         subtotal: getOrderSubtotal(found),
-        discount_type: found.discount_type || disc?.discount_type || (found.discount_amount > 0 ? 'fixed' : 'none'),
-        discount_value: found.discount_value !== undefined ? found.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (found.discount_amount || 0)),
+        discount_type: resolveOrderDiscounts(found).discount_type,
+              discount_value: resolveOrderDiscounts(found).discount_value,
         customer_gstin: found.customer_gstin || gstin || undefined,
         invoice_number: found.invoice_number || found.order_number,
       };
@@ -713,8 +745,8 @@ export const orderService = {
               order_source: resolveOrderSource(ord),
               status: normalizeOrderStatus(ord),
               subtotal: getOrderSubtotal(ord),
-              discount_type: ord.discount_type || disc?.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none'),
-              discount_value: ord.discount_value !== undefined ? ord.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (ord.discount_amount || 0)),
+              discount_type: resolveOrderDiscounts(ord).discount_type,
+              discount_value: resolveOrderDiscounts(ord).discount_value,
               customer_gstin: ord.customer_gstin || gstin || undefined,
               invoice_number: ord.invoice_number || ord.order_number,
               kots: orderKots,
@@ -735,8 +767,8 @@ export const orderService = {
         order_source: resolveOrderSource(ord),
         status: normalizeOrderStatus(ord),
         subtotal: getOrderSubtotal(ord),
-        discount_type: ord.discount_type || disc?.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none'),
-        discount_value: ord.discount_value !== undefined ? ord.discount_value : (disc?.discount_value !== undefined ? disc.discount_value : (ord.discount_amount || 0)),
+        discount_type: resolveOrderDiscounts(ord).discount_type,
+              discount_value: resolveOrderDiscounts(ord).discount_value,
         customer_gstin: ord.customer_gstin || gstin || undefined,
         invoice_number: ord.invoice_number || ord.order_number,
       };
@@ -832,10 +864,11 @@ export const orderService = {
     const validCustomerId = orderData.customer_id && uuidRegex.test(orderData.customer_id) ? orderData.customer_id : null;
     const validCreatedBy = orderData.created_by && uuidRegex.test(orderData.created_by) ? orderData.created_by : null;
 
+    const resolvedInitialDiscounts = resolveOrderDiscounts(orderData);
     const finalNotesWithDisc = attachDiscountToNotes(
       finalNotes,
-      orderData.discount_type || (orderData.discount_amount && orderData.discount_amount > 0 ? 'fixed' : 'none'),
-      orderData.discount_value !== undefined ? orderData.discount_value : (orderData.discount_amount || 0)
+      resolvedInitialDiscounts.discount_type,
+      resolvedInitialDiscounts.discount_value
     );
     const finalNotesWithDiscAndGstin = attachGstinToNotes(
       finalNotesWithDisc,
@@ -862,8 +895,8 @@ export const orderService = {
       delivery_charge: orderData.delivery_charge || 0,
       status: orderData.status || 'confirmed',
       subtotal: computedSubtotal,
-      discount_type: orderData.discount_type || (orderData.discount_amount && orderData.discount_amount > 0 ? 'fixed' : 'none'),
-      discount_value: orderData.discount_value !== undefined ? orderData.discount_value : (orderData.discount_amount || 0),
+      discount_type: resolvedInitialDiscounts.discount_type,
+      discount_value: resolvedInitialDiscounts.discount_value,
       discount_amount: orderData.discount_amount || 0,
       taxable_amount: orderData.taxable_amount,
       coupon_code: orderData.coupon_code,
@@ -944,7 +977,7 @@ export const orderService = {
           }
         }
 
-        const { items, payments, kots, order_source, discount_type, discount_value, taxable_amount, customer_gstin, invoice_number, ...orderRecord } = newOrder;
+        const { items, payments, kots, order_source, ...orderRecord } = newOrder;
         let dbPayload: any = {
           ...orderRecord,
           restaurant_id: targetRestaurantId,

@@ -17,7 +17,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { orderService, resolveOrderSource, clearOrdersCache } from '../../src/services/api/orderService';
+import { orderService, resolveOrderSource, clearOrdersCache, resolveOrderDiscounts } from '../../src/services/api/orderService';
 import { productService } from '../../src/services/api/productService';
 import { tableService } from '../../src/services/api/tableService';
 import { kotService, clearKotsCache } from '../../src/services/api/kotService';
@@ -412,15 +412,9 @@ export default function OrdersScreen() {
     setEditDeliveryAddress(ord.delivery_address || '');
     setEditTableId(ord.table_id || '');
     setEditNotes(cleanCustomerOrderNotes(ord.notes));
-    const resolvedDiscType = ord.discount_type || (ord.discount_amount > 0 ? 'fixed' : 'none');
-    setEditDiscountType(resolvedDiscType);
-    setEditDiscountValue(
-      ord.discount_value !== undefined
-        ? String(ord.discount_value)
-        : ord.discount_amount > 0
-        ? String(ord.discount_amount)
-        : '0'
-    );
+    const resolvedDisc = resolveOrderDiscounts(ord);
+    setEditDiscountType(resolvedDisc.discount_type);
+    setEditDiscountValue(resolvedDisc.discount_value > 0 ? String(resolvedDisc.discount_value) : '0');
     setEditReason('Item adjustment / guest request');
     setProdSearch('');
   };
@@ -1058,14 +1052,9 @@ export default function OrdersScreen() {
     setPayReceived(true);
     setPayTxnRef('');
     setPayCustomerGstin(order.customer_gstin || '');
-    setPayDiscountType(order.discount_type || (order.discount_amount > 0 ? 'fixed' : 'none'));
-    setPayDiscountValue(
-      order.discount_value !== undefined
-        ? String(order.discount_value)
-        : order.discount_amount > 0
-        ? String(order.discount_amount)
-        : ''
-    );
+    const resolvedPayDisc = resolveOrderDiscounts(order);
+    setPayDiscountType(resolvedPayDisc.discount_type);
+    setPayDiscountValue(resolvedPayDisc.discount_value > 0 ? String(resolvedPayDisc.discount_value) : '');
   };
 
   const paySubtotal = payOrderModal ? getOrderSubtotal(payOrderModal) : 0;
@@ -1575,7 +1564,7 @@ export default function OrdersScreen() {
                 {Boolean(order.discount_amount && order.discount_amount > 0) && (
                   <View style={{ backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2.5, marginBottom: 4, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Text style={{ fontSize: 10, fontWeight: '800', color: '#92400E' }}>
-                      🏷️ Discount ({order.discount_type === 'percentage' ? `${order.discount_value}%` : 'Flat ₹'}):
+                      🏷️ Discount ({order.discount_type === 'percentage' && Number(order.discount_value) > 0 ? `${order.discount_value}%` : order.discount_type === 'percentage' && order.subtotal ? `${Math.round(((order.discount_amount || 0) / order.subtotal) * 100)}%` : 'Flat ₹'}):
                     </Text>
                     <Text style={{ fontSize: 10, fontWeight: '900', color: '#B45309' }}>
                       -{formatCurrency(order.discount_amount || 0)}
@@ -3371,7 +3360,7 @@ export default function OrdersScreen() {
                     {Boolean(viewOrderModal.discount_amount && viewOrderModal.discount_amount > 0) && (
                       <View style={styles.invoiceRow}>
                         <Text style={[styles.invoiceLabel, { color: '#16a34a', fontWeight: '700' }]}>
-                          Discount {viewOrderModal.discount_type === 'percentage' ? `(${viewOrderModal.discount_value || ''}%)` : (viewOrderModal.discount_value ? `(₹${viewOrderModal.discount_value})` : '')}
+                          Discount ({viewOrderModal.discount_type === 'percentage' && Number(viewOrderModal.discount_value) > 0 ? `${viewOrderModal.discount_value}%` : viewOrderModal.discount_type === 'percentage' && viewOrderModal.subtotal ? `${Math.round(((viewOrderModal.discount_amount || 0) / viewOrderModal.subtotal) * 100)}%` : 'Flat ₹'}):
                         </Text>
                         <Text style={[styles.invoiceVal, { color: '#16a34a', fontWeight: '800' }]}>
                           -{formatCurrency(viewOrderModal.discount_amount)}

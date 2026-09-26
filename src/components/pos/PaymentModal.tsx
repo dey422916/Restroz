@@ -19,6 +19,7 @@ import { calculateOrderTotals, getOrderSubtotal } from '../../utils/gst';
 import { formatOrderDateTime } from '../../utils/dateUtils';
 import { validateGSTIN } from '../../utils/validators';
 import { useSettings } from '../../context/SettingsContext';
+import { resolveOrderDiscounts } from '../../services/api/orderService';
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -59,15 +60,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const taxRate = settings?.default_tax_rate !== undefined ? settings.default_tax_rate : 5.0;
 
   // Discount configuration state
+  const resolvedInitialDiscounts = resolveOrderDiscounts(order);
   const [discountType, setDiscountType] = useState<'none' | 'fixed' | 'percentage'>(
-    order.discount_type || (order.discount_amount > 0 ? 'fixed' : 'none')
+    resolvedInitialDiscounts.discount_type
   );
   const [discountInput, setDiscountInput] = useState<string>(
-    order.discount_value !== undefined
-      ? String(order.discount_value)
-      : order.discount_amount > 0
-      ? String(order.discount_amount)
-      : ''
+    resolvedInitialDiscounts.discount_value > 0 ? String(resolvedInitialDiscounts.discount_value) : ''
   );
 
   const [customerGstinInput, setCustomerGstinInput] = useState<string>(order.customer_gstin || '');
@@ -95,13 +93,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           : 'cash'
       );
       setCustomerGstinInput(order.customer_gstin || '');
-      setDiscountType(order.discount_type || (order.discount_amount > 0 ? 'fixed' : 'none'));
+      const resolvedModalDiscounts = resolveOrderDiscounts(order);
+      setDiscountType(resolvedModalDiscounts.discount_type);
       setDiscountInput(
-        order.discount_value !== undefined
-          ? String(order.discount_value)
-          : order.discount_amount > 0
-          ? String(order.discount_amount)
-          : ''
+        resolvedModalDiscounts.discount_value > 0 ? String(resolvedModalDiscounts.discount_value) : ''
       );
     }
   }, [order?.id]);

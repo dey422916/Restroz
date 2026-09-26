@@ -6,6 +6,9 @@ import { cleanCustomerOrderNotes } from '../utils/orderNotes';
 import { formatOrderDateTime } from '../utils/dateUtils';
 import { supabase } from './supabase';
 
+
+
+
 export function formatLogoDataUri(urlOrBase64?: string | null): string {
   if (!urlOrBase64) return '';
   const trimmed = urlOrBase64.trim();
@@ -276,7 +279,7 @@ export const printService = {
         // Default 80mm
         return `
           <tr style="border-bottom: 1px dashed #444;">
-            <td style="padding: 5px 0; font-size: 14px; font-weight: bold; line-height: 1.3; word-break: break-word;">
+            <td style="padding: 3.5px 0; font-size: 13px; font-weight: bold; line-height: 1.25; word-break: break-word;">
               ${item.name}
               ${
                 item.notes
@@ -284,7 +287,7 @@ export const printService = {
                   : ''
               }
             </td>
-            <td style="padding: 5px 0; text-align: right; font-size: 16px; font-weight: 900; vertical-align: top; width: 45px;">
+            <td style="padding: 3.5px 0; text-align: right; font-size: 14.5px; font-weight: 900; vertical-align: top; width: 45px;">
               ${item.quantity}
             </td>
           </tr>
@@ -300,31 +303,34 @@ export const printService = {
         : 'Delivery';
 
     const pageCss = isA4
-      ? `@page { size: A4 portrait; margin: 12mm 15mm; }
-         body { width: 100%; max-width: 180mm; margin: 0 auto; padding: 10px 0; font-size: 14px; line-height: 1.4; color: #111; }
-         .kot-title { font-size: 26px; font-weight: 900; letter-spacing: 1px; margin: 4px 0; }
-         .bill-no { font-size: 16px; font-weight: bold; margin: 3px 0; }
-         .date-time { font-size: 13px; margin: 2px 0; }
-         .reprint-banner { font-size: 16px; font-weight: 900; letter-spacing: 2px; color: #d97706; margin-bottom: 6px; }
-         .sup-banner { font-size: 16px; font-weight: 900; letter-spacing: 2px; color: #000; margin-bottom: 6px; }
-         table th { font-size: 14px; font-weight: 900; padding: 8px; border-bottom: 2px solid #000; background-color: #f1f5f9; }`
+      ? `@page { size: A4 portrait; margin: 10mm 12mm; }
+         html, body { width: 100%; margin: 0; padding: 0; font-size: 13.5px; line-height: 1.4; color: #111; }
+         .receipt-container { width: 100%; max-width: 180mm; margin: 0 auto; padding: 10px 0; }
+         .kot-title { font-size: 24px; font-weight: 900; letter-spacing: 1px; margin: 4px 0; }
+         .bill-no { font-size: 15px; font-weight: bold; margin: 3px 0; }
+         .date-time { font-size: 12px; margin: 2px 0; }
+         .reprint-banner { font-size: 15px; font-weight: 900; letter-spacing: 2px; color: #d97706; margin-bottom: 6px; }
+         .sup-banner { font-size: 15px; font-weight: 900; letter-spacing: 2px; color: #000; margin-bottom: 6px; }
+         table th { font-size: 13px; font-weight: 900; padding: 6px; border-bottom: 2px solid #000; background-color: #f1f5f9; }`
       : is58
-      ? `@page { size: 58mm auto; margin: 1mm 1.5mm; }
-         body { width: 48mm; margin: 0 auto; padding: 1mm 0; font-size: 11px; line-height: 1.15; color: #000; }
-         .kot-title { font-size: 16px; font-weight: 900; letter-spacing: 0.5px; margin: 1px 0; }
-         .bill-no { font-size: 11px; font-weight: bold; margin: 1px 0; }
-         .date-time { font-size: 10px; margin: 1px 0; }
-         .reprint-banner { font-size: 12px; font-weight: 900; letter-spacing: 1px; color: #000; margin-bottom: 2px; }
-         .sup-banner { font-size: 12px; font-weight: 900; letter-spacing: 1px; color: #000; margin-bottom: 2px; }
-         table th { font-size: 11px; font-weight: 900; padding: 3px 0; border-bottom: 1px solid #000; }`
-      : `@page { size: 80mm auto; margin: 2mm 3mm; }
-         body { width: 74mm; margin: 0 auto; padding: 2mm 0; font-size: 12px; line-height: 1.25; color: #000; }
-         .kot-title { font-size: 20px; font-weight: 900; letter-spacing: 0.5px; margin: 2px 0; }
-         .bill-no { font-size: 13px; font-weight: bold; margin: 2px 0; }
-         .date-time { font-size: 11px; margin: 1px 0; }
-         .reprint-banner { font-size: 14px; font-weight: 900; letter-spacing: 1.5px; color: #000; margin-bottom: 4px; }
-         .sup-banner { font-size: 14px; font-weight: 900; letter-spacing: 1.5px; color: #000; margin-bottom: 4px; }
-         table th { font-size: 13px; font-weight: 900; padding: 4px 0; border-bottom: 1px solid #000; }`;
+      ? `@page { size: 58mm auto; margin: 0; }
+         html, body { width: 58mm; margin: 0; padding: 0; font-size: 10.5px; line-height: 1.15; color: #000; }
+         .receipt-container { width: 48mm; max-width: 48mm; margin: 0 auto; padding: 1mm 1mm; }
+         .kot-title { font-size: 15px; font-weight: 900; letter-spacing: 0.5px; margin: 1px 0; }
+         .bill-no { font-size: 10.5px; font-weight: bold; margin: 1px 0; }
+         .date-time { font-size: 9.5px; margin: 1px 0; }
+         .reprint-banner { font-size: 11px; font-weight: 900; letter-spacing: 1px; color: #000; margin-bottom: 2px; }
+         .sup-banner { font-size: 11px; font-weight: 900; letter-spacing: 1px; color: #000; margin-bottom: 2px; }
+         table th { font-size: 10.5px; font-weight: 900; padding: 3px 0; border-bottom: 1px solid #000; }`
+      : `@page { size: 80mm auto; margin: 0; }
+          html, body { width: 80mm; margin: 0; padding: 0; font-size: 10.5px; line-height: 1.20; color: #000; }
+          .receipt-container { width: 72mm; max-width: 72mm; margin: 0 8mm 0 0mm; padding: 1mm 1.5mm; }
+          .kot-title { font-size: 16px; font-weight: 900; letter-spacing: 0.5px; margin: 2px 0; }
+          .bill-no { font-size: 11px; font-weight: bold; margin: 1.5px 0; }
+          .date-time { font-size: 9.5px; margin: 1px 0; }
+          .reprint-banner { font-size: 12px; font-weight: 900; letter-spacing: 1px; color: #000; margin-bottom: 3px; }
+          .sup-banner { font-size: 12px; font-weight: 900; letter-spacing: 1px; color: #000; margin-bottom: 3px; }
+          table th { font-size: 11px; font-weight: 900; padding: 2.5px 0; border-bottom: 1px solid #000; }`;
 
     const html = `
       <!DOCTYPE html>
@@ -334,68 +340,110 @@ export const printService = {
           <title>KOT #${kotNum} (${paperSize})</title>
           <style>
             ${pageCss}
+            @media print {
+              html, body {
+                margin: 0 !important;
+                padding: 0 !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+            }
             * {
+              box-sizing: border-box;
+              margin: 0;
+              padding: 0;
+            }
+            html, body {
+              background: #fff;
+              color: #000;
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            }
+            .receipt-container {
               box-sizing: border-box;
             }
             .center { text-align: center; }
             .bold { font-weight: bold; }
-            .dashed { border-bottom: 1px dashed #000; margin: ${is58 ? '4px' : '6px'} 0; }
-            .double { border-bottom: 2px solid #000; margin: ${is58 ? '4px' : '6px'} 0; }
-            .flex-between { display: flex; justify-content: space-between; margin: ${is58 ? '2px' : '3px'} 0; font-size: ${is58 ? '11px' : isA4 ? '14px' : '12px'}; }
-            table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+            .dashed { border-bottom: 1px dashed #000; margin: ${is58 ? '3px' : '5px'} 0; width: 100%; }
+            .double { border-bottom: 2px solid #000; margin: ${is58 ? '3px' : '5px'} 0; width: 100%; }
+            .flex-between {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              width: 100%;
+              margin: ${is58 ? '1.5px' : '2px'} 0;
+              font-size: ${is58 ? '10px' : isA4 ? '13px' : '11.5px'};
+            }
+            .flex-between > :first-child {
+              text-align: left;
+              overflow-wrap: break-word;
+              min-width: 0;
+            }
+            .flex-between > :last-child {
+              text-align: right;
+              white-space: nowrap;
+              flex-shrink: 0;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              table-layout: fixed;
+              margin-top: 4px;
+            }
             th { text-align: left; }
           </style>
         </head>
         <body>
-          ${showReprintBanner ? `<div class="center reprint-banner">*** REPRINT ***</div>` : ''}
-          ${isSupplementary ? `<div class="center sup-banner">*** SUPPLEMENTARY KOT (SUP) ***</div>` : ''}
-          <div class="center kot-title">${kotNum.startsWith('KOT') ? kotNum : `KOT #${kotNum}`}${isSupplementary && !kotNum.toUpperCase().includes('SUP') ? ' (SUP)' : ''}</div>
+          <div class="receipt-container">
+            ${showReprintBanner ? `<div class="center reprint-banner">*** REPRINT ***</div>` : ''}
+            ${isSupplementary ? `<div class="center sup-banner">*** SUPPLEMENTARY KOT (SUP) ***</div>` : ''}
+            <div class="center kot-title">${kotNum.startsWith('KOT') ? kotNum : `KOT #${kotNum}`}${isSupplementary && !kotNum.toUpperCase().includes('SUP') ? ' (SUP)' : ''}</div>
 
-          <div class="dashed"></div>
-          
-          <div class="center bill-no">Bill No.: ${order.order_number}</div>
-          <div class="center date-time">Date & Time: ${formattedOrderDateTime}</div>
-
-          <div class="dashed"></div>
-
-          <div class="flex-between">
-            <span><b>Type:</b> ${orderTypeLabel}</span>
-            ${order.table_number ? `<span><b>Table:</b> ${order.table_number}</span>` : ''}
-          </div>
-
-          ${order.customer_name ? `<div><b>Customer:</b> ${order.customer_name}</div>` : ''}
-          ${order.customer_phone ? `<div><b>Phone:</b> ${order.customer_phone}</div>` : ''}
-          ${order.delivery_address ? `<div><b>Address:</b> ${order.delivery_address}</div>` : ''}
-
-          <div class="dashed"></div>
-
-          <table>
-            <thead>
-              <tr>
-                <th>Description</th>
-                <th style="text-align: right; width: ${isA4 ? '80px' : is58 ? '32px' : '45px'};">Qty</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${itemsHtml}
-            </tbody>
-          </table>
-
-          ${
-            cleanCustomerOrderNotes(order.notes)
-              ? `
             <div class="dashed"></div>
-            <div style="font-size: ${is58 ? '10px' : '11px'}; margin: 4px 0;">
-              <b>Notes:</b> ${cleanCustomerOrderNotes(order.notes)}
+            
+            <div class="center bill-no">Bill No.: ${order.order_number}</div>
+            <div class="center date-time">Date & Time: ${formattedOrderDateTime}</div>
+
+            <div class="dashed"></div>
+
+            <div class="flex-between">
+              <span><b>Type:</b> ${orderTypeLabel}</span>
+              ${order.table_number ? `<span><b>Table:</b> ${order.table_number}</span>` : ''}
             </div>
-          `
-              : ''
-          }
 
-          <div class="dashed"></div>
+            ${order.customer_name ? `<div><b>Customer:</b> ${order.customer_name}</div>` : ''}
+            ${order.customer_phone ? `<div><b>Phone:</b> ${order.customer_phone}</div>` : ''}
+            ${order.delivery_address ? `<div><b>Address:</b> ${order.delivery_address}</div>` : ''}
 
-          <div class="center" style="font-size: ${is58 ? '9px' : '10px'}; margin-top: 6px; color: #333;">
-            --- END OF KOT (${paperSize}) ---
+            <div class="dashed"></div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: ${isA4 ? '85%' : '80%'};">Description</th>
+                  <th style="text-align: right; width: ${isA4 ? '15%' : '20%'};">Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemsHtml}
+              </tbody>
+            </table>
+
+            ${
+              cleanCustomerOrderNotes(order.notes)
+                ? `
+              <div class="dashed"></div>
+              <div style="font-size: ${is58 ? '9.5px' : '10.5px'}; margin: 3px 0; word-break: break-word;">
+                <b>Notes:</b> ${cleanCustomerOrderNotes(order.notes)}
+              </div>
+            `
+                : ''
+            }
+
+            <div class="dashed"></div>
+
+            <div class="center" style="font-size: ${is58 ? '8.5px' : '9.5px'}; margin-top: 4px; color: #333;">
+              --- END OF KOT (${paperSize}) ---
+            </div>
           </div>
         </body>
       </html>
@@ -438,6 +486,10 @@ export const printService = {
     const totalItemCount = activeItems.length;
     const totalQty = activeItems.reduce((sum, i) => sum + i.quantity, 0);
 
+    const billPaperSize = settings.bill_paper_size || settings.kot_paper_size || '80mm';
+    const is58 = billPaperSize === '58mm';
+    const isA4 = billPaperSize === 'A4';
+
     const itemsHtml = activeItems
       .map((item) => {
         const qty = Number(item.quantity) || 1;
@@ -449,16 +501,16 @@ export const printService = {
         const amount = lineAmount.toFixed(2);
         return `
           <tr style="border-bottom: 1px dashed #e2e8f0;">
-            <td style="padding: 4px 0; font-size: 12px; font-weight: bold; line-height: 1.2;">
+            <td style="padding: 3px 2px 3px 0; font-size: ${is58 ? '10px' : isA4 ? '13px' : '10.5px'}; font-weight: bold; line-height: 1.2; word-break: break-word; overflow-wrap: anywhere; vertical-align: top; text-align: left;">
               ${item.product_name}
             </td>
-            <td style="padding: 4px 0; text-align: center; font-size: 12px; width: 35px;">
+            <td style="padding: 3px 0; text-align: center; font-size: ${is58 ? '10px' : isA4 ? '13px' : '10.5px'}; vertical-align: top; white-space: nowrap;">
               ${item.quantity}
             </td>
-            <td style="padding: 4px 0; text-align: right; font-size: 12px; width: 55px;">
+            <td style="padding: 3px 0; text-align: right; font-size: ${is58 ? '10px' : isA4 ? '13px' : '10.5px'}; vertical-align: top; white-space: nowrap;">
               ${rate}
             </td>
-            <td style="padding: 4px 0; text-align: right; font-size: 12px; font-weight: bold; width: 65px;">
+            <td style="padding: 3px 0; text-align: right; font-size: ${is58 ? '10px' : isA4 ? '13px' : '10.5px'}; font-weight: bold; vertical-align: top; white-space: nowrap;">
               ${amount}
             </td>
           </tr>
@@ -502,36 +554,35 @@ export const printService = {
 
     const logoUrl = formatLogoDataUri(settings?.logo_url || (order as any)?.restaurant?.logo_url);
 
-    const billPaperSize = settings.bill_paper_size || settings.kot_paper_size || '80mm';
-    const is58 = billPaperSize === '58mm';
-    const isA4 = billPaperSize === 'A4';
-
     const billPageCss = isA4
-      ? `@page { size: A4 portrait; margin: 12mm 15mm; }
-         body { width: 100%; max-width: 180mm; margin: 0 auto; padding: 10px 0; font-size: 14px; line-height: 1.4; color: #000; }
-         .restaurant-title { font-size: 24px; font-weight: 900; letter-spacing: 0.5px; line-height: 1.2; }
+      ? `@page { size: A4 portrait; margin: 10mm 12mm; }
+         html, body { width: 100%; margin: 0; padding: 0; font-size: 13.5px; line-height: 1.4; color: #000; }
+         .receipt-container { width: 100%; max-width: 180mm; margin: 0 auto; padding: 10px 0; }
+         .restaurant-title { font-size: 22px; font-weight: 900; letter-spacing: 0.5px; line-height: 1.2; }
          .branch-title { font-size: 13px; margin-top: 2px; }
-         .legal-meta { font-size: 12px; color: #333; margin-top: 2px; }
+         .legal-meta { font-size: 11.5px; color: #333; margin-top: 2px; }
          .flex-between { font-size: 13px; margin: 3px 0; }
-         table th { font-size: 13px; padding: 6px 0; }
-         .paid-badge { font-size: 14px; font-weight: 900; padding: 4px 10px; }`
+         table th { font-size: 12.5px; padding: 6px 0; }
+         .paid-badge { font-size: 13px; font-weight: 900; padding: 3px 8px; }`
       : is58
-      ? `@page { size: 58mm auto; margin: 1mm 1.5mm; }
-         body { width: 48mm; margin: 0 auto; padding: 1mm 0; font-size: 11px; line-height: 1.15; color: #000; }
-         .restaurant-title { font-size: 14px; font-weight: 900; letter-spacing: 0.5px; line-height: 1.15; }
-         .branch-title { font-size: 10px; margin-top: 1px; }
-         .legal-meta { font-size: 9px; color: #333; margin-top: 1px; }
-         .flex-between { font-size: 10.5px; margin: 1.5px 0; }
-         table th { font-size: 10.5px; padding: 2px 0; }
-         .paid-badge { font-size: 11px; font-weight: 900; padding: 2px 5px; }`
-      : `@page { size: 80mm auto; margin: 2mm 3mm; }
-         body { width: 74mm; margin: 0 auto; padding: 2mm 0; font-size: 12px; line-height: 1.25; color: #000; }
-         .restaurant-title { font-size: 16px; font-weight: 900; letter-spacing: 0.5px; line-height: 1.15; }
-         .branch-title { font-size: 11px; margin-top: 1px; }
-         .legal-meta { font-size: 10px; color: #333; margin-top: 1px; }
-         .flex-between { font-size: 12px; margin: 2px 0; }
-         table th { font-size: 11px; padding: 4px 0; }
-         .paid-badge { font-size: 12px; font-weight: 900; padding: 2px 6px; }`;
+      ? `@page { size: 58mm auto; margin: 0; }
+         html, body { width: 58mm; margin: 0; padding: 0; font-size: 10.5px; line-height: 1.15; color: #000; }
+         .receipt-container { width: 48mm; max-width: 48mm; margin: 0 auto; padding: 1mm 1mm; }
+         .restaurant-title { font-size: 13px; font-weight: 900; letter-spacing: 0.3px; line-height: 1.15; }
+         .branch-title { font-size: 9.5px; margin-top: 1px; }
+         .legal-meta { font-size: 8.5px; color: #333; margin-top: 1px; }
+         .flex-between { font-size: 10px; margin: 1.5px 0; }
+         table th { font-size: 10px; padding: 2px 0; }
+         .paid-badge { font-size: 10px; font-weight: 900; padding: 1px 4px; }`
+      : `@page { size: 80mm auto; margin: 0; }
+          html, body { width: 80mm; margin: 0; padding: 0; font-size: 10.5px; line-height: 1.20; color: #000; }
+          .receipt-container { width: 72mm; max-width: 72mm; margin: 0 8mm 0 0mm; padding: 1mm 1.5mm; }
+          .restaurant-title { font-size: 14px; font-weight: 900; letter-spacing: 0.3px; line-height: 1.15; }
+          .branch-title { font-size: 10px; margin-top: 1px; }
+          .legal-meta { font-size: 9px; color: #333; margin-top: 1px; }
+          .flex-between { font-size: 10.5px; margin: 1.5px 0; }
+          table th { font-size: 10.5px; padding: 2.5px 0; }
+          .paid-badge { font-size: 10px; font-weight: 900; padding: 2px 4px; }`;
 
     const html = `
       <!DOCTYPE html>
@@ -541,185 +592,235 @@ export const printService = {
           <title>${isTaxInvoice ? 'Tax Invoice' : 'Retail Bill'} #${invoiceNumber} (${billPaperSize})</title>
           <style>
             ${billPageCss}
+            @media print {
+              html, body {
+                margin: 0 !important;
+                padding: 0 !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+            }
             * {
+              box-sizing: border-box;
+              margin: 0;
+              padding: 0;
+            }
+            html, body {
+              background: #fff;
+              color: #000;
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            }
+            .receipt-container {
               box-sizing: border-box;
             }
             .center { text-align: center; }
             .bold { font-weight: bold; }
-            .dashed { border-bottom: 1px dashed #000; margin: ${is58 ? '4px' : '6px'} 0; }
-            .double { border-bottom: 2px solid #000; margin: ${is58 ? '4px' : '6px'} 0; }
+            .dashed { border-bottom: 1px dashed #000; margin: ${is58 ? '3px' : '5px'} 0; width: 100%; }
+            .double { border-bottom: 2px solid #000; margin: ${is58 ? '3px' : '5px'} 0; width: 100%; }
             .brand-header-row {
               display: flex;
               align-items: center;
               justify-content: center;
-              gap: 8px;
+              gap: 6px;
               margin-bottom: 3px;
+              width: 100%;
             }
             .restaurant-logo {
-              width: ${isA4 ? '48px' : '36px'};
-              height: ${isA4 ? '48px' : '36px'};
-              max-width: ${isA4 ? '48px' : '36px'};
-              max-height: ${isA4 ? '48px' : '36px'};
+              width: ${isA4 ? '44px' : '32px'};
+              height: ${isA4 ? '44px' : '32px'};
+              max-width: ${isA4 ? '44px' : '32px'};
+              max-height: ${isA4 ? '44px' : '32px'};
               object-fit: contain;
               border-radius: 4px;
               flex-shrink: 0;
             }
             .restaurant-text-wrap {
               text-align: ${logoUrl ? 'left' : 'center'};
+              overflow: hidden;
             }
-            .flex-between { display: flex; justify-content: space-between; }
-            table { width: 100%; border-collapse: collapse; margin-top: 4px; }
-            th { text-align: left; border-bottom: 1px solid #000; }
-            .paid-badge { border: 1px solid #000; display: inline-block; }
+            .flex-between {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              width: 100%;
+              margin: ${is58 ? '1.5px' : '2px'} 0;
+            }
+            .flex-between > :first-child {
+              text-align: left;
+              overflow-wrap: break-word;
+              min-width: 0;
+            }
+            .flex-between > :last-child {
+              text-align: right;
+              white-space: nowrap;
+              flex-shrink: 0;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              table-layout: fixed;
+              margin-top: 3px;
+            }
+            th {
+              text-align: left;
+              border-bottom: 1px solid #000;
+              font-weight: 900;
+            }
+            .paid-badge {
+              border: 1px solid #000;
+              display: inline-block;
+            }
           </style>
         </head>
         <body>
-          <div class="brand-header-row">
-            ${logoUrl ? `<img src="${logoUrl}" width="36" height="36" class="restaurant-logo" alt="Logo" />` : ''}
-            <div class="restaurant-text-wrap">
-              <div class="restaurant-title">${settings.name || 'RESTAURANT'}</div>
-              ${settings.legal_name ? `<div class="branch-title">${settings.legal_name}</div>` : ''}
+          <div class="receipt-container">
+            <div class="brand-header-row">
+              ${logoUrl ? `<img src="${logoUrl}" width="32" height="32" class="restaurant-logo" alt="Logo" />` : ''}
+              <div class="restaurant-text-wrap">
+                <div class="restaurant-title">${settings.name || 'RESTAURANT'}</div>
+                ${settings.legal_name ? `<div class="branch-title">${settings.legal_name}</div>` : ''}
+              </div>
             </div>
-          </div>
-          ${settings.address ? `<div class="center legal-meta">${settings.address}</div>` : ''}
-          ${isTaxInvoice && settings.gstin ? `<div class="center legal-meta">GSTIN: <b>${settings.gstin}</b></div>` : ''}
-          ${settings.phone ? `<div class="center legal-meta">Phone: ${settings.phone}</div>` : ''}
+            ${settings.address ? `<div class="center legal-meta">${settings.address}</div>` : ''}
+            ${isTaxInvoice && settings.gstin ? `<div class="center legal-meta">GSTIN: <b>${settings.gstin}</b></div>` : ''}
+            ${settings.phone ? `<div class="center legal-meta">Phone: ${settings.phone}</div>` : ''}
 
-          <div class="dashed"></div>
+            <div class="dashed"></div>
 
-          <div class="flex-between">
-            <span><b>${isTaxInvoice ? 'Invoice No.:' : 'Bill No.:'}</b> ${invoiceNumber}</span>
-            <span style="font-weight: 800;">${isTaxInvoice ? 'TAX INVOICE' : 'RETAIL BILL'}</span>
-          </div>
-          <div><b>Order ID:</b> ${order.order_number}</div>
-          <div><b>KOT No.:</b> ${kotRefs}</div>
-          <div><b>Date & Time:</b> ${formattedOrderDateTime}</div>
-          ${
-            isTaxInvoice
-              ? `<div><b>Place of Supply:</b> ${settings.state || 'West Bengal'} (${settings.state_code || '19'})</div>
-                 <div><b>Reverse Charge:</b> No</div>`
-              : ''
-          }
+            <div class="flex-between">
+              <span><b>${isTaxInvoice ? 'Invoice No.:' : 'Bill No.:'}</b> ${invoiceNumber}</span>
+              <span style="font-weight: 800; letter-spacing: 0.3px;">${isTaxInvoice ? 'TAX INVOICE' : 'RETAIL BILL'}</span>
+            </div>
+            <div><b>Order ID:</b> ${order.order_number}</div>
+            <div><b>KOT No.:</b> ${kotRefs}</div>
+            <div><b>Date & Time:</b> ${formattedOrderDateTime}</div>
+            ${
+              isTaxInvoice
+                ? `<div><b>Place of Supply:</b> ${settings.state || 'West Bengal'} (${settings.state_code || '19'})</div>
+                   <div><b>Reverse Charge:</b> No</div>`
+                : ''
+            }
 
-          <div style="margin-top: 4px;"></div>
-          <div class="flex-between">
-            <span><b>Type:</b> ${orderTypeLabel}</span>
-            <span><b>${totalItemCount} Item (${totalQty} Qty)</b></span>
-          </div>
-          <div><b>Customer:</b> ${order.customer_name || 'Walk-in Customer'}</div>
-          ${order.customer_phone ? `<div><b>Phone:</b> ${order.customer_phone}</div>` : ''}
-          ${isTaxInvoice && customerGstin ? `<div><b>Customer GSTIN (B2B):</b> ${customerGstin}</div>` : ''}
-          ${order.table_number ? `<div><b>Table:</b> ${order.table_number}</div>` : ''}
-          ${order.delivery_address ? `<div><b>Address:</b> ${order.delivery_address}</div>` : ''}
+            <div style="margin-top: 3px;"></div>
+            <div class="flex-between">
+              <span><b>Type:</b> ${orderTypeLabel}</span>
+              <span><b>${totalItemCount} Item (${totalQty} Qty)</b></span>
+            </div>
+            <div><b>Customer:</b> ${order.customer_name || 'Walk-in Customer'}</div>
+            ${order.customer_phone ? `<div><b>Phone:</b> ${order.customer_phone}</div>` : ''}
+            ${isTaxInvoice && customerGstin ? `<div><b>Customer GSTIN (B2B):</b> ${customerGstin}</div>` : ''}
+            ${order.table_number ? `<div><b>Table:</b> ${order.table_number}</div>` : ''}
+            ${order.delivery_address ? `<div><b>Address:</b> ${order.delivery_address}</div>` : ''}
 
-          <div class="dashed"></div>
+            <div class="dashed"></div>
 
-          <table>
-            <thead>
-              <tr>
-                <th style="text-align: left;">Description</th>
-                <th style="text-align: center; width: 35px;">Qty</th>
-                <th style="text-align: right; width: 55px;">Rate</th>
-                <th style="text-align: right; width: 65px;">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${itemsHtml}
-            </tbody>
-          </table>
+            <table>
+              <thead>
+                <tr>
+                  <th style="text-align: left; width: 44%; padding: 3px 0;">Description</th>
+                  <th style="text-align: center; width: 14%; padding: 3px 0;">Qty</th>
+                  <th style="text-align: right; width: 20%; padding: 3px 0;">Rate</th>
+                  <th style="text-align: right; width: 22%; padding: 3px 0;">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemsHtml}
+              </tbody>
+            </table>
 
-          <div class="dashed"></div>
+            <div class="dashed"></div>
 
-          <div class="flex-between">
-            <span>Subtotal:</span>
-            <span>${subTotalStr}</span>
-          </div>
+            <div class="flex-between">
+              <span>Subtotal:</span>
+              <span>${subTotalStr}</span>
+            </div>
 
-          ${
-            order.discount_amount
-              ? `<div class="flex-between"><span>Discount ${order.discount_type === 'percentage' ? `(${order.discount_value || ''}%)` : (order.discount_value ? `(₹${order.discount_value})` : '')}:</span><span>-${order.discount_amount.toFixed(2)}</span></div>`
-              : ''
-          }
-          ${
-            order.coupon_discount
-              ? `<div class="flex-between"><span>Coupon (${order.coupon_code || ''}):</span><span>-${order.coupon_discount.toFixed(2)}</span></div>`
-              : ''
-          }
+            ${
+              order.discount_amount
+                ? `<div class="flex-between"><span>Discount ${order.discount_type === 'percentage' ? `(${order.discount_value || ''}%)` : (order.discount_value ? `(₹${order.discount_value})` : '')}:</span><span>-${order.discount_amount.toFixed(2)}</span></div>`
+                : ''
+            }
+            ${
+              order.coupon_discount
+                ? `<div class="flex-between"><span>Coupon (${order.coupon_code || ''}):</span><span>-${order.coupon_discount.toFixed(2)}</span></div>`
+                : ''
+            }
 
-          ${
-            isTaxInvoice && taxTotal > 0
-              ? `
-          <div class="flex-between">
-            <span>Taxable Amount:</span>
-            <span>${(order.taxable_amount !== undefined && order.taxable_amount > 0 ? order.taxable_amount : Math.max(0, subTotalNum - (order.discount_amount || 0) - (order.coupon_discount || 0))).toFixed(2)}</span>
-          </div>
+            ${
+              isTaxInvoice && taxTotal > 0
+                ? `
+            <div class="flex-between">
+              <span>Taxable Amount:</span>
+              <span>${(order.taxable_amount !== undefined && order.taxable_amount > 0 ? order.taxable_amount : Math.max(0, subTotalNum - (order.discount_amount || 0) - (order.coupon_discount || 0))).toFixed(2)}</span>
+            </div>
 
-          <div class="flex-between">
-            <span>CGST (${halfTaxRateStr}%):</span>
-            <span>${(order.cgst_amount || 0).toFixed(2)}</span>
-          </div>
+            <div class="flex-between">
+              <span>CGST (${halfTaxRateStr}%):</span>
+              <span>${(order.cgst_amount || 0).toFixed(2)}</span>
+            </div>
 
-          <div class="flex-between">
-            <span>SGST (${halfTaxRateStr}%):</span>
-            <span>${(order.sgst_amount || 0).toFixed(2)}</span>
-          </div>
+            <div class="flex-between">
+              <span>SGST (${halfTaxRateStr}%):</span>
+              <span>${(order.sgst_amount || 0).toFixed(2)}</span>
+            </div>
 
-          ${
-            order.igst_amount && order.igst_amount > 0
-              ? `<div class="flex-between"><span>IGST:</span><span>${order.igst_amount.toFixed(2)}</span></div>`
-              : ''
-          }
-          `
-              : ''
-          }
+            ${
+              order.igst_amount && order.igst_amount > 0
+                ? `<div class="flex-between"><span>IGST:</span><span>${order.igst_amount.toFixed(2)}</span></div>`
+                : ''
+            }
+            `
+                : ''
+            }
 
-          ${
-            order.delivery_charge
-              ? `<div class="flex-between"><span>Delivery Charge:</span><span>${order.delivery_charge.toFixed(2)}</span></div>`
-              : ''
-          }
-          ${
-            order.service_charge
-              ? `<div class="flex-between"><span>Service Charge:</span><span>${order.service_charge.toFixed(2)}</span></div>`
-              : ''
-          }
+            ${
+              order.delivery_charge
+                ? `<div class="flex-between"><span>Delivery Charge:</span><span>${order.delivery_charge.toFixed(2)}</span></div>`
+                : ''
+            }
+            ${
+              order.service_charge
+                ? `<div class="flex-between"><span>Service Charge:</span><span>${order.service_charge.toFixed(2)}</span></div>`
+                : ''
+            }
 
-          <div class="flex-between">
-            <span>Round Off:</span>
-            <span>${roundOffStr}</span>
-          </div>
+            <div class="flex-between">
+              <span>Round Off:</span>
+              <span>${roundOffStr}</span>
+            </div>
 
-          <div class="dashed"></div>
+            <div class="dashed"></div>
 
-          <div class="flex-between bold" style="font-size: 14px;">
-            <span>Grand Total:</span>
-            <span>${payableAmountStr}</span>
-          </div>
+            <div class="flex-between bold" style="font-size: ${is58 ? '12px' : isA4 ? '15px' : '13px'};">
+              <span>Grand Total:</span>
+              <span>${payableAmountStr}</span>
+            </div>
 
-          <div class="dashed"></div>
+            <div class="dashed"></div>
 
-          <div class="flex-between bold">
-            <span>Payment Method:</span>
-            <span>${paymentMethodStr}</span>
-          </div>
+            <div class="flex-between bold">
+              <span>Payment Method:</span>
+              <span>${paymentMethodStr}</span>
+            </div>
 
-          <div class="flex-between">
-            <span>Payment Status:</span>
-            <span class="bold">${isPaid ? 'PAID' : 'UNPAID'}</span>
-          </div>
+            <div class="flex-between">
+              <span>Payment Status:</span>
+              <span class="bold">${isPaid ? 'PAID' : 'UNPAID'}</span>
+            </div>
 
-          ${txnRef ? `<div class="flex-between"><span>Ref #:</span><span>${txnRef}</span></div>` : ''}
+            ${txnRef ? `<div class="flex-between"><span>Ref #:</span><span>${txnRef}</span></div>` : ''}
 
-          <div class="dashed"></div>
+            <div class="dashed"></div>
 
-          <div class="center" style="font-size: 10px; margin-top: 2px;">All prices are in Indian Rupee (INR)</div>
-          
-          <div class="center" style="margin-top: 6px; font-size: 11px;">
-            <b>Billed By:</b> ${billedBy}
-          </div>
+            <div class="center" style="font-size: 9px; margin-top: 2px;">All prices are in Indian Rupee (INR)</div>
+            
+            <div class="center" style="margin-top: 4px; font-size: 9.5px;">
+              <b>Billed By:</b> ${billedBy}
+            </div>
 
-          <div class="center bold" style="margin-top: 8px; font-size: 13px; letter-spacing: 0.5px;">
-            Thank You Visit Again!
+            <div class="center bold" style="margin-top: 5px; font-size: 11.5px; letter-spacing: 0.3px;">
+              Thank You Visit Again!
+            </div>
           </div>
         </body>
       </html>

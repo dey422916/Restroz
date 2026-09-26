@@ -11,7 +11,7 @@ import {
 } from '../types';
 import { calculateOrderTotals, CalculationResult } from '../utils/gst';
 import { validateCoupon } from '../utils/validators';
-import { orderService, clearOrdersCache } from '../services/api/orderService';
+import { orderService, clearOrdersCache, resolveOrderDiscounts } from '../services/api/orderService';
 import { kotService } from '../services/api/kotService';
 import { dayRegisterService } from '../services/api/dayRegisterService';
 import { mockStorage } from '../services/mockStorage';
@@ -534,10 +534,12 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       landmark: order.delivery_landmark,
       deliveryCharge: order.delivery_charge,
     });
-    if (order.discount_type && order.discount_type !== 'none') {
-      setDiscountType(order.discount_type);
-      setDiscountValue(order.discount_value || order.discount_amount || 0);
+    const resolvedDisc = resolveOrderDiscounts(order);
+    if (resolvedDisc.discount_type !== 'none' && resolvedDisc.discount_value > 0) {
+      setDiscountType(resolvedDisc.discount_type === 'percentage' ? 'percentage' : 'fixed');
+      setDiscountValue(resolvedDisc.discount_value);
     } else {
+      setDiscountType('fixed');
       setDiscountValue(0);
     }
   };

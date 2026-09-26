@@ -3,6 +3,7 @@ import { getLocalRestaurantDate } from './dayRegisterService';
 import { formatCurrency } from '../../utils/currency';
 import { formatOrderDateTime, formatOrderDate, formatOrderTime } from '../../utils/dateUtils';
 import { resolveOrderSource } from './orderService';
+import { validateReportDateRange, getEarliestRestaurantReportingDate } from '../../utils/dateValidation';
 
 export type ReportType =
   | 'daily_sales'
@@ -99,7 +100,17 @@ export const reportExportService = {
     settings: RestaurantSettings,
     orderTypeFilter: 'all' | 'dine_in' | 'takeaway' | 'delivery' | 'qr' = 'all'
   ): { csvContent: string; fileName: string; title: string } {
+    const earliestAvailableDate = getEarliestRestaurantReportingDate(orders);
+    const validation = validateReportDateRange(startDateStr, endDateStr, { earliestAvailableDate });
+    if (!validation.isValid) {
+      throw new Error(validation.error || 'Please select a valid date.');
+    }
+
     const filteredOrders = this.filterOrdersByDateRange(orders, startDateStr, endDateStr, orderTypeFilter);
+    if (filteredOrders.length === 0) {
+      throw new Error('No data available for the selected date range.');
+    }
+
     let headers: string[] = [];
     let rows: string[][] = [];
     let title = '';

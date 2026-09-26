@@ -24,6 +24,7 @@ import { reportExportService, ReportType } from '../../src/services/api/reportEx
 import { printService } from '../../src/services/printService';
 import { useAuth } from '../../src/context/AuthContext';
 import { formatCurrency } from '../../src/utils/currency';
+import { validateReportDateRange, getEarliestRestaurantReportingDate } from '../../src/utils/dateValidation';
 import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
 import { Order, Product, Category, DayRegister, RestaurantSettings, ItemSalesSummary } from '../../src/types';
 
@@ -50,6 +51,14 @@ export default function DashboardScreen() {
   const [datePreset, setDatePreset] = useState<'today' | 'yesterday' | '7days' | '30days' | 'custom'>('today');
   const [startDate, setStartDate] = useState<string>(todayStr);
   const [endDate, setEndDate] = useState<string>(todayStr);
+
+  const earliestAvailableDate = useMemo(() => {
+    return getEarliestRestaurantReportingDate(orders, registers, (activeRestaurant as any)?.created_at);
+  }, [orders, registers, activeRestaurant]);
+
+  const dateValidation = useMemo(() => {
+    return validateReportDateRange(startDate, endDate, { earliestAvailableDate });
+  }, [startDate, endDate, earliestAvailableDate]);
 
   // Item Search & Filter
   const [itemSearch, setItemSearch] = useState<string>('');
@@ -230,13 +239,60 @@ export default function DashboardScreen() {
 
   // Day-wise Sales Analytics
   const daySalesData = useMemo(() => {
+    if (!dateValidation.isValid) {
+      return {
+        days: [],
+        dailySummaries: [],
+        totals: {
+          total_orders: 0,
+          gross_sales: 0,
+          discount_amount: 0,
+          coupon_discount: 0,
+          taxable_amount: 0,
+          tax_collected: 0,
+          delivery_charges: 0,
+          packaging_charges: 0,
+          net_sales: 0,
+          cash_sales: 0,
+          upi_sales: 0,
+          card_sales: 0,
+          other_sales: 0,
+          dine_in_sales: 0,
+          takeaway_sales: 0,
+          delivery_sales: 0,
+          qr_sales: 0,
+          cancelled_orders_count: 0,
+          paid_orders_count: 0,
+          average_order_value: 0,
+        },
+      };
+    }
     return analyticsService.getDayWiseSales(orders, startDate, endDate);
-  }, [orders, startDate, endDate]);
+  }, [orders, startDate, endDate, dateValidation.isValid]);
 
   // Item-wise Sales & Best Sellers Analytics
   const itemSalesData = useMemo(() => {
+    if (!dateValidation.isValid) {
+      return {
+        items: [],
+        categories: [],
+        categorySales: [],
+        topSellingItems: [],
+        totalUnitsSold: 0,
+        totalRevenue: 0,
+        food_types: {
+          veg: { quantity: 0, revenue: 0 },
+          'non-veg': { quantity: 0, revenue: 0 },
+          egg: { quantity: 0, revenue: 0 },
+        },
+        totals: {
+          total_quantity: 0,
+          total_revenue: 0,
+        },
+      };
+    }
     return analyticsService.getItemWiseSales(orders, products, startDate, endDate);
-  }, [orders, products, startDate, endDate]);
+  }, [orders, products, startDate, endDate, dateValidation.isValid]);
 
   // Filtered Item Ranking List
   const filteredItemRanking = useMemo(() => {
@@ -409,6 +465,22 @@ export default function DashboardScreen() {
   const [exportingReport, setExportingReport] = useState<string | null>(null);
 
   const handleExportReportCsv = async (type: ReportType) => {
+    const validation = validateReportDateRange(startDate, endDate, { earliestAvailableDate });
+    if (!validation.isValid) {
+      const msg = validation.error || 'Please select a valid date.';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Invalid Date', msg);
+      return;
+    }
+
+    const filteredOrders = reportExportService.filterOrdersByDateRange(orders, startDate, endDate);
+    if (filteredOrders.length === 0) {
+      const msg = 'No data available for the selected date range.';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('No Records', msg);
+      return;
+    }
+
     const effectiveSettings: RestaurantSettings = settings || {
       id: activeRestaurantId || 'default',
       name: activeRestaurant?.name || 'Restaurant POS',
@@ -450,6 +522,22 @@ export default function DashboardScreen() {
   };
 
   const handleExportReportPdf = async (type: ReportType) => {
+    const validation = validateReportDateRange(startDate, endDate, { earliestAvailableDate });
+    if (!validation.isValid) {
+      const msg = validation.error || 'Please select a valid date.';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Invalid Date', msg);
+      return;
+    }
+
+    const filteredOrders = reportExportService.filterOrdersByDateRange(orders, startDate, endDate);
+    if (filteredOrders.length === 0) {
+      const msg = 'No data available for the selected date range.';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('No Records', msg);
+      return;
+    }
+
     const effectiveSettings: RestaurantSettings = settings || {
       id: activeRestaurantId || 'default',
       name: activeRestaurant?.name || 'Restaurant POS',
@@ -654,7 +742,7 @@ export default function DashboardScreen() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748b' }}>From:</Text>
                   <TextInput
-                    style={styles.dateInput}
+                    style={[styles.dateInput, !dateValidation.isValid && styles.dateInputError]}
                     value={startDate}
                     onChangeText={(t) => {
                       setStartDate(t);
@@ -662,10 +750,15 @@ export default function DashboardScreen() {
                     }}
                     placeholder="YYYY-MM-DD"
                     placeholderTextColor="#64748b"
+                    {...({
+                      type: 'date',
+                      max: todayStr,
+                      min: earliestAvailableDate || undefined,
+                    } as any)}
                   />
                   <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748b' }}>To:</Text>
                   <TextInput
-                    style={styles.dateInput}
+                    style={[styles.dateInput, !dateValidation.isValid && styles.dateInputError]}
                     value={endDate}
                     onChangeText={(t) => {
                       setEndDate(t);
@@ -673,6 +766,11 @@ export default function DashboardScreen() {
                     }}
                     placeholder="YYYY-MM-DD"
                     placeholderTextColor="#64748b"
+                    {...({
+                      type: 'date',
+                      max: todayStr,
+                      min: earliestAvailableDate || undefined,
+                    } as any)}
                   />
                 </View>
                 <View style={{ alignSelf: isMobile ? 'flex-start' : 'auto' }}>
@@ -681,6 +779,12 @@ export default function DashboardScreen() {
                   </Text>
                 </View>
               </View>
+
+              {!dateValidation.isValid && (
+                <View style={styles.dateValidationErrorBanner}>
+                  <Text style={styles.dateValidationErrorText}>⚠️ {dateValidation.error}</Text>
+                </View>
+              )}
             </View>
 
             {/* Core KPI Metrics Grid */}
@@ -871,7 +975,11 @@ export default function DashboardScreen() {
               {daySalesData.dailySummaries.length === 0 ? (
                 <View style={styles.emptyBox}>
                   <Text style={{ fontSize: 28 }}>📭</Text>
-                  <Text style={styles.emptyText}>No sales recorded for the selected period.</Text>
+                  <Text style={styles.emptyText}>
+                    {!dateValidation.isValid
+                      ? dateValidation.error
+                      : 'No data available for the selected date range.'}
+                  </Text>
                 </View>
               ) : (
                 <ScrollView horizontal showsHorizontalScrollIndicator={true}>
@@ -1354,7 +1462,7 @@ export default function DashboardScreen() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748b' }}>From:</Text>
                   <TextInput
-                    style={styles.dateInput}
+                    style={[styles.dateInput, !dateValidation.isValid && styles.dateInputError]}
                     value={startDate}
                     onChangeText={(t) => {
                       setStartDate(t);
@@ -1362,10 +1470,15 @@ export default function DashboardScreen() {
                     }}
                     placeholder="YYYY-MM-DD"
                     placeholderTextColor="#64748b"
+                    {...({
+                      type: 'date',
+                      max: todayStr,
+                      min: earliestAvailableDate || undefined,
+                    } as any)}
                   />
                   <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748b' }}>To:</Text>
                   <TextInput
-                    style={styles.dateInput}
+                    style={[styles.dateInput, !dateValidation.isValid && styles.dateInputError]}
                     value={endDate}
                     onChangeText={(t) => {
                       setEndDate(t);
@@ -1373,6 +1486,11 @@ export default function DashboardScreen() {
                     }}
                     placeholder="YYYY-MM-DD"
                     placeholderTextColor="#64748b"
+                    {...({
+                      type: 'date',
+                      max: todayStr,
+                      min: earliestAvailableDate || undefined,
+                    } as any)}
                   />
                 </View>
 
@@ -1380,6 +1498,12 @@ export default function DashboardScreen() {
                   Calculations follow: Subtotal → Discount/Coupon → Taxable → CGST + SGST → Charges → Grand Total
                 </Text>
               </View>
+
+              {!dateValidation.isValid && (
+                <View style={styles.dateValidationErrorBanner}>
+                  <Text style={styles.dateValidationErrorText}>⚠️ {dateValidation.error}</Text>
+                </View>
+              )}
             </View>
 
             {/* Grid / List of 6 POS Reports */}
@@ -2333,8 +2457,27 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     fontSize: 11,
     color: '#0f172a',
-    width: 90,
+    minWidth: 120,
     backgroundColor: '#f8fafc',
+  },
+  dateInputError: {
+    borderColor: '#ef4444',
+    backgroundColor: '#fef2f2',
+  },
+  dateValidationErrorBanner: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+    padding: 8,
+    borderRadius: 6,
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dateValidationErrorText: {
+    color: '#b91c1c',
+    fontSize: 11.5,
+    fontWeight: '700',
   },
   dateRangeBadge: {
     fontSize: 11,

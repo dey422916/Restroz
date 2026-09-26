@@ -2120,10 +2120,30 @@ export default function PosScreen() {
 
                       <TouchableOpacity
                         style={styles.modalActionKotBtn}
-                        onPress={() => {
+                        onPress={async () => {
                           if (viewTableModalData.order) {
-                            printService.printKotThermal(viewTableModalData.order, settings, undefined, true);
-                            showToast('success', 'KOT Slip', 'KOT reprint sent to printer.');
+                            try {
+                              await printService.printKotThermal(viewTableModalData.order, settings, undefined, true);
+                              showToast('success', 'KOT Slip', 'KOT reprint sent to printer.');
+                            } catch (printErr: any) {
+                              console.warn('[pos.tsx] Reprint KOT failed:', printErr);
+                              if (Platform.OS === 'web' && typeof window !== 'undefined' && printErr?.code !== 'PRINT_IN_PROGRESS') {
+                                const proceed = window.confirm(
+                                  `Unable to print KOT automatically. Check POS80 printer / QZ Tray.\n\nWould you like to print using the browser?`
+                                );
+                                if (proceed) {
+                                  try {
+                                    await printService.printKotThermalBrowser(viewTableModalData.order, settings, undefined, true);
+                                  } catch (fallbackErr) {
+                                    console.warn('[pos.tsx] Fallback browser reprint failed:', fallbackErr);
+                                  }
+                                }
+                              } else if (printErr?.code === 'PRINT_IN_PROGRESS') {
+                                showToast('warning', 'Print In Progress', 'A KOT print job is already in progress.');
+                              } else {
+                                showToast('error', 'Direct Print Failed', 'Unable to print KOT automatically. Check POS80 printer / QZ Tray.');
+                              }
+                            }
                           }
                         }}
                       >

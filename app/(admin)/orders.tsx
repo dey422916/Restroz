@@ -605,7 +605,17 @@ export default function OrdersScreen() {
       });
 
       if ((updated as any).latest_kot) {
-        printService.printKotThermal(updated, settings, (updated as any).latest_kot).catch((e) => console.warn('KOT Print warning:', e));
+        printService.printKotThermal(updated, settings, (updated as any).latest_kot).catch((e: any) => {
+          console.warn('KOT Print warning:', e);
+          if (Platform.OS === 'web' && typeof window !== 'undefined' && e?.code !== 'PRINT_IN_PROGRESS') {
+            const proceed = window.confirm(
+              `Unable to print KOT automatically. Check POS80 printer / QZ Tray.\n\nWould you like to print using the browser?`
+            );
+            if (proceed) {
+              printService.printKotThermalBrowser(updated, settings, (updated as any).latest_kot).catch(console.warn);
+            }
+          }
+        });
       }
 
       clearOrdersCache(updated.restaurant_id || activeRestaurantId);
@@ -834,8 +844,6 @@ export default function OrdersScreen() {
           : (hasExistingKot ? 'Supplementary Kitchen Slip' : 'Kitchen Slip');
 
         const newKot = await kotService.generateKot(order, kotReason, itemsToGenerate);
-        await printService.printKotThermal(order, settings, newKot, false);
-        await printedKotTracker.markKotAsAutoPrinted(newKot.id, newKot.kitchen_notes);
         await orderService.updateOrderStatus(order.id, 'kot_generated');
 
         // Optimistically update order state immediately so KOT button disables instantly
@@ -857,20 +865,63 @@ export default function OrdersScreen() {
         clearKotsCache(order.restaurant_id || activeRestaurantId);
         await loadData(true);
 
-        if (!settings.auto_print_kot) {
-          Alert.alert(
-            '🖨️ KOT Generated & Printed',
-            hasExistingKot
-              ? `Supplementary KOT #${newKot.kot_number} generated for new items.`
-              : `KOT #${newKot.kot_number} generated for kitchen.`
-          );
+        try {
+          await printService.printKotThermal(order, settings, newKot, false);
+          await printedKotTracker.markKotAsAutoPrinted(newKot.id, newKot.kitchen_notes);
+          if (!settings.auto_print_kot) {
+            showAlert(
+              '🖨️ KOT Generated & Printed',
+              hasExistingKot
+                ? `Supplementary KOT #${newKot.kot_number} generated for new items.`
+                : `KOT #${newKot.kot_number} generated for kitchen.`
+            );
+          }
+        } catch (printErr: any) {
+          console.warn('[orders.tsx] Direct KOT print failed:', printErr);
+          if (Platform.OS === 'web' && typeof window !== 'undefined' && printErr?.code !== 'PRINT_IN_PROGRESS') {
+            const proceed = window.confirm(
+              `Unable to print KOT automatically. Check POS80 printer / QZ Tray.\n\nWould you like to print using the browser?`
+            );
+            if (proceed) {
+              try {
+                await printService.printKotThermalBrowser(order, settings, newKot, false);
+                await printedKotTracker.markKotAsAutoPrinted(newKot.id, newKot.kitchen_notes);
+              } catch (fallbackErr) {
+                console.warn('[orders.tsx] Browser fallback print failed:', fallbackErr);
+              }
+            }
+          } else if (printErr?.code === 'PRINT_IN_PROGRESS') {
+            showAlert('Print In Progress', 'A KOT print job is already in progress. Please wait.');
+          } else {
+            showAlert('Direct Printing Unavailable', 'Unable to print KOT automatically. Check POS80 printer / QZ Tray.');
+          }
         }
       } else {
         // Manual reprint of existing KOT - same KOT is printed
         const activeKot = order.kots && order.kots.length > 0 ? order.kots[order.kots.length - 1] : undefined;
-        await printService.printKotThermal(order, settings, activeKot, true);
-        if (!settings.auto_print_kot) {
-          Alert.alert('🖨️ KOT Reprinted', `Kitchen slip reprinted for Order #${order.order_number}.`);
+        try {
+          await printService.printKotThermal(order, settings, activeKot, true);
+          if (!settings.auto_print_kot) {
+            showAlert('🖨️ KOT Reprinted', `Kitchen slip reprinted for Order #${order.order_number}.`);
+          }
+        } catch (printErr: any) {
+          console.warn('[orders.tsx] Direct KOT reprint failed:', printErr);
+          if (Platform.OS === 'web' && typeof window !== 'undefined' && printErr?.code !== 'PRINT_IN_PROGRESS') {
+            const proceed = window.confirm(
+              `Unable to print KOT automatically. Check POS80 printer / QZ Tray.\n\nWould you like to print using the browser?`
+            );
+            if (proceed) {
+              try {
+                await printService.printKotThermalBrowser(order, settings, activeKot, true);
+              } catch (fallbackErr) {
+                console.warn('[orders.tsx] Browser fallback reprint failed:', fallbackErr);
+              }
+            }
+          } else if (printErr?.code === 'PRINT_IN_PROGRESS') {
+            showAlert('Print In Progress', 'A KOT print job is already in progress. Please wait.');
+          } else {
+            showAlert('Direct Printing Unavailable', 'Unable to print KOT automatically. Check POS80 printer / QZ Tray.');
+          }
         }
       }
     } catch (err: any) {
@@ -3442,7 +3493,30 @@ export default function OrdersScreen() {
 
                     <TouchableOpacity
                       style={[styles.invoiceActionBtn, styles.invoiceBtnKot]}
-                      onPress={() => printService.printKotThermal(viewOrderModal, settings)}
+                      onPress={async () => {
+                        try {
+                          await printService.printKotThermal(viewOrderModal, settings);
+                          showAlert('🖨️ KOT Printed', `Kitchen slip printed for Order #${viewOrderModal.order_number}.`);
+                        } catch (err: any) {
+                          console.warn('[orders.tsx] viewOrderModal KOT print failed:', err);
+                          if (Platform.OS === 'web' && typeof window !== 'undefined' && err?.code !== 'PRINT_IN_PROGRESS') {
+                            const proceed = window.confirm(
+                              `Unable to print KOT automatically. Check POS80 printer / QZ Tray.\n\nWould you like to print using the browser?`
+                            );
+                            if (proceed) {
+                              try {
+                                await printService.printKotThermalBrowser(viewOrderModal, settings);
+                              } catch (fallbackErr) {
+                                console.warn('[orders.tsx] Browser fallback print failed:', fallbackErr);
+                              }
+                            }
+                          } else if (err?.code === 'PRINT_IN_PROGRESS') {
+                            showAlert('Print In Progress', 'A KOT print job is already in progress. Please wait.');
+                          } else {
+                            showAlert('Direct Printing Unavailable', 'Unable to print KOT automatically. Check POS80 printer / QZ Tray.');
+                          }
+                        }
+                      }}
                     >
                       <Text style={styles.invoiceBtnText}>🖨️ KOT Slip</Text>
                     </TouchableOpacity>

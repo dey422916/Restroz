@@ -4,10 +4,8 @@ import { formatCurrency, numberToWords } from '../utils/currency';
 import { getOrderSubtotal } from '../utils/gst';
 import { cleanCustomerOrderNotes } from '../utils/orderNotes';
 import { formatOrderDateTime } from '../utils/dateUtils';
+import { directPrintService, resolveKotPrinterName, DirectPrintError } from './directPrintService';
 import { supabase } from './supabase';
-
-
-
 
 export function formatLogoDataUri(urlOrBase64?: string | null): string {
   if (!urlOrBase64) return '';
@@ -173,10 +171,10 @@ async function executeIsolatedPrint(html: string): Promise<void> {
 
 export const printService = {
   /**
-   * Dedicated Thermal / Standard KOT Slip (58mm / 80mm / A4 Kitchen Ticket)
-   * Matches the official KOT reference specification with responsive layout per paper size.
+   * Generates the canonical HTML for a Thermal / Standard KOT Slip (58mm / 80mm / A4 Kitchen Ticket).
+   * Exact physical calibration is preserved.
    */
-  async printKotThermal(order: Order, settings: RestaurantSettings, kot?: KOT, isReprint: boolean = false): Promise<void> {
+  generateKotHtml(order: Order, settings: RestaurantSettings, kot?: KOT, isReprint: boolean = false): string {
     const activeKot = kot;
     let kotNum = activeKot?.kot_number;
     if (!kotNum) {
@@ -322,7 +320,12 @@ export const printService = {
          .reprint-banner { font-size: 11px; font-weight: 900; letter-spacing: 1px; color: #000; margin-bottom: 2px; }
          .sup-banner { font-size: 11px; font-weight: 900; letter-spacing: 1px; color: #000; margin-bottom: 2px; }
          table th { font-size: 10.5px; font-weight: 900; padding: 3px 0; border-bottom: 1px solid #000; }`
-      : `@page { size: 80mm auto; margin: 0; }
+      : `/*
+          * POS80 PHYSICAL PRINT CALIBRATION
+          * Verified on physical printer.
+          * DO NOT RECENTER OR MODIFY WITHOUT PHYSICAL PRINTER TESTING.
+          */
+          @page { size: 80mm auto; margin: 0; }
           html, body { width: 80mm; margin: 0; padding: 0; font-size: 10.5px; line-height: 1.20; color: #000; }
           .receipt-container { width: 72mm; max-width: 72mm; margin: 0 8mm 0 0mm; padding: 1mm 1.5mm; }
           .kot-title { font-size: 16px; font-weight: 900; letter-spacing: 0.5px; margin: 2px 0; }
@@ -332,7 +335,7 @@ export const printService = {
           .sup-banner { font-size: 12px; font-weight: 900; letter-spacing: 1px; color: #000; margin-bottom: 3px; }
           table th { font-size: 11px; font-weight: 900; padding: 2.5px 0; border-bottom: 1px solid #000; }`;
 
-    const html = `
+    return `
       <!DOCTYPE html>
       <html>
         <head>
@@ -448,8 +451,44 @@ export const printService = {
         </body>
       </html>
     `;
+  },
 
+  /**
+   * Browser / Native Print Dialog fallback for KOT slip.
+   */
+  async printKotThermalBrowser(order: Order, settings: RestaurantSettings, kot?: KOT, isReprint: boolean = false): Promise<void> {
+    const html = this.generateKotHtml(order, settings, kot, isReprint);
     await executeIsolatedPrint(html);
+  },
+
+  /**
+   * Dedicated Thermal / Standard KOT Slip (58mm / 80mm / A4 Kitchen Ticket)
+   * On Web: Sends print job directly & silently to configured POS80 printer via QZ Tray without Chrome print dialog.
+   * If direct printing fails, throws DirectPrintError so caller can notify user and offer browser fallback.
+   * On Native: Uses expo-print printAsync.
+   */
+  async printKotThermal(
+    order: Order,
+    settings: RestaurantSettings,
+    kot?: KOT,
+    isReprint: boolean = false,
+    options?: { forceBrowser?: boolean }
+  ): Promise<{ direct: boolean; printerName?: string }> {
+    const html = this.generateKotHtml(order, settings, kot, isReprint);
+
+    if (Platform.OS === 'web' && !options?.forceBrowser) {
+      const kotNum = kot?.kot_number || (order.kots && order.kots[0]?.kot_number) || order.order_number;
+      const targetPrinter = resolveKotPrinterName(settings);
+      const result = await directPrintService.printKotDirect(html, {
+        printerName: targetPrinter,
+        jobName: `KOT_${kotNum}`,
+      });
+      return { direct: true, printerName: result.printerName };
+    }
+
+    // Native or forceBrowser fallback
+    await executeIsolatedPrint(html);
+    return { direct: false };
   },
 
   /**
@@ -574,7 +613,12 @@ export const printService = {
          .flex-between { font-size: 10px; margin: 1.5px 0; }
          table th { font-size: 10px; padding: 2px 0; }
          .paid-badge { font-size: 10px; font-weight: 900; padding: 1px 4px; }`
-      : `@page { size: 80mm auto; margin: 0; }
+      : `/*
+          * POS80 PHYSICAL PRINT CALIBRATION
+          * Verified on physical printer.
+          * DO NOT RECENTER OR MODIFY WITHOUT PHYSICAL PRINTER TESTING.
+          */
+          @page { size: 80mm auto; margin: 0; }
           html, body { width: 80mm; margin: 0; padding: 0; font-size: 10.5px; line-height: 1.20; color: #000; }
           .receipt-container { width: 72mm; max-width: 72mm; margin: 0 8mm 0 0mm; padding: 1mm 1.5mm; }
           .restaurant-title { font-size: 14px; font-weight: 900; letter-spacing: 0.3px; line-height: 1.15; }
@@ -832,7 +876,7 @@ export const printService = {
   /**
    * Reprint an existing persisted KOT without generating a new KOT number.
    */
-  async reprintKot(kotId: string, settings: RestaurantSettings): Promise<void> {
+  async reprintKot(kotId: string, settings: RestaurantSettings, forceBrowser: boolean = false): Promise<void> {
     const { data: kotData, error: kotErr } = await supabase
       .from('kots')
       .select('*, items:kot_items(*)')
@@ -873,7 +917,9 @@ export const printService = {
         created_at: kotData.created_at,
       },
       settings,
-      kotData
+      kotData,
+      true,
+      { forceBrowser }
     );
   },
 

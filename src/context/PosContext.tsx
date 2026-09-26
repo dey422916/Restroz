@@ -17,6 +17,7 @@ import { dayRegisterService } from '../services/api/dayRegisterService';
 import { mockStorage } from '../services/mockStorage';
 import { useSettings } from './SettingsContext';
 import { useNotification } from './NotificationContext';
+import { Platform } from 'react-native';
 import { useAuth } from './AuthContext';
 import { printService } from '../services/printService';
 import { supabase, isSupabaseConfigured } from '../services/supabase';
@@ -497,8 +498,20 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         await printService.printKotThermal(newOrder, settings, initialKot, false);
         await printedKotTracker.markKotAsAutoPrinted(initialKot.id, initialKot.kitchen_notes);
-      } catch (printErr) {
+      } catch (printErr: any) {
         console.warn('[PosContext] Auto-print initial KOT handled safely:', printErr);
+        if (Platform.OS === 'web' && typeof window !== 'undefined' && printErr?.code !== 'PRINT_IN_PROGRESS') {
+          const proceed = window.confirm(
+            `Unable to print KOT automatically. Check POS80 printer / QZ Tray.\n\nWould you like to print using the browser?`
+          );
+          if (proceed) {
+            try {
+              await printService.printKotThermalBrowser(newOrder, settings, initialKot, false);
+            } catch (fallbackErr) {
+              console.warn('[PosContext] Fallback browser print error:', fallbackErr);
+            }
+          }
+        }
       }
     }
 
@@ -582,8 +595,20 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         try {
           await printService.printKotThermal(updated, settings, deltaKot, false);
           await printedKotTracker.markKotAsAutoPrinted(deltaKot.id, deltaKot.kitchen_notes);
-        } catch (printErr) {
+        } catch (printErr: any) {
           console.warn('[PosContext] Auto-print delta KOT handled safely:', printErr);
+          if (Platform.OS === 'web' && typeof window !== 'undefined' && printErr?.code !== 'PRINT_IN_PROGRESS') {
+            const proceed = window.confirm(
+              `Unable to print KOT automatically. Check POS80 printer / QZ Tray.\n\nWould you like to print using the browser?`
+            );
+            if (proceed) {
+              try {
+                await printService.printKotThermalBrowser(updated, settings, deltaKot, false);
+              } catch (fallbackErr) {
+                console.warn('[PosContext] Fallback browser print error:', fallbackErr);
+              }
+            }
+          }
         }
       }
       showToast('success', 'New Item KOT Saved', `Sent KOT #${deltaKot.kot_number} for new items.`);
@@ -627,7 +652,23 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const generateKot = async (order: Order, kitchenNotes?: string, itemsToInclude?: OrderItem[]): Promise<KOT> => {
     const kot = await kotService.generateKot(order, kitchenNotes, itemsToInclude);
     showToast('warning', 'KOT Generated!', `KOT #${kot.kot_number} created.`);
-    printService.printKotThermal(order, settings, kot);
+    try {
+      await printService.printKotThermal(order, settings, kot);
+    } catch (printErr: any) {
+      console.warn('[PosContext] Direct KOT print failed:', printErr);
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && printErr?.code !== 'PRINT_IN_PROGRESS') {
+        const proceed = window.confirm(
+          `Unable to print KOT automatically. Check POS80 printer / QZ Tray.\n\nWould you like to print using the browser?`
+        );
+        if (proceed) {
+          try {
+            await printService.printKotThermalBrowser(order, settings, kot);
+          } catch (fallbackErr) {
+            console.warn('[PosContext] Fallback browser print error:', fallbackErr);
+          }
+        }
+      }
+    }
     await refreshOrders();
     return kot;
   };

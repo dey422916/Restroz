@@ -68,7 +68,9 @@ serve(async (req: Request) => {
     // 1. GET: Return the Public Digital Certificate
     if (req.method === "GET") {
       const customCert = Deno.env.get("QZ_CERTIFICATE");
-      const cert = customCert || DEFAULT_PUBLIC_CERTIFICATE;
+      const cert = customCert
+        ? (customCert.includes("\\n") ? customCert.replace(/\\n/g, "\n") : customCert)
+        : DEFAULT_PUBLIC_CERTIFICATE;
       return new Response(cert, {
         status: 200,
         headers: {
@@ -142,8 +144,8 @@ serve(async (req: Request) => {
       }
 
       // Load Private Key from Supabase Secret environment (never exposed to client)
-      const privateKeyPem = Deno.env.get("QZ_PRIVATE_KEY");
-      if (!privateKeyPem) {
+      const rawKey = Deno.env.get("QZ_PRIVATE_KEY");
+      if (!rawKey) {
         return new Response(
           JSON.stringify({
             error: "Server signing private key not configured (QZ_PRIVATE_KEY in Supabase secrets).",
@@ -151,6 +153,7 @@ serve(async (req: Request) => {
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+      const privateKeyPem = rawKey.includes("\\n") ? rawKey.replace(/\\n/g, "\n") : rawKey;
 
       // Generate RSA-SHA512 Signature on exact un-normalized string
       const signer = crypto.createSign("SHA512");

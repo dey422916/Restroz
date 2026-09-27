@@ -18,6 +18,10 @@ dist/
 
 # Local diagnostic / scratch scripts
 scratch/
+*.pem
+*.key
+qz-restroz-private.pem
+qz-restroz-certificate.pem
 
 # Sensitive account and credential files
 *credentials*

@@ -10,6 +10,11 @@ import { UserRole, PaperSize, Category } from '../../src/types';
 import { OptimizedImage } from '../../src/components/common/OptimizedImage';
 import { PrinterManagementSection } from '../../src/components/PrinterManagementSection';
 import {
+  directPrintService,
+  getLocalKotPrinter,
+  setLocalKotPrinter,
+} from '../../src/services/directPrintService';
+import {
   parseBannerUrls,
   extractBannerCleanUrl,
   extractBannerPosY,
@@ -76,6 +81,14 @@ export default function SettingsScreen() {
   const [billPaperSize, setBillPaperSize] = useState<PaperSize>(settings.bill_paper_size || '80mm');
   const [autoPrintKot, setAutoPrintKot] = useState<boolean>(Boolean(settings.auto_print_kot));
   const [isSavingPrinter, setIsSavingPrinter] = useState(false);
+
+  // QZ Tray & Local KOT Printer State
+  const [qzConnected, setQzConnected] = useState<boolean>(false);
+  const [availablePrinters, setAvailablePrinters] = useState<string[]>([]);
+  const [selectedKotPrinter, setSelectedKotPrinter] = useState<string>('');
+  const [isDetectingPrinters, setIsDetectingPrinters] = useState<boolean>(false);
+  const [printerDetectionMessage, setPrinterDetectionMessage] = useState<string>('');
+  const [showPrinterDropdown, setShowPrinterDropdown] = useState<boolean>(false);
 
   // Online Delivery & Payment settings state
   const [deliveryPaymentQrUrl, setDeliveryPaymentQrUrl] = useState(settings.delivery_payment_qr_url || '');
@@ -297,24 +310,105 @@ export default function SettingsScreen() {
     }
   };
 
+  const detectQzPrinters = async (silent = false) => {
+    if (Platform.OS !== 'web') return;
+    setIsDetectingPrinters(true);
+    try {
+      const isConn = await directPrintService.isConnected();
+      if (!isConn) {
+        const didConnect = await directPrintService.connect();
+        if (!didConnect) {
+          setQzConnected(false);
+          setAvailablePrinters([]);
+          setPrinterDetectionMessage('Start QZ Tray to detect installed printers.');
+          if (!silent) {
+            showToast('info', 'QZ Tray Not Detected', 'Start QZ Tray to detect installed Windows printers.');
+          }
+          return;
+        }
+      }
+      setQzConnected(true);
+      const list = await directPrintService.getAvailablePrinters();
+      setAvailablePrinters(list);
+      if (list.length === 0) {
+        setPrinterDetectionMessage('No printers found by QZ Tray.');
+      } else {
+        setPrinterDetectionMessage('');
+        if (!silent) {
+          showToast('success', 'Printers Detected', `Found ${list.length} installed printer(s).`);
+        }
+      }
+    } catch (err: any) {
+      setQzConnected(false);
+      setAvailablePrinters([]);
+      setPrinterDetectionMessage('Start QZ Tray to detect installed printers.');
+    } finally {
+      setIsDetectingPrinters(false);
+    }
+  };
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const saved = getLocalKotPrinter(effectiveRestaurantId) || (settings as any).kot_printer_name || '';
+      setSelectedKotPrinter(saved);
+      detectQzPrinters(true);
+    }
+  }, [effectiveRestaurantId]);
+
+  const handleSelectKotPrinter = (printerName: string) => {
+    setSelectedKotPrinter(printerName);
+    setLocalKotPrinter(printerName, effectiveRestaurantId);
+    setShowPrinterDropdown(false);
+    setIsDirty(true);
+  };
+
+  const handleToggleAutoPrint = (enable: boolean) => {
+    if (!canManage) {
+      showToast('error', 'Permission Denied', 'Only ADMIN users can update printer settings.');
+      Alert.alert('Permission Denied', 'Only ADMIN users can update printer settings.');
+      return;
+    }
+    if (enable) {
+      if (!selectedKotPrinter.trim()) {
+        showToast('error', 'KOT Printer Required', 'Please select a KOT printer before enabling Auto Print.');
+        Alert.alert('KOT Printer Required', 'Please select a KOT printer before enabling Auto Print.');
+        return;
+      }
+      if (!qzConnected) {
+        showToast('error', 'QZ Tray Not Connected', 'Start QZ Tray to detect installed printers before enabling Auto Print.');
+        Alert.alert('QZ Tray Not Connected', 'Start QZ Tray to detect installed printers before enabling Auto Print.');
+        return;
+      }
+    }
+    setAutoPrintKot(enable);
+    setIsDirty(true);
+  };
+
   const handleSavePrinterSettings = async () => {
     if (!canManage) {
       showToast('error', 'Permission Denied', 'Only ADMIN users can update printer settings.');
       Alert.alert('Permission Denied', 'Only ADMIN users can update printer settings.');
       return;
     }
+    if (autoPrintKot && !selectedKotPrinter.trim()) {
+      showToast('error', 'KOT Printer Required', 'Please select a KOT printer before enabling Auto Print.');
+      Alert.alert('KOT Printer Required', 'Please select a KOT printer before enabling Auto Print.');
+      return;
+    }
     try {
       setIsSavingPrinter(true);
+      setLocalKotPrinter(selectedKotPrinter, effectiveRestaurantId);
       await updateSettings({
         kot_paper_size: kotPaperSize,
         bill_paper_size: billPaperSize,
         auto_print_kot: autoPrintKot,
+        kot_printer_name: selectedKotPrinter,
       });
-      const summary = `KOT Paper: ${kotPaperSize} • Bill Paper: ${billPaperSize} • Auto Print: ${autoPrintKot ? 'ON' : 'OFF'}`;
+      const summary = `KOT Paper: ${kotPaperSize} • Bill Paper: ${billPaperSize} • KOT Printer: ${selectedKotPrinter || 'None'} • Auto Print: ${autoPrintKot ? 'ON' : 'OFF'}`;
       showToast('success', 'Printer Settings Saved', summary);
       Alert.alert(
         'Printer Settings Saved',
-        `KOT Paper: ${kotPaperSize}\nBill Paper: ${billPaperSize}\nAuto Print: ${autoPrintKot ? 'ON' : 'OFF'}`
+        `KOT Paper: ${kotPaperSize}\nBill Paper: ${billPaperSize}\nKOT Printer: ${selectedKotPrinter || 'None'}\nAuto Print: ${autoPrintKot ? 'ON' : 'OFF'}`
       );
     } catch (e: any) {
       showToast('error', 'Save Failed', e.message || 'Failed to save printer settings.');
@@ -1712,10 +1806,139 @@ export default function SettingsScreen() {
 
               {/* 4. Printer Settings */}
               <View style={styles.card}>
-                <Text style={styles.cardHeader}>🖨️ Printer Settings</Text>
-                <Text style={styles.cardSubHeader}>
-                  Configure thermal receipt dimensions and automatic printing per restaurant.
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 8 }}>
+                  <View style={{ flex: 1, minWidth: 200 }}>
+                    <Text style={styles.cardHeader}>🖨️ Printer Settings</Text>
+                    <Text style={styles.cardSubHeader}>
+                      Configure thermal receipt dimensions and direct Windows printing via QZ Tray.
+                    </Text>
+                  </View>
+                  <View
+                    testID="qz-connection-status"
+                    style={[
+                      styles.qzStatusBadge,
+                      qzConnected ? styles.qzStatusBadgeConnected : styles.qzStatusBadgeDisconnected
+                    ]}
+                  >
+                    <View style={[
+                      styles.qzStatusDot,
+                      qzConnected ? styles.qzStatusDotConnected : styles.qzStatusDotDisconnected
+                    ]} />
+                    <Text style={[
+                      styles.qzStatusText,
+                      qzConnected ? styles.qzStatusTextConnected : styles.qzStatusTextDisconnected
+                    ]}>
+                      {qzConnected ? 'QZ Tray: Connected' : 'QZ Tray: Not Connected'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* KOT Printer Dropdown (Windows / QZ Tray) */}
+                <View style={{ marginBottom: 14 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <Text style={styles.label}>KOT Printer</Text>
+                    <TouchableOpacity
+                      testID="refresh-printers-btn"
+                      style={[styles.refreshPrintersBtn, isDetectingPrinters && { opacity: 0.7 }]}
+                      onPress={() => detectQzPrinters(false)}
+                      disabled={isDetectingPrinters}
+                    >
+                      {isDetectingPrinters ? (
+                        <ActivityIndicator size="small" color="#1d4ed8" />
+                      ) : (
+                        <Text style={styles.refreshPrintersBtnText}>🔄 Refresh Printers</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+
+                  {!qzConnected ? (
+                    <View style={styles.qzNoticeBanner}>
+                      <Text style={styles.qzNoticeTitle}>🔌 Start QZ Tray to detect installed printers.</Text>
+                      <Text style={styles.qzNoticeText}>
+                        QZ Tray is required for direct thermal receipt printing on Windows PC.
+                      </Text>
+                    </View>
+                  ) : selectedKotPrinter && availablePrinters.length > 0 && !availablePrinters.includes(selectedKotPrinter) ? (
+                    <View style={[styles.qzNoticeBanner, { backgroundColor: '#fffbeb', borderColor: '#fde68a' }]}>
+                      <Text style={[styles.qzNoticeTitle, { color: '#b45309' }]}>⚠️ Selected printer is not available.</Text>
+                      <Text style={[styles.qzNoticeText, { color: '#92400e' }]}>
+                        "{selectedKotPrinter}" was not detected among active installed printers. Please select an installed printer.
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {/* Dropdown Select Button */}
+                  <TouchableOpacity
+                    testID="select-kot-printer-btn"
+                    style={[
+                      styles.printerSelectBtn,
+                      !qzConnected && styles.printerSelectBtnDisabled,
+                      showPrinterDropdown && styles.printerSelectBtnActive
+                    ]}
+                    onPress={() => {
+                      if (!qzConnected) {
+                        detectQzPrinters(false);
+                      } else {
+                        setShowPrinterDropdown(!showPrinterDropdown);
+                      }
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                      <Text style={{ fontSize: 16 }}>🖨️</Text>
+                      <Text
+                        style={[
+                          styles.printerSelectBtnText,
+                          !selectedKotPrinter && { color: '#94a3b8' },
+                          !qzConnected && { color: '#94a3b8' }
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {selectedKotPrinter || (qzConnected ? 'Select Installed Printer ▼' : 'Start QZ Tray to detect installed printers')}
+                      </Text>
+                    </View>
+                    <Text style={{ fontSize: 12, color: '#64748b', fontWeight: '700' }}>
+                      {showPrinterDropdown ? '▲' : '▼'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Dropdown Options List */}
+                  {showPrinterDropdown && qzConnected && (
+                    <View style={styles.printerDropdownList}>
+                      {availablePrinters.length === 0 ? (
+                        <View style={{ padding: 12, alignItems: 'center' }}>
+                          <Text style={{ fontSize: 13, color: '#64748b' }}>No printers detected. Check QZ Tray.</Text>
+                        </View>
+                      ) : (
+                        availablePrinters.map((p) => {
+                          const isSelected = selectedKotPrinter === p;
+                          return (
+                            <TouchableOpacity
+                              key={p}
+                              testID={`printer-option-${p}`}
+                              style={[
+                                styles.printerDropdownItem,
+                                isSelected && styles.printerDropdownItemActive
+                              ]}
+                              onPress={() => handleSelectKotPrinter(p)}
+                            >
+                              <Text
+                                style={[
+                                  styles.printerDropdownItemText,
+                                  isSelected && styles.printerDropdownItemTextActive
+                                ]}
+                              >
+                                {p} {isSelected ? '✓' : ''}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })
+                      )}
+                    </View>
+                  )}
+                  <Text style={styles.helperText}>
+                    Selected printer is stored locally per Windows device and restaurant ({effectiveRestaurantId || 'default'}).
+                  </Text>
+                </View>
 
                 <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
                   {/* KOT Paper Size */}
@@ -1783,7 +2006,7 @@ export default function SettingsScreen() {
                         styles.toggleBadge,
                         autoPrintKot ? styles.toggleBadgeOn : styles.toggleBadgeOff,
                       ]}
-                      onPress={() => setAutoPrintKot(!autoPrintKot)}
+                      onPress={() => handleToggleAutoPrint(!autoPrintKot)}
                     >
                       <Text style={[styles.toggleBadgeText, !autoPrintKot && styles.toggleBadgeTextOff]}>
                         {autoPrintKot ? '● ON' : '○ OFF'}
@@ -3109,5 +3332,131 @@ const styles = StyleSheet.create({
   },
   toggleBadgeTextOff: {
     color: '#475569',
+  },
+  qzStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  qzStatusBadgeConnected: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#bbf7d0',
+  },
+  qzStatusBadgeDisconnected: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+  },
+  qzStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  qzStatusDotConnected: {
+    backgroundColor: '#16a34a',
+  },
+  qzStatusDotDisconnected: {
+    backgroundColor: '#dc2626',
+  },
+  qzStatusText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  qzStatusTextConnected: {
+    color: '#15803d',
+  },
+  qzStatusTextDisconnected: {
+    color: '#b91c1c',
+  },
+  refreshPrintersBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  refreshPrintersBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1d4ed8',
+  },
+  qzNoticeBanner: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+  },
+  qzNoticeTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 2,
+  },
+  qzNoticeText: {
+    fontSize: 11,
+    color: '#64748b',
+    lineHeight: 15,
+  },
+  printerSelectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  printerSelectBtnDisabled: {
+    backgroundColor: '#f1f5f9',
+    borderColor: '#e2e8f0',
+  },
+  printerSelectBtnActive: {
+    borderColor: '#2563eb',
+    backgroundColor: '#ffffff',
+  },
+  printerSelectBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  printerDropdownList: {
+    marginTop: 4,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    maxHeight: 220,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+    zIndex: 100,
+  },
+  printerDropdownItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  printerDropdownItemActive: {
+    backgroundColor: '#eff6ff',
+  },
+  printerDropdownItemText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#334155',
+  },
+  printerDropdownItemTextActive: {
+    fontWeight: '700',
+    color: '#1d4ed8',
   },
 });

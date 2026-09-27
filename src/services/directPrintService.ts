@@ -333,28 +333,76 @@ async function ensureConnection(): Promise<any> {
 }
 
 /**
- * Resolves the configured KOT printer name from RestaurantSettings or default
+ * Device-specific local storage helpers for KOT printer selection.
+ * Keyed per restaurant ID: restroz_printer_<restaurantId>_kot
  */
-export function resolveKotPrinterName(settings?: RestaurantSettings | null): string {
-  if (!settings) return DEFAULT_KOT_PRINTER_NAME;
-  return (
-    (settings as any).kot_printer_name ||
-    (settings as any).thermal_printer_name ||
-    DEFAULT_KOT_PRINTER_NAME
-  );
+export function getLocalKotPrinter(restaurantId?: string | null): string {
+  try {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      if (restaurantId) {
+        const perRest = window.localStorage.getItem(`restroz_printer_${restaurantId}_kot`);
+        if (perRest) return perRest;
+      }
+      const legacyOrGlobal = window.localStorage.getItem('restroz_printer_kot');
+      if (legacyOrGlobal) return legacyOrGlobal;
+    }
+  } catch (e) {
+    console.warn('[directPrintService] Error reading local KOT printer:', e);
+  }
+  return '';
+}
+
+export function setLocalKotPrinter(printerName: string, restaurantId?: string | null): void {
+  try {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      if (restaurantId) {
+        if (printerName) {
+          window.localStorage.setItem(`restroz_printer_${restaurantId}_kot`, printerName);
+        } else {
+          window.localStorage.removeItem(`restroz_printer_${restaurantId}_kot`);
+        }
+      }
+      if (printerName) {
+        window.localStorage.setItem('restroz_printer_kot', printerName);
+      } else {
+        window.localStorage.removeItem('restroz_printer_kot');
+      }
+    }
+  } catch (e) {
+    console.warn('[directPrintService] Error saving local KOT printer:', e);
+  }
+}
+
+/**
+ * Resolves the configured KOT printer name from device local storage or RestaurantSettings
+ */
+export function resolveKotPrinterName(settings?: RestaurantSettings | null, restaurantId?: string | null): string {
+  const restId = restaurantId || settings?.restaurant_id || (settings as any)?.id;
+  const local = getLocalKotPrinter(restId);
+  if (local) return local;
+
+  if (settings) {
+    const fromSettings = (settings as any).kot_printer_name || (settings as any).thermal_printer_name;
+    if (fromSettings) return fromSettings;
+  }
+  return '';
 }
 
 /**
  * Resolves the configured Bill / Receipt printer name from RestaurantSettings or default
  */
-export function resolveBillPrinterName(settings?: RestaurantSettings | null): string {
-  if (!settings) return DEFAULT_KOT_PRINTER_NAME;
+export function resolveBillPrinterName(settings?: RestaurantSettings | null, restaurantId?: string | null): string {
+  const restId = restaurantId || settings?.restaurant_id || (settings as any)?.id;
+  const local = getLocalKotPrinter(restId);
+  if (local) return local;
+
+  if (!settings) return '';
   return (
     (settings as any).bill_printer_name ||
     (settings as any).receipt_printer_name ||
     (settings as any).kot_printer_name ||
     (settings as any).thermal_printer_name ||
-    DEFAULT_KOT_PRINTER_NAME
+    ''
   );
 }
 
@@ -371,60 +419,48 @@ export function isAutoPrintEnabled(settings?: RestaurantSettings | null): boolea
 }
 
 /**
- * Locates the target thermal printer on the local machine
+ * Locates the target thermal printer on the local machine via QZ Tray.
+ * Strictly verifies availability without silently redirecting to an arbitrary printer.
  */
 async function locatePrinter(qz: any, targetName: string): Promise<string> {
-  const trimmed = targetName.trim();
+  const trimmed = targetName?.trim();
+  if (!trimmed) {
+    throw new DirectPrintError(
+      'Selected printer is not available. Please select a KOT printer in Settings.',
+      'PRINTER_NOT_FOUND'
+    );
+  }
 
   // 1. Try finding by exact / regex query
   try {
     const found = await qz.printers.find(trimmed);
     if (found) {
       if (typeof found === 'string') return found;
-      if (Array.isArray(found) && found.length > 0) return found[0];
+      if (Array.isArray(found) && found.length > 0) {
+        const exact = found.find((p: string) => p.toLowerCase() === trimmed.toLowerCase());
+        if (exact) return exact;
+        return found[0];
+      }
     }
   } catch (findErr) {
-    // Continue to fuzzy search across printer list
+    // Continue to full printer list lookup
   }
 
-  // 2. Fuzzy search across all installed printers
+  // 2. Search across all installed printers returned by QZ Tray
   try {
     const allPrinters: string[] = await qz.printers.find();
-    if (allPrinters && allPrinters.length > 0) {
-      const normalizedTarget = trimmed.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-      // Check if target name matches any printer
-      const directMatch = allPrinters.find((p) => {
-        const norm = p.toLowerCase().replace(/[^a-z0-9]/g, '');
-        return norm.includes(normalizedTarget) || normalizedTarget.includes(norm);
-      });
+    if (Array.isArray(allPrinters) && allPrinters.length > 0) {
+      const directMatch = allPrinters.find(
+        (p) => p.trim().toLowerCase() === trimmed.toLowerCase()
+      );
       if (directMatch) return directMatch;
-
-      // Check common thermal printer names (POS80, POS-80, Thermal, 80mm, 58mm)
-      const thermalMatch = allPrinters.find((p) => {
-        const low = p.toLowerCase();
-        return (
-          low.includes('pos80') ||
-          low.includes('pos-80') ||
-          low.includes('pos 80') ||
-          low.includes('pos_80') ||
-          low.includes('pos58') ||
-          low.includes('pos-58') ||
-          low.includes('pos 58') ||
-          low.includes('thermal') ||
-          low.includes('receipt') ||
-          low.includes('80mm') ||
-          low.includes('58mm')
-        );
-      });
-      if (thermalMatch) return thermalMatch;
     }
   } catch (listErr) {
     console.warn('[directPrintService] Error querying printer list:', listErr);
   }
 
   throw new DirectPrintError(
-    `Unable to locate configured thermal printer "${trimmed}". Please check that your printer is turned on and connected.`,
+    `Selected printer is not available. ("${trimmed}" was not detected by QZ Tray)`,
     'PRINTER_NOT_FOUND'
   );
 }
@@ -497,8 +533,8 @@ export const directPrintService = {
       // 2. Connect to QZ Tray (with certificate and signature setup)
       const qz = await ensureConnection();
 
-      // 3. Locate configured POS80 / thermal printer
-      const targetPrinterName = options?.printerName || DEFAULT_KOT_PRINTER_NAME;
+      // 3. Locate configured thermal printer
+      const targetPrinterName = options?.printerName?.trim() || '';
       const matchedPrinter = await locatePrinter(qz, targetPrinterName);
 
       const jobName = options?.jobName || 'Thermal Receipt';

@@ -80,6 +80,7 @@ export interface RestaurantSettings {
   kot_paper_size?: PaperSize;
   bill_paper_size?: PaperSize;
   auto_print_kot?: boolean;
+  kot_printer_name?: string;
   online_orders_enabled?: boolean;
   delivery_payment_qr_url?: string;
   delivery_upi_id?: string;

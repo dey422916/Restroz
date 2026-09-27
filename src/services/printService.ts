@@ -549,7 +549,8 @@ export const printService = {
       }
       try {
         const kotNum = kot?.kot_number || (order.kots && order.kots[0]?.kot_number) || order.order_number;
-        const targetPrinter = resolveKotPrinterName(settings);
+        const restId = order.restaurant_id || settings.restaurant_id || (settings as any).id;
+        const targetPrinter = resolveKotPrinterName(settings, restId);
         const result = await directPrintService.printThermalDirect(html, {
           printerName: targetPrinter,
           jobName: `KOT_${kotNum}`,
@@ -1062,7 +1063,8 @@ export const printService = {
         console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nAuto Print: true\nRoute: QZ_DIRECT');
       }
       try {
-        const targetPrinter = resolveBillPrinterName(settings);
+        const restId = order.restaurant_id || settings.restaurant_id || (settings as any).id;
+        const targetPrinter = resolveBillPrinterName(settings, restId);
         const result = await directPrintService.printThermalDirect(html, {
           printerName: targetPrinter,
           jobName: `Bill_${order.invoice_number || order.order_number}`,

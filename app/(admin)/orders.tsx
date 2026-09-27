@@ -291,6 +291,25 @@ export default function OrdersScreen() {
     }
   }, [openOrderId, orders]);
 
+  // Ensure full items list is populated when View Order / Retail Bill modal opens
+  useEffect(() => {
+    if (viewOrderModal && (!viewOrderModal.items || viewOrderModal.items.length === 0)) {
+      (async () => {
+        try {
+          const { data: itms } = await supabase
+            .from('order_items')
+            .select('*')
+            .eq('order_id', viewOrderModal.id);
+          if (itms && itms.length > 0) {
+            setViewOrderModal((prev) => (prev && prev.id === viewOrderModal.id ? { ...prev, items: itms } : prev));
+          }
+        } catch (err: any) {
+          console.warn('Could not fetch items for viewOrderModal:', err);
+        }
+      })();
+    }
+  }, [viewOrderModal?.id]);
+
   // Categorized order partitions helper for display badges
   const isOnlineDeliveryOrder = (o: Order): boolean => {
     return resolveOrderSource(o) === 'CUSTOMER_APP';
@@ -1317,18 +1336,10 @@ export default function OrdersScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Search & Status Filters in compact toolbar */}
+        {/* Status Filters (Left 50%) & Search Field (Right 50%) */}
         <View style={[styles.toolbarRow, isMobile && styles.toolbarRowMobile]}>
-          <TextInput
-            style={[styles.search, !isMobile && { flex: 1, marginBottom: 0 }]}
-            placeholder="Search by Order #, Customer, Phone, Table..."
-            placeholderTextColor="#64748b"
-            value={search}
-            onChangeText={setSearch}
-          />
-
-          {/* Status Sub-filter Pills */}
-          <View style={styles.tabRow}>
+          {/* Status Sub-filter Pills (Left 50%) */}
+          <View style={[styles.tabRow, !isMobile && { flex: 1 }]}>
             {[
               { id: 'active', label: '🔥 Active' },
               { id: 'completed', label: '✓ Completed' },
@@ -1337,15 +1348,28 @@ export default function OrdersScreen() {
             ].map((tab) => (
               <TouchableOpacity
                 key={tab.id}
-                style={[styles.tabBtn, tabFilter === tab.id && styles.tabBtnActive]}
+                style={[
+                  styles.tabBtn,
+                  !isMobile && { flex: 1, alignItems: 'center', justifyContent: 'center' },
+                  tabFilter === tab.id && styles.tabBtnActive,
+                ]}
                 onPress={() => setTabFilter(tab.id as any)}
               >
-                <Text style={[styles.tabText, tabFilter === tab.id && styles.tabTextActive]}>
+                <Text style={[styles.tabText, tabFilter === tab.id && styles.tabTextActive]} numberOfLines={1}>
                   {tab.label}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
+
+          {/* Search Input (Right 50%) */}
+          <TextInput
+            style={[styles.search, !isMobile && { flex: 1, marginBottom: 0 }]}
+            placeholder="Search by Order #, Customer, Phone, Table..."
+            placeholderTextColor="#64748b"
+            value={search}
+            onChangeText={setSearch}
+          />
         </View>
       </View>
 
@@ -2047,7 +2071,29 @@ export default function OrdersScreen() {
 
                         <TouchableOpacity
                           style={[styles.gridActionBtn, styles.actionPrintThermalBg]}
-                          onPress={() => printService.printFinalReceiptThermal(order, settings, user?.full_name)}
+                          onPress={async () => {
+                            try {
+                              await printService.printFinalReceiptThermal(order, settings, user?.full_name);
+                            } catch (err: any) {
+                              console.warn('[orders.tsx] Thermal bill print error:', err);
+                              if (Platform.OS === 'web' && typeof window !== 'undefined' && err?.code !== 'PRINT_IN_PROGRESS') {
+                                const proceed = window.confirm(
+                                  `Unable to print receipt automatically via QZ Tray.\n\nWould you like to print using the browser print dialog?`
+                                );
+                                if (proceed) {
+                                  try {
+                                    await printService.printFinalReceiptThermalBrowser(order, settings, user?.full_name);
+                                  } catch (fallbackErr) {
+                                    console.warn('[orders.tsx] Browser fallback print failed:', fallbackErr);
+                                  }
+                                }
+                              } else if (err?.code === 'PRINT_IN_PROGRESS') {
+                                showAlert('Print In Progress', 'A print job is already in progress. Please wait.');
+                              } else {
+                                showAlert('Direct Printing Unavailable', 'Unable to print receipt automatically via QZ Tray.');
+                              }
+                            }
+                          }}
                         >
                           <Text style={styles.actionBtnTextWhite}>🖨️ Thermal</Text>
                         </TouchableOpacity>
@@ -3394,20 +3440,32 @@ export default function OrdersScreen() {
                   ) : null}
 
                   {/* Items Card */}
-                  <View style={styles.invoiceItemsCard}>
-                    <Text style={styles.invoiceSectionTitle}>ORDERED ITEMS ({viewOrderModal.items?.length || 0})</Text>
-                    {(viewOrderModal.items || []).map((itm, i) => (
-                      <View key={itm.id || i} style={styles.invoiceItemRow}>
-                        <View style={styles.invoiceQtyBadge}>
-                          <Text style={styles.invoiceQtyText}>{itm.quantity}x</Text>
-                        </View>
-                        <Text style={styles.invoiceItemName} numberOfLines={2}>{itm.product_name}</Text>
-                        <Text style={styles.invoiceItemPrice}>
-                          {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
-                        </Text>
+                  {(() => {
+                    const orderedItemsList = (viewOrderModal.items && viewOrderModal.items.length > 0)
+                      ? viewOrderModal.items
+                      : ((viewOrderModal as any).order_items && (viewOrderModal as any).order_items.length > 0)
+                      ? (viewOrderModal as any).order_items
+                      : (viewOrderModal.kots && viewOrderModal.kots.length > 0)
+                      ? viewOrderModal.kots.flatMap((k) => k.items || [])
+                      : [];
+
+                    return (
+                      <View style={styles.invoiceItemsCard}>
+                        <Text style={styles.invoiceSectionTitle}>ORDERED ITEMS ({orderedItemsList.length})</Text>
+                        {orderedItemsList.map((itm: any, i: number) => (
+                          <View key={itm.id || i} style={styles.invoiceItemRow}>
+                            <View style={styles.invoiceQtyBadge}>
+                              <Text style={styles.invoiceQtyText}>{itm.quantity}x</Text>
+                            </View>
+                            <Text style={styles.invoiceItemName} numberOfLines={2}>{itm.product_name || itm.name || 'Item'}</Text>
+                            <Text style={styles.invoiceItemPrice}>
+                              {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
+                            </Text>
+                          </View>
+                        ))}
                       </View>
-                    ))}
-                  </View>
+                    );
+                  })()}
 
                   {/* Financial Breakdown Card */}
                   <View style={styles.invoiceTotalsCard}>
@@ -3489,7 +3547,29 @@ export default function OrdersScreen() {
                   <View style={[styles.invoiceActionsRow, isMobile && styles.invoiceActionsCol]}>
                     <TouchableOpacity
                       style={[styles.invoiceActionBtn, styles.invoiceBtnThermal]}
-                      onPress={() => printService.printFinalReceiptThermal(viewOrderModal, settings, user?.full_name)}
+                      onPress={async () => {
+                        try {
+                          await printService.printFinalReceiptThermal(viewOrderModal, settings, user?.full_name);
+                        } catch (err: any) {
+                          console.warn('[orders.tsx] viewOrderModal thermal bill print error:', err);
+                          if (Platform.OS === 'web' && typeof window !== 'undefined' && err?.code !== 'PRINT_IN_PROGRESS') {
+                            const proceed = window.confirm(
+                              `Unable to print receipt automatically via QZ Tray.\n\nWould you like to print using the browser print dialog?`
+                            );
+                            if (proceed) {
+                              try {
+                                await printService.printFinalReceiptThermalBrowser(viewOrderModal, settings, user?.full_name);
+                              } catch (fallbackErr) {
+                                console.warn('[orders.tsx] Browser fallback print failed:', fallbackErr);
+                              }
+                            }
+                          } else if (err?.code === 'PRINT_IN_PROGRESS') {
+                            showAlert('Print In Progress', 'A print job is already in progress. Please wait.');
+                          } else {
+                            showAlert('Direct Printing Unavailable', 'Unable to print receipt automatically via QZ Tray.');
+                          }
+                        }
+                      }}
                     >
                       <Text style={styles.invoiceBtnText}>🖨️ Thermal Bill</Text>
                     </TouchableOpacity>

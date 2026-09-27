@@ -718,8 +718,24 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast('success', 'Payment Completed & Bill Closed', `Order #${updatedOrder.order_number} finalized.`);
     }
 
-    // Auto-print final thermal receipt with persisted numbers
-    await printService.printFinalReceiptThermal(updatedOrder, settings);
+    // Print final thermal receipt with persisted numbers (Auto Print ON -> QZ, Auto Print OFF -> Browser)
+    try {
+      await printService.printFinalReceiptThermal(updatedOrder, settings);
+    } catch (printErr: any) {
+      console.warn('[PosContext] Thermal receipt print handled safely:', printErr);
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && printErr?.code !== 'PRINT_IN_PROGRESS') {
+        const proceed = window.confirm(
+          `Unable to print receipt automatically via QZ Tray.\n\nWould you like to print using the browser print dialog?`
+        );
+        if (proceed) {
+          try {
+            await printService.printFinalReceiptThermalBrowser(updatedOrder, settings);
+          } catch (fallbackErr) {
+            console.warn('[PosContext] Fallback browser receipt print error:', fallbackErr);
+          }
+        }
+      }
+    }
 
     clearCart();
     await refreshOrders();

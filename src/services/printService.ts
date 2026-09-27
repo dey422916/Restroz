@@ -4,7 +4,7 @@ import { formatCurrency, numberToWords } from '../utils/currency';
 import { getOrderSubtotal } from '../utils/gst';
 import { cleanCustomerOrderNotes } from '../utils/orderNotes';
 import { formatOrderDateTime } from '../utils/dateUtils';
-import { directPrintService, resolveKotPrinterName, resolveBillPrinterName, DirectPrintError } from './directPrintService';
+import { directPrintService, resolveKotPrinterName, resolveBillPrinterName, isAutoPrintEnabled, DirectPrintError } from './directPrintService';
 import { supabase } from './supabase';
 
 export function formatLogoDataUri(urlOrBase64?: string | null): string {
@@ -482,28 +482,20 @@ export const printService = {
       return { direct: false };
     }
 
-    if (Platform.OS === 'web' && !options?.forceBrowser) {
+    // Auto Print ON: use direct QZ printing to configured KOT printer
+    if (Platform.OS === 'web' && isAutoPrintEnabled(settings) && !options?.forceBrowser) {
       const kotNum = kot?.kot_number || (order.kots && order.kots[0]?.kot_number) || order.order_number;
       const targetPrinter = resolveKotPrinterName(settings);
-      try {
-        const result = await directPrintService.printThermalDirect(html, {
-          printerName: targetPrinter,
-          jobName: `KOT_${kotNum}`,
-          paperSize,
-        });
-        return { direct: true, printerName: result.printerName };
-      } catch (err: any) {
-        if (settings.auto_print_kot) {
-          throw err;
-        } else {
-          console.warn('[printService] Direct QZ KOT print failed, falling back to browser print:', err);
-          await executeIsolatedPrint(html);
-          return { direct: false };
-        }
-      }
+      const result = await directPrintService.printThermalDirect(html, {
+        printerName: targetPrinter,
+        jobName: `KOT_${kotNum}`,
+        paperSize,
+      });
+      return { direct: true, printerName: result.printerName };
     }
 
-    // When native platform, or forceBrowser fallback:
+    // Auto Print OFF, forceBrowser fallback, or Native platform:
+    // Completely bypass QZ and invoke original browser / native printing
     await executeIsolatedPrint(html);
     return { direct: false };
   },
@@ -929,22 +921,19 @@ export const printService = {
       return { direct: false };
     }
 
-    if (Platform.OS === 'web' && !options?.forceBrowser) {
+    // Auto Print ON: use direct QZ printing to configured Bill printer
+    if (Platform.OS === 'web' && isAutoPrintEnabled(settings) && !options?.forceBrowser) {
       const targetPrinter = resolveBillPrinterName(settings);
-      try {
-        const result = await directPrintService.printThermalDirect(html, {
-          printerName: targetPrinter,
-          jobName: `Bill_${order.invoice_number || order.order_number}`,
-          paperSize: billPaperSize,
-        });
-        return { direct: true, printerName: result.printerName };
-      } catch (err: any) {
-        console.warn('[printService] Direct thermal bill print failed, falling back to browser print:', err);
-        await executeIsolatedPrint(html);
-        return { direct: false };
-      }
+      const result = await directPrintService.printThermalDirect(html, {
+        printerName: targetPrinter,
+        jobName: `Bill_${order.invoice_number || order.order_number}`,
+        paperSize: billPaperSize,
+      });
+      return { direct: true, printerName: result.printerName };
     }
 
+    // Auto Print OFF, forceBrowser fallback, or Native platform:
+    // Completely bypass QZ and invoke original browser / native printing
     await executeIsolatedPrint(html);
     return { direct: false };
   },
@@ -1002,7 +991,12 @@ export const printService = {
   /**
    * Reprint Final Tax Receipt for an existing Order.
    */
-  async reprintFinalBill(orderId: string, settings: RestaurantSettings, billedBy?: string): Promise<void> {
+  async reprintFinalBill(
+    orderId: string,
+    settings: RestaurantSettings,
+    billedBy?: string,
+    forceBrowser: boolean = false
+  ): Promise<void> {
     const { data: orderData, error: orderErr } = await supabase
       .from('orders')
       .select('*, items:order_items(*), kots(*), payments(*)')
@@ -1013,7 +1007,7 @@ export const printService = {
       throw new Error(`Could not load Order: ${orderErr?.message || 'Not found'}`);
     }
 
-    await this.printFinalReceiptThermal(orderData, settings, billedBy);
+    await this.printFinalReceiptThermal(orderData, settings, billedBy, { forceBrowser });
   },
 
   /**

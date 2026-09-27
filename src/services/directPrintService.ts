@@ -287,6 +287,18 @@ export function resolveBillPrinterName(settings?: RestaurantSettings | null): st
 }
 
 /**
+ * Helper to check if Auto Print is enabled from RestaurantSettings
+ */
+export function isAutoPrintEnabled(settings?: RestaurantSettings | null): boolean {
+  if (!settings) return false;
+  return Boolean(
+    settings.auto_print_kot ||
+    (settings as any).kot_auto_print ||
+    (settings as any).auto_print
+  );
+}
+
+/**
  * Locates the target thermal printer on the local machine
  */
 async function locatePrinter(qz: any, targetName: string): Promise<string> {
@@ -316,7 +328,7 @@ async function locatePrinter(qz: any, targetName: string): Promise<string> {
       });
       if (directMatch) return directMatch;
 
-      // Check common thermal printer names (POS80, POS-80, Thermal, 80mm)
+      // Check common thermal printer names (POS80, POS-80, Thermal, 80mm, 58mm)
       const thermalMatch = allPrinters.find((p) => {
         const low = p.toLowerCase();
         return (
@@ -324,23 +336,23 @@ async function locatePrinter(qz: any, targetName: string): Promise<string> {
           low.includes('pos-80') ||
           low.includes('pos 80') ||
           low.includes('pos_80') ||
+          low.includes('pos58') ||
+          low.includes('pos-58') ||
+          low.includes('pos 58') ||
           low.includes('thermal') ||
           low.includes('receipt') ||
-          low.includes('80mm')
+          low.includes('80mm') ||
+          low.includes('58mm')
         );
       });
       if (thermalMatch) return thermalMatch;
-
-      // Fallback: check default system printer
-      const defaultPrinter = await qz.printers.getDefault();
-      if (defaultPrinter) return defaultPrinter;
     }
   } catch (listErr) {
     console.warn('[directPrintService] Error querying printer list:', listErr);
   }
 
   throw new DirectPrintError(
-    `Unable to locate printer "${trimmed}". Check that your thermal printer is turned on and connected.`,
+    `Unable to locate configured thermal printer "${trimmed}". Please check that your printer is turned on and connected.`,
     'PRINTER_NOT_FOUND'
   );
 }

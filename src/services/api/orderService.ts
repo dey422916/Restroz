@@ -1909,13 +1909,56 @@ export const orderService = {
       clearOrdersCache(settledOrder.restaurant_id);
       const localOrders = mockStorage.getOrders(settledOrder.restaurant_id);
       const orderIndex = localOrders.findIndex((o) => o.id === orderId);
+      const existingOrder = orderIndex !== -1 ? localOrders[orderIndex] : null;
+
+      let finalItems = rpcRes?.items && rpcRes.items.length > 0
+        ? rpcRes.items
+        : (existingOrder?.items && existingOrder.items.length > 0 ? existingOrder.items : []);
+
+      if (!finalItems || finalItems.length === 0) {
+        try {
+          const { data: dbItems } = await supabase
+            .from('order_items')
+            .select('*')
+            .eq('order_id', orderId);
+          if (dbItems && dbItems.length > 0) {
+            finalItems = dbItems;
+          }
+        } catch (itemErr) {
+          console.warn('Failed to fetch order items after settlement:', itemErr);
+        }
+      }
+
+      let finalPayments = rpcRes?.payments && rpcRes.payments.length > 0
+        ? rpcRes.payments
+        : (existingOrder?.payments && existingOrder.payments.length > 0 ? existingOrder.payments : []);
+
+      if (!finalPayments || finalPayments.length === 0) {
+        try {
+          const { data: dbPayments } = await supabase
+            .from('payments')
+            .select('*')
+            .eq('order_id', orderId);
+          if (dbPayments && dbPayments.length > 0) {
+            finalPayments = dbPayments;
+          }
+        } catch (payErr) {
+          console.warn('Failed to fetch payments after settlement:', payErr);
+        }
+      }
+
+      let finalKots = rpcRes?.kots && rpcRes.kots.length > 0
+        ? rpcRes.kots
+        : (existingOrder?.kots && existingOrder.kots.length > 0 ? existingOrder.kots : []);
+
       const fullSettledOrder: Order & { reward_earned?: number; new_wallet_balance?: number; wallet_redeemed?: number } = {
         ...settledOrder,
-        items: rpcRes?.items || [],
-        payments: rpcRes?.payments || [],
+        items: finalItems,
+        payments: finalPayments,
+        kots: finalKots,
         payment_method: normalizedPaymentMethod,
         order_source: resolveOrderSource(settledOrder),
-        subtotal: getOrderSubtotal(settledOrder),
+        subtotal: getOrderSubtotal({ ...settledOrder, items: finalItems }),
         discount_type: discountType,
         discount_value: discountValue,
         taxable_amount: taxableAmount,

@@ -8,6 +8,7 @@ export interface DirectPrintOptions {
   printerName?: string;
   jobName?: string;
   paperWidthMm?: number;
+  paperSize?: '80mm' | '58mm' | string;
 }
 
 export interface DirectPrintResult {
@@ -126,48 +127,74 @@ function setupQzSecurity(qz: any): void {
         console.warn('[directPrintService] Could not retrieve session for signing:', authErr);
       }
 
-      fetch(signingUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(anonKey ? { apikey: anonKey } : {}),
-          Authorization: authHeaderValue,
-        },
-        body: JSON.stringify({ request: toSign }),
-      })
-        .then(async (response) => {
-          if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`Signing server returned HTTP ${response.status}: ${errText}`);
-          }
-          const contentType = response.headers.get('content-type') || '';
-          if (contentType.includes('application/json')) {
-            const data = await response.json();
-            if (data.signature) {
-              resolve(data.signature);
-              return;
-            }
-          }
-          const rawText = await response.text();
-          resolve(rawText.trim());
+      const performRemoteSigning = () => {
+        fetch(signingUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(anonKey ? { apikey: anonKey } : {}),
+            Authorization: authHeaderValue,
+          },
+          body: JSON.stringify({ request: toSign }),
         })
-        .catch((err) => {
-          console.error('[directPrintService] QZ signature request failed:', err);
-          // Development-only fallback: only attempt local signer if in dev environment
-          if (isDevEnvironment() && signingUrl !== 'http://localhost:8183') {
-            fetch('http://localhost:8183', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ request: toSign }),
-            })
-              .then((res) => res.json())
-              .then((d) => resolve(d.signature))
-              .catch(() => reject(err));
-          } else {
-            // Production: strictly reject, never attempt localhost
-            reject(err);
-          }
-        });
+          .then(async (response) => {
+            if (!response.ok) {
+              const errText = await response.text();
+              throw new Error(`Signing server returned HTTP ${response.status}: ${errText}`);
+            }
+            const contentType = response.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+              const data = await response.json();
+              if (data.signature) {
+                resolve(data.signature);
+                return;
+              }
+            }
+            const rawText = await response.text();
+            resolve(rawText.trim());
+          })
+          .catch((err) => {
+            if (isDevEnvironment() && signingUrl !== 'http://localhost:8183') {
+              // Development fallback to local signer
+              fetch('http://localhost:8183', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ request: toSign }),
+              })
+                .then((res) => res.json())
+                .then((d) => resolve(d.signature))
+                .catch(() => {
+                  console.error('[directPrintService] QZ signature request failed on both remote and local:', err);
+                  reject(err);
+                });
+            } else {
+              console.error('[directPrintService] QZ signature request failed:', err);
+              reject(err);
+            }
+          });
+      };
+
+      // In dev environment, if local signer is running on 8183, try it directly for instant signing
+      if (isDevEnvironment()) {
+        fetch('http://localhost:8183', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ request: toSign }),
+        })
+          .then((res) => res.json())
+          .then((d) => {
+            if (d && d.signature) {
+              resolve(d.signature);
+            } else {
+              performRemoteSigning();
+            }
+          })
+          .catch(() => {
+            performRemoteSigning();
+          });
+      } else {
+        performRemoteSigning();
+      }
     };
   });
 
@@ -234,11 +261,25 @@ async function ensureConnection(): Promise<any> {
 }
 
 /**
- * Resolves the configured printer name from RestaurantSettings or default
+ * Resolves the configured KOT printer name from RestaurantSettings or default
  */
 export function resolveKotPrinterName(settings?: RestaurantSettings | null): string {
   if (!settings) return DEFAULT_KOT_PRINTER_NAME;
   return (
+    (settings as any).kot_printer_name ||
+    (settings as any).thermal_printer_name ||
+    DEFAULT_KOT_PRINTER_NAME
+  );
+}
+
+/**
+ * Resolves the configured Bill / Receipt printer name from RestaurantSettings or default
+ */
+export function resolveBillPrinterName(settings?: RestaurantSettings | null): string {
+  if (!settings) return DEFAULT_KOT_PRINTER_NAME;
+  return (
+    (settings as any).bill_printer_name ||
+    (settings as any).receipt_printer_name ||
     (settings as any).kot_printer_name ||
     (settings as any).thermal_printer_name ||
     DEFAULT_KOT_PRINTER_NAME
@@ -306,7 +347,7 @@ async function locatePrinter(qz: any, targetName: string): Promise<string> {
 
 export const directPrintService = {
   /**
-   * Check if a KOT print job is currently in progress
+   * Check if a thermal print job is currently in progress
    */
   isKotPrinting(): boolean {
     return isKotPrintingLock;
@@ -354,14 +395,14 @@ export const directPrintService = {
   },
 
   /**
-   * Sends KOT HTML directly to the configured POS80 thermal printer via QZ Tray.
+   * Sends thermal HTML (KOT / Bill / Receipt) directly to the configured thermal printer via QZ Tray.
    * Includes duplicate protection mutex and strict error handling.
    */
-  async printKotDirect(html: string, options?: DirectPrintOptions): Promise<DirectPrintResult> {
+  async printThermalDirect(html: string, options?: DirectPrintOptions): Promise<DirectPrintResult> {
     // 1. Duplicate Protection Check
     if (isKotPrintingLock) {
       throw new DirectPrintError(
-        'A KOT print job is already in progress. Please wait for the current job to complete.',
+        'A print job is already in progress. Please wait for the current job to complete.',
         'PRINT_IN_PROGRESS'
       );
     }
@@ -372,32 +413,63 @@ export const directPrintService = {
       // 2. Connect to QZ Tray (with certificate and signature setup)
       const qz = await ensureConnection();
 
-      // 3. Locate configured POS80 printer
+      // 3. Locate configured POS80 / thermal printer
       const targetPrinterName = options?.printerName || DEFAULT_KOT_PRINTER_NAME;
       const matchedPrinter = await locatePrinter(qz, targetPrinterName);
 
-      const jobName = options?.jobName || 'KOT Ticket';
+      const jobName = options?.jobName || 'Thermal Receipt';
+      const is58 = options?.paperSize === '58mm' || (options?.paperWidthMm && options.paperWidthMm < 65);
+      const paperWidthInches = is58 ? 2.2835 : (options?.paperWidthMm ? options.paperWidthMm / 25.4 : 3.1496);
 
-      // 4. Create QZ Tray configuration for 80mm thermal receipt
-      // margins: 0 and rasterize: true ensures HTML @page CSS layout renders 1:1 identically to browser print
+      // 4. Create QZ Tray configuration for 80mm / 58mm thermal receipt
       const config = qz.configs.create(matchedPrinter, {
+        size: { width: paperWidthInches },
+        units: 'in',
         margins: 0,
-        units: 'mm',
         colorType: 'color',
         scaleContent: false,
-        rasterize: true,
+        rasterize: false,
+        density: 203,
         jobName,
       });
 
-      // 5. Build print data payload
+      // 5. Build print data payload with explicit HTML rendering pageWidth
       const printData = [
         {
           type: 'pixel',
           format: 'html',
           flavor: 'plain',
           data: html,
+          options: {
+            pageWidth: paperWidthInches,
+          },
         },
       ];
+
+      // Diagnostic logging in development (non-sensitive only)
+      if (isDevEnvironment()) {
+        console.log('[directPrintService] QZ Print Diagnostic:', {
+          matchedPrinter,
+          jobName,
+          paperWidthInches,
+          config: {
+            units: 'in',
+            size: { width: paperWidthInches },
+            density: 203,
+            scaleContent: false,
+            rasterize: false,
+          },
+          data: {
+            type: 'pixel',
+            format: 'html',
+            flavor: 'plain',
+            options: {
+              pageWidth: paperWidthInches,
+              pageHeight: 'auto',
+            },
+          },
+        });
+      }
 
       // 6. Send print job directly to printer
       await qz.print(config, printData);
@@ -406,13 +478,13 @@ export const directPrintService = {
         success: true,
         printerName: matchedPrinter,
         jobName,
-        message: 'KOT printed successfully',
+        message: 'Thermal print job sent successfully',
       };
     } catch (err: any) {
       if (err instanceof DirectPrintError) {
         throw err;
       }
-      console.error('[directPrintService] printKotDirect error:', err);
+      console.error('[directPrintService] printThermalDirect error:', err);
       throw new DirectPrintError(
         err?.message || 'Failed to send print job to thermal printer.',
         'PRINT_FAILED',
@@ -422,5 +494,15 @@ export const directPrintService = {
       // Release lock after print job dispatched
       isKotPrintingLock = false;
     }
+  },
+
+  /**
+   * Sends KOT HTML directly to the configured POS80 thermal printer via QZ Tray.
+   */
+  async printKotDirect(html: string, options?: DirectPrintOptions): Promise<DirectPrintResult> {
+    return this.printThermalDirect(html, {
+      ...options,
+      jobName: options?.jobName || 'KOT Ticket',
+    });
   },
 };

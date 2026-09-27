@@ -17,8 +17,9 @@ import { useFocusEffect } from 'expo-router';
 import { couponService } from '../../src/services/api/couponService';
 import { loyaltyService } from '../../src/services/api/loyaltyService';
 import { useAuth } from '../../src/context/AuthContext';
-import { Coupon, DiscountType } from '../../src/types';
+import { Coupon, DiscountType, CustomerWalletInfo } from '../../src/types';
 import { formatCurrency } from '../../src/utils/currency';
+import { isValidIndianPhone, normalizeIndianPhone } from '../../src/utils/validation';
 
 export default function CouponsScreen() {
   const { width } = useWindowDimensions();
@@ -40,6 +41,31 @@ export default function CouponsScreen() {
   const [minRedeemBalance, setMinRedeemBalance] = useState('50');
   const [loadingRewards, setLoadingRewards] = useState(false);
   const [savingRewards, setSavingRewards] = useState(false);
+
+  // Customer Wallet Lookup & Directory State
+  const [lookupPhone, setLookupPhone] = useState('');
+  const [lookupWallet, setLookupWallet] = useState<CustomerWalletInfo | null>(null);
+  const [lookupTransactions, setLookupTransactions] = useState<Array<{
+    id: string;
+    transaction_type: string;
+    amount: number;
+    order_id?: string;
+    notes?: string;
+    created_at: string;
+  }>>([]);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+
+  // Active Customer Wallets List State
+  const [customerWallets, setCustomerWallets] = useState<Array<{
+    id: string;
+    customer_mobile: string;
+    balance: number;
+    total_earned: number;
+    total_redeemed: number;
+    updated_at: string;
+  }>>([]);
+  const [loadingWallets, setLoadingWallets] = useState(false);
 
   // Coupon Modal State
   const [modalVisible, setModalVisible] = useState(false);
@@ -90,11 +116,51 @@ export default function CouponsScreen() {
     }
   }, [activeRestaurantId]);
 
+  const loadCustomerWallets = useCallback(async () => {
+    if (!activeRestaurantId) return;
+    try {
+      setLoadingWallets(true);
+      const wallets = await loyaltyService.getRestaurantCustomerWallets(activeRestaurantId);
+      setCustomerWallets(wallets);
+    } catch (e: any) {
+      console.warn('Error loading customer wallets:', e);
+    } finally {
+      setLoadingWallets(false);
+    }
+  }, [activeRestaurantId]);
+
+  const handleLookupCustomer = async (targetPhone?: string) => {
+    const query = (targetPhone || lookupPhone).trim();
+    if (!query) {
+      Alert.alert('Phone Required', 'Please enter a customer mobile number to check balance.');
+      return;
+    }
+    if (!activeRestaurantId) return;
+
+    const normalized = normalizeIndianPhone(query);
+    setLookupLoading(true);
+    setHasSearched(true);
+    try {
+      const [wallet, transactions] = await Promise.all([
+        loyaltyService.getCustomerWallet(activeRestaurantId, normalized),
+        loyaltyService.getCustomerWalletTransactions(activeRestaurantId, normalized),
+      ]);
+      setLookupWallet(wallet);
+      setLookupTransactions(transactions);
+    } catch (e: any) {
+      console.warn('Error looking up customer wallet:', e);
+      Alert.alert('Lookup Error', e.message || 'Failed to fetch customer wallet details.');
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
   useFocusEffect(
     useCallback(() => {
       loadCoupons();
       loadRewardsSettings();
-    }, [loadCoupons, loadRewardsSettings])
+      loadCustomerWallets();
+    }, [loadCoupons, loadRewardsSettings, loadCustomerWallets])
   );
 
   const openCreateModal = () => {
@@ -464,7 +530,8 @@ export default function CouponsScreen() {
               <Text style={{ marginTop: 10, color: '#64748B' }}>Loading rewards configuration...</Text>
             </View>
           ) : (
-            <View style={styles.rewardsCard}>
+            <>
+              <View style={styles.rewardsCard}>
               <View style={styles.rewardsCardHeader}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.rewardsTitle}>🎁 Loyalty Cashback & Customer Wallet</Text>
@@ -583,7 +650,303 @@ export default function CouponsScreen() {
                 )}
               </TouchableOpacity>
             </View>
-          )}
+
+            {/* CUSTOMER WALLET BALANCE LOOKUP TOOL */}
+            <View style={styles.walletLookupCard}>
+              <View style={styles.walletLookupHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.walletLookupTitle}>🔍 Customer Wallet Balance Lookup</Text>
+                  <Text style={styles.walletLookupSubtitle}>
+                    Search by 10-digit mobile number to view live wallet balance, redemption status, and transaction history.
+                  </Text>
+                </View>
+              </View>
+
+              <View style={[styles.lookupInputRow, isMobile && styles.lookupInputRowMobile]}>
+                <View style={styles.phoneInputWrap}>
+                  <Text style={styles.phoneInputPrefix}>🇮🇳 +91</Text>
+                  <TextInput
+                    style={styles.phoneInput}
+                    value={lookupPhone}
+                    onChangeText={(val) => setLookupPhone(val.replace(/[^\d]/g, ''))}
+                    placeholder="Enter 10-digit customer mobile"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="phone-pad"
+                    maxLength={10}
+                    onSubmitEditing={() => handleLookupCustomer()}
+                  />
+                  {Boolean(lookupPhone) && (
+                    <TouchableOpacity
+                      style={styles.clearPhoneBtn}
+                      onPress={() => {
+                        setLookupPhone('');
+                        setLookupWallet(null);
+                        setLookupTransactions([]);
+                        setHasSearched(false);
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, color: '#94A3B8' }}>✕</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.lookupBtn, lookupLoading && styles.lookupBtnDisabled]}
+                  onPress={() => handleLookupCustomer()}
+                  disabled={lookupLoading}
+                  activeOpacity={0.8}
+                >
+                  {lookupLoading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.lookupBtnText}>Check Balance</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              {/* Lookup Result Box */}
+              {hasSearched && (
+                <View style={styles.lookupResultContainer}>
+                  {lookupLoading ? (
+                    <View style={styles.lookupLoadingBox}>
+                      <ActivityIndicator size="small" color="#2563EB" />
+                      <Text style={styles.lookupLoadingText}>Fetching customer wallet data...</Text>
+                    </View>
+                  ) : lookupWallet ? (
+                    <View style={styles.walletDetailCard}>
+                      <View style={styles.walletDetailHeader}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <View style={styles.phoneBadge}>
+                            <Text style={styles.phoneBadgeText}>📱 {lookupWallet.customer_mobile || lookupPhone}</Text>
+                          </View>
+                          <View style={[styles.statusBadge, { backgroundColor: '#DCFCE7' }]}>
+                            <Text style={[styles.statusText, { color: '#15803D' }]}>LOYALTY MEMBER</Text>
+                          </View>
+                        </View>
+                        <View
+                          style={[
+                            styles.eligibilityBadge,
+                            lookupWallet.can_redeem ? styles.eligibilityBadgeGreen : styles.eligibilityBadgeAmber,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.eligibilityText,
+                              lookupWallet.can_redeem ? styles.eligibilityTextGreen : styles.eligibilityTextAmber,
+                            ]}
+                          >
+                            {lookupWallet.can_redeem
+                              ? '✓ Eligible to Redeem at POS'
+                              : `⚠️ Min ₹${lookupWallet.min_redeem_balance} needed to redeem`}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Prominent Balance Row */}
+                      <View style={styles.balanceHighlightRow}>
+                        <View>
+                          <Text style={styles.balanceHighlightLabel}>Available Wallet Balance</Text>
+                          <Text style={styles.balanceHighlightAmount}>
+                            {formatCurrency(lookupWallet.balance || 0)}
+                          </Text>
+                        </View>
+                        <View style={styles.walletMiniStats}>
+                          <View style={styles.miniStatCol}>
+                            <Text style={styles.miniStatLabel}>Total Earned</Text>
+                            <Text style={[styles.miniStatValue, { color: '#15803D' }]}>
+                              +{formatCurrency(lookupWallet.total_earned || 0)}
+                            </Text>
+                          </View>
+                          <View style={styles.miniStatDivider} />
+                          <View style={styles.miniStatCol}>
+                            <Text style={styles.miniStatLabel}>Total Redeemed</Text>
+                            <Text style={[styles.miniStatValue, { color: '#2563EB' }]}>
+                              -{formatCurrency(lookupWallet.total_redeemed || 0)}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+
+                      {/* Transaction Ledger History */}
+                      <View style={styles.ledgerHeaderRow}>
+                        <Text style={styles.ledgerTitle}>
+                          📜 Recent Activity ({lookupTransactions.length})
+                        </Text>
+                      </View>
+
+                      {lookupTransactions.length === 0 ? (
+                        <View style={styles.emptyLedgerBox}>
+                          <Text style={styles.emptyLedgerText}>
+                            No wallet transactions recorded yet for this mobile number.
+                          </Text>
+                        </View>
+                      ) : (
+                        <View style={styles.ledgerList}>
+                          {lookupTransactions.map((tx) => {
+                            const isEarn = tx.transaction_type === 'earn';
+                            return (
+                              <View key={tx.id} style={styles.ledgerItem}>
+                                <View style={styles.ledgerLeft}>
+                                  <View
+                                    style={[
+                                      styles.txTypeBadge,
+                                      isEarn ? styles.txTypeEarn : styles.txTypeRedeem,
+                                    ]}
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.txTypeText,
+                                        isEarn ? styles.txTypeTextEarn : styles.txTypeTextRedeem,
+                                      ]}
+                                    >
+                                      {isEarn ? 'EARNED' : 'REDEEMED'}
+                                    </Text>
+                                  </View>
+                                  <View style={{ marginLeft: 8 }}>
+                                    <Text style={styles.txNotes}>
+                                      {tx.notes || (isEarn ? 'Cashback from settled order' : 'Redeemed on bill payment')}
+                                    </Text>
+                                    <Text style={styles.txDate}>
+                                      {new Date(tx.created_at).toLocaleString()}
+                                    </Text>
+                                  </View>
+                                </View>
+                                <Text
+                                  style={[
+                                    styles.txAmount,
+                                    isEarn ? styles.txAmountEarn : styles.txAmountRedeem,
+                                  ]}
+                                >
+                                  {isEarn ? '+' : '-'}{formatCurrency(tx.amount)}
+                                </Text>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      )}
+                    </View>
+                  ) : (
+                    <View style={styles.lookupNotFoundBox}>
+                      <Text style={{ fontSize: 24, marginBottom: 6 }}>🔍</Text>
+                      <Text style={styles.lookupNotFoundTitle}>No Wallet Found</Text>
+                      <Text style={styles.lookupNotFoundText}>
+                        No customer wallet found for mobile number "{lookupPhone}". A wallet is automatically created when an order is settled with their phone number.
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+            </View>
+
+            {/* CUSTOMER WALLETS DIRECTORY TABLE */}
+            <View style={styles.walletDirectoryCard}>
+              <View style={styles.walletDirectoryHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.walletDirectoryTitle}>
+                    👥 Customer Loyalty Directory ({customerWallets.length})
+                  </Text>
+                  <Text style={styles.walletDirectorySubtitle}>
+                    Overview of active customer wallet balances for your restaurant.
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.refreshWalletsBtn}
+                  onPress={loadCustomerWallets}
+                  disabled={loadingWallets}
+                  activeOpacity={0.8}
+                >
+                  {loadingWallets ? (
+                    <ActivityIndicator size="small" color="#2563EB" />
+                  ) : (
+                    <Text style={styles.refreshWalletsBtnText}>🔄 Refresh</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              {/* Directory Summary Metrics */}
+              {customerWallets.length > 0 && (
+                <View style={[styles.directorySummaryRow, isMobile && styles.directorySummaryRowMobile]}>
+                  <View style={styles.directoryStatBox}>
+                    <Text style={styles.directoryStatLabel}>Total Customers</Text>
+                    <Text style={styles.directoryStatVal}>{customerWallets.length}</Text>
+                  </View>
+                  <View style={styles.directoryStatBox}>
+                    <Text style={styles.directoryStatLabel}>Total Wallet Balance</Text>
+                    <Text style={[styles.directoryStatVal, { color: '#059669' }]}>
+                      {formatCurrency(customerWallets.reduce((acc, w) => acc + (w.balance || 0), 0))}
+                    </Text>
+                  </View>
+                  <View style={styles.directoryStatBox}>
+                    <Text style={styles.directoryStatLabel}>Total Rewards Issued</Text>
+                    <Text style={[styles.directoryStatVal, { color: '#2563EB' }]}>
+                      {formatCurrency(customerWallets.reduce((acc, w) => acc + (w.total_earned || 0), 0))}
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {loadingWallets ? (
+                <View style={styles.center}>
+                  <ActivityIndicator size="large" color="#2563EB" />
+                  <Text style={{ marginTop: 10, color: '#64748B' }}>Loading customer wallets...</Text>
+                </View>
+              ) : customerWallets.length === 0 ? (
+                <View style={styles.emptyWalletsBox}>
+                  <Text style={{ fontSize: 36, marginBottom: 8 }}>💳</Text>
+                  <Text style={styles.emptyWalletsTitle}>No Customer Wallets Yet</Text>
+                  <Text style={styles.emptyWalletsSub}>
+                    When orders are settled at POS with customer mobile numbers, cashbacks will automatically accrue and appear here.
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.walletsTable}>
+                  <View style={styles.walletsTableHeader}>
+                    <Text style={[styles.thCell, { flex: 2 }]}>CUSTOMER MOBILE</Text>
+                    <Text style={[styles.thCell, { flex: 1.5, textAlign: 'right' }]}>BALANCE</Text>
+                    <Text style={[styles.thCell, { flex: 1.5, textAlign: 'right' }]}>EARNED</Text>
+                    <Text style={[styles.thCell, { flex: 1.5, textAlign: 'right' }]}>REDEEMED</Text>
+                    <Text style={[styles.thCell, { flex: 1.5, textAlign: 'center' }]}>ACTION</Text>
+                  </View>
+
+                  {customerWallets.map((w) => (
+                    <View key={w.id} style={styles.walletsTableRow}>
+                      <View style={[styles.tdCell, { flex: 2 }]}>
+                        <Text style={styles.tdMobileText}>📱 {w.customer_mobile}</Text>
+                        <Text style={styles.tdDateText}>
+                          Updated: {new Date(w.updated_at).toLocaleDateString()}
+                        </Text>
+                      </View>
+                      <View style={[styles.tdCell, { flex: 1.5, alignItems: 'flex-end' }]}>
+                        <View style={styles.tableBalanceBadge}>
+                          <Text style={styles.tableBalanceText}>{formatCurrency(w.balance)}</Text>
+                        </View>
+                      </View>
+                      <View style={[styles.tdCell, { flex: 1.5, alignItems: 'flex-end' }]}>
+                        <Text style={styles.tdEarnedText}>+{formatCurrency(w.total_earned)}</Text>
+                      </View>
+                      <View style={[styles.tdCell, { flex: 1.5, alignItems: 'flex-end' }]}>
+                        <Text style={styles.tdRedeemedText}>-{formatCurrency(w.total_redeemed)}</Text>
+                      </View>
+                      <View style={[styles.tdCell, { flex: 1.5, alignItems: 'center' }]}>
+                        <TouchableOpacity
+                          style={styles.inspectBtn}
+                          onPress={() => {
+                            setLookupPhone(w.customer_mobile);
+                            handleLookupCustomer(w.customer_mobile);
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={styles.inspectBtnText}>Inspect</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          </>
+        )}
         </ScrollView>
       )}
 
@@ -1118,4 +1481,456 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   saveBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+
+  // Wallet Lookup Card Styles
+  walletLookupCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginTop: 24,
+  },
+  walletLookupHeader: {
+    marginBottom: 16,
+  },
+  walletLookupTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  walletLookupSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  lookupInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  lookupInputRowMobile: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  },
+  phoneInputWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    overflow: 'hidden',
+  },
+  phoneInputPrefix: {
+    paddingLeft: 12,
+    paddingRight: 6,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  phoneInput: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingRight: 12,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  clearPhoneBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  lookupBtn: {
+    backgroundColor: '#0F172A',
+    paddingVertical: 11,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lookupBtnDisabled: {
+    opacity: 0.6,
+  },
+  lookupBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  lookupResultContainer: {
+    marginTop: 18,
+  },
+  lookupLoadingBox: {
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+  },
+  lookupLoadingText: {
+    marginTop: 8,
+    fontSize: 13,
+    color: '#64748B',
+  },
+  walletDetailCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 18,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+  },
+  walletDetailHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  phoneBadge: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  phoneBadgeText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  eligibilityBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  eligibilityBadgeGreen: {
+    backgroundColor: '#DCFCE7',
+  },
+  eligibilityBadgeAmber: {
+    backgroundColor: '#FEF3C7',
+  },
+  eligibilityText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  eligibilityTextGreen: {
+    color: '#15803D',
+  },
+  eligibilityTextAmber: {
+    color: '#B45309',
+  },
+  balanceHighlightRow: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
+  balanceHighlightLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  balanceHighlightAmount: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#059669',
+    marginTop: 2,
+  },
+  walletMiniStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  miniStatCol: {
+    alignItems: 'flex-start',
+  },
+  miniStatLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  miniStatValue: {
+    fontSize: 14,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  miniStatDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: '#E2E8F0',
+  },
+  ledgerHeaderRow: {
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  ledgerTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  emptyLedgerBox: {
+    padding: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  emptyLedgerText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontStyle: 'italic',
+  },
+  ledgerList: {
+    gap: 8,
+  },
+  ledgerItem: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  ledgerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  txTypeBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  txTypeEarn: {
+    backgroundColor: '#DCFCE7',
+  },
+  txTypeRedeem: {
+    backgroundColor: '#DBEAFE',
+  },
+  txTypeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  txTypeTextEarn: {
+    color: '#15803D',
+  },
+  txTypeTextRedeem: {
+    color: '#1D4ED8',
+  },
+  txNotes: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  txDate: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  txAmount: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  txAmountEarn: {
+    color: '#15803D',
+  },
+  txAmountRedeem: {
+    color: '#2563EB',
+  },
+  lookupNotFoundBox: {
+    padding: 20,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+  },
+  lookupNotFoundTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 4,
+  },
+  lookupNotFoundText: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+    maxWidth: 380,
+  },
+
+  // Wallet Directory Table Styles
+  walletDirectoryCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginTop: 24,
+  },
+  walletDirectoryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  walletDirectoryTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  walletDirectorySubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  refreshWalletsBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  refreshWalletsBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2563EB',
+  },
+  directorySummaryRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  directorySummaryRowMobile: {
+    flexDirection: 'column',
+  },
+  directoryStatBox: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  directoryStatLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '700',
+  },
+  directoryStatVal: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginTop: 2,
+  },
+  emptyWalletsBox: {
+    padding: 32,
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  emptyWalletsTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 4,
+  },
+  emptyWalletsSub: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+    maxWidth: 420,
+  },
+  walletsTable: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  walletsTableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#CBD5E1',
+  },
+  thCell: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#475569',
+  },
+  walletsTableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
+  },
+  tdCell: {
+    justifyContent: 'center',
+  },
+  tdMobileText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  tdDateText: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  tableBalanceBadge: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  tableBalanceText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  tdEarnedText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  tdRedeemedText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  inspectBtn: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  inspectBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
 });
+

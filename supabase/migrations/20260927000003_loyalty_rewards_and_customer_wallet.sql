@@ -328,6 +328,9 @@ END;
 $$;
 
 -- 10. Update settle_order RPC to include atomic wallet redemption and rewards earning
+DROP FUNCTION IF EXISTS public.settle_order(text, text, numeric, text, text, text, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, text, boolean, jsonb);
+DROP FUNCTION IF EXISTS public.settle_order(text, text, numeric, text, text, text, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, text, boolean, jsonb, numeric);
+
 CREATE OR REPLACE FUNCTION public.settle_order(
   p_order_id text,
   p_payment_method text,
@@ -391,7 +394,6 @@ BEGIN
   v_is_service := (
     COALESCE(auth.jwt() ->> 'role', '') = 'service_role'
     OR COALESCE(auth.role(), '') = 'service_role'
-    OR current_user = 'postgres'
   );
 
   -- 1. Authentication check
@@ -708,13 +710,12 @@ BEGIN
       discount_type = COALESCE(NULLIF(p_discount_type, 'none'), v_order.discount_type, 'none'),
       discount_value = COALESCE(p_discount_value, v_order.discount_value, 0),
       discount_amount = COALESCE(p_discount_amount, v_order.discount_amount, 0),
-      taxable_amount = COALESCE(p_taxable_amount, v_order.taxable_amount),
       cgst_amount = COALESCE(p_cgst_amount, v_order.cgst_amount),
       sgst_amount = COALESCE(p_sgst_amount, v_order.sgst_amount),
       grand_total = COALESCE(p_grand_total, v_order.grand_total),
       round_off = COALESCE(p_round_off, v_order.round_off),
       payable_amount = v_final_payable,
-      customer_gstin = COALESCE(TRIM(UPPER(p_customer_gstin)), v_order.customer_gstin),
+      customer_phone = COALESCE(NULLIF(v_norm_mobile, ''), v_order.customer_phone),
       notes = v_notes_with_gstin,
       updated_at = NOW()
   WHERE id = v_order.id

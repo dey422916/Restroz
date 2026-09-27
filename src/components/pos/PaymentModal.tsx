@@ -41,6 +41,7 @@ interface PaymentModalProps {
       round_off: number;
       payable_amount: number;
       customer_gstin?: string;
+      customer_phone?: string;
       wallet_redeem_amount?: number;
     }
   ) => Promise<void>;
@@ -83,7 +84,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [refNo, setRefNo] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
-  // Customer Loyalty Wallet State
+  // Customer Phone & Loyalty Wallet State
+  const [customerPhoneInput, setCustomerPhoneInput] = useState<string>(order.customer_phone || '');
   const [walletInfo, setWalletInfo] = useState<CustomerWalletInfo | null>(null);
   const [isRedeemWallet, setIsRedeemWallet] = useState<boolean>(false);
 
@@ -99,24 +101,34 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           : 'cash'
       );
       setCustomerGstinInput(order.customer_gstin || '');
+      setCustomerPhoneInput(order.customer_phone || '');
       const resolvedModalDiscounts = resolveOrderDiscounts(order);
       setDiscountType(resolvedModalDiscounts.discount_type);
       setDiscountInput(
         resolvedModalDiscounts.discount_value > 0 ? String(resolvedModalDiscounts.discount_value) : ''
       );
-
-      // Fetch customer wallet info if customer mobile and restaurant are available
-      if (order.restaurant_id && order.customer_phone) {
-        loyaltyService
-          .getCustomerWallet(order.restaurant_id, order.customer_phone)
-          .then((info) => setWalletInfo(info))
-          .catch((e) => console.warn('[PaymentModal] Error loading wallet info:', e));
-      } else {
-        setWalletInfo(null);
-        setIsRedeemWallet(false);
-      }
     }
   }, [order?.id, order?.restaurant_id, order?.customer_phone]);
+
+  // Reactive wallet fetch on phone input
+  useEffect(() => {
+    if (!order?.restaurant_id) return;
+    const cleanPhone = (customerPhoneInput || '').trim().replace(/[^\d]/g, '');
+    if (cleanPhone.length >= 10) {
+      loyaltyService
+        .getCustomerWallet(order.restaurant_id, cleanPhone)
+        .then((info) => setWalletInfo(info))
+        .catch((e) => console.warn('[PaymentModal] Error loading wallet info:', e));
+    } else {
+      loyaltyService
+        .getCustomerWallet(order.restaurant_id)
+        .then((info) => {
+          setWalletInfo(info);
+          setIsRedeemWallet(false);
+        })
+        .catch((e) => console.warn('[PaymentModal] Error loading default loyalty settings:', e));
+    }
+  }, [order?.restaurant_id, customerPhoneInput]);
 
   // Centralized real-time calculation
   const subtotal = useMemo(() => getOrderSubtotal(order), [order]);
@@ -205,6 +217,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           round_off: totals.roundOff,
           payable_amount: totals.payableAmount,
           customer_gstin: customerGstinInput.trim().toUpperCase() || undefined,
+          customer_phone: customerPhoneInput.trim() || undefined,
           wallet_redeem_amount: walletRedeemAmount,
         }
       );
@@ -409,89 +422,111 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               </View>
 
               {/* 3. CUSTOMER LOYALTY WALLET REDEMPTION SECTION */}
-              {isRewardsEnabled && order.customer_phone ? (
+              {isRewardsEnabled && (
                 <View style={styles.walletSectionBox}>
                   <View style={styles.walletHeaderRow}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                       <Text style={{ fontSize: 16 }}>🎁</Text>
                       <Text style={styles.walletHeaderTitle}>Customer Loyalty Wallet</Text>
                     </View>
-                    <View style={styles.walletBalanceBadge}>
-                      <Text style={styles.walletBalanceBadgeText}>
-                        Balance: {formatCurrency(walletBalance)}
-                      </Text>
-                    </View>
+                    {Boolean(customerPhoneInput && customerPhoneInput.length >= 10) && (
+                      <View style={styles.walletBalanceBadge}>
+                        <Text style={styles.walletBalanceBadgeText}>
+                          Balance: {formatCurrency(walletBalance)}
+                        </Text>
+                      </View>
+                    )}
                   </View>
 
-                  <TouchableOpacity
-                    style={[styles.walletCheckboxRow, !canRedeem && styles.walletCheckboxRowDisabled]}
-                    disabled={!canRedeem}
-                    onPress={() => setIsRedeemWallet(!isRedeemWallet)}
-                    activeOpacity={0.8}
-                  >
-                    <View
-                      style={[
-                        styles.checkboxBox,
-                        isRedeemWallet && styles.checkboxBoxChecked,
-                        !canRedeem && styles.checkboxBoxDisabled,
-                      ]}
-                    >
-                      {isRedeemWallet && <Text style={styles.checkboxCheck}>✓</Text>}
+                  {/* Customer Phone Input if missing or editable */}
+                  {!order.customer_phone ? (
+                    <View style={styles.walletPhoneInputRow}>
+                      <Text style={styles.walletPhoneInputLabel}>Customer Mobile Number:</Text>
+                      <TextInput
+                        style={styles.walletPhoneInput}
+                        placeholder="Enter 10-digit mobile to check wallet balance"
+                        placeholderTextColor="#94A3B8"
+                        value={customerPhoneInput}
+                        onChangeText={(val) => setCustomerPhoneInput(val.replace(/[^\d]/g, ''))}
+                        keyboardType="phone-pad"
+                        maxLength={10}
+                      />
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.checkboxLabel, !canRedeem && styles.checkboxLabelDisabled]}>
-                        Redeem Wallet Balance
-                      </Text>
-                      {!canRedeem && (
-                        <Text style={styles.walletHintText}>
-                          {walletBalance > 0
-                            ? `Minimum ${formatCurrency(minRequired)} wallet balance required for redemption.`
-                            : `Customer has ₹0.00 wallet balance.`}
-                        </Text>
-                      )}
-                    </View>
-                  </TouchableOpacity>
+                  ) : null}
 
-                  {isRedeemWallet && canRedeem && (
-                    <View style={styles.walletBreakdownBox}>
-                      <View style={styles.walletBreakdownRow}>
-                        <Text style={styles.walletBreakdownLabel}>Wallet Available:</Text>
-                        <Text style={styles.walletBreakdownVal}>{formatCurrency(walletBalance)}</Text>
-                      </View>
-                      <View style={styles.walletBreakdownRow}>
-                        <Text style={styles.walletBreakdownLabel}>Order Due:</Text>
-                        <Text style={styles.walletBreakdownVal}>{formatCurrency(remainingBalance)}</Text>
-                      </View>
-                      <View style={styles.walletBreakdownRow}>
-                        <Text style={[styles.walletBreakdownLabel, { color: '#059669', fontWeight: '800' }]}>
-                          Wallet Used:
-                        </Text>
-                        <Text style={[styles.walletBreakdownVal, { color: '#059669', fontWeight: '900' }]}>
-                          - {formatCurrency(walletRedeemAmount)}
-                        </Text>
-                      </View>
-                      <View
-                        style={[
-                          styles.walletBreakdownRow,
-                          { borderTopWidth: 1, borderTopColor: '#CBD5E1', paddingTop: 4, marginTop: 2 },
-                        ]}
+                  {Boolean(customerPhoneInput && customerPhoneInput.length >= 10) ? (
+                    <>
+                      <TouchableOpacity
+                        style={[styles.walletCheckboxRow, !canRedeem && styles.walletCheckboxRowDisabled]}
+                        disabled={!canRedeem}
+                        onPress={() => setIsRedeemWallet(!isRedeemWallet)}
+                        activeOpacity={0.8}
                       >
-                        <Text style={[styles.walletBreakdownLabel, { fontWeight: '900', color: '#0F172A' }]}>
-                          Remaining to Pay:
-                        </Text>
-                        <Text
+                        <View
                           style={[
-                            styles.walletBreakdownVal,
-                            { fontWeight: '900', color: '#2563EB', fontSize: 14 },
+                            styles.checkboxBox,
+                            isRedeemWallet && styles.checkboxBoxChecked,
+                            !canRedeem && styles.checkboxBoxDisabled,
                           ]}
                         >
-                          {formatCurrency(netPayable)}
-                        </Text>
-                      </View>
-                    </View>
-                  )}
+                          {isRedeemWallet && <Text style={styles.checkboxCheck}>✓</Text>}
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.checkboxLabel, !canRedeem && styles.checkboxLabelDisabled]}>
+                            Redeem Wallet Balance ({formatCurrency(walletBalance)})
+                          </Text>
+                          {!canRedeem && (
+                            <Text style={styles.walletHintText}>
+                              {walletBalance > 0
+                                ? `Minimum ${formatCurrency(minRequired)} wallet balance required for redemption.`
+                                : `Customer has ₹0.00 wallet balance.`}
+                            </Text>
+                          )}
+                        </View>
+                      </TouchableOpacity>
+
+                      {isRedeemWallet && canRedeem && (
+                        <View style={styles.walletBreakdownBox}>
+                          <View style={styles.walletBreakdownRow}>
+                            <Text style={styles.walletBreakdownLabel}>Wallet Available:</Text>
+                            <Text style={styles.walletBreakdownVal}>{formatCurrency(walletBalance)}</Text>
+                          </View>
+                          <View style={styles.walletBreakdownRow}>
+                            <Text style={styles.walletBreakdownLabel}>Order Due:</Text>
+                            <Text style={styles.walletBreakdownVal}>{formatCurrency(remainingBalance)}</Text>
+                          </View>
+                          <View style={styles.walletBreakdownRow}>
+                            <Text style={[styles.walletBreakdownLabel, { color: '#059669', fontWeight: '800' }]}>
+                              Wallet Used:
+                            </Text>
+                            <Text style={[styles.walletBreakdownVal, { color: '#059669', fontWeight: '900' }]}>
+                              - {formatCurrency(walletRedeemAmount)}
+                            </Text>
+                          </View>
+                          <View
+                            style={[
+                              styles.walletBreakdownRow,
+                              { borderTopWidth: 1, borderTopColor: '#CBD5E1', paddingTop: 4, marginTop: 2 },
+                            ]}
+                          >
+                            <Text style={[styles.walletBreakdownLabel, { fontWeight: '900', color: '#0F172A' }]}>
+                              Remaining to Pay:
+                            </Text>
+                            <Text
+                              style={[
+                                styles.walletBreakdownVal,
+                                { fontWeight: '900', color: '#2563EB', fontSize: 14 },
+                              ]}
+                            >
+                              {formatCurrency(netPayable)}
+                            </Text>
+                          </View>
+                        </View>
+                      )}
+                    </>
+                  ) : null}
                 </View>
-              ) : null}
+              )}
 
               {/* 4. PAYMENT MODE SELECTION */}
               {netPayable > 0 && (
@@ -781,6 +816,26 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     color: '#166534',
+  },
+  walletPhoneInputRow: {
+    marginBottom: 8,
+  },
+  walletPhoneInputLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 4,
+  },
+  walletPhoneInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
   },
   walletCheckboxRow: {
     flexDirection: 'row',

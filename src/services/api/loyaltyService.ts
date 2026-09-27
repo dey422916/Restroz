@@ -219,12 +219,95 @@ export const loyaltyService = {
         return defaultResp;
       }
 
-      return {
-        wallets: Array.isArray(data?.wallets) ? data.wallets : [],
-        transactions: Array.isArray(data?.transactions) ? data.transactions : [],
-      };
+      if (data) {
+        return data as CustomerMarketplaceWalletsResponse;
+      }
     }
 
     return defaultResp;
   },
+
+  /**
+   * Get list of customer wallets for a restaurant (Admin lookup)
+   */
+  async getRestaurantCustomerWallets(restaurantId: string, limit = 50): Promise<Array<{
+    id: string;
+    customer_mobile: string;
+    balance: number;
+    total_earned: number;
+    total_redeemed: number;
+    updated_at: string;
+  }>> {
+    if (!restaurantId || !isSupabaseConfigured) return [];
+
+    const { data, error } = await supabase
+      .from('customer_wallets')
+      .select('id, customer_mobile, balance, total_earned, total_redeemed, updated_at')
+      .eq('restaurant_id', restaurantId)
+      .order('balance', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      console.warn('[loyaltyService] Error fetching customer wallets:', error);
+      return [];
+    }
+
+    return (data || []).map((w) => ({
+      id: w.id,
+      customer_mobile: w.customer_mobile,
+      balance: Number(w.balance) || 0,
+      total_earned: Number(w.total_earned) || 0,
+      total_redeemed: Number(w.total_redeemed) || 0,
+      updated_at: w.updated_at,
+    }));
+  },
+
+  /**
+   * Get transaction history for a customer wallet in a restaurant
+   */
+  async getCustomerWalletTransactions(restaurantId: string, customerMobile: string, limit = 20): Promise<Array<{
+    id: string;
+    transaction_type: 'earn' | 'redeem' | 'expire' | 'adjustment';
+    amount: number;
+    order_id?: string;
+    notes?: string;
+    created_at: string;
+  }>> {
+    if (!restaurantId || !customerMobile || !isSupabaseConfigured) return [];
+
+    const cleanMobile = normalizeIndianPhone(customerMobile);
+    if (!cleanMobile) return [];
+
+    // First find wallet
+    const { data: wallet } = await supabase
+      .from('customer_wallets')
+      .select('id')
+      .eq('restaurant_id', restaurantId)
+      .eq('customer_mobile', cleanMobile)
+      .maybeSingle();
+
+    if (!wallet) return [];
+
+    const { data, error } = await supabase
+      .from('customer_wallet_transactions')
+      .select('id, transaction_type, amount, order_id, notes, created_at')
+      .eq('wallet_id', wallet.id)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      console.warn('[loyaltyService] Error fetching customer wallet transactions:', error);
+      return [];
+    }
+
+    return (data || []).map((t) => ({
+      id: t.id,
+      transaction_type: t.transaction_type,
+      amount: Number(t.amount) || 0,
+      order_id: t.order_id,
+      notes: t.notes,
+      created_at: t.created_at,
+    }));
+  },
 };
+

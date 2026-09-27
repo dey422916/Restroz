@@ -4,7 +4,7 @@ import { formatCurrency, numberToWords } from '../utils/currency';
 import { getOrderSubtotal } from '../utils/gst';
 import { cleanCustomerOrderNotes } from '../utils/orderNotes';
 import { formatOrderDateTime } from '../utils/dateUtils';
-import { directPrintService, resolveKotPrinterName, DirectPrintError } from './directPrintService';
+import { directPrintService, resolveKotPrinterName, resolveBillPrinterName, DirectPrintError } from './directPrintService';
 import { supabase } from './supabase';
 
 export function formatLogoDataUri(urlOrBase64?: string | null): string {
@@ -475,19 +475,35 @@ export const printService = {
     options?: { forceBrowser?: boolean }
   ): Promise<{ direct: boolean; printerName?: string }> {
     const html = this.generateKotHtml(order, settings, kot, isReprint);
+    const paperSize = settings.kot_paper_size || '80mm';
 
-    if (Platform.OS === 'web' && settings.auto_print_kot && !options?.forceBrowser) {
-      const kotNum = kot?.kot_number || (order.kots && order.kots[0]?.kot_number) || order.order_number;
-      const targetPrinter = resolveKotPrinterName(settings);
-      const result = await directPrintService.printKotDirect(html, {
-        printerName: targetPrinter,
-        jobName: `KOT_${kotNum}`,
-      });
-      return { direct: true, printerName: result.printerName };
+    if (paperSize === 'A4') {
+      await executeIsolatedPrint(html);
+      return { direct: false };
     }
 
-    // When auto_print_kot is disabled, or native platform, or forceBrowser fallback:
-    // Uses standard browser / native printing without connecting to QZ Tray
+    if (Platform.OS === 'web' && !options?.forceBrowser) {
+      const kotNum = kot?.kot_number || (order.kots && order.kots[0]?.kot_number) || order.order_number;
+      const targetPrinter = resolveKotPrinterName(settings);
+      try {
+        const result = await directPrintService.printThermalDirect(html, {
+          printerName: targetPrinter,
+          jobName: `KOT_${kotNum}`,
+          paperSize,
+        });
+        return { direct: true, printerName: result.printerName };
+      } catch (err: any) {
+        if (settings.auto_print_kot) {
+          throw err;
+        } else {
+          console.warn('[printService] Direct QZ KOT print failed, falling back to browser print:', err);
+          await executeIsolatedPrint(html);
+          return { direct: false };
+        }
+      }
+    }
+
+    // When native platform, or forceBrowser fallback:
     await executeIsolatedPrint(html);
     return { direct: false };
   },
@@ -496,15 +512,23 @@ export const printService = {
    * Final Bill / Customer Receipt (80mm Thermal Format)
    * Matches the official Ratnadeep Restaurant Final Bill reference layout.
    */
-  async printBillThermal(order: Order, settings: RestaurantSettings): Promise<void> {
-    return this.printFinalReceiptThermal(order, settings);
+  async printBillThermal(
+    order: Order,
+    settings: RestaurantSettings,
+    options?: { forceBrowser?: boolean }
+  ): Promise<{ direct: boolean; printerName?: string }> {
+    return this.printFinalReceiptThermal(order, settings, undefined, options);
   },
 
-  async printFinalReceiptThermal(
+  /**
+   * Generates the canonical HTML for Final Bill / Customer Receipt (80mm / 58mm / A4 Thermal Format)
+   * Matches the official Ratnadeep Restaurant Final Bill reference layout.
+   */
+  generateFinalReceiptHtml(
     order: Order,
     settings: RestaurantSettings,
     billedBy: string = 'Ratnadeep Dey'
-  ): Promise<void> {
+  ): string {
     const formattedOrderDateTime = formatOrderDateTime(order.created_at);
 
     const kotRefs =
@@ -870,8 +894,59 @@ export const printService = {
         </body>
       </html>
     `;
+    return html;
+  },
+
+  /**
+   * Browser / Native Print Dialog fallback for Final Bill / Customer Receipt.
+   */
+  async printFinalReceiptThermalBrowser(
+    order: Order,
+    settings: RestaurantSettings,
+    billedBy: string = 'Ratnadeep Dey'
+  ): Promise<void> {
+    const html = this.generateFinalReceiptHtml(order, settings, billedBy);
+    await executeIsolatedPrint(html);
+  },
+
+  /**
+   * Final Bill / Customer Receipt (80mm / 58mm Thermal Format)
+   * On Web: Sends print job directly to configured POS80 / thermal printer via QZ Tray without Chrome print dialog.
+   * If direct printing fails or QZ is unavailable, gracefully falls back to browser printing.
+   * On Native: Uses expo-print printAsync.
+   */
+  async printFinalReceiptThermal(
+    order: Order,
+    settings: RestaurantSettings,
+    billedBy: string = 'Ratnadeep Dey',
+    options?: { forceBrowser?: boolean }
+  ): Promise<{ direct: boolean; printerName?: string }> {
+    const html = this.generateFinalReceiptHtml(order, settings, billedBy);
+    const billPaperSize = settings.bill_paper_size || settings.kot_paper_size || '80mm';
+
+    if (billPaperSize === 'A4') {
+      await executeIsolatedPrint(html);
+      return { direct: false };
+    }
+
+    if (Platform.OS === 'web' && !options?.forceBrowser) {
+      const targetPrinter = resolveBillPrinterName(settings);
+      try {
+        const result = await directPrintService.printThermalDirect(html, {
+          printerName: targetPrinter,
+          jobName: `Bill_${order.invoice_number || order.order_number}`,
+          paperSize: billPaperSize,
+        });
+        return { direct: true, printerName: result.printerName };
+      } catch (err: any) {
+        console.warn('[printService] Direct thermal bill print failed, falling back to browser print:', err);
+        await executeIsolatedPrint(html);
+        return { direct: false };
+      }
+    }
 
     await executeIsolatedPrint(html);
+    return { direct: false };
   },
 
   /**

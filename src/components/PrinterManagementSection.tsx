@@ -19,16 +19,26 @@ import {
   PrinterAlignment,
   PrinterCalibration,
   DevicePrinterBinding,
+  DevicePrinterDefaults,
+  RestaurantSettings,
   Category,
   TableSection,
+  Order,
 } from '../types';
 import { printerManager } from '../services/printerManager';
 import { CALIBRATION_LIMITS, DEFAULT_PRINTER_CALIBRATION } from '../services/printerManager/printerTypes';
+import {
+  AutoPrintReadinessReport,
+  RoutingPreviewReport,
+  PrinterSystemCheckReport,
+} from '../services/printerManager/diagnostics';
+import { isAutoPrintEnabled } from '../services/directPrintService';
 
 interface Props {
   restaurantId: string;
   categories: Category[];
   canManage: boolean;
+  settings?: RestaurantSettings | null;
   showToast: (type: 'success' | 'error' | 'info', title: string, message: string) => void;
 }
 
@@ -45,6 +55,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
   restaurantId,
   categories,
   canManage,
+  settings,
   showToast,
 }) => {
   const [printers, setPrinters] = useState<RestaurantPrinter[]>([]);
@@ -73,7 +84,9 @@ export const PrinterManagementSection: React.FC<Props> = ({
   // Bluetooth fields
   const [bluetoothDeviceName, setBluetoothDeviceName] = useState('');
   const [selectedBluetoothMac, setSelectedBluetoothMac] = useState('');
-  const [discoveredBluetoothDevices, setDiscoveredBluetoothDevices] = useState<import('../services/printerManager/transports/types').BluetoothDeviceInfo[]>([]);
+  const [discoveredBluetoothDevices, setDiscoveredBluetoothDevices] = useState<
+    import('../services/printerManager/transports/types').BluetoothDeviceInfo[]
+  >([]);
   const [isScanningBt, setIsScanningBt] = useState(false);
 
   // USB fields
@@ -81,7 +94,9 @@ export const PrinterManagementSection: React.FC<Props> = ({
   const [usbProductId, setUsbProductId] = useState('');
   const [usbSerialNumber, setUsbSerialNumber] = useState('');
   const [usbDeviceName, setUsbDeviceName] = useState('');
-  const [discoveredUsbDevices, setDiscoveredUsbDevices] = useState<import('../services/printerManager/transports/types').UsbDeviceInfo[]>([]);
+  const [discoveredUsbDevices, setDiscoveredUsbDevices] = useState<
+    import('../services/printerManager/transports/types').UsbDeviceInfo[]
+  >([]);
   const [isScanningUsb, setIsScanningUsb] = useState(false);
 
   const [deviceBindings, setDeviceBindings] = useState<Record<string, DevicePrinterBinding>>({});
@@ -96,6 +111,20 @@ export const PrinterManagementSection: React.FC<Props> = ({
   const [marginRightMm, setMarginRightMm] = useState<number>(0.0);
   const [marginTopMm, setMarginTopMm] = useState<number>(0.0);
   const [marginBottomMm, setMarginBottomMm] = useState<number>(0.0);
+
+  // Diagnostic Modals State
+  const [readinessModalVisible, setReadinessModalVisible] = useState(false);
+  const [readinessReport, setReadinessReport] = useState<AutoPrintReadinessReport | null>(null);
+
+  const [previewModalVisible, setPreviewModalVisible] = useState(false);
+  const [previewReport, setPreviewReport] = useState<RoutingPreviewReport | null>(null);
+
+  const [systemCheckModalVisible, setSystemCheckModalVisible] = useState(false);
+  const [systemCheckReport, setSystemCheckReport] = useState<PrinterSystemCheckReport | null>(null);
+
+  const [harnessModalVisible, setHarnessModalVisible] = useState(false);
+
+  const autoPrintActive = isAutoPrintEnabled(settings);
 
   const loadPrinters = useCallback(async () => {
     if (!restaurantId) return;
@@ -159,7 +188,6 @@ export const PrinterManagementSection: React.FC<Props> = ({
       setIsScanningUsb(false);
     }
   };
-
 
   useEffect(() => {
     loadPrinters();
@@ -358,6 +386,13 @@ export const PrinterManagementSection: React.FC<Props> = ({
   };
 
   const handleDeletePrinter = (printer: RestaurantPrinter) => {
+    const warnings = printerManager.getDeleteOrDisableWarnings(printer.id, printers, {
+      default_kot_printer_id: deviceKotPrinterId,
+      default_bill_printer_id: deviceBillPrinterId,
+    });
+
+    const warningText = warnings.length > 0 ? `\n\n⚠️ Warnings:\n${warnings.map((w) => `• ${w}`).join('\n')}` : '';
+
     const doDelete = async () => {
       try {
         await printerManager.deletePrinter(printer.id);
@@ -370,11 +405,11 @@ export const PrinterManagementSection: React.FC<Props> = ({
     };
 
     if (Platform.OS === 'web') {
-      if (window.confirm(`Are you sure you want to delete "${printer.name}"?`)) {
+      if (window.confirm(`Are you sure you want to delete "${printer.name}"?${warningText}`)) {
         doDelete();
       }
     } else {
-      Alert.alert('Delete Printer', `Are you sure you want to delete "${printer.name}"?`, [
+      Alert.alert('Delete Printer', `Are you sure you want to delete "${printer.name}"?${warningText}`, [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: doDelete },
       ]);
@@ -388,7 +423,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
         default_kot_printer_id: deviceKotPrinterId || null,
         default_bill_printer_id: deviceBillPrinterId || null,
       });
-      showToast('success', 'Saved', 'Device-local default printers updated.');
+      showToast('success', 'Saved', 'Device-local default printers updated for this tablet.');
     } catch (err: any) {
       showToast('error', 'Error', err.message || 'Could not save device defaults.');
     } finally {
@@ -522,6 +557,135 @@ export const PrinterManagementSection: React.FC<Props> = ({
     }
   };
 
+  // Phase 7 Diagnostic Handlers (NON-HARDWARE TOUCHING)
+  const handleCheckAutoPrintSetup = () => {
+    const report = printerManager.checkAutoPrintReadiness(
+      settings,
+      printers,
+      deviceBindings,
+      {
+        default_kot_printer_id: deviceKotPrinterId,
+        default_bill_printer_id: deviceBillPrinterId,
+      }
+    );
+    setReadinessReport(report);
+    setReadinessModalVisible(true);
+  };
+
+  const handlePreviewRouting = () => {
+    // Deterministic sample order for routing inspection
+    const sampleOrder: Order = {
+      id: 'preview-ord-001',
+      restaurant_id: restaurantId,
+      order_number: 'ORD-PREVIEW',
+      order_type: 'dine_in',
+      table_number: 'T1',
+      customer_name: 'Walk-in Guest',
+      status: 'confirmed',
+      payment_status: 'unpaid',
+      subtotal: 750,
+      discount_amount: 0,
+      coupon_discount: 0,
+      cgst_amount: 18.75,
+      sgst_amount: 18.75,
+      igst_amount: 0,
+      service_charge: 0,
+      delivery_charge: 0,
+      grand_total: 787.5,
+      round_off: 0.5,
+      payable_amount: 788,
+      created_at: new Date().toISOString(),
+      items: [
+        {
+          id: 'item-1',
+          order_id: 'preview-ord-001',
+          product_name: 'Chicken Biryani',
+          quantity: 2,
+          unit_price: 250,
+          total_price: 500,
+          subtotal: 500,
+          tax_rate: 5,
+          tax_amount: 25,
+          product: {
+            id: 'prod-1',
+            name: 'Chicken Biryani',
+            category_id: categories.find((c) => c.name.toLowerCase().includes('main'))?.id || 'cat-mains',
+            price: 250,
+            is_active: true,
+            created_at: '',
+            updated_at: '',
+          },
+        } as any,
+        {
+          id: 'item-2',
+          order_id: 'preview-ord-001',
+          product_name: 'Cold Coffee',
+          quantity: 1,
+          unit_price: 120,
+          total_price: 120,
+          subtotal: 120,
+          tax_rate: 5,
+          tax_amount: 6,
+          product: {
+            id: 'prod-2',
+            name: 'Cold Coffee',
+            category_id: categories.find((c) => c.name.toLowerCase().includes('beverage') || c.name.toLowerCase().includes('drink'))?.id || 'cat-beverages',
+            price: 120,
+            is_active: true,
+            created_at: '',
+            updated_at: '',
+          },
+        } as any,
+        {
+          id: 'item-3',
+          order_id: 'preview-ord-001',
+          product_name: 'Veg Momo',
+          quantity: 1,
+          unit_price: 130,
+          total_price: 130,
+          subtotal: 130,
+          tax_rate: 5,
+          tax_amount: 6.5,
+          product: {
+            id: 'prod-3',
+            name: 'Veg Momo',
+            category_id: categories.find((c) => c.name.toLowerCase().includes('starter') || c.name.toLowerCase().includes('snack'))?.id || 'cat-starters',
+            price: 130,
+            is_active: true,
+            created_at: '',
+            updated_at: '',
+          },
+        } as any,
+      ],
+    };
+
+    const report = printerManager.previewRouting(
+      sampleOrder,
+      settings,
+      printers,
+      deviceBindings,
+      {
+        default_kot_printer_id: deviceKotPrinterId,
+        default_bill_printer_id: deviceBillPrinterId,
+      }
+    );
+    setPreviewReport(report);
+    setPreviewModalVisible(true);
+  };
+
+  const handleRunSystemCheck = () => {
+    const report = printerManager.runPrinterSystemCheck(
+      settings,
+      printers,
+      deviceBindings,
+      {
+        default_kot_printer_id: deviceKotPrinterId,
+        default_bill_printer_id: deviceBillPrinterId,
+      }
+    );
+    setSystemCheckReport(report);
+    setSystemCheckModalVisible(true);
+  };
 
   const toggleCategorySelection = (catId: string) => {
     if (selectedCategoryIds.includes(catId)) {
@@ -539,10 +703,75 @@ export const PrinterManagementSection: React.FC<Props> = ({
     }
   };
 
+  // Helper for printer card status badge
+  const getPrinterCardStatusBadge = (p: RestaurantPrinter) => {
+    if (!p.is_active) {
+      return <View style={styles.inactiveBadge}><Text style={styles.inactiveBadgeText}>DISABLED</Text></View>;
+    }
+
+    if (p.connection_type === 'bluetooth' && !deviceBindings[p.id]?.bluetooth_mac_address) {
+      return (
+        <View style={styles.unboundBadge}>
+          <Text style={styles.unboundBadgeText}>⚠️ UNBOUND ON TABLET</Text>
+        </View>
+      );
+    }
+
+    if (
+      p.connection_type === 'usb' &&
+      (deviceBindings[p.id]?.usb_vendor_id == null || deviceBindings[p.id]?.usb_product_id == null)
+    ) {
+      return (
+        <View style={styles.unboundBadge}>
+          <Text style={styles.unboundBadgeText}>⚠️ UNBOUND ON TABLET</Text>
+        </View>
+      );
+    }
+
+    if (['lan', 'wifi'].includes(p.connection_type) && (!p.ip_address || !p.ip_address.trim())) {
+      return (
+        <View style={styles.configIssueBadge}>
+          <Text style={styles.configIssueBadgeText}>MISSING IP</Text>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.readyBadge}>
+        <Text style={styles.readyBadgeText}>CONFIGURED</Text>
+      </View>
+    );
+  };
+
+  // Filter valid fallback printers (exclude self and cycle)
+  const validFallbackPrinters = printers.filter((p) => {
+    if (editingPrinter && p.id === editingPrinter.id) return false;
+    if (!p.is_active) return false;
+    return true;
+  });
+
   return (
     <View style={styles.container}>
+      {/* 1. Master Auto Print Status Banner */}
+      <View style={[styles.autoPrintBanner, autoPrintActive ? styles.autoPrintBannerOn : styles.autoPrintBannerOff]}>
+        <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={{ fontSize: 16 }}>{autoPrintActive ? '🟢' : '⚪'}</Text>
+            <Text style={styles.autoPrintBannerTitle}>
+              Master Auto Print: {autoPrintActive ? 'ON' : 'OFF'}
+            </Text>
+          </View>
+          <Text style={styles.autoPrintBannerText}>
+            {autoPrintActive
+              ? 'Automatically sends thermal KOTs and bills directly to configured printers.'
+              : 'Uses manual printing. Direct printers will not trigger automatically.'}
+          </Text>
+        </View>
+      </View>
+
+      {/* 2. Header and Diagnostic Actions Bar */}
       <View style={styles.headerRow}>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={styles.title}>🖨️ Multi-Printer Management</Text>
           <Text style={styles.subtitle}>
             Configure Bluetooth, USB, LAN, and Wi-Fi thermal printers per restaurant.
@@ -558,6 +787,26 @@ export const PrinterManagementSection: React.FC<Props> = ({
         </TouchableOpacity>
       </View>
 
+      {/* Diagnostic Action Buttons */}
+      <View style={styles.diagnosticsRow}>
+        <TouchableOpacity style={styles.diagBtn} onPress={handleCheckAutoPrintSetup}>
+          <Text style={styles.diagBtnText}>🔍 Check Auto Print Setup</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.diagBtn} onPress={handlePreviewRouting}>
+          <Text style={styles.diagBtnText}>📋 Preview Routing</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.diagBtn} onPress={handleRunSystemCheck}>
+          <Text style={styles.diagBtnText}>⚡ Run System Check</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.diagBtn, styles.diagBtnHarness]} onPress={() => setHarnessModalVisible(true)}>
+          <Text style={[styles.diagBtnText, { color: '#7c3aed' }]}>🧪 Physical Test Harness</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* 3. Printer Cards List */}
       {isLoading ? (
         <View style={styles.centerBox}>
           <ActivityIndicator size="small" color="#2563eb" />
@@ -579,7 +828,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
                 <View style={styles.nameRow}>
                   <Text style={styles.printerName}>{p.name}</Text>
                   {p.is_primary && <View style={styles.primaryBadge}><Text style={styles.primaryBadgeText}>PRIMARY</Text></View>}
-                  {!p.is_active && <View style={styles.inactiveBadge}><Text style={styles.inactiveBadgeText}>DISABLED</Text></View>}
+                  {getPrinterCardStatusBadge(p)}
                 </View>
 
                 <View style={styles.badgesRow}>
@@ -613,16 +862,23 @@ export const PrinterManagementSection: React.FC<Props> = ({
                 )}
                 {p.connection_type === 'bluetooth' && (
                   <Text style={styles.detailText}>
-                    <Text style={{ fontWeight: '700' }}>Device: </Text>{p.bluetooth_device_name || 'Generic BT'} {deviceBindings[p.id]?.bluetooth_mac_address ? `(${deviceBindings[p.id]?.bluetooth_mac_address})` : '(Not bound)'}
+                    <Text style={{ fontWeight: '700' }}>Device: </Text>{p.bluetooth_device_name || 'Generic BT'}{' '}
+                    {deviceBindings[p.id]?.bluetooth_mac_address
+                      ? `(${deviceBindings[p.id]?.bluetooth_mac_address})`
+                      : '(⚠️ Not bound on this tablet)'}
                   </Text>
                 )}
                 {p.connection_type === 'usb' && (
                   <Text style={styles.detailText}>
-                    <Text style={{ fontWeight: '700' }}>USB Target: </Text>{deviceBindings[p.id]?.usb_vendor_id !== undefined && deviceBindings[p.id]?.usb_vendor_id !== null ? `VID: 0x${deviceBindings[p.id]!.usb_vendor_id!.toString(16).toUpperCase()}, PID: 0x${deviceBindings[p.id]!.usb_product_id!.toString(16).toUpperCase()}` : '(Not bound on this tablet)'}
+                    <Text style={{ fontWeight: '700' }}>USB Target: </Text>
+                    {deviceBindings[p.id]?.usb_vendor_id !== undefined && deviceBindings[p.id]?.usb_vendor_id !== null
+                      ? `VID: 0x${deviceBindings[p.id]!.usb_vendor_id!.toString(16).toUpperCase()}, PID: 0x${deviceBindings[p.id]!.usb_product_id!.toString(16).toUpperCase()}`
+                      : '(⚠️ Not bound on this tablet)'}
                   </Text>
                 )}
                 <Text style={styles.detailText}>
-                  <Text style={{ fontWeight: '700' }}>Calibration: </Text>{p.alignment || 'Center'} / {Number(p.horizontal_shift_mm) > 0 ? `+${p.horizontal_shift_mm}` : p.horizontal_shift_mm}mm shift
+                  <Text style={{ fontWeight: '700' }}>Calibration: </Text>{p.alignment || 'Center'} /{' '}
+                  {Number(p.horizontal_shift_mm) > 0 ? `+${p.horizontal_shift_mm}` : p.horizontal_shift_mm}mm shift
                 </Text>
                 {p.category_ids && p.category_ids.length > 0 && (
                   <Text style={styles.detailText}>
@@ -634,8 +890,15 @@ export const PrinterManagementSection: React.FC<Props> = ({
                     <Text style={{ fontWeight: '700' }}>Sections: </Text>{p.section_names.join(', ')}
                   </Text>
                 )}
+                {p.fallback_printer_id && (
+                  <Text style={styles.detailText}>
+                    <Text style={{ fontWeight: '700' }}>Fallback: </Text>
+                    {printers.find((tp) => tp.id === p.fallback_printer_id)?.name || 'Unknown target'}
+                  </Text>
+                )}
                 <Text style={[styles.statusText, printerStatuses[p.id]?.color ? { color: printerStatuses[p.id]?.color } : null]}>
-                  <Text style={{ fontWeight: '700' }}>Status: </Text>{printerStatuses[p.id]?.text || (['lan', 'wifi'].includes(p.connection_type) ? 'Configured (TCP Ready)' : p.connection_type === 'bluetooth' ? (deviceBindings[p.id]?.bluetooth_mac_address ? 'Configured (BT Bound)' : 'Not Bound') : (deviceBindings[p.id]?.usb_vendor_id !== undefined && deviceBindings[p.id]?.usb_vendor_id !== null ? 'Configured (USB Bound)' : 'Not Bound'))}
+                  <Text style={{ fontWeight: '700' }}>Reachability: </Text>
+                  {printerStatuses[p.id]?.text || 'Not tested in current session'}
                 </Text>
               </View>
 
@@ -685,6 +948,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
                 >
                   <Text style={styles.actionBtnTextSecondary}>Edit</Text>
                 </TouchableOpacity>
+
                 <TouchableOpacity
                   style={styles.actionBtnDanger}
                   onPress={() => handleDeletePrinter(p)}
@@ -698,7 +962,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
         </View>
       )}
 
-      {/* Device-Local Defaults Card */}
+      {/* 4. Device-Local Defaults Card */}
       {printers.length > 0 && (
         <View style={styles.deviceCard}>
           <Text style={styles.deviceCardTitle}>📱 This Device Defaults (Local Tablet Binding)</Text>
@@ -762,7 +1026,308 @@ export const PrinterManagementSection: React.FC<Props> = ({
         </View>
       )}
 
-      {/* Add / Edit Printer Modal */}
+      {/* ========================================================================= */}
+      {/* 5. DIAGNOSTIC MODAL: Check Auto Print Setup                                */}
+      {/* ========================================================================= */}
+      <Modal visible={readinessModalVisible} animationType="fade" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>🔍 Auto Print Setup Readiness Check</Text>
+              <TouchableOpacity onPress={() => setReadinessModalVisible(false)}>
+                <Text style={styles.modalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalBody}>
+              <View style={[styles.diagStatusHeader, readinessReport?.isReady ? styles.diagReady : styles.diagAttention]}>
+                <Text style={styles.diagStatusTitle}>
+                  {readinessReport?.isReady ? '✓ Auto Print is Ready' : '⚠️ Attention Required'}
+                </Text>
+                <Text style={styles.diagStatusMessage}>{readinessReport?.statusMessage}</Text>
+              </View>
+
+              <Text style={[styles.sectionHeader, { marginTop: 14 }]}>Configuration Checklist</Text>
+              {readinessReport?.checklist.map((item) => (
+                <View key={item.key} style={styles.checkItemRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.checkItemLabel}>{item.label}</Text>
+                    {item.detail ? <Text style={styles.checkItemDetail}>{item.detail}</Text> : null}
+                  </View>
+                  <View
+                    style={[
+                      styles.checkBadge,
+                      item.status === 'ready'
+                        ? styles.checkBadgeReady
+                        : item.status === 'error'
+                        ? styles.checkBadgeError
+                        : item.status === 'warning'
+                        ? styles.checkBadgeWarning
+                        : styles.checkBadgeMuted,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.checkBadgeText,
+                        item.status === 'ready'
+                          ? { color: '#047857' }
+                          : item.status === 'error'
+                          ? { color: '#b91c1c' }
+                          : item.status === 'warning'
+                          ? { color: '#b45309' }
+                          : { color: '#64748b' },
+                      ]}
+                    >
+                      {item.summary}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+
+              <View style={styles.diagFooterNotice}>
+                <Text style={styles.diagFooterNoticeText}>
+                  ℹ️ Diagnostic only. This check inspects configuration and does NOT transmit data or connect to physical hardware.
+                </Text>
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setReadinessModalVisible(false)}>
+                <Text style={styles.cancelBtnText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* 6. DIAGNOSTIC MODAL: Routing Preview                                      */}
+      {/* ========================================================================= */}
+      <Modal visible={previewModalVisible} animationType="fade" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>📋 KOT & Bill Routing Preview</Text>
+              <TouchableOpacity onPress={() => setPreviewModalVisible(false)}>
+                <Text style={styles.modalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalBody}>
+              <Text style={styles.previewSubtext}>
+                Demonstrates how live orders are deterministically routed across configured printers without touching physical hardware.
+              </Text>
+
+              <Text style={styles.sectionHeader}>KOT Document Splits</Text>
+              {previewReport?.kotRoutes.length === 0 ? (
+                <Text style={styles.emptyDetailText}>No active KOT routes available.</Text>
+              ) : (
+                previewReport?.kotRoutes.map((route, idx) => (
+                  <View key={idx} style={styles.previewCard}>
+                    <View style={styles.previewCardHeader}>
+                      <Text style={styles.previewCardTitle}>🖨️ {route.printerName}</Text>
+                      <View style={styles.connBadge}>
+                        <Text style={styles.connBadgeText}>{route.connectionType} ({route.paperWidth})</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.previewReasonText}>Routing Reason: {route.routingReason}</Text>
+                    <View style={styles.previewItemsList}>
+                      {route.items.map((i, iIdx) => (
+                        <Text key={iIdx} style={styles.previewItemText}>
+                          • {i.quantity}x {i.name} {i.notes ? `(${i.notes})` : ''}
+                        </Text>
+                      ))}
+                    </View>
+                  </View>
+                ))
+              )}
+
+              <Text style={[styles.sectionHeader, { marginTop: 14 }]}>Final Bill Destination</Text>
+              {previewReport?.billRoute ? (
+                <View style={styles.previewCard}>
+                  <View style={styles.previewCardHeader}>
+                    <Text style={styles.previewCardTitle}>🧾 {previewReport.billRoute.printerName}</Text>
+                    <View style={styles.connBadge}>
+                      <Text style={styles.connBadgeText}>{previewReport.billRoute.connectionType} ({previewReport.billRoute.paperWidth})</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.previewReasonText}>Routing Reason: {previewReport.billRoute.routingReason}</Text>
+                </View>
+              ) : (
+                <Text style={styles.emptyDetailText}>No active Bill printer configured.</Text>
+              )}
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setPreviewModalVisible(false)}>
+                <Text style={styles.cancelBtnText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* 7. DIAGNOSTIC MODAL: Printer System Health Check                          */}
+      {/* ========================================================================= */}
+      <Modal visible={systemCheckModalVisible} animationType="fade" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>⚡ RestroZ Printer System Health Check</Text>
+              <TouchableOpacity onPress={() => setSystemCheckModalVisible(false)}>
+                <Text style={styles.modalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalBody}>
+              <View style={styles.sysCheckList}>
+                {systemCheckReport?.checks.map((c, idx) => (
+                  <View key={idx} style={styles.sysCheckRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.sysCheckName}>{c.name}</Text>
+                      <Text style={styles.sysCheckDetail}>{c.detail}</Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.sysCheckBadge,
+                        c.status === 'PASS' || c.status === 'CONFIGURED'
+                          ? styles.sysCheckPass
+                          : c.status === 'NOT_TESTED'
+                          ? styles.sysCheckNotTested
+                          : c.status === 'WARN'
+                          ? styles.sysCheckWarn
+                          : styles.sysCheckFail,
+                      ]}
+                    >
+                      <Text style={styles.sysCheckBadgeText}>{c.status}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+
+              <View style={styles.hardwareStatusBox}>
+                <Text style={styles.hardwareStatusTitle}>Physical Hardware Status</Text>
+                <Text style={styles.hardwareStatusText}>
+                  {systemCheckReport?.hardwareStatus}
+                </Text>
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setSystemCheckModalVisible(false)}>
+                <Text style={styles.cancelBtnText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* 8. DIAGNOSTIC MODAL: Physical Validation Harness                          */}
+      {/* ========================================================================= */}
+      <Modal visible={harnessModalVisible} animationType="fade" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>🧪 Physical Hardware Validation Harness</Text>
+              <TouchableOpacity onPress={() => setHarnessModalVisible(false)}>
+                <Text style={styles.modalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalBody}>
+              <View style={styles.harnessWarningBox}>
+                <Text style={styles.harnessWarningTitle}>⚠️ Physical Hardware Validation Notice</Text>
+                <Text style={styles.harnessWarningText}>
+                  These actions send real test commands to connected thermal hardware. Run these explicitly during physical hardware testing.
+                </Text>
+              </View>
+
+              {printers.map((p) => (
+                <View key={p.id} style={styles.harnessCard}>
+                  <Text style={styles.harnessCardTitle}>
+                    {p.name} ({p.connection_type.toUpperCase()} • {p.paper_width})
+                  </Text>
+
+                  <View style={styles.harnessButtonsRow}>
+                    <TouchableOpacity
+                      style={styles.harnessActionBtn}
+                      onPress={() => handleTestConnection(p)}
+                    >
+                      <Text style={styles.harnessActionBtnText}>Test Conn</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.harnessActionBtn}
+                      onPress={() => {
+                        Alert.alert('Print Physical Test', `Print 1 test receipt to "${p.name}"?`, [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Print', onPress: () => handleTestPrint(p) },
+                        ]);
+                      }}
+                    >
+                      <Text style={styles.harnessActionBtnText}>Test Print</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.harnessActionBtn}
+                      onPress={() => {
+                        Alert.alert('Print Calibration Sheet', `Print calibration receipt to "${p.name}"?`, [
+                          { text: 'Cancel', style: 'cancel' },
+                          {
+                            text: 'Print',
+                            onPress: () => printerManager.printCalibrationTest(p).then((res) => {
+                              if (res.success) showToast('success', 'Sent', 'Calibration sheet sent.');
+                              else showToast('error', 'Failed', res.message);
+                            }),
+                          },
+                        ]);
+                      }}
+                    >
+                      <Text style={styles.harnessActionBtnText}>Calibration</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.harnessActionBtn}
+                      onPress={() => {
+                        Alert.alert('Print Sample KOT', `Print sample KOT to "${p.name}"?`, [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Print', onPress: () => handlePrintSampleKot(p) },
+                        ]);
+                      }}
+                    >
+                      <Text style={styles.harnessActionBtnText}>Sample KOT</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.harnessActionBtn}
+                      onPress={() => {
+                        Alert.alert('Print Sample Bill', `Print sample Bill to "${p.name}"?`, [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Print', onPress: () => handlePrintSampleBill(p) },
+                        ]);
+                      }}
+                    >
+                      <Text style={styles.harnessActionBtnText}>Sample Bill</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setHarnessModalVisible(false)}>
+                <Text style={styles.cancelBtnText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* 9. ADD / EDIT PRINTER MODAL                                               */}
+      {/* ========================================================================= */}
       <Modal visible={modalVisible} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
@@ -849,6 +1414,14 @@ export const PrinterManagementSection: React.FC<Props> = ({
                   </View>
                 </View>
               </View>
+
+              <Text style={styles.roleExplanationText}>
+                {printerRole === 'kot'
+                  ? 'KOT: Kitchen & order tickets.'
+                  : printerRole === 'bill'
+                  ? 'Bill: Customer bills & payment receipts.'
+                  : 'Both: Can handle either KOT or Bill.'}
+              </Text>
 
               {/* Network Specific Fields */}
               {['lan', 'wifi'].includes(connectionType) && (
@@ -1002,10 +1575,10 @@ export const PrinterManagementSection: React.FC<Props> = ({
                             }}
                           >
                             <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>
-                              {d.deviceName || 'USB Thermal Printer'} {isSelected ? '✓' : ''}
+                              {d.deviceName || 'Thermal USB Printer'} {isSelected ? '✓' : ''}
                             </Text>
                             <Text style={{ fontSize: 11, color: '#64748b' }}>
-                              VID: {vHex} | PID: {pHex} {d.serialNumber ? `| Serial: ${d.serialNumber}` : ''}
+                              VID: {vHex} • PID: {pHex} {d.serialNumber ? `• S/N: ${d.serialNumber}` : ''}
                             </Text>
                           </TouchableOpacity>
                         );
@@ -1013,85 +1586,88 @@ export const PrinterManagementSection: React.FC<Props> = ({
                     </View>
                   )}
 
-                  <View style={[styles.rowTwoCol, { marginTop: 10 }]}>
+                  <View style={styles.rowTwoCol}>
                     <View style={styles.col}>
-                      <Text style={styles.fieldLabel}>Vendor ID (VID) *</Text>
+                      <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Vendor ID (Hex/Dec)</Text>
                       <TextInput
                         style={styles.input}
-                        placeholder="e.g. 0x0416, 0x0483"
+                        placeholder="e.g. 0x0416 or 1046"
                         placeholderTextColor="#94a3b8"
                         value={usbVendorId}
                         onChangeText={setUsbVendorId}
-                        autoCapitalize="characters"
+                        autoCapitalize="none"
                       />
                     </View>
                     <View style={styles.col}>
-                      <Text style={styles.fieldLabel}>Product ID (PID) *</Text>
+                      <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Product ID (Hex/Dec)</Text>
                       <TextInput
                         style={styles.input}
-                        placeholder="e.g. 0x5011, 0x5740"
+                        placeholder="e.g. 0x5011 or 20497"
                         placeholderTextColor="#94a3b8"
                         value={usbProductId}
                         onChangeText={setUsbProductId}
-                        autoCapitalize="characters"
+                        autoCapitalize="none"
                       />
                     </View>
                   </View>
-
-                  <Text style={[styles.fieldLabel, { marginTop: 6 }]}>USB Serial Number (Optional)</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Leave blank if not applicable"
-                    placeholderTextColor="#94a3b8"
-                    value={usbSerialNumber}
-                    onChangeText={setUsbSerialNumber}
-                  />
                 </View>
               )}
 
-              {/* Primary & Fallback */}
-              <View style={styles.toggleRow}>
+              {/* 3. Primary and Fallback Configuration */}
+              <Text style={styles.sectionHeader}>3. Primary & Fallback Routing</Text>
+              <TouchableOpacity
+                style={styles.toggleRow}
+                onPress={() => setIsPrimary(!isPrimary)}
+              >
+                <View style={[styles.checkbox, isPrimary && styles.checkboxActive]}>
+                  {isPrimary && <Text style={styles.checkboxText}>✓</Text>}
+                </View>
+                <Text style={styles.checkboxLabel}>Set as Restaurant Primary Printer for this role</Text>
+              </TouchableOpacity>
+
+              <Text style={[styles.fieldLabel, { marginTop: 8 }]}>Fallback Printer (Optional)</Text>
+              <View style={styles.pickerWrap}>
                 <TouchableOpacity
-                  style={[styles.checkbox, isPrimary && styles.checkboxActive]}
-                  onPress={() => setIsPrimary(!isPrimary)}
+                  style={styles.pickerBtn}
+                  onPress={() => {
+                    if (validFallbackPrinters.length === 0) return;
+                    const idx = validFallbackPrinters.findIndex((p) => p.id === fallbackPrinterId);
+                    const next = validFallbackPrinters[(idx + 1) % validFallbackPrinters.length];
+                    setFallbackPrinterId(next?.id || '');
+                  }}
                 >
-                  <Text style={styles.checkboxText}>{isPrimary ? '✓' : ''}</Text>
+                  <Text style={styles.pickerBtnText}>
+                    {printers.find((p) => p.id === fallbackPrinterId)?.name || 'None (No fallback)'}
+                  </Text>
                 </TouchableOpacity>
-                <Text style={styles.checkboxLabel}>Set as Primary {printerRole.toUpperCase()} Printer</Text>
               </View>
 
-              {/* 3. Category Routing Foundation */}
-              {(printerRole === 'kot' || printerRole === 'both') && categories.length > 0 && (
+              {/* 4. KOT Routing (Categories & Sections) */}
+              {(printerRole === 'kot' || printerRole === 'both') && (
                 <View style={styles.routingSection}>
-                  <Text style={styles.sectionHeader}>3. Category Routing (Optional)</Text>
+                  <Text style={styles.sectionHeader}>4. KOT Menu Categories & Dining Sections</Text>
                   <Text style={styles.helperText}>
-                    Select specific menu categories for this kitchen station. Leave unselected to receive all items.
+                    Route specific menu categories to this printer (e.g. Kitchen, Bar, Bakery).
                   </Text>
                   <View style={styles.tagWrap}>
-                    {categories.map((c) => {
-                      const selected = selectedCategoryIds.includes(c.id);
+                    {categories.map((cat) => {
+                      const selected = selectedCategoryIds.includes(cat.id);
                       return (
                         <TouchableOpacity
-                          key={c.id}
+                          key={cat.id}
                           style={[styles.tag, selected && styles.tagActive]}
-                          onPress={() => toggleCategorySelection(c.id)}
+                          onPress={() => toggleCategorySelection(cat.id)}
                         >
                           <Text style={[styles.tagText, selected && styles.tagTextActive]}>
-                            {c.name} {selected ? '✓' : ''}
+                            {cat.name} {selected ? '✓' : ''}
                           </Text>
                         </TouchableOpacity>
                       );
                     })}
                   </View>
-                </View>
-              )}
 
-              {/* 4. Floor / Section Routing Foundation */}
-              {(printerRole === 'kot' || printerRole === 'both') && (
-                <View style={styles.routingSection}>
-                  <Text style={styles.sectionHeader}>4. Floor / Section Routing (Optional)</Text>
                   <Text style={styles.helperText}>
-                    Select dining table sections that route to this printer.
+                    Route specific dining room sections or floors to this printer (e.g. Rooftop).
                   </Text>
                   <View style={styles.tagWrap}>
                     {TABLE_SECTIONS.map((sec) => {
@@ -1112,14 +1688,13 @@ export const PrinterManagementSection: React.FC<Props> = ({
                 </View>
               )}
 
-              {/* 5. Print Calibration */}
+              {/* 5. Physical Calibration Controls */}
               <View style={styles.calibrationSection}>
-                <Text style={styles.sectionHeader}>5. Print Calibration</Text>
+                <Text style={styles.sectionHeader}>5. Physical Paper Calibration</Text>
                 <Text style={styles.helperText}>
-                  Fine-tune hardware margins and horizontal alignment without altering application CSS.
+                  Adjust alignment and margins to prevent text clipping on physical paper.
                 </Text>
 
-                {/* Alignment */}
                 <Text style={styles.fieldLabel}>Alignment</Text>
                 <View style={styles.segmentedRow}>
                   {(['left', 'center', 'right'] as PrinterAlignment[]).map((a) => (
@@ -1135,46 +1710,26 @@ export const PrinterManagementSection: React.FC<Props> = ({
                   ))}
                 </View>
 
-                {/* Horizontal Shift */}
-                <Text style={[styles.fieldLabel, { marginTop: 12 }]}>
-                  Horizontal Shift: <Text style={styles.highlightVal}>{horizontalShiftMm > 0 ? `+${horizontalShiftMm}` : horizontalShiftMm}mm</Text>
+                <Text style={styles.fieldLabel}>
+                  Horizontal Shift: <Text style={styles.highlightVal}>{horizontalShiftMm > 0 ? `+${horizontalShiftMm}` : horizontalShiftMm} mm</Text>
                 </Text>
-                <Text style={styles.subHelperText}>
-                  Negative = Move content LEFT | Positive = Move content RIGHT
-                </Text>
-
+                <Text style={styles.subHelperText}>Negative = Left shift • Positive = Right shift (-10mm to +10mm)</Text>
                 <View style={styles.stepperRow}>
-                  <TouchableOpacity style={styles.stepBtn} onPress={() => adjustShift(-2.0)}>
-                    <Text style={styles.stepBtnText}>-2mm</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.stepBtn} onPress={() => adjustShift(-1.0)}>
-                    <Text style={styles.stepBtnText}>-1mm</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.stepBtn} onPress={() => adjustShift(-0.5)}>
-                    <Text style={styles.stepBtnText}>-0.5mm</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[styles.stepBtn, styles.stepBtnZero]} onPress={() => setHorizontalShiftMm(0.0)}>
-                    <Text style={styles.stepBtnTextZero}>RESET 0</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.stepBtn} onPress={() => adjustShift(+0.5)}>
-                    <Text style={styles.stepBtnText}>+0.5mm</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.stepBtn} onPress={() => adjustShift(+1.0)}>
-                    <Text style={styles.stepBtnText}>+1mm</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.stepBtn} onPress={() => adjustShift(+2.0)}>
-                    <Text style={styles.stepBtnText}>+2mm</Text>
-                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.stepBtn} onPress={() => adjustShift(-2.0)}><Text style={styles.stepBtnText}>-2mm</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.stepBtn} onPress={() => adjustShift(-0.5)}><Text style={styles.stepBtnText}>-0.5mm</Text></TouchableOpacity>
+                  <TouchableOpacity style={[styles.stepBtn, styles.stepBtnZero]} onPress={() => setHorizontalShiftMm(0.0)}><Text style={styles.stepBtnTextZero}>0 mm</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.stepBtn} onPress={() => adjustShift(0.5)}><Text style={styles.stepBtnText}>+0.5mm</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.stepBtn} onPress={() => adjustShift(2.0)}><Text style={styles.stepBtnText}>+2mm</Text></TouchableOpacity>
                 </View>
 
-                {/* Margins */}
                 <View style={styles.rowTwoCol}>
                   <View style={styles.col}>
                     <Text style={styles.fieldLabel}>Left Margin (mm)</Text>
                     <TextInput
                       style={styles.input}
+                      placeholder="0.0"
                       value={String(marginLeftMm)}
-                      onChangeText={(v) => setMarginLeftMm(Number(v) || 0)}
+                      onChangeText={(t) => setMarginLeftMm(Number(t) || 0)}
                       keyboardType="numeric"
                     />
                   </View>
@@ -1182,50 +1737,22 @@ export const PrinterManagementSection: React.FC<Props> = ({
                     <Text style={styles.fieldLabel}>Right Margin (mm)</Text>
                     <TextInput
                       style={styles.input}
+                      placeholder="0.0"
                       value={String(marginRightMm)}
-                      onChangeText={(v) => setMarginRightMm(Number(v) || 0)}
+                      onChangeText={(t) => setMarginRightMm(Number(t) || 0)}
                       keyboardType="numeric"
                     />
                   </View>
                 </View>
 
                 <View style={styles.calibrationActionsRow}>
-                  <TouchableOpacity
-                    style={styles.calTestBtn}
-                    onPress={handleCalibrationTest}
-                    disabled={isSaving}
-                  >
-                    <Text style={styles.calTestBtnText}>Print Calibration Test</Text>
+                  <TouchableOpacity style={styles.calTestBtn} onPress={handleCalibrationTest}>
+                    <Text style={styles.calTestBtnText}>📄 Print Calibration Test</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.calResetBtn}
-                    onPress={resetCalibrationForm}
-                  >
-                    <Text style={styles.calResetBtnText}>Reset to Default</Text>
+                  <TouchableOpacity style={styles.calResetBtn} onPress={resetCalibrationForm}>
+                    <Text style={styles.calResetBtnText}>Reset</Text>
                   </TouchableOpacity>
                 </View>
-
-                {editingPrinter && ['lan', 'wifi'].includes(editingPrinter.connection_type) && (
-                  <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#e2e8f0' }}>
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6 }}>
-                      🧪 DEV Test Receipts (No Database Mutation)
-                    </Text>
-                    <View style={{ flexDirection: 'row', gap: 8 }}>
-                      <TouchableOpacity
-                        style={[styles.calTestBtn, { backgroundColor: '#f59e0b', flex: 1 }]}
-                        onPress={() => handlePrintSampleKot(editingPrinter)}
-                      >
-                        <Text style={styles.calTestBtnText}>Test KOT Slip</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.calTestBtn, { backgroundColor: '#10b981', flex: 1 }]}
-                        onPress={() => handlePrintSampleBill(editingPrinter)}
-                      >
-                        <Text style={styles.calTestBtnText}>Test Bill Receipt</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                )}
               </View>
             </ScrollView>
 
@@ -1236,7 +1763,6 @@ export const PrinterManagementSection: React.FC<Props> = ({
               >
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
-
               <TouchableOpacity
                 style={styles.saveModalBtn}
                 onPress={handleSavePrinter}
@@ -1260,10 +1786,37 @@ export const PrinterManagementSection: React.FC<Props> = ({
 
 const styles = StyleSheet.create({
   container: {
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
+    padding: 16,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginVertical: 10,
+  },
+  autoPrintBanner: {
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 14,
+  },
+  autoPrintBannerOn: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#86efac',
+  },
+  autoPrintBannerOff: {
+    backgroundColor: '#fffbeb',
+    borderColor: '#fde68a',
+  },
+  autoPrintBannerTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  autoPrintBannerText: {
+    fontSize: 12,
+    color: '#475569',
+    marginTop: 2,
+    lineHeight: 16,
   },
   headerRow: {
     flexDirection: 'row',
@@ -1273,13 +1826,36 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 18,
-    fontWeight: '800',
+    fontWeight: '900',
     color: '#0f172a',
   },
   subtitle: {
-    fontSize: 13,
+    fontSize: 12.5,
     color: '#64748b',
     marginTop: 2,
+  },
+  diagnosticsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 14,
+  },
+  diagBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 6,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  diagBtnHarness: {
+    backgroundColor: '#f5f3ff',
+    borderColor: '#ddd6fe',
+  },
+  diagBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
   },
   addBtn: {
     backgroundColor: '#2563eb',
@@ -1295,62 +1871,56 @@ const styles = StyleSheet.create({
   centerBox: {
     padding: 24,
     alignItems: 'center',
-    justifyContent: 'center',
   },
   loadingText: {
-    marginTop: 8,
-    color: '#64748b',
     fontSize: 13,
+    color: '#64748b',
+    marginTop: 8,
   },
   emptyCard: {
-    backgroundColor: '#f8fafc',
-    borderRadius: 12,
-    padding: 24,
+    padding: 32,
     alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    borderStyle: 'dashed',
   },
   emptyIcon: {
     fontSize: 32,
     marginBottom: 8,
   },
   emptyTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
-    color: '#334155',
+    color: '#1e293b',
   },
   emptySubtitle: {
-    fontSize: 12,
+    fontSize: 12.5,
     color: '#64748b',
     textAlign: 'center',
     marginTop: 4,
-    maxWidth: 320,
+    maxWidth: 380,
   },
   printerList: {
     gap: 12,
   },
   printerCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f8fafc',
     borderRadius: 10,
-    padding: 14,
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    shadowColor: '#000',
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
+    padding: 12,
   },
   printerCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   nameRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
     flexWrap: 'wrap',
   },
   printerName: {
@@ -1359,66 +1929,116 @@ const styles = StyleSheet.create({
     color: '#0f172a',
   },
   primaryBadge: {
-    backgroundColor: '#dcfce7',
+    backgroundColor: '#eff6ff',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
   },
   primaryBadgeText: {
-    color: '#15803d',
     fontSize: 10,
     fontWeight: '800',
+    color: '#1d4ed8',
   },
   inactiveBadge: {
-    backgroundColor: '#fee2e2',
+    backgroundColor: '#f1f5f9',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
   },
   inactiveBadgeText: {
-    color: '#b91c1c',
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  readyBadge: {
+    backgroundColor: '#ecfdf5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+  },
+  readyBadgeText: {
     fontSize: 10,
     fontWeight: '800',
+    color: '#047857',
+  },
+  unboundBadge: {
+    backgroundColor: '#fffbeb',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+  },
+  unboundBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#b45309',
+  },
+  configIssueBadge: {
+    backgroundColor: '#fef2f2',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  configIssueBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#b91c1c',
   },
   badgesRow: {
     flexDirection: 'row',
-    gap: 6,
+    gap: 4,
   },
   connBadge: {
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#ffffff',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
   },
   connBadgeText: {
-    color: '#334155',
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '700',
+    color: '#334155',
   },
   paperBadge: {
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#ffffff',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
   },
   paperBadgeText: {
-    color: '#334155',
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '700',
+    color: '#334155',
   },
   roleBadge: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#0f172a',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
   },
   roleBadgeText: {
-    color: '#1d4ed8',
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#ffffff',
   },
   printerDetails: {
-    gap: 3,
+    backgroundColor: '#ffffff',
+    padding: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+    gap: 2,
     marginVertical: 6,
   },
   detailText: {
@@ -1427,90 +2047,91 @@ const styles = StyleSheet.create({
   },
   statusText: {
     fontSize: 12,
-    color: '#0284c7',
+    color: '#16a34a',
+    marginTop: 2,
   },
   actionsRow: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 6,
   },
   actionBtnSecondary: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 6,
     backgroundColor: '#f1f5f9',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   actionBtnTextSecondary: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 11.5,
+    fontWeight: '700',
     color: '#334155',
   },
   actionBtnDanger: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 6,
+    backgroundColor: '#fee2e2',
     borderRadius: 6,
-    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
   },
   actionBtnTextDanger: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#dc2626',
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#b91c1c',
   },
   deviceCard: {
+    marginTop: 14,
+    padding: 12,
     backgroundColor: '#f8fafc',
     borderRadius: 10,
-    padding: 14,
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    marginTop: 14,
   },
   deviceCardTitle: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 13.5,
+    fontWeight: '800',
     color: '#0f172a',
   },
   deviceCardSubtitle: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: '#64748b',
     marginTop: 2,
-    marginBottom: 10,
+    marginBottom: 8,
   },
   deviceFormRow: {
     flexDirection: 'row',
-    gap: 12,
-    flexWrap: 'wrap',
+    gap: 10,
   },
   deviceFormCol: {
     flex: 1,
-    minWidth: 200,
   },
   pickerWrap: {
-    marginTop: 4,
-  },
-  pickerBtn: {
-    backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#cbd5e1',
-    borderRadius: 8,
-    paddingHorizontal: 12,
+    borderRadius: 6,
+    backgroundColor: '#ffffff',
+    overflow: 'hidden',
+  },
+  pickerBtn: {
+    paddingHorizontal: 10,
     paddingVertical: 8,
   },
   pickerBtnText: {
-    fontSize: 13,
-    color: '#1e293b',
+    fontSize: 12.5,
+    color: '#0f172a',
     fontWeight: '600',
   },
   saveDefaultsBtn: {
+    marginTop: 10,
     backgroundColor: '#0f172a',
     paddingVertical: 8,
-    paddingHorizontal: 14,
     borderRadius: 6,
-    alignSelf: 'flex-start',
-    marginTop: 10,
+    alignItems: 'center',
   },
   saveDefaultsBtnText: {
     color: '#ffffff',
@@ -1526,14 +2147,11 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     backgroundColor: '#ffffff',
-    borderRadius: 14,
+    borderRadius: 12,
     width: '100%',
-    maxWidth: 600,
+    maxWidth: 640,
     maxHeight: '90%',
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    elevation: 8,
+    overflow: 'hidden',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1544,7 +2162,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#e2e8f0',
   },
   modalTitle: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '800',
     color: '#0f172a',
   },
@@ -1552,49 +2170,42 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#64748b',
     fontWeight: '700',
-    padding: 4,
   },
   modalBody: {
     padding: 16,
   },
   sectionHeader: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '800',
-    color: '#1e293b',
-    marginTop: 12,
+    color: '#0f172a',
     marginBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-    paddingBottom: 4,
   },
   connTypeRow: {
     flexDirection: 'row',
-    gap: 8,
-    flexWrap: 'wrap',
-    marginBottom: 8,
+    gap: 6,
+    marginBottom: 12,
   },
   connTypeBtn: {
     flex: 1,
-    minWidth: 110,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
+    paddingVertical: 8,
+    alignItems: 'center',
     backgroundColor: '#f8fafc',
     borderWidth: 1,
     borderColor: '#cbd5e1',
-    borderRadius: 8,
-    alignItems: 'center',
+    borderRadius: 6,
   },
   connTypeBtnActive: {
     backgroundColor: '#eff6ff',
     borderColor: '#2563eb',
   },
   connTypeBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '600',
     color: '#475569',
   },
   connTypeBtnTextActive: {
     color: '#1d4ed8',
+    fontWeight: '800',
   },
   fieldLabel: {
     fontSize: 12,
@@ -1625,7 +2236,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#f1f5f9',
     borderRadius: 8,
     padding: 2,
-    marginBottom: 10,
+    marginBottom: 6,
   },
   segmentBtn: {
     flex: 1,
@@ -1648,6 +2259,12 @@ const styles = StyleSheet.create({
   segmentBtnTextActive: {
     color: '#0f172a',
     fontWeight: '700',
+  },
+  roleExplanationText: {
+    fontSize: 11.5,
+    color: '#64748b',
+    marginBottom: 10,
+    fontStyle: 'italic',
   },
   infoNoticeBox: {
     backgroundColor: '#f0fdf4',
@@ -1835,5 +2452,250 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#ffffff',
+  },
+  // Diagnostic Modal Styles
+  diagStatusHeader: {
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 8,
+  },
+  diagReady: {
+    backgroundColor: '#ecfdf5',
+    borderColor: '#a7f3d0',
+  },
+  diagAttention: {
+    backgroundColor: '#fffbeb',
+    borderColor: '#fde68a',
+  },
+  diagStatusTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 4,
+  },
+  diagStatusMessage: {
+    fontSize: 12,
+    color: '#334155',
+    lineHeight: 16,
+  },
+  checkItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  checkItemLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  checkItemDetail: {
+    fontSize: 11.5,
+    color: '#64748b',
+    marginTop: 1,
+  },
+  checkBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  checkBadgeReady: {
+    backgroundColor: '#ecfdf5',
+    borderColor: '#a7f3d0',
+  },
+  checkBadgeError: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+  },
+  checkBadgeWarning: {
+    backgroundColor: '#fffbeb',
+    borderColor: '#fde68a',
+  },
+  checkBadgeMuted: {
+    backgroundColor: '#f8fafc',
+    borderColor: '#e2e8f0',
+  },
+  checkBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  diagFooterNotice: {
+    marginTop: 14,
+    padding: 10,
+    backgroundColor: '#f8fafc',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  diagFooterNoticeText: {
+    fontSize: 11,
+    color: '#64748b',
+    lineHeight: 15,
+  },
+  previewSubtext: {
+    fontSize: 12,
+    color: '#64748b',
+    marginBottom: 12,
+    lineHeight: 16,
+  },
+  previewCard: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+  },
+  previewCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  previewCardTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  previewReasonText: {
+    fontSize: 11.5,
+    color: '#2563eb',
+    fontWeight: '600',
+    marginTop: 2,
+    marginBottom: 6,
+  },
+  previewItemsList: {
+    backgroundColor: '#ffffff',
+    padding: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+    gap: 2,
+  },
+  previewItemText: {
+    fontSize: 12,
+    color: '#334155',
+  },
+  emptyDetailText: {
+    fontSize: 12,
+    color: '#94a3b8',
+    fontStyle: 'italic',
+    paddingVertical: 8,
+  },
+  sysCheckList: {
+    gap: 8,
+  },
+  sysCheckRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  sysCheckName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  sysCheckDetail: {
+    fontSize: 11.5,
+    color: '#64748b',
+  },
+  sysCheckBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  sysCheckPass: {
+    backgroundColor: '#ecfdf5',
+  },
+  sysCheckWarn: {
+    backgroundColor: '#fffbeb',
+  },
+  sysCheckFail: {
+    backgroundColor: '#fef2f2',
+  },
+  sysCheckNotTested: {
+    backgroundColor: '#f1f5f9',
+  },
+  sysCheckBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  hardwareStatusBox: {
+    marginTop: 14,
+    padding: 12,
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  hardwareStatusTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#475569',
+    textTransform: 'uppercase',
+  },
+  hardwareStatusText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginTop: 2,
+  },
+  harnessWarningBox: {
+    backgroundColor: '#fffbeb',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    marginBottom: 12,
+  },
+  harnessWarningTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#92400e',
+  },
+  harnessWarningText: {
+    fontSize: 11.5,
+    color: '#78350f',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  harnessCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 10,
+    marginBottom: 10,
+  },
+  harnessCardTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 8,
+  },
+  harnessButtonsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  harnessActionBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    backgroundColor: '#ffffff',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  harnessActionBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#334155',
   },
 });

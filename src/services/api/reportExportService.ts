@@ -4,6 +4,7 @@ import { formatCurrency } from '../../utils/currency';
 import { formatOrderDateTime, formatOrderDate, formatOrderTime } from '../../utils/dateUtils';
 import { resolveOrderSource } from './orderService';
 import { validateReportDateRange, getEarliestRestaurantReportingDate } from '../../utils/dateValidation';
+import { getOrderTaxableBreakdown } from '../../utils/gst';
 
 export type ReportType =
   | 'daily_sales'
@@ -186,7 +187,7 @@ export const reportExportService = {
             const oSub = Number(o.subtotal) || 0;
             const oDisc = Number(o.discount_amount) || 0;
             const oCoupon = Number(o.coupon_discount) || 0;
-            const oTaxable = o.taxable_amount !== undefined && o.taxable_amount > 0 ? Number(o.taxable_amount) : Math.max(0, oSub - oDisc - oCoupon);
+            const oTaxable = o.taxable_amount !== undefined && o.taxable_amount !== null ? Number(o.taxable_amount) : getOrderTaxableBreakdown(o).taxableAmount;
             const oCgst = Number(o.cgst_amount) || 0;
             const oSgst = Number(o.sgst_amount) || 0;
             const oCharge = (Number(o.delivery_charge) || 0) + (Number(o.service_charge) || 0);
@@ -296,7 +297,7 @@ export const reportExportService = {
           const oSub = Number(o.subtotal) || 0;
           const oDisc = Number(o.discount_amount) || 0;
           const oCoupon = Number(o.coupon_discount) || 0;
-          const oTaxable = o.taxable_amount !== undefined && o.taxable_amount > 0 ? Number(o.taxable_amount) : Math.max(0, oSub - oDisc - oCoupon);
+          const oTaxable = o.taxable_amount !== undefined && o.taxable_amount !== null ? Number(o.taxable_amount) : getOrderTaxableBreakdown(o).taxableAmount;
           const oCgst = Number(o.cgst_amount) || 0;
           const oSgst = Number(o.sgst_amount) || 0;
           const oCharge = (Number(o.delivery_charge) || 0) + (Number(o.service_charge) || 0);
@@ -404,7 +405,7 @@ export const reportExportService = {
             const oSub = Number(o.subtotal) || 0;
             const oDisc = Number(o.discount_amount) || 0;
             const oCoupon = Number(o.coupon_discount) || 0;
-            const oTaxable = o.taxable_amount !== undefined && o.taxable_amount > 0 ? Number(o.taxable_amount) : Math.max(0, oSub - oDisc - oCoupon);
+            const oTaxable = o.taxable_amount !== undefined && o.taxable_amount !== null ? Number(o.taxable_amount) : getOrderTaxableBreakdown(o).taxableAmount;
             const oCgst = Number(o.cgst_amount) || 0;
             const oSgst = Number(o.sgst_amount) || 0;
             const oCharge = (Number(o.delivery_charge) || 0) + (Number(o.service_charge) || 0);
@@ -511,7 +512,7 @@ export const reportExportService = {
             const oSub = Number(o.subtotal) || 0;
             const oDisc = Number(o.discount_amount) || 0;
             const oCoupon = Number(o.coupon_discount) || 0;
-            const oTaxable = o.taxable_amount !== undefined && o.taxable_amount > 0 ? Number(o.taxable_amount) : Math.max(0, oSub - oDisc - oCoupon);
+            const oTaxable = o.taxable_amount !== undefined && o.taxable_amount !== null ? Number(o.taxable_amount) : getOrderTaxableBreakdown(o).taxableAmount;
             const oCgst = Number(o.cgst_amount) || 0;
             const oSgst = Number(o.sgst_amount) || 0;
             const oCharge = (Number(o.delivery_charge) || 0) + (Number(o.service_charge) || 0);
@@ -610,7 +611,7 @@ export const reportExportService = {
           const oSub = Number(o.subtotal) || 0;
           const oDisc = Number(o.discount_amount) || 0;
           const oCoupon = Number(o.coupon_discount) || 0;
-          const oTaxable = o.taxable_amount !== undefined && o.taxable_amount > 0 ? Number(o.taxable_amount) : Math.max(0, oSub - oDisc - oCoupon);
+          const oTaxable = o.taxable_amount !== undefined && o.taxable_amount !== null ? Number(o.taxable_amount) : getOrderTaxableBreakdown(o).taxableAmount;
           const oCgst = Number(o.cgst_amount) || 0;
           const oSgst = Number(o.sgst_amount) || 0;
           const oCharge = (Number(o.delivery_charge) || 0) + (Number(o.service_charge) || 0);
@@ -705,7 +706,7 @@ export const reportExportService = {
           const oSub = Number(o.subtotal) || 0;
           const oDisc = Number(o.discount_amount) || 0;
           const oCoupon = Number(o.coupon_discount) || 0;
-          const oTaxable = o.taxable_amount !== undefined && o.taxable_amount > 0 ? Number(o.taxable_amount) : Math.max(0, oSub - oDisc - oCoupon);
+          const oTaxable = o.taxable_amount !== undefined && o.taxable_amount !== null ? Number(o.taxable_amount) : getOrderTaxableBreakdown(o).taxableAmount;
           const oCgst = Number(o.cgst_amount) || 0;
           const oSgst = Number(o.sgst_amount) || 0;
           const oIgst = Number(o.igst_amount) || 0;
@@ -946,7 +947,7 @@ export const reportExportService = {
             const oSub = Number(o.subtotal) || 0;
             const oDisc = Number(o.discount_amount) || 0;
             const oCoupon = Number(o.coupon_discount) || 0;
-            const oTaxable = o.taxable_amount !== undefined && o.taxable_amount > 0 ? Number(o.taxable_amount) : Math.max(0, oSub - oDisc - oCoupon);
+            const oTaxable = o.taxable_amount !== undefined && o.taxable_amount !== null ? Number(o.taxable_amount) : getOrderTaxableBreakdown(o).taxableAmount;
             const oCgst = Number(o.cgst_amount) || 0;
             const oSgst = Number(o.sgst_amount) || 0;
             const oCharge = (Number(o.delivery_charge) || 0) + (Number(o.service_charge) || 0);
@@ -1058,7 +1059,7 @@ export const reportExportService = {
           const oSub = Number(o.subtotal) || 0;
           const oDisc = Number(o.discount_amount) || 0;
           const oCoupon = Number(o.coupon_discount) || 0;
-          const oTaxable = o.taxable_amount !== undefined && o.taxable_amount > 0 ? Number(o.taxable_amount) : Math.max(0, oSub - oDisc - oCoupon);
+          const oTaxable = o.taxable_amount !== undefined && o.taxable_amount !== null ? Number(o.taxable_amount) : getOrderTaxableBreakdown(o).taxableAmount;
           const oCgst = Number(o.cgst_amount) || 0;
           const oSgst = Number(o.sgst_amount) || 0;
           const oCharge = (Number(o.delivery_charge) || 0) + (Number(o.service_charge) || 0);
@@ -1156,7 +1157,7 @@ export const reportExportService = {
             const oSub = Number(o.subtotal) || 0;
             const oDisc = Number(o.discount_amount) || 0;
             const oCoupon = Number(o.coupon_discount) || 0;
-            const oTaxable = o.taxable_amount !== undefined && o.taxable_amount > 0 ? Number(o.taxable_amount) : Math.max(0, oSub - oDisc - oCoupon);
+            const oTaxable = o.taxable_amount !== undefined && o.taxable_amount !== null ? Number(o.taxable_amount) : getOrderTaxableBreakdown(o).taxableAmount;
             const oCgst = Number(o.cgst_amount) || 0;
             const oSgst = Number(o.sgst_amount) || 0;
             const oCharge = (Number(o.delivery_charge) || 0) + (Number(o.service_charge) || 0);
@@ -1257,7 +1258,7 @@ export const reportExportService = {
             const oSub = Number(o.subtotal) || 0;
             const oDisc = Number(o.discount_amount) || 0;
             const oCoupon = Number(o.coupon_discount) || 0;
-            const oTaxable = o.taxable_amount !== undefined && o.taxable_amount > 0 ? Number(o.taxable_amount) : Math.max(0, oSub - oDisc - oCoupon);
+            const oTaxable = o.taxable_amount !== undefined && o.taxable_amount !== null ? Number(o.taxable_amount) : getOrderTaxableBreakdown(o).taxableAmount;
             const oCgst = Number(o.cgst_amount) || 0;
             const oSgst = Number(o.sgst_amount) || 0;
             const oCharge = (Number(o.delivery_charge) || 0) + (Number(o.service_charge) || 0);
@@ -1358,7 +1359,7 @@ export const reportExportService = {
           const oSub = Number(o.subtotal) || 0;
           const oDisc = Number(o.discount_amount) || 0;
           const oCoupon = Number(o.coupon_discount) || 0;
-          const oTaxable = o.taxable_amount !== undefined && o.taxable_amount > 0 ? Number(o.taxable_amount) : Math.max(0, oSub - oDisc - oCoupon);
+          const oTaxable = o.taxable_amount !== undefined && o.taxable_amount !== null ? Number(o.taxable_amount) : getOrderTaxableBreakdown(o).taxableAmount;
           const oCgst = Number(o.cgst_amount) || 0;
           const oSgst = Number(o.sgst_amount) || 0;
           const oCharge = (Number(o.delivery_charge) || 0) + (Number(o.service_charge) || 0);
@@ -1449,7 +1450,7 @@ export const reportExportService = {
           const oSub = Number(o.subtotal) || 0;
           const oDisc = Number(o.discount_amount) || 0;
           const oCoupon = Number(o.coupon_discount) || 0;
-          const oTaxable = o.taxable_amount !== undefined && o.taxable_amount > 0 ? Number(o.taxable_amount) : Math.max(0, oSub - oDisc - oCoupon);
+          const oTaxable = o.taxable_amount !== undefined && o.taxable_amount !== null ? Number(o.taxable_amount) : getOrderTaxableBreakdown(o).taxableAmount;
           const oCgst = Number(o.cgst_amount) || 0;
           const oSgst = Number(o.sgst_amount) || 0;
           const oIgst = Number(o.igst_amount) || 0;

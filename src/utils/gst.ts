@@ -20,6 +20,7 @@ export interface CalculationResult {
   discountAmount: number;
   couponDiscount: number;
   taxableSubtotal: number;
+  nilExemptSubtotal: number;
   cgstAmount: number;
   sgstAmount: number;
   igstAmount: number;
@@ -74,48 +75,63 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
   }
 
   const totalDiscounts = Math.min(discountAmount + couponDiscount, subtotal);
-  const taxableSubtotal = roundToTwoDecimals(Math.max(0, subtotal - totalDiscounts));
+  const netOrderValue = roundToTwoDecimals(Math.max(0, subtotal - totalDiscounts));
 
   let totalCgst = 0;
   let totalSgst = 0;
   let totalIgst = 0;
+  let taxableValue = 0;
+  let nilExemptValue = 0;
 
-  // Calculate GST only if GST is enabled for the restaurant
-  if (isGstEnabled && subtotal > 0 && taxableSubtotal > 0) {
-    const defaultRate = customTaxRate !== undefined && !isNaN(Number(customTaxRate))
-      ? Number(customTaxRate)
-      : 5.0;
+  const defaultRate = customTaxRate !== undefined && customTaxRate !== null && !isNaN(Number(customTaxRate))
+    ? Number(customTaxRate)
+    : 5.0;
 
-    if (items.length > 0) {
-      const discountRatio = taxableSubtotal / subtotal;
+  if (items.length > 0 && subtotal > 0) {
+    const discountRatio = netOrderValue / subtotal;
 
-      items.forEach((item) => {
-        const itemGross = Number(item.unit_price) * Number(item.quantity);
-        const itemTaxable = itemGross * discountRatio;
-        const rate = (item.tax_rate !== null && item.tax_rate !== undefined && !isNaN(Number(item.tax_rate)))
-          ? Number(item.tax_rate)
-          : defaultRate;
+    items.forEach((item) => {
+      const itemGross = Number(item.unit_price) * Number(item.quantity);
+      const itemNet = itemGross * discountRatio;
+      const rate = (item.tax_rate !== null && item.tax_rate !== undefined && !isNaN(Number(item.tax_rate)))
+        ? Number(item.tax_rate)
+        : defaultRate;
 
-        if (isInterState) {
-          totalIgst += (itemTaxable * rate) / 100;
-        } else {
-          const halfRate = rate / 2;
-          totalCgst += (itemTaxable * halfRate) / 100;
-          totalSgst += (itemTaxable * halfRate) / 100;
+      if (rate > 0) {
+        taxableValue += itemNet;
+        if (isGstEnabled) {
+          if (isInterState) {
+            totalIgst += (itemNet * rate) / 100;
+          } else {
+            const halfRate = rate / 2;
+            totalCgst += (itemNet * halfRate) / 100;
+            totalSgst += (itemNet * halfRate) / 100;
+          }
         }
-      });
-    } else {
-      // Fallback if items array is missing/empty: compute GST from default rate directly
-      if (isInterState) {
-        totalIgst = (taxableSubtotal * defaultRate) / 100;
       } else {
-        const halfRate = defaultRate / 2;
-        totalCgst = (taxableSubtotal * halfRate) / 100;
-        totalSgst = (taxableSubtotal * halfRate) / 100;
+        nilExemptValue += itemNet;
       }
+    });
+  } else {
+    // When no items array is provided (subtotal fallback only):
+    if (defaultRate > 0) {
+      taxableValue = netOrderValue;
+      if (isGstEnabled) {
+        if (isInterState) {
+          totalIgst = (taxableValue * defaultRate) / 100;
+        } else {
+          const halfRate = defaultRate / 2;
+          totalCgst = (taxableValue * halfRate) / 100;
+          totalSgst = (taxableValue * halfRate) / 100;
+        }
+      }
+    } else {
+      nilExemptValue = netOrderValue;
     }
   }
 
+  const taxableSubtotal = roundToTwoDecimals(taxableValue);
+  const nilExemptSubtotal = roundToTwoDecimals(nilExemptValue);
   const cgstAmount = roundToTwoDecimals(totalCgst);
   const sgstAmount = roundToTwoDecimals(totalSgst);
   const igstAmount = roundToTwoDecimals(totalIgst);
@@ -126,7 +142,7 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
     : 0;
 
   const rawTotal = roundToTwoDecimals(
-    taxableSubtotal + totalTax + serviceCharge + Number(deliveryCharge)
+    netOrderValue + totalTax + serviceCharge + Number(deliveryCharge)
   );
 
   const payableAmount = Math.round(rawTotal);
@@ -137,6 +153,7 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
     discountAmount: roundToTwoDecimals(discountAmount),
     couponDiscount,
     taxableSubtotal,
+    nilExemptSubtotal,
     cgstAmount,
     sgstAmount,
     igstAmount,
@@ -167,5 +184,66 @@ export function getOrderSubtotal(order: Partial<Order>): number {
     return roundToTwoDecimals(Number(order.subtotal));
   }
   return 0;
+}
+
+/**
+ * Helper to compute taxable breakdown (taxable value vs nil/exempt value) from an order or its items.
+ */
+export function getOrderTaxableBreakdown(order: Partial<Order>, defaultTaxRate: number = 5.0): {
+  taxableAmount: number;
+  nilExemptAmount: number;
+} {
+  const subtotal = getOrderSubtotal(order);
+  const discount = (order.discount_amount || 0) + (order.coupon_discount || 0);
+  const netOrderValue = Math.max(0, subtotal - discount);
+
+  if (order.items && order.items.length > 0 && subtotal > 0) {
+    const discountRatio = netOrderValue / subtotal;
+    let taxable = 0;
+    let nilExempt = 0;
+
+    order.items.forEach((item) => {
+      const itemGross = Number(item.unit_price) * Number(item.quantity);
+      const itemNet = itemGross * discountRatio;
+      const rate = (item.tax_rate !== null && item.tax_rate !== undefined && !isNaN(Number(item.tax_rate)))
+        ? Number(item.tax_rate)
+        : defaultTaxRate;
+
+      if (rate > 0) {
+        taxable += itemNet;
+      } else {
+        nilExempt += itemNet;
+      }
+    });
+
+    return {
+      taxableAmount: roundToTwoDecimals(taxable),
+      nilExemptAmount: roundToTwoDecimals(nilExempt),
+    };
+  }
+
+  // If order explicitly stored taxable_amount:
+  if (order.taxable_amount !== undefined && order.taxable_amount !== null) {
+    const storedTaxable = Number(order.taxable_amount);
+    const nilExempt = Math.max(0, netOrderValue - storedTaxable);
+    return {
+      taxableAmount: roundToTwoDecimals(storedTaxable),
+      nilExemptAmount: roundToTwoDecimals(nilExempt),
+    };
+  }
+
+  // Fallback: if tax is 0 and subtotal > 0, check if order is nil-rated:
+  const taxSum = (order.cgst_amount || 0) + (order.sgst_amount || 0) + (order.igst_amount || 0);
+  if (taxSum === 0) {
+    return {
+      taxableAmount: 0,
+      nilExemptAmount: roundToTwoDecimals(netOrderValue),
+    };
+  }
+
+  return {
+    taxableAmount: roundToTwoDecimals(netOrderValue),
+    nilExemptAmount: 0,
+  };
 }
 

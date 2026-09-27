@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import { Order, KOT, RestaurantSettings, OrderItem, DayRegister } from '../types';
 import { formatCurrency, numberToWords } from '../utils/currency';
-import { getOrderSubtotal } from '../utils/gst';
+import { getOrderSubtotal, getOrderTaxableBreakdown } from '../utils/gst';
 import { cleanCustomerOrderNotes } from '../utils/orderNotes';
 import { formatOrderDateTime } from '../utils/dateUtils';
 import { supabase } from './supabase';
@@ -541,6 +541,7 @@ export const printService = {
             : 5.0);
     const halfTaxRate = dynamicTaxRate / 2;
     const halfTaxRateStr = halfTaxRate % 1 === 0 ? String(halfTaxRate) : halfTaxRate.toFixed(1);
+    const taxableBreakdown = getOrderTaxableBreakdown(order, dynamicTaxRate);
 
     const invoiceNumber = order.invoice_number || order.order_number;
     const customerGstin = order.customer_gstin;
@@ -747,13 +748,22 @@ export const printService = {
             }
 
             ${
-              isTaxInvoice && taxTotal > 0
+              isTaxInvoice
                 ? `
             <div class="flex-between">
-              <span>Taxable Amount:</span>
-              <span>${(order.taxable_amount !== undefined && order.taxable_amount > 0 ? order.taxable_amount : Math.max(0, subTotalNum - (order.discount_amount || 0) - (order.coupon_discount || 0))).toFixed(2)}</span>
+              <span>Taxable Value:</span>
+              <span>${taxableBreakdown.taxableAmount.toFixed(2)}</span>
             </div>
 
+            ${
+              taxableBreakdown.nilExemptAmount > 0
+                ? `<div class="flex-between"><span>Nil/Exempt Value:</span><span>${taxableBreakdown.nilExemptAmount.toFixed(2)}</span></div>`
+                : ''
+            }
+
+            ${
+              taxTotal > 0
+                ? `
             <div class="flex-between">
               <span>CGST (${halfTaxRateStr}%):</span>
               <span>${(order.cgst_amount || 0).toFixed(2)}</span>
@@ -767,6 +777,9 @@ export const printService = {
             ${
               order.igst_amount && order.igst_amount > 0
                 ? `<div class="flex-between"><span>IGST:</span><span>${order.igst_amount.toFixed(2)}</span></div>`
+                : ''
+            }
+            `
                 : ''
             }
             `
@@ -924,9 +937,9 @@ export const printService = {
     const stateName = settings.state || 'West Bengal';
     const stateCode = settings.state_code || '19';
     const subtotal = getOrderSubtotal(order);
-    const taxableAmount = order.taxable_amount !== undefined && order.taxable_amount > 0
-      ? order.taxable_amount
-      : Math.max(0, subtotal - (order.discount_amount || 0) - (order.coupon_discount || 0));
+    const taxableBreakdown = getOrderTaxableBreakdown(order, dynamicTaxRate);
+    const taxableAmount = taxableBreakdown.taxableAmount;
+    const nilExemptAmount = taxableBreakdown.nilExemptAmount;
 
     const paymentMethodStr = order.payments && order.payments.length > 0
       ? order.payments.map((p) => p.payment_method.toUpperCase()).join(', ')
@@ -1342,12 +1355,19 @@ export const printService = {
                   ${order.discount_amount ? `<div class="total-row" style="color: #16a34a;"><span>Discount ${order.discount_type === 'percentage' ? `(${order.discount_value || ''}%)` : (order.discount_value ? `(₹${order.discount_value})` : '')}:</span><b>-${formatCurrency(order.discount_amount)}</b></div>` : ''}
                   ${order.coupon_discount ? `<div class="total-row" style="color: #16a34a;"><span>Coupon (${order.coupon_code || ''}):</span><b>-${formatCurrency(order.coupon_discount)}</b></div>` : ''}
                   ${
-                    isTaxInvoice && taxTotal > 0
+                    isTaxInvoice
                       ? `
                     <div class="total-row"><span>Taxable Value:</span><b>${formatCurrency(taxableAmount)}</b></div>
+                    ${nilExemptAmount > 0 ? `<div class="total-row"><span>Nil/Exempt Value:</span><b>${formatCurrency(nilExemptAmount)}</b></div>` : ''}
+                    ${
+                      taxTotal > 0
+                        ? `
                     <div class="total-row"><span>CGST (${halfTaxRateStr}%):</span><b>${formatCurrency(order.cgst_amount || 0)}</b></div>
                     <div class="total-row"><span>SGST (${halfTaxRateStr}%):</span><b>${formatCurrency(order.sgst_amount || 0)}</b></div>
                     ${order.igst_amount && order.igst_amount > 0 ? `<div class="total-row"><span>IGST:</span><b>${formatCurrency(order.igst_amount)}</b></div>` : ''}
+                    `
+                        : ''
+                    }
                   `
                       : ''
                   }

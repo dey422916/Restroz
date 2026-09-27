@@ -24,7 +24,7 @@ import { kotService, clearKotsCache } from '../../src/services/api/kotService';
 import { printService, formatLogoDataUri } from '../../src/services/printService';
 import { Order, OrderItem, OrderStatus, PaymentStatus, OrderSource, Product, DiningTable, RestaurantSettings, PaymentMethod } from '../../src/types';
 import { formatCurrency, numberToWords } from '../../src/utils/currency';
-import { getOrderSubtotal, calculateOrderTotals } from '../../src/utils/gst';
+import { getOrderSubtotal, calculateOrderTotals, getOrderTaxableBreakdown } from '../../src/utils/gst';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { useAuth } from '../../src/context/AuthContext';
 import { useSettings } from '../../src/context/SettingsContext';
@@ -1087,12 +1087,16 @@ export default function OrdersScreen() {
       const ordSub = payOrderModal.subtotal || paySubtotal;
       const cpnDisc = payOrderModal.coupon_discount || 0;
       const discAmt = payOrderModal.discount_amount || 0;
-      const taxable = Math.max(0, ordSub - cpnDisc - discAmt);
+      const effectiveRate = (payOrderModal as any)?.tax_rate !== undefined && (payOrderModal as any)?.tax_rate !== null
+        ? Number((payOrderModal as any).tax_rate)
+        : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 5.0);
+      const breakdown = getOrderTaxableBreakdown(payOrderModal, effectiveRate);
       return {
         subtotal: ordSub,
         discountAmount: discAmt,
         couponDiscount: cpnDisc,
-        taxableSubtotal: taxable,
+        taxableSubtotal: breakdown.taxableAmount,
+        nilExemptSubtotal: breakdown.nilExemptAmount,
         cgstAmount: payOrderModal.cgst_amount || 0,
         sgstAmount: payOrderModal.sgst_amount || 0,
         igstAmount: payOrderModal.igst_amount || 0,
@@ -2340,10 +2344,16 @@ export default function OrdersScreen() {
                         <Text style={{ fontSize: 12, fontWeight: '700', color: '#16a34a' }}>-{formatCurrency(editTotals.couponDiscount)}</Text>
                       </View>
                     )}
-                    {(editTotals.discountAmount > 0 || editTotals.couponDiscount > 0) && (
+                    {editTotals.taxableSubtotal > 0 && (
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-                        <Text style={{ fontSize: 12, color: '#64748b' }}>Taxable Amount:</Text>
+                        <Text style={{ fontSize: 12, color: '#64748b' }}>Taxable Value:</Text>
                         <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.taxableSubtotal)}</Text>
+                      </View>
+                    )}
+                    {editTotals.nilExemptSubtotal > 0 && (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <Text style={{ fontSize: 12, color: '#64748b' }}>Nil/Exempt Value:</Text>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.nilExemptSubtotal)}</Text>
                       </View>
                     )}
                     {Boolean(settings?.is_gst_enabled !== false && (editTotals.cgstAmount + editTotals.sgstAmount > 0)) && (() => {
@@ -2930,10 +2940,19 @@ export default function OrdersScreen() {
                     </View>
                   )}
 
-                  <View style={styles.billRow}>
-                    <Text style={styles.billLabel}>Taxable Amount:</Text>
-                    <Text style={styles.billVal}>{formatCurrency(payTotals?.taxableSubtotal || paySubtotal)}</Text>
-                  </View>
+                  {(payTotals?.taxableSubtotal !== undefined && payTotals.taxableSubtotal > 0) && (
+                    <View style={styles.billRow}>
+                      <Text style={styles.billLabel}>Taxable Value:</Text>
+                      <Text style={styles.billVal}>{formatCurrency(payTotals.taxableSubtotal)}</Text>
+                    </View>
+                  )}
+
+                  {(payTotals?.nilExemptSubtotal !== undefined && payTotals.nilExemptSubtotal > 0) && (
+                    <View style={styles.billRow}>
+                      <Text style={styles.billLabel}>Nil/Exempt Value:</Text>
+                      <Text style={styles.billVal}>{formatCurrency(payTotals.nilExemptSubtotal)}</Text>
+                    </View>
+                  )}
 
                   {Boolean(settings?.is_gst_enabled !== false && ((payTotals?.cgstAmount || 0) > 0 || (payTotals?.sgstAmount || 0) > 0)) && (() => {
                     const payTaxRate = (payOrderModal as any)?.tax_rate !== undefined && (payOrderModal as any)?.tax_rate !== null
@@ -3384,24 +3403,37 @@ export default function OrdersScreen() {
                       </View>
                     )}
 
-                    {isTaxInvoice && (viewOrderModal.cgst_amount || 0) + (viewOrderModal.sgst_amount || 0) > 0 ? (
-                      <>
-                        <View style={styles.invoiceRow}>
-                          <Text style={styles.invoiceLabel}>Taxable Amount</Text>
-                          <Text style={styles.invoiceVal}>
-                            {formatCurrency(viewOrderModal.taxable_amount !== undefined && viewOrderModal.taxable_amount > 0 ? viewOrderModal.taxable_amount : Math.max(0, subtotalVal - (viewOrderModal.discount_amount || 0) - (viewOrderModal.coupon_discount || 0)))}
-                          </Text>
-                        </View>
-                        <View style={styles.invoiceRow}>
-                          <Text style={styles.invoiceLabel}>CGST ({halfRate}%)</Text>
-                          <Text style={styles.invoiceVal}>{formatCurrency(viewOrderModal.cgst_amount || 0)}</Text>
-                        </View>
-                        <View style={styles.invoiceRow}>
-                          <Text style={styles.invoiceLabel}>SGST ({halfRate}%)</Text>
-                          <Text style={styles.invoiceVal}>{formatCurrency(viewOrderModal.sgst_amount || 0)}</Text>
-                        </View>
-                      </>
-                    ) : null}
+                    {(() => {
+                      const breakdown = getOrderTaxableBreakdown(viewOrderModal, dynamicTaxRate);
+                      return (
+                        <>
+                          {breakdown.taxableAmount > 0 && (
+                            <View style={styles.invoiceRow}>
+                              <Text style={styles.invoiceLabel}>Taxable Value</Text>
+                              <Text style={styles.invoiceVal}>{formatCurrency(breakdown.taxableAmount)}</Text>
+                            </View>
+                          )}
+                          {breakdown.nilExemptAmount > 0 && (
+                            <View style={styles.invoiceRow}>
+                              <Text style={styles.invoiceLabel}>Nil/Exempt Value</Text>
+                              <Text style={styles.invoiceVal}>{formatCurrency(breakdown.nilExemptAmount)}</Text>
+                            </View>
+                          )}
+                          {isTaxInvoice && (viewOrderModal.cgst_amount || 0) + (viewOrderModal.sgst_amount || 0) > 0 ? (
+                            <>
+                              <View style={styles.invoiceRow}>
+                                <Text style={styles.invoiceLabel}>CGST ({halfRate}%)</Text>
+                                <Text style={styles.invoiceVal}>{formatCurrency(viewOrderModal.cgst_amount || 0)}</Text>
+                              </View>
+                              <View style={styles.invoiceRow}>
+                                <Text style={styles.invoiceLabel}>SGST ({halfRate}%)</Text>
+                                <Text style={styles.invoiceVal}>{formatCurrency(viewOrderModal.sgst_amount || 0)}</Text>
+                              </View>
+                            </>
+                          ) : null}
+                        </>
+                      );
+                    })()}
 
                     {Boolean(viewOrderModal.delivery_charge && viewOrderModal.delivery_charge > 0) && (
                       <View style={styles.invoiceRow}>

@@ -18,6 +18,7 @@ import {
   PrinterRole,
   PrinterAlignment,
   PrinterCalibration,
+  DevicePrinterBinding,
   Category,
   TableSection,
 } from '../types';
@@ -71,7 +72,10 @@ export const PrinterManagementSection: React.FC<Props> = ({
 
   // Bluetooth fields
   const [bluetoothDeviceName, setBluetoothDeviceName] = useState('');
-
+  const [selectedBluetoothMac, setSelectedBluetoothMac] = useState('');
+  const [discoveredBluetoothDevices, setDiscoveredBluetoothDevices] = useState<import('../services/printerManager/transports/types').BluetoothDeviceInfo[]>([]);
+  const [isScanningBt, setIsScanningBt] = useState(false);
+  const [deviceBindings, setDeviceBindings] = useState<Record<string, DevicePrinterBinding>>({});
   // Routing fields
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
   const [selectedSections, setSelectedSections] = useState<TableSection[]>([]);
@@ -91,6 +95,16 @@ export const PrinterManagementSection: React.FC<Props> = ({
       const data = await printerManager.getRestaurantPrinters(restaurantId);
       setPrinters(data);
 
+      // Load device bindings for all printers
+      const bindingsMap: Record<string, DevicePrinterBinding> = {};
+      for (const p of data) {
+        if (p.connection_type === 'bluetooth') {
+          const b = await printerManager.getDeviceBinding(p.id);
+          if (b) bindingsMap[p.id] = b;
+        }
+      }
+      setDeviceBindings(bindingsMap);
+
       // Load device defaults
       const defaults = await printerManager.getDeviceDefaults();
       if (defaults.default_kot_printer_id) setDeviceKotPrinterId(defaults.default_kot_printer_id);
@@ -102,6 +116,24 @@ export const PrinterManagementSection: React.FC<Props> = ({
       setIsLoading(false);
     }
   }, [restaurantId, showToast]);
+
+  const handleScanBluetoothDevices = async () => {
+    setIsScanningBt(true);
+    try {
+      const paired = await printerManager.getBluetoothPairedDevices();
+      setDiscoveredBluetoothDevices(paired);
+      if (paired.length === 0) {
+        showToast('info', 'No Paired Devices', 'Pair your thermal printer in Android Bluetooth Settings first.');
+      } else {
+        showToast('success', 'Bluetooth Devices Found', `Found ${paired.length} paired Bluetooth printer(s).`);
+      }
+    } catch (err: any) {
+      showToast('error', 'Scan Error', err?.message || 'Could not scan Bluetooth devices.');
+    } finally {
+      setIsScanningBt(false);
+    }
+  };
+
 
   useEffect(() => {
     loadPrinters();
@@ -118,6 +150,8 @@ export const PrinterManagementSection: React.FC<Props> = ({
     setIpAddress('');
     setPort('9100');
     setBluetoothDeviceName('');
+    setSelectedBluetoothMac('');
+    setDiscoveredBluetoothDevices([]);
     setSelectedCategoryIds([]);
     setSelectedSections([]);
     resetCalibrationForm();
@@ -135,6 +169,8 @@ export const PrinterManagementSection: React.FC<Props> = ({
     setIpAddress(printer.ip_address || '');
     setPort(String(printer.port || 9100));
     setBluetoothDeviceName(printer.bluetooth_device_name || '');
+    setSelectedBluetoothMac(deviceBindings[printer.id]?.bluetooth_mac_address || '');
+    setDiscoveredBluetoothDevices([]);
     setSelectedCategoryIds(printer.category_ids || []);
     setSelectedSections(printer.section_names || []);
 
@@ -198,6 +234,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
 
     setIsSaving(true);
     try {
+      let savedPrinterId = editingPrinter?.id;
       if (editingPrinter) {
         await printerManager.updatePrinter(editingPrinter.id, {
           name: name.trim(),
@@ -215,7 +252,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
         });
         showToast('success', 'Printer Updated', `${name} updated successfully.`);
       } else {
-        await printerManager.createPrinter({
+        const created = await printerManager.createPrinter({
           restaurant_id: restaurantId,
           name: name.trim(),
           connection_type: connectionType,
@@ -231,8 +268,20 @@ export const PrinterManagementSection: React.FC<Props> = ({
           section_names: selectedSections,
           ...calibrationPayload,
         });
+        savedPrinterId = created.id;
         showToast('success', 'Printer Added', `${name} added successfully.`);
       }
+
+      // Save device-local Bluetooth binding if configured
+      if (savedPrinterId && connectionType === 'bluetooth' && selectedBluetoothMac) {
+        await printerManager.saveDeviceBinding({
+          restaurant_printer_id: savedPrinterId,
+          connection_type: 'bluetooth',
+          bluetooth_mac_address: selectedBluetoothMac,
+          bluetooth_device_name: bluetoothDeviceName || undefined,
+        });
+      }
+
       setModalVisible(false);
       await loadPrinters();
     } catch (err: any) {
@@ -779,11 +828,61 @@ export const PrinterManagementSection: React.FC<Props> = ({
               {/* Bluetooth Specific Fields */}
               {connectionType === 'bluetooth' && (
                 <View style={styles.infoNoticeBox}>
-                  <Text style={styles.infoNoticeTitle}>Bluetooth Discovery</Text>
+                  <Text style={styles.infoNoticeTitle}>🔵 Bluetooth Classic Printer (SPP / RFCOMM)</Text>
                   <Text style={styles.infoNoticeText}>
-                    Bluetooth printer discovery will become available after Bluetooth printer support is installed in Phase 4.
+                    Pair your Bluetooth thermal printer in Android Settings, then scan below to bind it to this device.
                   </Text>
-                  <Text style={[styles.fieldLabel, { marginTop: 8 }]}>Device Name (Optional)</Text>
+
+                  <TouchableOpacity
+                    style={[styles.addBtn, { marginTop: 10, alignSelf: 'flex-start', backgroundColor: '#0284c7' }]}
+                    onPress={handleScanBluetoothDevices}
+                    disabled={isScanningBt}
+                  >
+                    {isScanningBt ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.addBtnText}>🔍 Scan Paired Bluetooth Devices</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  {selectedBluetoothMac ? (
+                    <View style={{ marginTop: 8, padding: 8, backgroundColor: '#ecfdf5', borderRadius: 6, borderWidth: 1, borderColor: '#a7f3d0' }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#065f46' }}>
+                        ✓ Bound Device: {bluetoothDeviceName || 'Thermal Printer'}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#047857' }}>MAC Address: {selectedBluetoothMac}</Text>
+                    </View>
+                  ) : null}
+
+                  {discoveredBluetoothDevices.length > 0 && (
+                    <View style={{ marginTop: 10, gap: 6 }}>
+                      <Text style={[styles.fieldLabel, { marginBottom: 2 }]}>Available Paired Devices:</Text>
+                      {discoveredBluetoothDevices.map((d) => (
+                        <TouchableOpacity
+                          key={d.address}
+                          style={{
+                            padding: 8,
+                            backgroundColor: selectedBluetoothMac === d.address ? '#dbeafe' : '#f8fafc',
+                            borderRadius: 6,
+                            borderWidth: 1,
+                            borderColor: selectedBluetoothMac === d.address ? '#2563eb' : '#cbd5e1',
+                          }}
+                          onPress={() => {
+                            setSelectedBluetoothMac(d.address);
+                            if (d.name && !name) setName(d.name);
+                            if (d.name) setBluetoothDeviceName(d.name);
+                          }}
+                        >
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>
+                            {d.name} {selectedBluetoothMac === d.address ? '✓' : ''}
+                          </Text>
+                          <Text style={{ fontSize: 11, color: '#64748b' }}>MAC: {d.address}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+
+                  <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Device Name (Optional)</Text>
                   <TextInput
                     style={styles.input}
                     placeholder="e.g. POS-80, MPT-II"

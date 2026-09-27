@@ -136,12 +136,12 @@ export const settingsService = {
               ? Boolean((prof as any).tax_invoice_enabled)
               : Boolean(rpcResult.tax_invoice_enabled),
             gstin: (prof as any).gstin || rpcResult.gstin || '',
-            default_tax_rate: (prof as any).default_tax_rate !== undefined
+            default_tax_rate: (prof as any).default_tax_rate !== undefined && (prof as any).default_tax_rate !== null
               ? Number((prof as any).default_tax_rate)
-              : (rpcResult.default_tax_rate !== undefined ? Number(rpcResult.default_tax_rate) : 5.0),
-            tax_rate: (prof as any).tax_rate !== undefined
+              : (rpcResult.default_tax_rate !== undefined && rpcResult.default_tax_rate !== null ? Number(rpcResult.default_tax_rate) : 0),
+            tax_rate: (prof as any).tax_rate !== undefined && (prof as any).tax_rate !== null
               ? Number((prof as any).tax_rate)
-              : (rpcResult.tax_rate !== undefined ? Number(rpcResult.tax_rate) : 5.0),
+              : (rpcResult.tax_rate !== undefined && rpcResult.tax_rate !== null ? Number(rpcResult.tax_rate) : 0),
           };
         }
       } catch (profErr) {
@@ -246,21 +246,26 @@ export const settingsService = {
 
         // Resolve GST & Tax configuration
         const effectiveGstin = (data?.gstin || '').trim();
+        const rawTaxRate = data?.default_tax_rate !== undefined && data?.default_tax_rate !== null
+          ? Number(data.default_tax_rate)
+          : (data?.tax_rate !== undefined && data?.tax_rate !== null ? Number(data.tax_rate) : 0);
+        const resolvedTaxRate = (!isNaN(rawTaxRate) && rawTaxRate > 0 && rawTaxRate <= 100) ? rawTaxRate : 0;
+
         const resolvedGstRegistered: boolean = localGstSettings?.gst_registered !== undefined
           ? localGstSettings.gst_registered
           : (data?.gst_registered !== undefined ? Boolean(data.gst_registered) : Boolean(effectiveGstin));
 
-        const resolvedIsGstEnabled: boolean = data?.is_gst_enabled !== undefined && data?.is_gst_enabled !== null
+        const resolvedIsGstEnabled: boolean = (data?.is_gst_enabled !== undefined && data?.is_gst_enabled !== null
           ? Boolean(data.is_gst_enabled)
           : (localGstSettings?.is_gst_enabled !== undefined
               ? Boolean(localGstSettings.is_gst_enabled)
-              : false);
+              : false)) && resolvedGstRegistered && resolvedTaxRate > 0;
 
-        const resolvedTaxInvoiceEnabled: boolean = data?.tax_invoice_enabled !== undefined && data?.tax_invoice_enabled !== null
+        const resolvedTaxInvoiceEnabled: boolean = (data?.tax_invoice_enabled !== undefined && data?.tax_invoice_enabled !== null
           ? Boolean(data.tax_invoice_enabled)
           : (localGstSettings?.tax_invoice_enabled !== undefined
               ? Boolean(localGstSettings.tax_invoice_enabled)
-              : false);
+              : false)) && resolvedGstRegistered && resolvedIsGstEnabled && resolvedTaxRate > 0;
 
         // Sync local cache with Supabase values
         AsyncStorage.setItem(
@@ -334,11 +339,8 @@ export const settingsService = {
             delivery_payment_qr_url: publicProf?.delivery_payment_qr_url || data?.delivery_payment_qr_url || '',
             delivery_upi_id: publicProf?.delivery_upi_id || data?.delivery_upi_id || '',
             delivery_sample_screenshot_url: publicProf?.delivery_sample_screenshot_url || data?.delivery_sample_screenshot_url || '',
-            default_tax_rate: Number(
-              data?.default_tax_rate !== undefined && data?.default_tax_rate !== null
-                ? data.default_tax_rate
-                : (data?.tax_rate !== undefined && data?.tax_rate !== null ? data.tax_rate : 5.0)
-            ),
+            default_tax_rate: resolvedTaxRate,
+            tax_rate: resolvedTaxRate,
           };
           mockStorage.saveSettings(loaded);
           return loaded;
@@ -371,7 +373,8 @@ export const settingsService = {
             delivery_payment_qr_url: publicProf?.delivery_payment_qr_url || '',
             delivery_upi_id: publicProf?.delivery_upi_id || '',
             delivery_sample_screenshot_url: publicProf?.delivery_sample_screenshot_url || '',
-            default_tax_rate: 5.0,
+            default_tax_rate: 0,
+            tax_rate: 0,
           };
           mockStorage.saveSettings(loaded);
           return loaded;
@@ -382,14 +385,22 @@ export const settingsService = {
     }
 
     const localSettings = mockStorage.getSettings();
+    const rawLocalTax = Number(localSettings.default_tax_rate ?? localSettings.tax_rate ?? 0);
+    const validLocalTax = (!isNaN(rawLocalTax) && rawLocalTax > 0 && rawLocalTax <= 100) ? rawLocalTax : 0;
+    const localGstReg = localGstSettings?.gst_registered !== undefined ? localGstSettings.gst_registered : Boolean(localSettings.gstin);
+    const localIsGst = (localGstSettings?.is_gst_enabled !== undefined ? localGstSettings.is_gst_enabled : (localSettings.is_gst_enabled ?? Boolean(localSettings.gstin))) && localGstReg && validLocalTax > 0;
+    const localTaxInv = (localGstSettings?.tax_invoice_enabled !== undefined ? localGstSettings.tax_invoice_enabled : (localSettings.tax_invoice_enabled ?? Boolean(localSettings.gstin))) && localGstReg && localIsGst && validLocalTax > 0;
+
     return {
       ...localSettings,
       kot_paper_size: localPrinterSettings?.kot_paper_size || localSettings.kot_paper_size || '80mm',
       bill_paper_size: localPrinterSettings?.bill_paper_size || localSettings.bill_paper_size || '80mm',
       auto_print_kot: localPrinterSettings?.auto_print_kot !== undefined ? localPrinterSettings.auto_print_kot : (localSettings.auto_print_kot || false),
-      gst_registered: localGstSettings?.gst_registered !== undefined ? localGstSettings.gst_registered : Boolean(localSettings.gstin),
-      is_gst_enabled: localGstSettings?.is_gst_enabled !== undefined ? localGstSettings.is_gst_enabled : (localSettings.is_gst_enabled ?? Boolean(localSettings.gstin)),
-      tax_invoice_enabled: localGstSettings?.tax_invoice_enabled !== undefined ? localGstSettings.tax_invoice_enabled : (localSettings.tax_invoice_enabled ?? Boolean(localSettings.gstin)),
+      gst_registered: localGstReg,
+      is_gst_enabled: localIsGst,
+      tax_invoice_enabled: localTaxInv,
+      default_tax_rate: validLocalTax,
+      tax_rate: validLocalTax,
     };
   },
 
@@ -409,15 +420,40 @@ export const settingsService = {
     const targetBillPaper = updated.bill_paper_size || '80mm';
     const targetAutoPrint = Boolean(updated.auto_print_kot);
 
-    const targetGstRegistered = updated.gst_registered !== undefined
+    // Strict validation & sanitization of GST parameters
+    const rawRate = settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
+      ? Number(settings.default_tax_rate)
+      : (settings.tax_rate !== undefined && settings.tax_rate !== null
+          ? Number(settings.tax_rate)
+          : (updated.default_tax_rate !== undefined && updated.default_tax_rate !== null ? Number(updated.default_tax_rate) : 0));
+    const validRate = (!isNaN(rawRate) && rawRate > 0 && rawRate <= 100) ? rawRate : 0;
+
+    let targetGstRegistered = updated.gst_registered !== undefined
       ? Boolean(updated.gst_registered)
       : Boolean((updated.gstin || '').trim());
-    const targetIsGstEnabled = updated.is_gst_enabled !== undefined
+    let targetIsGstEnabled = updated.is_gst_enabled !== undefined
       ? Boolean(updated.is_gst_enabled)
       : false;
-    const targetTaxInvoiceEnabled = updated.tax_invoice_enabled !== undefined
+    let targetTaxInvoiceEnabled = updated.tax_invoice_enabled !== undefined
       ? Boolean(updated.tax_invoice_enabled)
       : false;
+
+    // Rule A: If GST Registered Business = OFF -> force Include GST = OFF & Tax Invoice = OFF
+    if (!targetGstRegistered) {
+      targetIsGstEnabled = false;
+      targetTaxInvoiceEnabled = false;
+    }
+
+    // Rule B: If GST Rate <= 0 -> cannot enable GST collection or Tax Invoice
+    if (validRate <= 0) {
+      targetIsGstEnabled = false;
+      targetTaxInvoiceEnabled = false;
+    }
+
+    // Rule D: Tax Invoice Labeling can ONLY be ON if Include GST is ON and valid GST rate > 0
+    if (!targetIsGstEnabled) {
+      targetTaxInvoiceEnabled = false;
+    }
 
     // Save to local AsyncStorage cache for instant response
     try {
@@ -527,19 +563,13 @@ export const settingsService = {
         sanitizedSettingsPayload.kot_auto_print = Boolean(settings.auto_print_kot ?? updated.auto_print_kot);
       }
 
-      if (settings.default_tax_rate !== undefined || settings.tax_rate !== undefined || updated.default_tax_rate !== undefined) {
-        const rawRate =
-          settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
-            ? settings.default_tax_rate
-            : (settings.tax_rate !== undefined && settings.tax_rate !== null
-                ? settings.tax_rate
-                : (updated.default_tax_rate !== undefined && updated.default_tax_rate !== null ? updated.default_tax_rate : 5.0));
-        const rate = Number(rawRate);
-        sanitizedSettingsPayload.default_tax_rate = rate;
-        sanitizedSettingsPayload.tax_rate = rate;
-        sanitizedSettingsPayload.cgst_rate = Number((rate / 2).toFixed(2));
-        sanitizedSettingsPayload.sgst_rate = Number((rate / 2).toFixed(2));
-      }
+      sanitizedSettingsPayload.default_tax_rate = validRate;
+      sanitizedSettingsPayload.tax_rate = validRate;
+      sanitizedSettingsPayload.cgst_rate = Number((validRate / 2).toFixed(2));
+      sanitizedSettingsPayload.sgst_rate = Number((validRate / 2).toFixed(2));
+      sanitizedSettingsPayload.gst_registered = targetGstRegistered;
+      sanitizedSettingsPayload.is_gst_enabled = targetIsGstEnabled;
+      sanitizedSettingsPayload.tax_invoice_enabled = targetTaxInvoiceEnabled;
 
       if (safeBannerPayload !== undefined) {
         sanitizedSettingsPayload.banner_url = safeBannerPayload || null;
@@ -572,13 +602,8 @@ export const settingsService = {
         gst_registered: targetGstRegistered,
         is_gst_enabled: targetIsGstEnabled,
         tax_invoice_enabled: targetTaxInvoiceEnabled,
-        default_tax_rate: Number(
-          data?.default_tax_rate !== undefined && data?.default_tax_rate !== null
-            ? data.default_tax_rate
-            : (data?.tax_rate !== undefined && data?.tax_rate !== null
-                ? data.tax_rate
-                : (updated.default_tax_rate !== undefined && updated.default_tax_rate !== null ? updated.default_tax_rate : 5.0))
-        ),
+        default_tax_rate: validRate,
+        tax_rate: validRate,
       };
       mockStorage.saveSettings(persisted);
       try {
@@ -589,13 +614,21 @@ export const settingsService = {
       return persisted;
     }
 
-    mockStorage.saveSettings(updated);
+    const persistedLocal: RestaurantSettings = {
+      ...updated,
+      gst_registered: targetGstRegistered,
+      is_gst_enabled: targetIsGstEnabled,
+      tax_invoice_enabled: targetTaxInvoiceEnabled,
+      default_tax_rate: validRate,
+      tax_rate: validRate,
+    };
+    mockStorage.saveSettings(persistedLocal);
     try {
       clearMarketplaceRestaurantCache();
     } catch (e) {
       // ignore
     }
-    return updated;
+    return persistedLocal;
   },
 };
 

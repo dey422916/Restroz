@@ -77,9 +77,9 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
   const totalDiscounts = Math.min(discountAmount + couponDiscount, subtotal);
   const netOrderValue = roundToTwoDecimals(Math.max(0, subtotal - totalDiscounts));
 
-  const defaultRate = customTaxRate !== undefined && customTaxRate !== null && !isNaN(Number(customTaxRate))
+  const defaultRate = (customTaxRate !== undefined && customTaxRate !== null && !isNaN(Number(customTaxRate)) && Number(customTaxRate) > 0)
     ? Number(customTaxRate)
-    : 5.0;
+    : 0;
 
   const rateBuckets = new Map<number, number>();
 
@@ -89,15 +89,16 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
     items.forEach((item) => {
       const itemGross = Number(item.unit_price) * Number(item.quantity);
       const itemNet = itemGross * discountRatio;
-      const rate = (item.tax_rate !== null && item.tax_rate !== undefined && !isNaN(Number(item.tax_rate)))
+      const hasExplicitRate = item.tax_rate !== null && item.tax_rate !== undefined && !isNaN(Number(item.tax_rate));
+      const rate = hasExplicitRate
         ? Number(item.tax_rate)
-        : defaultRate;
+        : (isGstEnabled ? defaultRate : 0);
 
       rateBuckets.set(rate, (rateBuckets.get(rate) || 0) + itemNet);
     });
   } else {
     // When no items array is provided (subtotal fallback only):
-    rateBuckets.set(defaultRate, netOrderValue);
+    rateBuckets.set(isGstEnabled ? defaultRate : 0, netOrderValue);
   }
 
   let totalCgst = 0;
@@ -108,16 +109,14 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
 
   rateBuckets.forEach((bucketNet, rate) => {
     const roundedBucketNet = roundToTwoDecimals(bucketNet);
-    if (rate > 0) {
+    if (rate > 0 && isGstEnabled) {
       taxableValue += roundedBucketNet;
-      if (isGstEnabled) {
-        if (isInterState) {
-          totalIgst += roundToTwoDecimals((roundedBucketNet * rate) / 100);
-        } else {
-          const halfRate = rate / 2;
-          totalCgst += roundToTwoDecimals((roundedBucketNet * halfRate) / 100);
-          totalSgst += roundToTwoDecimals((roundedBucketNet * halfRate) / 100);
-        }
+      if (isInterState) {
+        totalIgst += roundToTwoDecimals((roundedBucketNet * rate) / 100);
+      } else {
+        const halfRate = rate / 2;
+        totalCgst += roundToTwoDecimals((roundedBucketNet * halfRate) / 100);
+        totalSgst += roundToTwoDecimals((roundedBucketNet * halfRate) / 100);
       }
     } else {
       nilExemptValue += roundedBucketNet;
@@ -183,7 +182,7 @@ export function getOrderSubtotal(order: Partial<Order>): number {
 /**
  * Helper to compute taxable breakdown (taxable value vs nil/exempt value) from an order or its items.
  */
-export function getOrderTaxableBreakdown(order: Partial<Order>, defaultTaxRate: number = 5.0): {
+export function getOrderTaxableBreakdown(order: Partial<Order>, defaultTaxRate: number = 0): {
   taxableAmount: number;
   nilExemptAmount: number;
 } {
@@ -199,7 +198,8 @@ export function getOrderTaxableBreakdown(order: Partial<Order>, defaultTaxRate: 
     order.items.forEach((item) => {
       const itemGross = Number(item.unit_price) * Number(item.quantity);
       const itemNet = itemGross * discountRatio;
-      const rate = (item.tax_rate !== null && item.tax_rate !== undefined && !isNaN(Number(item.tax_rate)))
+      const hasExplicitRate = item.tax_rate !== null && item.tax_rate !== undefined && !isNaN(Number(item.tax_rate));
+      const rate = hasExplicitRate
         ? Number(item.tax_rate)
         : defaultTaxRate;
 
@@ -246,16 +246,26 @@ export function getOrderTaxableBreakdown(order: Partial<Order>, defaultTaxRate: 
  */
 export function getOrderInvoiceTotals(
   order: Partial<Order>,
-  settings?: { is_gst_enabled?: boolean; default_tax_rate?: number; service_charge_rate?: number }
+  settings?: { is_gst_enabled?: boolean; default_tax_rate?: number; service_charge_rate?: number; gst_registered?: boolean; gstin?: string }
 ): CalculationResult {
-  const dynamicTaxRate =
-    (order as any)?.tax_rate !== undefined && (order as any)?.tax_rate !== null
-      ? Number((order as any).tax_rate)
-      : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
-          ? Number(settings.default_tax_rate)
-          : 5.0);
+  const isGstRegistered = settings?.gst_registered !== undefined
+    ? Boolean(settings.gst_registered)
+    : Boolean((settings?.gstin || '').trim());
 
-  const isGstEnabled = settings?.is_gst_enabled !== false;
+  const rawTaxRate =
+    (order as any)?.tax_rate !== undefined && (order as any)?.tax_rate !== null && !isNaN(Number((order as any).tax_rate))
+      ? Number((order as any).tax_rate)
+      : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null && !isNaN(Number(settings.default_tax_rate))
+          ? Number(settings.default_tax_rate)
+          : 0);
+
+  const dynamicTaxRate = rawTaxRate > 0 ? rawTaxRate : 0;
+
+  const isGstEnabled = Boolean(
+    settings?.is_gst_enabled !== false &&
+    isGstRegistered &&
+    dynamicTaxRate > 0
+  );
 
   return calculateOrderTotals({
     items: order.items || [],

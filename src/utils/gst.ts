@@ -109,7 +109,7 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
 
   rateBuckets.forEach((bucketNet, rate) => {
     const roundedBucketNet = roundToTwoDecimals(bucketNet);
-    if (rate > 0 && isGstEnabled) {
+    if (rate > 0) {
       taxableValue += roundedBucketNet;
       if (isInterState) {
         totalIgst += roundToTwoDecimals((roundedBucketNet * rate) / 100);
@@ -180,6 +180,68 @@ export function getOrderSubtotal(order: Partial<Order>): number {
 }
 
 /**
+ * Resolves the effective GST rate belonging to an order snapshot.
+ * Never falls back to current restaurant settings if the order has its own stored tax snapshot.
+ */
+export function getOrderTaxRate(order: Partial<Order>, defaultTaxRateFallback: number = 0): number {
+  if ((order as any)?.tax_rate !== undefined && (order as any)?.tax_rate !== null && !isNaN(Number((order as any).tax_rate))) {
+    return Number((order as any).tax_rate);
+  }
+
+  if (order.items && order.items.length > 0) {
+    const itemWithRate = order.items.find(
+      (i) => i.tax_rate !== null && i.tax_rate !== undefined && !isNaN(Number(i.tax_rate)) && Number(i.tax_rate) > 0
+    );
+    if (itemWithRate) {
+      return Number(itemWithRate.tax_rate);
+    }
+  }
+
+  const storedTax = (Number(order.cgst_amount) || 0) + (Number(order.sgst_amount) || 0) + (Number(order.igst_amount) || 0);
+  if (storedTax > 0) {
+    const subtotal = getOrderSubtotal(order);
+    const disc = (Number(order.discount_amount) || 0) + (Number(order.coupon_discount) || 0);
+    const taxableBase = Number(order.taxable_amount) || Math.max(1, subtotal - disc);
+    const inferred = roundToTwoDecimals((storedTax / taxableBase) * 100);
+    if (inferred > 0) return inferred;
+  }
+
+  // If order was created and explicitly stored 0 tax or has items with 0 tax rate:
+  if (order.id && (order.cgst_amount !== undefined || order.taxable_amount !== undefined || (order.items && order.items.length > 0))) {
+    return 0;
+  }
+
+  return defaultTaxRateFallback > 0 ? defaultTaxRateFallback : 0;
+}
+
+/**
+ * Helper to check whether GST was applicable on this order snapshot.
+ */
+export function isOrderGstApplicable(order: Partial<Order>, isSettingsGstEnabled?: boolean): boolean {
+  // If order explicitly stored positive tax amounts:
+  const storedTax = (Number(order.cgst_amount) || 0) + (Number(order.sgst_amount) || 0) + (Number(order.igst_amount) || 0);
+  if (storedTax > 0) return true;
+
+  // If order has items with tax_rate > 0:
+  if (order.items && order.items.some((i) => Number(i.tax_rate) > 0 || Number((i as any).tax_amount) > 0 || Number((i as any).cgst_amount) > 0)) {
+    return true;
+  }
+
+  // If order explicitly stored tax_rate > 0:
+  if ((order as any)?.tax_rate !== undefined && Number((order as any).tax_rate) > 0) {
+    return true;
+  }
+
+  // If this is a historical persisted order with 0 tax, GST is NOT applicable (0% / Nil-Exempt):
+  if (order.id && (order.cgst_amount !== undefined || order.payable_amount !== undefined)) {
+    return false;
+  }
+
+  // Brand new draft order fallback:
+  return Boolean(isSettingsGstEnabled);
+}
+
+/**
  * Helper to compute taxable breakdown (taxable value vs nil/exempt value) from an order or its items.
  */
 export function getOrderTaxableBreakdown(order: Partial<Order>, defaultTaxRate: number = 0): {
@@ -190,6 +252,19 @@ export function getOrderTaxableBreakdown(order: Partial<Order>, defaultTaxRate: 
   const discount = (order.discount_amount || 0) + (order.coupon_discount || 0);
   const netOrderValue = roundToTwoDecimals(Math.max(0, subtotal - discount));
 
+  // 1. If order explicitly stored taxable_amount:
+  if (order.taxable_amount !== undefined && order.taxable_amount !== null) {
+    const storedTaxable = Number(order.taxable_amount);
+    const nilExempt = order.nil_exempt_amount !== undefined && order.nil_exempt_amount !== null
+      ? Number(order.nil_exempt_amount)
+      : Math.max(0, netOrderValue - storedTaxable);
+    return {
+      taxableAmount: roundToTwoDecimals(storedTaxable),
+      nilExemptAmount: roundToTwoDecimals(nilExempt),
+    };
+  }
+
+  // 2. If order has items with item-level tax_rate:
   if (order.items && order.items.length > 0 && subtotal > 0) {
     const discountRatio = netOrderValue / subtotal;
     let taxable = 0;
@@ -216,17 +291,7 @@ export function getOrderTaxableBreakdown(order: Partial<Order>, defaultTaxRate: 
     };
   }
 
-  // If order explicitly stored taxable_amount:
-  if (order.taxable_amount !== undefined && order.taxable_amount !== null) {
-    const storedTaxable = Number(order.taxable_amount);
-    const nilExempt = Math.max(0, netOrderValue - storedTaxable);
-    return {
-      taxableAmount: roundToTwoDecimals(storedTaxable),
-      nilExemptAmount: roundToTwoDecimals(nilExempt),
-    };
-  }
-
-  // Fallback: if tax is 0 and subtotal > 0, check if order is nil-rated:
+  // 3. Fallback from stored taxes:
   const taxSum = (order.cgst_amount || 0) + (order.sgst_amount || 0) + (order.igst_amount || 0);
   if (taxSum === 0) {
     return {
@@ -243,29 +308,14 @@ export function getOrderTaxableBreakdown(order: Partial<Order>, defaultTaxRate: 
 
 /**
  * Single source of truth to compute all invoice financial totals for any order (live or historical).
+ * Uses stored order values / item tax rates and preserves historical snapshots.
  */
 export function getOrderInvoiceTotals(
   order: Partial<Order>,
   settings?: { is_gst_enabled?: boolean; default_tax_rate?: number; service_charge_rate?: number; gst_registered?: boolean; gstin?: string }
 ): CalculationResult {
-  const isGstRegistered = settings?.gst_registered !== undefined
-    ? Boolean(settings.gst_registered)
-    : Boolean((settings?.gstin || '').trim());
-
-  const rawTaxRate =
-    (order as any)?.tax_rate !== undefined && (order as any)?.tax_rate !== null && !isNaN(Number((order as any).tax_rate))
-      ? Number((order as any).tax_rate)
-      : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null && !isNaN(Number(settings.default_tax_rate))
-          ? Number(settings.default_tax_rate)
-          : 0);
-
-  const dynamicTaxRate = rawTaxRate > 0 ? rawTaxRate : 0;
-
-  const isGstEnabled = Boolean(
-    settings?.is_gst_enabled !== false &&
-    isGstRegistered &&
-    dynamicTaxRate > 0
-  );
+  const orderTaxRate = getOrderTaxRate(order, Number(settings?.default_tax_rate) || 0);
+  const isGstEnabled = isOrderGstApplicable(order, settings?.is_gst_enabled);
 
   return calculateOrderTotals({
     items: order.items || [],
@@ -274,10 +324,13 @@ export function getOrderInvoiceTotals(
     discountValue: order.discount_value,
     couponDiscount: order.coupon_discount || 0,
     deliveryCharge: order.delivery_charge || 0,
-    serviceChargeRate: settings?.service_charge_rate,
+    serviceChargeRate: order.service_charge !== undefined && order.service_charge > 0 && order.taxable_amount
+      ? roundToTwoDecimals((Number(order.service_charge) / Number(order.taxable_amount)) * 100)
+      : settings?.service_charge_rate,
     isGstEnabled,
-    taxRate: dynamicTaxRate,
+    taxRate: orderTaxRate,
   });
 }
+
 
 

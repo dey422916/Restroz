@@ -24,7 +24,7 @@ import { kotService, clearKotsCache } from '../../src/services/api/kotService';
 import { printService, formatLogoDataUri } from '../../src/services/printService';
 import { Order, OrderItem, OrderStatus, PaymentStatus, OrderSource, Product, DiningTable, RestaurantSettings, PaymentMethod } from '../../src/types';
 import { formatCurrency, numberToWords } from '../../src/utils/currency';
-import { getOrderSubtotal, calculateOrderTotals, getOrderTaxableBreakdown, getOrderInvoiceTotals } from '../../src/utils/gst';
+import { getOrderSubtotal, calculateOrderTotals, getOrderTaxableBreakdown, getOrderInvoiceTotals, getOrderTaxRate, isOrderGstApplicable } from '../../src/utils/gst';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { useAuth } from '../../src/context/AuthContext';
 import { useSettings } from '../../src/context/SettingsContext';
@@ -517,10 +517,8 @@ export default function OrdersScreen() {
       recalculatedCouponDiscount = Math.min(editOrderModal.coupon_discount, currentSubtotal);
     }
 
-    const isGstEnabled = settings?.is_gst_enabled !== undefined && settings?.is_gst_enabled !== null
-      ? Boolean(settings.is_gst_enabled)
-      : false;
-    const taxRate = settings?.default_tax_rate !== undefined ? settings.default_tax_rate : 5.0;
+    const orderTaxRate = getOrderTaxRate(editOrderModal, Number(settings?.default_tax_rate) || 0);
+    const isOrderGst = isOrderGstApplicable(editOrderModal, settings?.is_gst_enabled);
 
     return calculateOrderTotals({
       items: editItems,
@@ -528,8 +526,8 @@ export default function OrdersScreen() {
       discountValue: validatedEditDiscount,
       couponDiscount: recalculatedCouponDiscount,
       deliveryCharge: editOrderModal.delivery_charge || 0,
-      isGstEnabled,
-      taxRate,
+      isGstEnabled: isOrderGst,
+      taxRate: orderTaxRate,
     });
   }, [editOrderModal, editItems, editDiscountType, editDiscountValue, settings]);
 
@@ -1081,12 +1079,8 @@ export default function OrdersScreen() {
 
     const hasManualDiscount = payDiscountType !== 'none' && validatedPayDiscount > 0;
 
-    const isGstEnabled = settings?.is_gst_enabled !== undefined && settings?.is_gst_enabled !== null
-      ? Boolean(settings.is_gst_enabled)
-      : false;
-    const taxRate = (payOrderModal as any)?.tax_rate !== undefined && (payOrderModal as any)?.tax_rate !== null
-      ? Number((payOrderModal as any).tax_rate)
-      : (settings?.default_tax_rate !== undefined ? Number(settings.default_tax_rate) : 5.0);
+    const orderTaxRate = getOrderTaxRate(payOrderModal, Number(settings?.default_tax_rate) || 0);
+    const isOrderGst = isOrderGstApplicable(payOrderModal, settings?.is_gst_enabled);
 
     return calculateOrderTotals({
       items: payOrderModal.items || [],
@@ -1095,8 +1089,8 @@ export default function OrdersScreen() {
       discountValue: validatedPayDiscount,
       couponDiscount: payOrderModal.coupon_discount || 0,
       deliveryCharge: payOrderModal.delivery_charge || 0,
-      isGstEnabled,
-      taxRate,
+      isGstEnabled: isOrderGst,
+      taxRate: orderTaxRate,
     });
   }, [payOrderModal, payDiscountType, validatedPayDiscount, paySubtotal, settings]);
 
@@ -3137,16 +3131,15 @@ export default function OrdersScreen() {
       {/* 4. VIEW FINAL BILL / TAX INVOICE MODAL                      */}
       {/* ============================================================ */}
       {viewOrderModal && (() => {
+        const invoiceTotals = getOrderInvoiceTotals(viewOrderModal, settings);
+        const dynamicTaxRate = getOrderTaxRate(viewOrderModal, Number(settings?.default_tax_rate) || 0);
+        const halfRate = (dynamicTaxRate / 2) % 1 === 0 ? String(dynamicTaxRate / 2) : (dynamicTaxRate / 2).toFixed(1);
         const isTaxInvoice =
-          settings?.is_gst_enabled !== false &&
-          ((viewOrderModal.cgst_amount || 0) > 0 ||
-           (viewOrderModal.sgst_amount || 0) > 0 ||
+          invoiceTotals.totalTax > 0 ||
+          Boolean(viewOrderModal.customer_gstin?.trim()) ||
+          (settings?.is_gst_enabled !== false &&
            (settings?.tax_invoice_enabled !== false && Boolean(settings?.gstin?.trim())));
         const invNo = viewOrderModal.invoice_number || viewOrderModal.order_number;
-        const dynamicTaxRate = (viewOrderModal as any).tax_rate !== undefined && (viewOrderModal as any).tax_rate !== null
-          ? Number((viewOrderModal as any).tax_rate)
-          : (Number(settings?.default_tax_rate) > 0 ? Number(settings.default_tax_rate) : 5.0);
-        const halfRate = (dynamicTaxRate / 2) % 1 === 0 ? String(dynamicTaxRate / 2) : (dynamicTaxRate / 2).toFixed(1);
         const subtotalVal = getOrderSubtotal(viewOrderModal);
         const isPaid = viewOrderModal.payment_status === 'paid';
         const isCompleted = viewOrderModal.status === 'completed';

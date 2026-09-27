@@ -28,7 +28,7 @@ import { useNotification } from '../../src/context/NotificationContext';
 import { useAuth } from '../../src/context/AuthContext';
 import { RegisterClosedError } from '../../src/context/PosContext';
 import { formatCurrency, numberToWords } from '../../src/utils/currency';
-import { getOrderSubtotal } from '../../src/utils/gst';
+import { getOrderSubtotal, getOrderTaxRate } from '../../src/utils/gst';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { printService } from '../../src/services/printService';
 import { dayRegisterService } from '../../src/services/api/dayRegisterService';
@@ -2071,12 +2071,8 @@ export default function PosScreen() {
                           </Text>
                         </View>
                       )}
-                      {Boolean(settings?.is_gst_enabled !== false && ((viewTableModalData.order.cgst_amount || 0) + (viewTableModalData.order.sgst_amount || 0)) > 0) && (() => {
-                        const tableOrderTaxRate = Number((viewTableModalData.order as any).tax_rate) > 0
-                          ? Number((viewTableModalData.order as any).tax_rate)
-                          : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
-                              ? Number(settings.default_tax_rate)
-                              : 5.0);
+                      {Boolean(((viewTableModalData.order.cgst_amount || 0) + (viewTableModalData.order.sgst_amount || 0)) > 0) && (() => {
+                        const tableOrderTaxRate = getOrderTaxRate(viewTableModalData.order, settings?.default_tax_rate);
                         const halfTaxRate = tableOrderTaxRate / 2;
                         const halfTaxRateStr = halfTaxRate % 1 === 0 ? `${halfTaxRate}` : `${halfTaxRate.toFixed(1)}`;
                         return (

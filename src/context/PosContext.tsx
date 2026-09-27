@@ -203,11 +203,17 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setCartItems((prev) => {
       const existingIdx = prev.findIndex((item) => item.product_id === product.id);
+      const defaultTax = (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null && !isNaN(Number(settings.default_tax_rate)))
+        ? Number(settings.default_tax_rate)
+        : 5.0;
+      const taxRate = (product.tax_rate !== undefined && product.tax_rate !== null && !isNaN(Number(product.tax_rate)))
+        ? Number(product.tax_rate)
+        : defaultTax;
+
       if (existingIdx !== -1) {
         const updated = [...prev];
         const newQty = updated[existingIdx].quantity + quantity;
         const unitPrice = product.discounted_price || product.price;
-        const taxRate = product.tax_rate;
         const subtotal = newQty * unitPrice;
         const taxAmount = (subtotal * taxRate) / 100;
 
@@ -224,7 +230,6 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       const unitPrice = product.discounted_price || product.price;
-      const taxRate = product.tax_rate;
       const subtotal = quantity * unitPrice;
       const taxAmount = (subtotal * taxRate) / 100;
 

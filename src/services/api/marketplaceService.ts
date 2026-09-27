@@ -820,7 +820,10 @@ export const marketplaceService = {
 
         const unitPrice = prod.discounted_price || prod.price;
         const lineSub = Math.round((unitPrice * item.quantity) * 100) / 100;
-        const itemTaxRate = isGstEnabled ? (Number(prod.tax_rate) || resolvedTaxRate || 5.0) : 0;
+        const resolvedItemTaxRate = (prod.tax_rate !== undefined && prod.tax_rate !== null && prod.tax_rate !== '' && !isNaN(Number(prod.tax_rate)))
+          ? Number(prod.tax_rate)
+          : (resolvedTaxRate !== undefined ? resolvedTaxRate : 5.0);
+        const itemTaxRate = isGstEnabled ? resolvedItemTaxRate : 0;
         const taxAmount = isGstEnabled ? Math.round(((lineSub * itemTaxRate) / 100.0) * 100) / 100 : 0;
         const lineTotal = lineSub;
         subtotal += lineSub;
@@ -1494,7 +1497,7 @@ export const marketplaceService = {
           product_id: live.id,
           name: live.name,
           price: Number(live.discounted_price || live.price || oldItem.unit_price || 0),
-          tax_rate: Number(live.tax_rate || 5),
+          tax_rate: (live.tax_rate !== undefined && live.tax_rate !== null && live.tax_rate !== '' && !isNaN(Number(live.tax_rate))) ? Number(live.tax_rate) : 5,
           food_type: live.food_type || 'VEG',
           image_url: live.image_url || oldItem.image_url,
           quantity: Number(oldItem.quantity || 1),

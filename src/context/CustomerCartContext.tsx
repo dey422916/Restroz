@@ -261,7 +261,7 @@ export const CustomerCartProvider: React.FC<{ children: React.ReactNode }> = ({ 
           product_id: product.id,
           name: product.name,
           price: product.discounted_price || product.price,
-          tax_rate: product.tax_rate || 5.0,
+          tax_rate: (product.tax_rate !== undefined && product.tax_rate !== null && !isNaN(Number(product.tax_rate))) ? Number(product.tax_rate) : 5.0,
           food_type: product.food_type,
           image_url: product.image_url,
           quantity: qty,

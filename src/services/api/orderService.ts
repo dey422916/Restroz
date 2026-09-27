@@ -1038,12 +1038,15 @@ export const orderService = {
               const rawItem = i as any;
               const unitPrice = Number(i.unit_price) || 0;
               const quantity = Number(i.quantity) || 1;
-              const taxRate = hasOrderTax ? (Number(i.tax_rate) || 5) : 0;
-              const itemTax = hasOrderTax ? (Number(i.tax_amount) || ((unitPrice * quantity * taxRate) / 100)) : 0;
+              const itemRate = (i.tax_rate !== null && i.tax_rate !== undefined && !isNaN(Number(i.tax_rate)))
+                ? Number(i.tax_rate)
+                : 5.0;
+              const taxRate = hasOrderTax ? itemRate : 0;
+              const itemTax = hasOrderTax ? ((rawItem.tax_amount !== null && rawItem.tax_amount !== undefined && !isNaN(Number(rawItem.tax_amount))) ? Number(rawItem.tax_amount) : ((unitPrice * quantity * taxRate) / 100)) : 0;
               const itemSubtotal = Number(i.subtotal) || (unitPrice * quantity);
               const itemTotal = itemSubtotal;
-              const cgst = hasOrderTax ? (Number(rawItem.cgst_amount) || (itemTax / 2)) : 0;
-              const sgst = hasOrderTax ? (Number(rawItem.sgst_amount) || (itemTax / 2)) : 0;
+              const cgst = hasOrderTax ? ((rawItem.cgst_amount !== null && rawItem.cgst_amount !== undefined && !isNaN(Number(rawItem.cgst_amount))) ? Number(rawItem.cgst_amount) : (itemTax / 2)) : 0;
+              const sgst = hasOrderTax ? ((rawItem.sgst_amount !== null && rawItem.sgst_amount !== undefined && !isNaN(Number(rawItem.sgst_amount))) ? Number(rawItem.sgst_amount) : (itemTax / 2)) : 0;
 
               return {
                 id: i.id?.startsWith('item-') ? i.id : 'item-' + Date.now() + Math.random().toString(36).substr(2, 4),
@@ -1298,7 +1301,9 @@ export const orderService = {
     const normalizedItems = updatedItems.map((i, idx) => {
       const qty = Number(i.quantity) || 1;
       const unitPrice = Number(i.unit_price) || (i.subtotal && qty ? Number(i.subtotal) / qty : (i.total && qty ? Number(i.total) / qty : 0));
-      const taxRate = Number(i.tax_rate) || 5;
+      const taxRate = (i.tax_rate !== null && i.tax_rate !== undefined && !isNaN(Number(i.tax_rate)))
+        ? Number(i.tax_rate)
+        : 5.0;
       const itemSubtotal = qty * unitPrice;
       const taxAmount = (itemSubtotal * taxRate) / 100;
       return {
@@ -1391,10 +1396,21 @@ export const orderService = {
       const unitPrice = Number(i.unit_price) || 0;
       const quantity = Number(i.quantity) || 1;
       const itemSubtotal = Number(i.subtotal) || (unitPrice * quantity);
-      const taxRate = Number(i.tax_rate) || (restSettings.default_tax_rate !== undefined ? Number(restSettings.default_tax_rate) : 5.0);
-      const itemTax = Number(i.tax_amount) || Number(((itemSubtotal * taxRate) / 100).toFixed(2));
-      const cgst = Number(rawItem.cgst_amount) || Number((itemTax / 2).toFixed(2));
-      const sgst = Number(rawItem.sgst_amount) || Number((itemTax / 2).toFixed(2));
+      const defaultTax = (restSettings.default_tax_rate !== undefined && restSettings.default_tax_rate !== null && !isNaN(Number(restSettings.default_tax_rate)))
+        ? Number(restSettings.default_tax_rate)
+        : 5.0;
+      const taxRate = (i.tax_rate !== null && i.tax_rate !== undefined && !isNaN(Number(i.tax_rate)))
+        ? Number(i.tax_rate)
+        : defaultTax;
+      const itemTax = (rawItem.tax_amount !== null && rawItem.tax_amount !== undefined && !isNaN(Number(rawItem.tax_amount)))
+        ? Number(rawItem.tax_amount)
+        : Number(((itemSubtotal * taxRate) / 100).toFixed(2));
+      const cgst = (rawItem.cgst_amount !== null && rawItem.cgst_amount !== undefined && !isNaN(Number(rawItem.cgst_amount)))
+        ? Number(rawItem.cgst_amount)
+        : Number((itemTax / 2).toFixed(2));
+      const sgst = (rawItem.sgst_amount !== null && rawItem.sgst_amount !== undefined && !isNaN(Number(rawItem.sgst_amount)))
+        ? Number(rawItem.sgst_amount)
+        : Number((itemTax / 2).toFixed(2));
       const itemTotal = itemSubtotal;
 
       return {

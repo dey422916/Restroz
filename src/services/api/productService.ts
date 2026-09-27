@@ -133,7 +133,9 @@ export const productService = {
       stock_quantity: stock,
       food_type: product.food_type || 'veg',
       unit: product.unit || 'portion',
-      tax_rate: product.tax_rate !== undefined ? Number(product.tax_rate) : 5,
+      tax_rate: (product.tax_rate !== undefined && product.tax_rate !== null && !isNaN(Number(product.tax_rate)))
+        ? Number(product.tax_rate)
+        : 5,
       hsn_code: product.hsn_code || '996331',
       preparation_time_mins: product.preparation_time_mins ? Number(product.preparation_time_mins) : 15,
       image_url:
@@ -332,7 +334,9 @@ export const productService = {
           category_name: row.category || 'General',
           description: row.description || '',
           price: Number(row.price),
-          tax_rate: row.tax !== undefined ? Number(row.tax) : 5,
+          tax_rate: (row.tax !== undefined && row.tax !== null && !isNaN(Number(row.tax)))
+            ? Number(row.tax)
+            : 5,
           hsn_code: row.hsn || '996331',
           food_type: foodType,
           stock_quantity: row.quantity !== undefined ? Number(row.quantity) : 100,

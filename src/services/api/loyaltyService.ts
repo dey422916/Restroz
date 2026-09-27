@@ -82,28 +82,60 @@ export const loyaltyService = {
     }
 
     if (isSupabaseConfigured) {
-      const { data, error } = await supabase.rpc('save_loyalty_settings', {
-        p_restaurant_id: restaurant_id,
-        p_is_enabled: is_enabled,
-        p_spend_amount: spend_amount,
-        p_reward_amount: reward_amount,
-        p_min_redeem_balance: min_redeem_balance,
-      });
+      let savedData: any = null;
 
-      if (error) {
-        console.error('[loyaltyService] save_loyalty_settings RPC error:', error);
-        throw new Error(error.message || 'Failed to save loyalty settings.');
+      try {
+        const { data, error } = await supabase.rpc('save_loyalty_settings', {
+          p_restaurant_id: restaurant_id,
+          p_is_enabled: is_enabled,
+          p_spend_amount: spend_amount,
+          p_reward_amount: reward_amount,
+          p_min_redeem_balance: min_redeem_balance,
+        });
+
+        if (!error && data) {
+          savedData = data;
+        } else if (error) {
+          console.warn('[loyaltyService] save_loyalty_settings RPC warning, attempting direct upsert:', error.message || error);
+        }
+      } catch (rpcErr) {
+        console.warn('[loyaltyService] RPC call exception, attempting direct upsert:', rpcErr);
+      }
+
+      // If RPC was not found or failed, execute direct table upsert
+      if (!savedData) {
+        const { data: upsertData, error: upsertErr } = await supabase
+          .from('loyalty_reward_settings')
+          .upsert(
+            {
+              restaurant_id,
+              is_enabled,
+              spend_amount,
+              reward_amount,
+              min_redeem_balance,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'restaurant_id' }
+          )
+          .select()
+          .single();
+
+        if (upsertErr) {
+          console.error('[loyaltyService] direct upsert error:', upsertErr);
+          throw new Error(upsertErr.message || 'Failed to save loyalty settings.');
+        }
+        savedData = upsertData;
       }
 
       return {
-        id: data?.id,
-        restaurant_id: data?.restaurant_id || restaurant_id,
-        is_enabled: Boolean(data?.is_enabled),
-        spend_amount: Number(data?.spend_amount) || spend_amount,
-        reward_amount: Number(data?.reward_amount) || reward_amount,
-        min_redeem_balance: Number(data?.min_redeem_balance) || min_redeem_balance,
-        created_at: data?.created_at,
-        updated_at: data?.updated_at,
+        id: savedData?.id,
+        restaurant_id: savedData?.restaurant_id || restaurant_id,
+        is_enabled: Boolean(savedData?.is_enabled),
+        spend_amount: Number(savedData?.spend_amount) || spend_amount,
+        reward_amount: Number(savedData?.reward_amount) || reward_amount,
+        min_redeem_balance: Number(savedData?.min_redeem_balance) || min_redeem_balance,
+        created_at: savedData?.created_at,
+        updated_at: savedData?.updated_at,
       };
     }
 

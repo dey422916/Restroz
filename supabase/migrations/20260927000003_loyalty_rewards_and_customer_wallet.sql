@@ -845,12 +845,16 @@ BEGIN
 END;
 $function$;
 
--- 11. Grant execute permissions
+-- 11. Grant table and execute permissions
+GRANT ALL ON TABLE public.loyalty_reward_settings TO authenticated, anon, service_role;
+GRANT ALL ON TABLE public.customer_wallets TO authenticated, anon, service_role;
+GRANT ALL ON TABLE public.customer_wallet_transactions TO authenticated, anon, service_role;
+
 REVOKE ALL ON FUNCTION public.get_customer_wallet(uuid, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_customer_wallet(uuid, text) TO authenticated, anon, service_role;
 
 REVOKE ALL ON FUNCTION public.save_loyalty_settings(uuid, boolean, numeric, numeric, numeric) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.save_loyalty_settings(uuid, boolean, numeric, numeric, numeric) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.save_loyalty_settings(uuid, boolean, numeric, numeric, numeric) TO authenticated, anon, service_role;
 
 REVOKE ALL ON FUNCTION public.get_customer_marketplace_wallets(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_customer_marketplace_wallets(text) TO authenticated, anon, service_role;

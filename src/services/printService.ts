@@ -5,11 +5,12 @@ import { getOrderSubtotal, getOrderTaxableBreakdown, getOrderInvoiceTotals } fro
 import { cleanCustomerOrderNotes } from '../utils/orderNotes';
 import { formatOrderDateTime } from '../utils/dateUtils';
 import { directPrintService, resolveKotPrinterName, resolveBillPrinterName, isAutoPrintEnabled, DirectPrintError } from './directPrintService';
+import { androidPrintRouter } from './printerManager/androidPrintRouter';
 import { supabase } from './supabase';
 
 /**
- * Handles thermal print errors with explicit user confirmation before opening browser print preview.
- * When Auto Print is ON and fails (e.g. QZ disconnected or printer off), this prevents Chrome from opening automatically.
+ * Handles thermal print errors with explicit user confirmation before opening browser/system print preview.
+ * When Auto Print is ON and fails, this prevents unwanted dialogs and warns against duplicate prints on partial writes.
  */
 export async function handleThermalPrintFallback(
   error: any,
@@ -38,12 +39,23 @@ export async function handleThermalPrintFallback(
     }
     return false;
   } else {
+    // Native (Android / iOS)
+    const isPartial =
+      error?.status === 'partial_or_unknown' ||
+      error?.message?.includes('interrupted after') ||
+      error?.message?.includes('partially printed');
+
+    const alertTitle = isPartial ? 'Print Interrupted' : 'Auto Print Failed';
+    const alertMessage = isPartial
+      ? 'Printer connection was interrupted after print data started sending.\n\nThe receipt may already have printed.\n\nCheck the printer before reprinting.'
+      : `Auto Print failed for ${documentTitle}.\n\nNo print data was sent.\n\nPrint manually instead?`;
+
     Alert.alert(
-      'Auto Print Failed',
-      `QZ Tray / thermal printer could not print ${documentTitle} automatically.\n\nPrint using browser instead?`,
+      alertTitle,
+      alertMessage,
       [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Print Using Browser', onPress: () => { onFallback().catch(console.warn); } },
+        { text: isPartial ? 'Close' : 'Cancel', style: 'cancel' },
+        { text: 'Print Manually', onPress: () => { onFallback().catch(console.warn); } },
       ]
     );
     return false;
@@ -555,8 +567,35 @@ export const printService = {
       }
     }
 
-    // Auto Print OFF, forceBrowser fallback, or Native platform:
-    // Completely bypass QZ and invoke original browser / native printing
+    // Auto Print ON: Android / Native platform -> Unified Android Print Router
+    if (Platform.OS !== 'web' && autoPrintEnabled && !options?.forceBrowser) {
+      if (__DEV__) {
+        console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: true\nPlatform: ANDROID\nRoute: ANDROID_DIRECT_ROUTER');
+      }
+      const routerResult = await androidPrintRouter.printKot(order, settings, kot, {
+        isReprint,
+      });
+
+      if (routerResult.success || routerResult.allSucceeded) {
+        const printerNames = routerResult.destinations.map((d) => d.printerName).join(', ');
+        if (__DEV__) {
+          console.log('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinters: ' + printerNames);
+        }
+        return { direct: true, printerName: printerNames };
+      } else {
+        if (__DEV__) {
+          console.warn('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
+        }
+        const firstErr = routerResult.destinations.find((d) => d.status !== 'success' && d.status !== 'skipped_dedup');
+        const errObj: any = new Error(routerResult.summary || 'Android direct KOT print failed');
+        errObj.status = firstErr?.status || 'failed_before_write';
+        errObj.destinationResults = routerResult.destinations;
+        throw errObj;
+      }
+    }
+
+    // Auto Print OFF, forceBrowser fallback, or Native platform manual print:
+    // Completely bypass direct transport and invoke original browser / native print dialog
     if (__DEV__) {
       console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: false\nRoute: BROWSER_MANUAL');
     }
@@ -1041,7 +1080,34 @@ export const printService = {
       }
     }
 
-    // Auto Print OFF, forceBrowser fallback, or Native platform:
+    // Auto Print ON: Android / Native platform -> Unified Android Print Router
+    if (Platform.OS !== 'web' && autoPrintEnabled && !options?.forceBrowser) {
+      if (__DEV__) {
+        console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nAuto Print: true\nPlatform: ANDROID\nRoute: ANDROID_DIRECT_ROUTER');
+      }
+      const routerResult = await androidPrintRouter.printBill(order, settings, billedBy, {
+        isReprint: options?.forceBrowser ? false : false,
+      });
+
+      if (routerResult.success || routerResult.allSucceeded) {
+        const printerNames = routerResult.destinations.map((d) => d.printerName).join(', ');
+        if (__DEV__) {
+          console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinter: ' + printerNames);
+        }
+        return { direct: true, printerName: printerNames };
+      } else {
+        if (__DEV__) {
+          console.warn('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
+        }
+        const firstErr = routerResult.destinations.find((d) => d.status !== 'success' && d.status !== 'skipped_dedup');
+        const errObj: any = new Error(routerResult.summary || 'Android direct Bill print failed');
+        errObj.status = firstErr?.status || 'failed_before_write';
+        errObj.destinationResults = routerResult.destinations;
+        throw errObj;
+      }
+    }
+
+    // Auto Print OFF, forceBrowser fallback, or Native manual fallback:
     // Completely bypass QZ and invoke original browser / native printing
     if (__DEV__) {
       console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nAuto Print: false\nRoute: BROWSER_MANUAL');

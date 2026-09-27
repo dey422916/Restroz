@@ -5,12 +5,14 @@ export * from './printerRepository';
 export * from './routing';
 export * from './escpos';
 export * from './transports';
+export * from './androidPrintRouter';
 
 import { RestaurantPrinter, PrinterCalibration } from '../../types';
 import { printerRepository } from './printerRepository';
 import { devicePrinterBindingService } from './devicePrinterBindings';
 import { calibrationService } from './calibration';
 import { printerRoutingService } from './routing';
+import { androidPrintRouter } from './androidPrintRouter';
 import { renderKotToEscPos } from './escpos/kotRenderer';
 import { renderBillToEscPos } from './escpos/billRenderer';
 import { renderCalibrationReceiptToEscPos } from './escpos/calibrationRenderer';
@@ -29,6 +31,7 @@ export const printerManager = {
   ...devicePrinterBindingService,
   ...calibrationService,
   ...printerRoutingService,
+  ...androidPrintRouter,
   renderKotToEscPos,
   renderBillToEscPos,
   renderCalibrationReceiptToEscPos,

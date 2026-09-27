@@ -300,11 +300,11 @@ export default function SettingsScreen() {
         bill_paper_size: billPaperSize,
         auto_print_kot: autoPrintKot,
       });
-      const summary = `KOT Paper: ${kotPaperSize} • Bill Paper: ${billPaperSize} • Auto-Print: ${autoPrintKot ? 'ON' : 'OFF'}`;
+      const summary = `KOT Paper: ${kotPaperSize} • Bill Paper: ${billPaperSize} • Auto Print: ${autoPrintKot ? 'ON' : 'OFF'}`;
       showToast('success', 'Printer Settings Saved', summary);
       Alert.alert(
         'Printer Settings Saved',
-        `KOT Paper: ${kotPaperSize}\nBill Paper: ${billPaperSize}\nAuto-Print KOT: ${autoPrintKot ? 'ON' : 'OFF'}`
+        `KOT Paper: ${kotPaperSize}\nBill Paper: ${billPaperSize}\nAuto Print: ${autoPrintKot ? 'ON' : 'OFF'}`
       );
     } catch (e: any) {
       showToast('error', 'Save Failed', e.message || 'Failed to save printer settings.');
@@ -1747,10 +1747,10 @@ export default function SettingsScreen() {
                   </View>
                 </View>
 
-                {/* Auto Print KOT Toggle */}
+                {/* Auto Print Toggle */}
                 <View style={[styles.toggleCard, { marginTop: 4 }]}>
                   <View style={styles.toggleHeaderRow}>
-                    <Text style={styles.toggleTitle}>Auto Print KOT</Text>
+                    <Text style={styles.toggleTitle}>Auto Print</Text>
                     <TouchableOpacity
                       testID="toggle-auto-print-kot"
                       style={[
@@ -1766,8 +1766,8 @@ export default function SettingsScreen() {
                   </View>
                   <Text style={styles.toggleDesc}>
                     {autoPrintKot
-                      ? 'Clicking KOT triggers the kitchen thermal printer immediately with zero extra steps.'
-                      : 'Clicking KOT follows manual confirmation & print flow.'}
+                      ? 'Thermal prints (KOT & Bills) are sent directly and immediately to the configured thermal printer via QZ Tray.'
+                      : 'Thermal prints open the browser print preview for manual confirmation & printing.'}
                   </Text>
                 </View>
 

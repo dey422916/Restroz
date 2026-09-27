@@ -21,7 +21,7 @@ import { orderService, resolveOrderSource, clearOrdersCache, resolveOrderDiscoun
 import { productService } from '../../src/services/api/productService';
 import { tableService } from '../../src/services/api/tableService';
 import { kotService, clearKotsCache } from '../../src/services/api/kotService';
-import { printService, formatLogoDataUri } from '../../src/services/printService';
+import { printService, formatLogoDataUri, handleThermalPrintFallback } from '../../src/services/printService';
 import { Order, OrderItem, OrderStatus, PaymentStatus, OrderSource, Product, DiningTable, RestaurantSettings, PaymentMethod } from '../../src/types';
 import { formatCurrency, numberToWords } from '../../src/utils/currency';
 import { getOrderSubtotal, calculateOrderTotals, getOrderTaxableBreakdown, getOrderInvoiceTotals } from '../../src/utils/gst';
@@ -624,16 +624,11 @@ export default function OrdersScreen() {
       });
 
       if ((updated as any).latest_kot) {
-        printService.printKotThermal(updated, settings, (updated as any).latest_kot).catch((e: any) => {
+        printService.printKotThermal(updated, settings, (updated as any).latest_kot).catch(async (e: any) => {
           console.warn('KOT Print warning:', e);
-          if (Platform.OS === 'web' && typeof window !== 'undefined' && e?.code !== 'PRINT_IN_PROGRESS') {
-            const proceed = window.confirm(
-              `Unable to print KOT automatically. Check POS80 printer / QZ Tray.\n\nWould you like to print using the browser?`
-            );
-            if (proceed) {
-              printService.printKotThermalBrowser(updated, settings, (updated as any).latest_kot).catch(console.warn);
-            }
-          }
+          await handleThermalPrintFallback(e, 'KOT', async () => {
+            await printService.printKotThermalBrowser(updated, settings, (updated as any).latest_kot);
+          });
         });
       }
 
@@ -897,23 +892,10 @@ export default function OrdersScreen() {
           }
         } catch (printErr: any) {
           console.warn('[orders.tsx] Direct KOT print failed:', printErr);
-          if (Platform.OS === 'web' && typeof window !== 'undefined' && printErr?.code !== 'PRINT_IN_PROGRESS') {
-            const proceed = window.confirm(
-              `Unable to print KOT automatically. Check POS80 printer / QZ Tray.\n\nWould you like to print using the browser?`
-            );
-            if (proceed) {
-              try {
-                await printService.printKotThermalBrowser(order, settings, newKot, false);
-                await printedKotTracker.markKotAsAutoPrinted(newKot.id, newKot.kitchen_notes);
-              } catch (fallbackErr) {
-                console.warn('[orders.tsx] Browser fallback print failed:', fallbackErr);
-              }
-            }
-          } else if (printErr?.code === 'PRINT_IN_PROGRESS') {
-            showAlert('Print In Progress', 'A KOT print job is already in progress. Please wait.');
-          } else {
-            showAlert('Direct Printing Unavailable', 'Unable to print KOT automatically. Check POS80 printer / QZ Tray.');
-          }
+          await handleThermalPrintFallback(printErr, 'KOT', async () => {
+            await printService.printKotThermalBrowser(order, settings, newKot, false);
+            await printedKotTracker.markKotAsAutoPrinted(newKot.id, newKot.kitchen_notes);
+          });
         }
       } else {
         // Manual reprint of existing KOT - same KOT is printed
@@ -925,22 +907,9 @@ export default function OrdersScreen() {
           }
         } catch (printErr: any) {
           console.warn('[orders.tsx] Direct KOT reprint failed:', printErr);
-          if (Platform.OS === 'web' && typeof window !== 'undefined' && printErr?.code !== 'PRINT_IN_PROGRESS') {
-            const proceed = window.confirm(
-              `Unable to print KOT automatically. Check POS80 printer / QZ Tray.\n\nWould you like to print using the browser?`
-            );
-            if (proceed) {
-              try {
-                await printService.printKotThermalBrowser(order, settings, activeKot, true);
-              } catch (fallbackErr) {
-                console.warn('[orders.tsx] Browser fallback reprint failed:', fallbackErr);
-              }
-            }
-          } else if (printErr?.code === 'PRINT_IN_PROGRESS') {
-            showAlert('Print In Progress', 'A KOT print job is already in progress. Please wait.');
-          } else {
-            showAlert('Direct Printing Unavailable', 'Unable to print KOT automatically. Check POS80 printer / QZ Tray.');
-          }
+          await handleThermalPrintFallback(printErr, 'KOT', async () => {
+            await printService.printKotThermalBrowser(order, settings, activeKot, true);
+          });
         }
       }
     } catch (err: any) {
@@ -2054,22 +2023,9 @@ export default function OrdersScreen() {
                               await printService.printFinalReceiptThermal(order, settings, user?.full_name);
                             } catch (err: any) {
                               console.warn('[orders.tsx] Thermal bill print error:', err);
-                              if (Platform.OS === 'web' && typeof window !== 'undefined' && err?.code !== 'PRINT_IN_PROGRESS') {
-                                const proceed = window.confirm(
-                                  `Unable to print receipt automatically via QZ Tray.\n\nWould you like to print using the browser print dialog?`
-                                );
-                                if (proceed) {
-                                  try {
-                                    await printService.printFinalReceiptThermalBrowser(order, settings, user?.full_name);
-                                  } catch (fallbackErr) {
-                                    console.warn('[orders.tsx] Browser fallback print failed:', fallbackErr);
-                                  }
-                                }
-                              } else if (err?.code === 'PRINT_IN_PROGRESS') {
-                                showAlert('Print In Progress', 'A print job is already in progress. Please wait.');
-                              } else {
-                                showAlert('Direct Printing Unavailable', 'Unable to print receipt automatically via QZ Tray.');
-                              }
+                              await handleThermalPrintFallback(err, 'Bill', async () => {
+                                await printService.printFinalReceiptThermalBrowser(order, settings, user?.full_name);
+                              });
                             }
                           }}
                         >
@@ -3559,22 +3515,9 @@ export default function OrdersScreen() {
                           await printService.printFinalReceiptThermal(viewOrderModal, settings, user?.full_name);
                         } catch (err: any) {
                           console.warn('[orders.tsx] viewOrderModal thermal bill print error:', err);
-                          if (Platform.OS === 'web' && typeof window !== 'undefined' && err?.code !== 'PRINT_IN_PROGRESS') {
-                            const proceed = window.confirm(
-                              `Unable to print receipt automatically via QZ Tray.\n\nWould you like to print using the browser print dialog?`
-                            );
-                            if (proceed) {
-                              try {
-                                await printService.printFinalReceiptThermalBrowser(viewOrderModal, settings, user?.full_name);
-                              } catch (fallbackErr) {
-                                console.warn('[orders.tsx] Browser fallback print failed:', fallbackErr);
-                              }
-                            }
-                          } else if (err?.code === 'PRINT_IN_PROGRESS') {
-                            showAlert('Print In Progress', 'A print job is already in progress. Please wait.');
-                          } else {
-                            showAlert('Direct Printing Unavailable', 'Unable to print receipt automatically via QZ Tray.');
-                          }
+                          await handleThermalPrintFallback(err, 'Bill', async () => {
+                            await printService.printFinalReceiptThermalBrowser(viewOrderModal, settings, user?.full_name);
+                          });
                         }
                       }}
                     >
@@ -3589,22 +3532,9 @@ export default function OrdersScreen() {
                           showAlert('🖨️ KOT Printed', `Kitchen slip printed for Order #${viewOrderModal.order_number}.`);
                         } catch (err: any) {
                           console.warn('[orders.tsx] viewOrderModal KOT print failed:', err);
-                          if (Platform.OS === 'web' && typeof window !== 'undefined' && err?.code !== 'PRINT_IN_PROGRESS') {
-                            const proceed = window.confirm(
-                              `Unable to print KOT automatically. Check POS80 printer / QZ Tray.\n\nWould you like to print using the browser?`
-                            );
-                            if (proceed) {
-                              try {
-                                await printService.printKotThermalBrowser(viewOrderModal, settings);
-                              } catch (fallbackErr) {
-                                console.warn('[orders.tsx] Browser fallback print failed:', fallbackErr);
-                              }
-                            }
-                          } else if (err?.code === 'PRINT_IN_PROGRESS') {
-                            showAlert('Print In Progress', 'A KOT print job is already in progress. Please wait.');
-                          } else {
-                            showAlert('Direct Printing Unavailable', 'Unable to print KOT automatically. Check POS80 printer / QZ Tray.');
-                          }
+                          await handleThermalPrintFallback(err, 'KOT', async () => {
+                            await printService.printKotThermalBrowser(viewOrderModal, settings);
+                          });
                         }
                       }}
                     >

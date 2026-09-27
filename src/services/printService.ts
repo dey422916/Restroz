@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { Platform, Alert } from 'react-native';
 import { Order, KOT, RestaurantSettings, OrderItem, DayRegister } from '../types';
 import { formatCurrency, numberToWords } from '../utils/currency';
 import { getOrderSubtotal, getOrderTaxableBreakdown, getOrderInvoiceTotals } from '../utils/gst';
@@ -6,6 +6,49 @@ import { cleanCustomerOrderNotes } from '../utils/orderNotes';
 import { formatOrderDateTime } from '../utils/dateUtils';
 import { directPrintService, resolveKotPrinterName, resolveBillPrinterName, isAutoPrintEnabled, DirectPrintError } from './directPrintService';
 import { supabase } from './supabase';
+
+/**
+ * Handles thermal print errors with explicit user confirmation before opening browser print preview.
+ * When Auto Print is ON and fails (e.g. QZ disconnected or printer off), this prevents Chrome from opening automatically.
+ */
+export async function handleThermalPrintFallback(
+  error: any,
+  documentTitle: string,
+  onFallback: () => Promise<void>
+): Promise<boolean> {
+  if (error?.code === 'PRINT_IN_PROGRESS') {
+    if (Platform.OS === 'web') {
+      window.alert('A print job is already in progress. Please wait.');
+    } else {
+      Alert.alert('Print In Progress', 'A print job is already in progress. Please wait.');
+    }
+    return false;
+  }
+
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    const message = `Auto Print failed.\n\nQZ Tray / thermal printer could not print ${documentTitle} automatically.\n\nPrint using browser instead?`;
+    const proceed = window.confirm(message);
+    if (proceed) {
+      try {
+        await onFallback();
+        return true;
+      } catch (fallbackErr) {
+        console.warn(`[printService] Browser fallback for ${documentTitle} failed:`, fallbackErr);
+      }
+    }
+    return false;
+  } else {
+    Alert.alert(
+      'Auto Print Failed',
+      `QZ Tray / thermal printer could not print ${documentTitle} automatically.\n\nPrint using browser instead?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Print Using Browser', onPress: () => { onFallback().catch(console.warn); } },
+      ]
+    );
+    return false;
+  }
+}
 
 export function formatLogoDataUri(urlOrBase64?: string | null): string {
   if (!urlOrBase64) return '';
@@ -478,24 +521,45 @@ export const printService = {
     const paperSize = settings.kot_paper_size || '80mm';
 
     if (paperSize === 'A4') {
+      if (__DEV__) {
+        console.log('[THERMAL PRINT]\nDocument: KOT\nPaper: A4\nRoute: BROWSER_MANUAL');
+      }
       await executeIsolatedPrint(html);
       return { direct: false };
     }
 
+    const autoPrintEnabled = isAutoPrintEnabled(settings);
+
     // Auto Print ON: use direct QZ printing to configured KOT printer
-    if (Platform.OS === 'web' && isAutoPrintEnabled(settings) && !options?.forceBrowser) {
-      const kotNum = kot?.kot_number || (order.kots && order.kots[0]?.kot_number) || order.order_number;
-      const targetPrinter = resolveKotPrinterName(settings);
-      const result = await directPrintService.printThermalDirect(html, {
-        printerName: targetPrinter,
-        jobName: `KOT_${kotNum}`,
-        paperSize,
-      });
-      return { direct: true, printerName: result.printerName };
+    if (Platform.OS === 'web' && autoPrintEnabled && !options?.forceBrowser) {
+      if (__DEV__) {
+        console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: true\nRoute: QZ_DIRECT');
+      }
+      try {
+        const kotNum = kot?.kot_number || (order.kots && order.kots[0]?.kot_number) || order.order_number;
+        const targetPrinter = resolveKotPrinterName(settings);
+        const result = await directPrintService.printThermalDirect(html, {
+          printerName: targetPrinter,
+          jobName: `KOT_${kotNum}`,
+          paperSize,
+        });
+        if (__DEV__) {
+          console.log('[THERMAL PRINT]\nDocument: KOT\nRoute: QZ_DIRECT\nResult: SUCCESS\nPrinter: ' + result.printerName);
+        }
+        return { direct: true, printerName: result.printerName };
+      } catch (err: any) {
+        if (__DEV__) {
+          console.warn('[THERMAL PRINT]\nDocument: KOT\nRoute: QZ_DIRECT\nResult: FAILED\nReason: ' + (err?.message || err));
+        }
+        throw err;
+      }
     }
 
     // Auto Print OFF, forceBrowser fallback, or Native platform:
     // Completely bypass QZ and invoke original browser / native printing
+    if (__DEV__) {
+      console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: false\nRoute: BROWSER_MANUAL');
+    }
     await executeIsolatedPrint(html);
     return { direct: false };
   },
@@ -944,23 +1008,44 @@ export const printService = {
     const billPaperSize = settings.bill_paper_size || settings.kot_paper_size || '80mm';
 
     if (billPaperSize === 'A4') {
+      if (__DEV__) {
+        console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nPaper: A4\nRoute: BROWSER_MANUAL');
+      }
       await executeIsolatedPrint(html);
       return { direct: false };
     }
 
+    const autoPrintEnabled = isAutoPrintEnabled(settings);
+
     // Auto Print ON: use direct QZ printing to configured Bill printer
-    if (Platform.OS === 'web' && isAutoPrintEnabled(settings) && !options?.forceBrowser) {
-      const targetPrinter = resolveBillPrinterName(settings);
-      const result = await directPrintService.printThermalDirect(html, {
-        printerName: targetPrinter,
-        jobName: `Bill_${order.invoice_number || order.order_number}`,
-        paperSize: billPaperSize,
-      });
-      return { direct: true, printerName: result.printerName };
+    if (Platform.OS === 'web' && autoPrintEnabled && !options?.forceBrowser) {
+      if (__DEV__) {
+        console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nAuto Print: true\nRoute: QZ_DIRECT');
+      }
+      try {
+        const targetPrinter = resolveBillPrinterName(settings);
+        const result = await directPrintService.printThermalDirect(html, {
+          printerName: targetPrinter,
+          jobName: `Bill_${order.invoice_number || order.order_number}`,
+          paperSize: billPaperSize,
+        });
+        if (__DEV__) {
+          console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: QZ_DIRECT\nResult: SUCCESS\nPrinter: ' + result.printerName);
+        }
+        return { direct: true, printerName: result.printerName };
+      } catch (err: any) {
+        if (__DEV__) {
+          console.warn('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: QZ_DIRECT\nResult: FAILED\nReason: ' + (err?.message || err));
+        }
+        throw err;
+      }
     }
 
     // Auto Print OFF, forceBrowser fallback, or Native platform:
     // Completely bypass QZ and invoke original browser / native printing
+    if (__DEV__) {
+      console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nAuto Print: false\nRoute: BROWSER_MANUAL');
+    }
     await executeIsolatedPrint(html);
     return { direct: false };
   },

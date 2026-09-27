@@ -30,7 +30,7 @@ import { RegisterClosedError } from '../../src/context/PosContext';
 import { formatCurrency, numberToWords } from '../../src/utils/currency';
 import { getOrderSubtotal } from '../../src/utils/gst';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
-import { printService } from '../../src/services/printService';
+import { printService, handleThermalPrintFallback } from '../../src/services/printService';
 import { dayRegisterService } from '../../src/services/api/dayRegisterService';
 import { subscriptionGuardService } from '../../src/services/api/subscriptionGuardService';
 import { isSupabaseConfigured } from '../../src/services/supabase';
@@ -555,22 +555,9 @@ export default function PosScreen() {
       showToast('success', 'Print Bill', `Bill printed for #${createdOrder.order_number}`);
     } catch (err: any) {
       console.warn('[pos.tsx] Print Bill error:', err);
-      if (Platform.OS === 'web' && typeof window !== 'undefined' && err?.code !== 'PRINT_IN_PROGRESS') {
-        const proceed = window.confirm(
-          `Unable to print receipt automatically via QZ Tray.\n\nWould you like to print using the browser print dialog?`
-        );
-        if (proceed) {
-          try {
-            await printService.printFinalReceiptThermalBrowser(createdOrder, settings);
-          } catch (fallbackErr) {
-            console.warn('[pos.tsx] Fallback browser print error:', fallbackErr);
-          }
-        }
-      } else if (err?.code === 'PRINT_IN_PROGRESS') {
-        showToast('warning', 'Print In Progress', 'A print job is already in progress.');
-      } else {
-        showToast('error', 'Direct Print Failed', 'Unable to print bill automatically via QZ Tray.');
-      }
+      await handleThermalPrintFallback(err, 'Bill', async () => {
+        await printService.printFinalReceiptThermalBrowser(createdOrder, settings);
+      });
     }
   };
 
@@ -2150,28 +2137,16 @@ export default function PosScreen() {
                       <TouchableOpacity
                         style={styles.modalActionKotBtn}
                         onPress={async () => {
-                          if (viewTableModalData.order) {
+                          const currentOrder = viewTableModalData.order;
+                          if (currentOrder) {
                             try {
-                              await printService.printKotThermal(viewTableModalData.order, settings, undefined, true);
+                              await printService.printKotThermal(currentOrder, settings, undefined, true);
                               showToast('success', 'KOT Slip', 'KOT reprint sent to printer.');
                             } catch (printErr: any) {
                               console.warn('[pos.tsx] Reprint KOT failed:', printErr);
-                              if (Platform.OS === 'web' && typeof window !== 'undefined' && printErr?.code !== 'PRINT_IN_PROGRESS') {
-                                const proceed = window.confirm(
-                                  `Unable to print KOT automatically. Check POS80 printer / QZ Tray.\n\nWould you like to print using the browser?`
-                                );
-                                if (proceed) {
-                                  try {
-                                    await printService.printKotThermalBrowser(viewTableModalData.order, settings, undefined, true);
-                                  } catch (fallbackErr) {
-                                    console.warn('[pos.tsx] Fallback browser reprint failed:', fallbackErr);
-                                  }
-                                }
-                              } else if (printErr?.code === 'PRINT_IN_PROGRESS') {
-                                showToast('warning', 'Print In Progress', 'A KOT print job is already in progress.');
-                              } else {
-                                showToast('error', 'Direct Print Failed', 'Unable to print KOT automatically. Check POS80 printer / QZ Tray.');
-                              }
+                              await handleThermalPrintFallback(printErr, 'KOT', async () => {
+                                await printService.printKotThermalBrowser(currentOrder, settings, undefined, true);
+                              });
                             }
                           }
                         }}
@@ -2182,28 +2157,16 @@ export default function PosScreen() {
                       <TouchableOpacity
                         style={styles.modalActionBillBtn}
                         onPress={async () => {
-                          if (viewTableModalData.order) {
+                          const currentOrder = viewTableModalData.order;
+                          if (currentOrder) {
                             try {
-                              await printService.printBillThermal(viewTableModalData.order, settings);
+                              await printService.printBillThermal(currentOrder, settings);
                               showToast('success', 'Thermal Bill', 'Bill printed.');
                             } catch (err: any) {
                               console.warn('[pos.tsx] modalActionBillBtn error:', err);
-                              if (Platform.OS === 'web' && typeof window !== 'undefined' && err?.code !== 'PRINT_IN_PROGRESS') {
-                                const proceed = window.confirm(
-                                  `Unable to print receipt automatically via QZ Tray.\n\nWould you like to print using the browser print dialog?`
-                                );
-                                if (proceed) {
-                                  try {
-                                    await printService.printFinalReceiptThermalBrowser(viewTableModalData.order, settings);
-                                  } catch (fallbackErr) {
-                                    console.warn('[pos.tsx] Browser fallback print failed:', fallbackErr);
-                                  }
-                                }
-                              } else if (err?.code === 'PRINT_IN_PROGRESS') {
-                                showToast('warning', 'Print In Progress', 'A print job is already in progress.');
-                              } else {
-                                showToast('error', 'Direct Print Failed', 'Unable to print bill automatically via QZ Tray.');
-                              }
+                              await handleThermalPrintFallback(err, 'Bill', async () => {
+                                await printService.printFinalReceiptThermalBrowser(currentOrder, settings);
+                              });
                             }
                           }
                         }}

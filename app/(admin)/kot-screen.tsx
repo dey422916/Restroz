@@ -10,7 +10,7 @@ import {
   Platform,
 } from 'react-native';
 import { kotService } from '../../src/services/api/kotService';
-import { printService } from '../../src/services/printService';
+import { printService, handleThermalPrintFallback } from '../../src/services/printService';
 import { KOT, RestaurantSettings } from '../../src/types';
 import { useSettings } from '../../src/context/SettingsContext';
 import { useAuth } from '../../src/context/AuthContext';
@@ -234,18 +234,9 @@ export default function KotScreen() {
                           await printService.reprintKot(kot.id, settings);
                         } catch (err: any) {
                           console.warn('KOT Print warning:', err);
-                          if (Platform.OS === 'web' && typeof window !== 'undefined' && err?.code !== 'PRINT_IN_PROGRESS') {
-                            const proceed = window.confirm(
-                              `Unable to print KOT automatically. Check POS80 printer / QZ Tray.\n\nWould you like to print using the browser?`
-                            );
-                            if (proceed) {
-                              try {
-                                await printService.reprintKot(kot.id, settings, true);
-                              } catch (fallbackErr) {
-                                console.warn('Fallback reprint failed:', fallbackErr);
-                              }
-                            }
-                          }
+                          await handleThermalPrintFallback(err, 'KOT', async () => {
+                            await printService.reprintKot(kot.id, settings, true);
+                          });
                         }
                       }}
                     >

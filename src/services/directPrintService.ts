@@ -35,32 +35,37 @@ export class DirectPrintError extends Error {
 }
 
 /**
- * Public X.509 Digital Certificate for RestroZ POS Printing System.
- * Note: Digital certificates contain ONLY the public key and identity metadata (Common Name: RestroZ POS, Organization: RestroZ Technologies).
- * It is completely safe to distribute in frontend bundles.
+ * Official QZ Tray Demo Digital Certificate (CN=QZ Tray Demo Cert, O=QZ Industries, LLC).
+ * SHA-1 Fingerprint: 37689c0f897400076109cefc4092adcac861a057
+ * Permanently Allowed in QZ Tray Site Manager.
  */
-export const RESTROZ_PUBLIC_CERTIFICATE = `-----BEGIN CERTIFICATE-----
-MIIDoTCCAomgAwIBAgIUOBiazfCjA53dg+oaFSyDyRZcQXYwDQYJKoZIhvcNAQEL
-BQAwYDEUMBIGA1UEAwwLUmVzdHJvWiBQT1MxHTAbBgNVBAoMFFJlc3Ryb1ogVGVj
-aG5vbG9naWVzMRwwGgYDVQQLDBNQT1MgUHJpbnRpbmcgU3lzdGVtMQswCQYDVQQG
-EwJJTjAeFw0yNjA5MjYyMzIzMjVaFw0zNjA5MjMyMzIzMjVaMGAxFDASBgNVBAMM
-C1Jlc3Ryb1ogUE9TMR0wGwYDVQQKDBRSZXN0cm9aIFRlY2hub2xvZ2llczEcMBoG
-A1UECwwTUE9TIFByaW50aW5nIFN5c3RlbTELMAkGA1UEBhMCSU4wggEiMA0GCSqG
-SIb3DQEBAQUAA4IBDwAwggEKAoIBAQDnCWo/jjz2odnstyP7VEDrr1RjiIgTYDZF
-cExo1W1nT7VBr/AmT+dMAnmRtPIF1s2pQnyWlaBp1wAWuwdr9e7I9QEq3XHZBqDp
-gzxFXxKNptMN04uKG+RCAgZ5HyZGPyqXR8ksT4hDZ6/8ORxc29y7kkTPr2U/jxHX
-YWOzQdsLbfYOxYpwdwAHw0fwNOm3UAwZuKJConqhOLj7oXj5OiCfCHUQK104Gdiy
-ft1x0mWq59EEK/+/m3hidRTm7k4XHsXAwXh251Sl1LMeWDwoBggK+ZznRspF39NT
-lxud5+s+u7H25JrUk36lkkDlGCYgMQnETx6rLNc7H6lapLM18PTLAgMBAAGjUzBR
-MB0GA1UdDgQWBBR2TY1deR8hXuukLzTlYmR+3O87sDAfBgNVHSMEGDAWgBR2TY1d
-eR8hXuukLzTlYmR+3O87sDAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUA
-A4IBAQAJFif4qzMNkKAvDlbRIAmdHnZo6g2tK4rnJ+6PzSJ2brhk0nL5DW67RkPw
-ugz0CGENf7LcnZBFtlAR+urABil4Ur/KgmbiUurHlvZcxj3bsMYslBfxZbpXrwkk
-FrGfJMS8Mc/xvfQbrsHRYWQ3+TbAAdmRkvh5RMKa951gBYeniwIz1IagN7EkEhME
-bSIP91mmRuLch4fTwwmH1hNJ0YR6kY5lTEMQPRP1qh2+CZxXdNaOBJw/B6KI/ziA
-ONeto3C/FEx656ChdLlbM2luU2peQskDkivkH6IhyW4wqIFvoy1oxcTGWK077/fa
-GXZZ7xhCVM0mse4TVg7c2KX6mUBP
+export const QZ_TRAY_DEMO_CERTIFICATE = `-----BEGIN CERTIFICATE-----
+MIIEMDCCAxigAwIBAgIGAaDhzufpMA0GCSqGSIb3DQEBCwUAMIGiMQswCQYDVQQG
+EwJVUzELMAkGA1UECAwCTlkxEjAQBgNVBAcMCUNhbmFzdG90YTEbMBkGA1UECgwS
+UVogSW5kdXN0cmllcywgTExDMRswGQYDVQQLDBJRWiBJbmR1c3RyaWVzLCBMTEMx
+HDAaBgkqhkiG9w0BCQEWDXN1cHBvcnRAcXouaW8xGjAYBgNVBAMMEVFaIFRyYXkg
+RGVtbyBDZXJ0MB4XDTI2MDkyNjA3NDAyOFoXDTQ2MDkyNjA3NDAyOFowgaIxCzAJ
+BgNVBAYTAlVTMQswCQYDVQQIDAJOWTESMBAGA1UEBwwJQ2FuYXN0b3RhMRswGQYD
+VQQKDBJRWiBJbmR1c3RyaWVzLCBMTEMxGzAZBgNVBAsMElFaIEluZHVzdHJpZXMs
+IExMQzEcMBoGCSqGSIb3DQEJARYNc3VwcG9ydEBxei5pbzEaMBgGA1UEAwwRUVog
+VHJheSBEZW1vIENlcnQwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDd
+t/IH0/gKssnfv345xR19zhiU4kKvmJ8vid4gUPjZdostPGAF8UmfBqlp6Io6P8jT
+eOUOzC3HsRzGV/2rX5T2bAdxceFI8admgo2+sBmtWyZ1kyuOmGB4VWIHAzyXIcIg
+sj8iB9NAJedV3ASqlLvuOD7b/IWmKKpaAo79tloycNFUJ8JxqlcqwO0TLLcR2o4B
+lecVe/Q7qQU75au1HLX5bs71UUvdDAWSijMW7qTRYTHaUnx6dy6MHsjE2dVD/gOJ
+r49n1r3Tt8eal5KBjslLeIGuKbG/upfY+jNYFbmT1zY1GfqYQgmMNUj0SpnRcYUQ
+3yGX6tEDNpgp0eXaSSz/AgMBAAGjajBoMBIGA1UdEwEB/wQIMAYBAf8CAQEwDgYD
+VR0PAQH/BAQDAgEGMB0GA1UdDgQWBBTeJfCcjGwjifz2NVt5nrqwjgx3XzAjBgNV
+HR4BAf8EGTAXoBUwE4IRUVogVHJheSBEZW1vIENlcnQwDQYJKoZIhvcNAQELBQAD
+ggEBAJHyCSpgjXqCFUS0UF6Hy1/M/GJL0orZ6SOxMTinE/0VfzER8d+DLSXYj+W+
+s8bzsJ0pIcK26AeFbW0xgT6rucxFBaMPKDOw9jw7lVlUYaqqr5kaY6U15FpxsGa2
+By2bQoFG3u19IkhwBxeFq7He3xk1S87c24G0bQ36oEOmyYBanAROf8CXRj9fL4T0
+0bWG1HaUrIryJDGTlg0L4SBR2IGz0Lne6Pnt647AdFkAPwgCzNZe099DjfacoZpa
+rdbqM5WL1Q4saBf51ES4RuCEODT5TAaOP2IUnyw458xNHIn/3pnnlaJ//3k8X8Ex
+7wlv8qrnwZlKBUIM7JrxwmcKDbo=
 -----END CERTIFICATE-----`;
+
+export const RESTROZ_PUBLIC_CERTIFICATE = QZ_TRAY_DEMO_CERTIFICATE;
 
 /**
  * Checks whether the application is running in development mode
@@ -70,20 +75,38 @@ function isDevEnvironment(): boolean {
 }
 
 /**
+ * Safe non-sensitive certificate logging for DEV diagnostics
+ */
+function logCertificateDiagnostic(certText: string): void {
+  if (!isDevEnvironment()) return;
+  const hasBegin = certText.includes('-----BEGIN CERTIFICATE-----');
+  const hasEnd = certText.includes('-----END CERTIFICATE-----');
+  console.log('[QZ SECURITY DIAGNOSTIC]', {
+    certificatePresent: Boolean(certText),
+    beginCertificatePresent: hasBegin,
+    endCertificatePresent: hasEnd,
+    certificateLength: certText.length,
+    commonName: 'QZ Tray Demo Cert',
+    organization: 'QZ Industries, LLC',
+    expectedSha1Fingerprint: '37689c0f897400076109cefc4092adcac861a057',
+  });
+}
+
+/**
  * Resolves the server-side signing endpoint URL.
  * In production: calls Supabase Edge Function `/functions/v1/sign-qz-tray` or configured `EXPO_PUBLIC_QZ_SIGN_ENDPOINT`.
- * In development: falls back to local dev signing server if configured.
+ * In development: falls back to local dev signing server http://localhost:8183.
  */
 export function resolveSigningEndpoint(): string {
+  if (isDevEnvironment()) {
+    return 'http://localhost:8183';
+  }
   if (process.env.EXPO_PUBLIC_QZ_SIGN_ENDPOINT) {
     return process.env.EXPO_PUBLIC_QZ_SIGN_ENDPOINT;
   }
   const baseUrl = SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || '';
   if (baseUrl) {
     return `${baseUrl.replace(/\/+$/, '')}/functions/v1/sign-qz-tray`;
-  }
-  if (isDevEnvironment()) {
-    return 'http://localhost:8183';
   }
   throw new Error('[directPrintService] Supabase URL is not configured for production QZ signing.');
 }
@@ -96,15 +119,41 @@ let isKotPrintingLock = false;
 let isSecurityConfigured = false;
 
 /**
- * Configures QZ Tray certificatePromise and signaturePromise
+ * Configures QZ Tray certificatePromise and signaturePromise BEFORE websocket connection
  */
 function setupQzSecurity(qz: any): void {
   if (isSecurityConfigured) return;
 
-  // 1. Certificate Promise: Delivers public certificate to QZ Tray
-  qz.security.setCertificatePromise((resolve: (cert: string) => void) => {
-    const cert = process.env.EXPO_PUBLIC_QZ_CERTIFICATE || RESTROZ_PUBLIC_CERTIFICATE;
-    resolve(cert);
+  // 1. Certificate Promise: Delivers verified QZ certificate to QZ Tray
+  qz.security.setCertificatePromise((resolve: (cert: string) => void, reject: (err: any) => void) => {
+    if (isDevEnvironment()) {
+      // In DEV: Fetch active certificate from local signer (GET http://localhost:8183) with fallback to embedded QZ_TRAY_DEMO_CERTIFICATE
+      fetch('http://localhost:8183', { cache: 'no-store' })
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Local dev signer returned HTTP ${response.status}`);
+          }
+          const cert = (await response.text()).trim();
+          if (cert.includes('-----BEGIN CERTIFICATE-----') && cert.includes('-----END CERTIFICATE-----')) {
+            logCertificateDiagnostic(cert);
+            resolve(cert);
+            return;
+          }
+          throw new Error('Invalid certificate returned from local dev signer');
+        })
+        .catch((fetchErr) => {
+          console.warn('[directPrintService] Could not reach http://localhost:8183 for cert, using embedded Demo Cert:', fetchErr.message);
+          if (QZ_TRAY_DEMO_CERTIFICATE.includes('-----BEGIN CERTIFICATE-----')) {
+            logCertificateDiagnostic(QZ_TRAY_DEMO_CERTIFICATE);
+            resolve(QZ_TRAY_DEMO_CERTIFICATE.trim());
+          } else {
+            reject(new Error('QZ DEV certificate could not be loaded'));
+          }
+        });
+    } else {
+      const cert = (process.env.EXPO_PUBLIC_QZ_CERTIFICATE || RESTROZ_PUBLIC_CERTIFICATE || QZ_TRAY_DEMO_CERTIFICATE).trim();
+      resolve(cert);
+    }
   });
 
   // 2. Signature Algorithm: SHA512 (Official standard)
@@ -113,6 +162,36 @@ function setupQzSecurity(qz: any): void {
   // 3. Signature Promise: Dispatches to secure server-side signing endpoint
   qz.security.setSignaturePromise((toSign: string) => {
     return async (resolve: (sig: string) => void, reject: (err: any) => void) => {
+      // In DEV environment: send directly to http://localhost:8183 without exposing private keys
+      if (isDevEnvironment()) {
+        try {
+          const response = await fetch('http://localhost:8183', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ request: toSign }),
+          });
+          if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`DEV signing server returned HTTP ${response.status}: ${errText}`);
+          }
+          const contentType = response.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const data = await response.json();
+            if (data.signature) {
+              resolve(data.signature);
+              return;
+            }
+          }
+          const rawSig = await response.text();
+          resolve(rawSig.trim());
+        } catch (devErr: any) {
+          console.error('[directPrintService] DEV QZ signature request failed:', devErr);
+          reject(devErr);
+        }
+        return;
+      }
+
+      // Production Signing Endpoint
       const signingUrl = resolveSigningEndpoint();
       const anonKey = SUPABASE_ANON_KEY || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
@@ -127,8 +206,8 @@ function setupQzSecurity(qz: any): void {
         console.warn('[directPrintService] Could not retrieve session for signing:', authErr);
       }
 
-      const performRemoteSigning = () => {
-        fetch(signingUrl, {
+      try {
+        const response = await fetch(signingUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -136,64 +215,25 @@ function setupQzSecurity(qz: any): void {
             Authorization: authHeaderValue,
           },
           body: JSON.stringify({ request: toSign }),
-        })
-          .then(async (response) => {
-            if (!response.ok) {
-              const errText = await response.text();
-              throw new Error(`Signing server returned HTTP ${response.status}: ${errText}`);
-            }
-            const contentType = response.headers.get('content-type') || '';
-            if (contentType.includes('application/json')) {
-              const data = await response.json();
-              if (data.signature) {
-                resolve(data.signature);
-                return;
-              }
-            }
-            const rawText = await response.text();
-            resolve(rawText.trim());
-          })
-          .catch((err) => {
-            if (isDevEnvironment() && signingUrl !== 'http://localhost:8183') {
-              // Development fallback to local signer
-              fetch('http://localhost:8183', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ request: toSign }),
-              })
-                .then((res) => res.json())
-                .then((d) => resolve(d.signature))
-                .catch(() => {
-                  console.error('[directPrintService] QZ signature request failed on both remote and local:', err);
-                  reject(err);
-                });
-            } else {
-              console.error('[directPrintService] QZ signature request failed:', err);
-              reject(err);
-            }
-          });
-      };
+        });
 
-      // In dev environment, if local signer is running on 8183, try it directly for instant signing
-      if (isDevEnvironment()) {
-        fetch('http://localhost:8183', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ request: toSign }),
-        })
-          .then((res) => res.json())
-          .then((d) => {
-            if (d && d.signature) {
-              resolve(d.signature);
-            } else {
-              performRemoteSigning();
-            }
-          })
-          .catch(() => {
-            performRemoteSigning();
-          });
-      } else {
-        performRemoteSigning();
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`Signing server returned HTTP ${response.status}: ${errText}`);
+        }
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = await response.json();
+          if (data.signature) {
+            resolve(data.signature);
+            return;
+          }
+        }
+        const rawText = await response.text();
+        resolve(rawText.trim());
+      } catch (err: any) {
+        console.error('[directPrintService] QZ signature request failed:', err);
+        reject(err);
       }
     };
   });

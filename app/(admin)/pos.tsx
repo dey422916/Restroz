@@ -1400,10 +1400,19 @@ export default function PosScreen() {
               </View>
             )}
 
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Taxable Amount</Text>
-              <Text style={styles.summaryVal}>{formatCurrency(totals.taxableSubtotal)}</Text>
-            </View>
+            {totals.taxableSubtotal > 0 && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Taxable Value</Text>
+                <Text style={styles.summaryVal}>{formatCurrency(totals.taxableSubtotal)}</Text>
+              </View>
+            )}
+
+            {totals.nilExemptSubtotal > 0 && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Nil/Exempt Value</Text>
+                <Text style={styles.summaryVal}>{formatCurrency(totals.nilExemptSubtotal)}</Text>
+              </View>
+            )}
 
             {Boolean(settings?.is_gst_enabled !== false && (totals.cgstAmount > 0 || totals.sgstAmount > 0)) && (() => {
               const totalTaxRate = settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 5.0;

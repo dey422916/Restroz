@@ -214,6 +214,7 @@ export interface Order {
   discount_value?: number;
   discount_amount: number;
   taxable_amount?: number;
+  nil_exempt_amount?: number;
   coupon_code?: string;
   coupon_discount: number;
   cgst_amount: number;

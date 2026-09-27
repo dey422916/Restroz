@@ -1040,13 +1040,20 @@ export const orderService = {
               const quantity = Number(i.quantity) || 1;
               const itemRate = (i.tax_rate !== null && i.tax_rate !== undefined && !isNaN(Number(i.tax_rate)))
                 ? Number(i.tax_rate)
-                : 5.0;
+                : (hasOrderTax ? 5.0 : 0);
               const taxRate = hasOrderTax ? itemRate : 0;
-              const itemTax = hasOrderTax ? ((rawItem.tax_amount !== null && rawItem.tax_amount !== undefined && !isNaN(Number(rawItem.tax_amount))) ? Number(rawItem.tax_amount) : ((unitPrice * quantity * taxRate) / 100)) : 0;
+              const halfTaxRate = taxRate / 2;
               const itemSubtotal = Number(i.subtotal) || (unitPrice * quantity);
               const itemTotal = itemSubtotal;
-              const cgst = hasOrderTax ? ((rawItem.cgst_amount !== null && rawItem.cgst_amount !== undefined && !isNaN(Number(rawItem.cgst_amount))) ? Number(rawItem.cgst_amount) : (itemTax / 2)) : 0;
-              const sgst = hasOrderTax ? ((rawItem.sgst_amount !== null && rawItem.sgst_amount !== undefined && !isNaN(Number(rawItem.sgst_amount))) ? Number(rawItem.sgst_amount) : (itemTax / 2)) : 0;
+              const cgst = hasOrderTax && taxRate > 0
+                ? Number(((itemSubtotal * halfTaxRate) / 100).toFixed(2))
+                : 0;
+              const sgst = hasOrderTax && taxRate > 0
+                ? Number(((itemSubtotal * halfTaxRate) / 100).toFixed(2))
+                : 0;
+              const itemTax = hasOrderTax && taxRate > 0
+                ? Number((cgst + sgst).toFixed(2))
+                : 0;
 
               return {
                 id: i.id?.startsWith('item-') ? i.id : 'item-' + Date.now() + Math.random().toString(36).substr(2, 4),
@@ -1399,18 +1406,20 @@ export const orderService = {
       const defaultTax = (restSettings.default_tax_rate !== undefined && restSettings.default_tax_rate !== null && !isNaN(Number(restSettings.default_tax_rate)))
         ? Number(restSettings.default_tax_rate)
         : 5.0;
-      const taxRate = (i.tax_rate !== null && i.tax_rate !== undefined && !isNaN(Number(i.tax_rate)))
+      const itemTaxRate = (i.tax_rate !== null && i.tax_rate !== undefined && !isNaN(Number(i.tax_rate)))
         ? Number(i.tax_rate)
         : defaultTax;
-      const itemTax = (rawItem.tax_amount !== null && rawItem.tax_amount !== undefined && !isNaN(Number(rawItem.tax_amount)))
-        ? Number(rawItem.tax_amount)
-        : Number(((itemSubtotal * taxRate) / 100).toFixed(2));
-      const cgst = (rawItem.cgst_amount !== null && rawItem.cgst_amount !== undefined && !isNaN(Number(rawItem.cgst_amount)))
-        ? Number(rawItem.cgst_amount)
-        : Number((itemTax / 2).toFixed(2));
-      const sgst = (rawItem.sgst_amount !== null && rawItem.sgst_amount !== undefined && !isNaN(Number(rawItem.sgst_amount)))
-        ? Number(rawItem.sgst_amount)
-        : Number((itemTax / 2).toFixed(2));
+      const taxRate = isGstEnabled ? itemTaxRate : 0;
+      const halfTaxRate = taxRate / 2;
+      const cgst = isGstEnabled && taxRate > 0
+        ? Number(((itemSubtotal * halfTaxRate) / 100).toFixed(2))
+        : 0;
+      const sgst = isGstEnabled && taxRate > 0
+        ? Number(((itemSubtotal * halfTaxRate) / 100).toFixed(2))
+        : 0;
+      const itemTax = isGstEnabled && taxRate > 0
+        ? Number((cgst + sgst).toFixed(2))
+        : 0;
       const itemTotal = itemSubtotal;
 
       return {
@@ -1961,7 +1970,13 @@ export const orderService = {
         subtotal: getOrderSubtotal({ ...settledOrder, items: finalItems }),
         discount_type: discountType,
         discount_value: discountValue,
-        taxable_amount: taxableAmount,
+        discount_amount: discountAmount,
+        taxable_amount: taxableAmount !== undefined ? taxableAmount : settledOrder.taxable_amount,
+        cgst_amount: cgstAmount !== undefined ? cgstAmount : settledOrder.cgst_amount,
+        sgst_amount: sgstAmount !== undefined ? sgstAmount : settledOrder.sgst_amount,
+        grand_total: grandTotal !== undefined ? grandTotal : settledOrder.grand_total,
+        round_off: roundOff !== undefined ? roundOff : settledOrder.round_off,
+        payable_amount: payableAmount !== undefined ? payableAmount : settledOrder.payable_amount,
         reward_earned: Number(rpcRes?.reward_earned) || 0,
         new_wallet_balance: Number(rpcRes?.new_wallet_balance) || 0,
         wallet_redeemed: Number(rpcRes?.wallet_redeemed) || 0,

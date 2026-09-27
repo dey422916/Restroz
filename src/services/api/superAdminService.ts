@@ -15,7 +15,65 @@ import {
   CreateRestaurantAdminPayload,
 } from '../../types';
 
+export const generateBaseSlug = (name: string): string => {
+  const base = (name || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return base || 'restaurant';
+};
+
+export async function generateUniqueRestaurantSlug(
+  name: string,
+  excludeRestaurantId?: string
+): Promise<string> {
+  const base = generateBaseSlug(name);
+  let candidate = base;
+  let counter = 1;
+
+  while (true) {
+    let query = supabase.from('restaurants').select('id').eq('slug', candidate);
+    if (excludeRestaurantId) {
+      query = query.neq('id', excludeRestaurantId);
+    }
+    const { data } = await query.maybeSingle();
+    if (!data) {
+      return candidate;
+    }
+    counter += 1;
+    candidate = `${base}-${counter}`;
+  }
+}
+
 export const superAdminService = {
+  generateBaseSlug,
+  generateUniqueSlug: generateUniqueRestaurantSlug,
+
+  // Backfill missing slugs for all existing restaurants in database
+  async backfillMissingRestaurantSlugs(): Promise<number> {
+    if (!isSupabaseConfigured) return 0;
+    const { data: rests, error } = await supabase.from('restaurants').select('id, name, slug');
+    if (error || !rests) return 0;
+
+    let updatedCount = 0;
+    for (const r of rests) {
+      if (!r.slug || r.slug.trim() === '') {
+        try {
+          const newSlug = await generateUniqueRestaurantSlug(r.name, r.id);
+          const { error: updErr } = await supabase
+            .from('restaurants')
+            .update({ slug: newSlug })
+            .eq('id', r.id);
+          if (!updErr) updatedCount += 1;
+        } catch (e) {
+          console.warn('Failed to backfill slug for restaurant', r.id, e);
+        }
+      }
+    }
+    return updatedCount;
+  },
+
   // --------------------------------------------------------------------------
   // 1. DASHBOARD PLATFORM METRICS
   // --------------------------------------------------------------------------
@@ -114,7 +172,23 @@ export const superAdminService = {
       .order('created_at', { ascending: false });
 
     if (error) throw error;
-    return data || [];
+    const list = data || [];
+
+    // Auto-backfill missing slugs where needed
+    const missingSlugs = list.filter((r) => !r.slug || r.slug.trim() === '');
+    if (missingSlugs.length > 0) {
+      for (const r of missingSlugs) {
+        try {
+          const generated = await generateUniqueRestaurantSlug(r.name, r.id);
+          r.slug = generated;
+          await supabase.from('restaurants').update({ slug: generated }).eq('id', r.id);
+        } catch (slugErr) {
+          console.warn('Auto backfill slug error for restaurant:', r.id, slugErr);
+        }
+      }
+    }
+
+    return list;
   },
 
   async getRestaurantById(id: string): Promise<Restaurant | null> {
@@ -152,7 +226,16 @@ export const superAdminService = {
       throw new Error('Postal code / PIN is required for restaurant onboarding.');
     }
 
-    const cleanSlug = payload.slug.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    let cleanSlug = payload.slug?.trim() ? generateBaseSlug(payload.slug) : '';
+    if (!cleanSlug) {
+      cleanSlug = await generateUniqueRestaurantSlug(payload.name);
+    } else {
+      const { data: existingSlug } = await supabase.from('restaurants').select('id').eq('slug', cleanSlug).maybeSingle();
+      if (existingSlug) {
+        cleanSlug = await generateUniqueRestaurantSlug(payload.slug);
+      }
+    }
+
     const defaultBanner = 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=800&q=80';
     const bannerUrl = payload.banner_url?.trim() || defaultBanner;
 

@@ -45,6 +45,12 @@ import {
   getIndianPhoneValidationError,
 } from '../../../src/utils/validation';
 
+import {
+  getRestaurantOnlineOrderingUrl,
+  copyRestaurantUrlToClipboard,
+  openRestaurantWebsite,
+} from '../../../src/utils/restaurantUrl';
+
 const getStaffDisplayRole = (m: any): { label: string; bg: string; color: string } => {
   if (m.role === 'ADMIN') {
     return { label: 'ADMIN', bg: '#fef08a', color: '#854d0e' };
@@ -988,6 +994,36 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
                 {restaurant.email ? `✉️ ${restaurant.email}` : ''}
               </Text>
             )}
+
+            {/* Online Ordering Website URL Box */}
+            <View style={{ backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, padding: 12, marginTop: 10 }}>
+              <Text style={{ fontSize: 10, fontWeight: '800', color: '#64748B', letterSpacing: 0.5, marginBottom: 4 }}>
+                ONLINE ORDERING WEBSITE
+              </Text>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A', marginBottom: 8 }} selectable>
+                {getRestaurantOnlineOrderingUrl(restaurant.slug || restaurant.id)}
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', borderRadius: 6, paddingVertical: 6, paddingHorizontal: 12 }}
+                  onPress={async () => {
+                    const url = getRestaurantOnlineOrderingUrl(restaurant.slug || restaurant.id);
+                    const copied = await copyRestaurantUrlToClipboard(url);
+                    if (copied) Alert.alert('Copied 🎉', 'Online ordering link copied to clipboard!\n\n' + url);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#2563EB' }}>📋 Copy URL</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#BBF7D0', borderRadius: 6, paddingVertical: 6, paddingHorizontal: 12 }}
+                  onPress={() => openRestaurantWebsite(restaurant.slug || restaurant.id)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#16A34A' }}>🌐 Open Website</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           </View>
         </View>
       </View>

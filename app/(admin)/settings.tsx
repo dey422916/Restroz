@@ -38,23 +38,20 @@ export default function SettingsScreen() {
   const [phone, setPhone] = useState(settings.phone || '');
   const [email, setEmail] = useState(settings.email || '');
   const [gstin, setGstin] = useState(settings.gstin || '');
+  const initialTaxRateNum = Number(settings.default_tax_rate ?? settings.tax_rate ?? 0);
+  const initialTaxRateValid = (!isNaN(initialTaxRateNum) && initialTaxRateNum > 0 && initialTaxRateNum <= 100) ? initialTaxRateNum : 0;
   const [taxRate, setTaxRate] = useState(
     settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
       ? settings.default_tax_rate.toString()
-      : '5.0'
+      : '0'
   );
-  const [gstRegistered, setGstRegistered] = useState<boolean>(
-    settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim())
-  );
+  const initialGstRegistered = settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim());
+  const [gstRegistered, setGstRegistered] = useState<boolean>(initialGstRegistered);
   const [isGstEnabled, setIsGstEnabled] = useState<boolean>(
-    settings.is_gst_enabled !== undefined
-      ? Boolean(settings.is_gst_enabled)
-      : false
+    Boolean(settings.is_gst_enabled) && initialGstRegistered && initialTaxRateValid > 0
   );
   const [taxInvoiceEnabled, setTaxInvoiceEnabled] = useState<boolean>(
-    settings.tax_invoice_enabled !== undefined
-      ? Boolean(settings.tax_invoice_enabled)
-      : false
+    Boolean(settings.tax_invoice_enabled) && initialGstRegistered && Boolean(settings.is_gst_enabled) && initialTaxRateValid > 0
   );
   const [logoUrl, setLogoUrl] = useState(settings.logo_url || '');
   const [bannerUrls, setBannerUrls] = useState<string[]>(() =>
@@ -144,23 +141,19 @@ export default function SettingsScreen() {
       setPhone(settings.phone || '');
       setEmail(settings.email || '');
       setGstin(settings.gstin || '');
+      const rawSyncTax = Number(settings.default_tax_rate ?? settings.tax_rate ?? 0);
+      const validSyncTax = (!isNaN(rawSyncTax) && rawSyncTax > 0 && rawSyncTax <= 100) ? rawSyncTax : 0;
       setTaxRate(
         settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
           ? settings.default_tax_rate.toString()
-          : '5.0'
+          : '0'
       );
-      setGstRegistered(
-        settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim())
-      );
-      setIsGstEnabled(
-        settings.is_gst_enabled !== undefined
-          ? Boolean(settings.is_gst_enabled)
-          : false
-      );
+      const syncGstReg = settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim());
+      setGstRegistered(syncGstReg);
+      const syncIsGst = Boolean(settings.is_gst_enabled) && syncGstReg && validSyncTax > 0;
+      setIsGstEnabled(syncIsGst);
       setTaxInvoiceEnabled(
-        settings.tax_invoice_enabled !== undefined
-          ? Boolean(settings.tax_invoice_enabled)
-          : false
+        Boolean(settings.tax_invoice_enabled) && syncGstReg && syncIsGst && validSyncTax > 0
       );
       setLogoUrl(settings.logo_url || '');
       setBannerUrls(parseBannerUrls(settings.banner_url || settings.banner_urls));
@@ -677,7 +670,23 @@ export default function SettingsScreen() {
     }
 
     const numRate = parseFloat(taxRate);
-    const validatedRate = !isNaN(numRate) && numRate >= 0 ? numRate : 0.0;
+
+    if (gstRegistered && isGstEnabled) {
+      if (isNaN(numRate) || numRate <= 0 || numRate > 100) {
+        showToast('error', 'Invalid GST Rate', 'Enter a valid GST rate greater than 0% before enabling GST collection.');
+        Alert.alert('Invalid GST Rate', 'Enter a valid GST rate greater than 0% before enabling GST collection.');
+        return;
+      }
+      if (!gstin.trim()) {
+        showToast('error', 'GSTIN Required', 'Please enter a valid GSTIN before enabling GST billing.');
+        Alert.alert('GSTIN Required', 'Please enter a valid GSTIN before enabling GST billing.');
+        return;
+      }
+    }
+
+    const validatedRate = !isNaN(numRate) && numRate > 0 && numRate <= 100 ? numRate : 0.0;
+    const targetIsGst = gstRegistered && isGstEnabled && validatedRate > 0;
+    const targetTaxInv = gstRegistered && targetIsGst && taxInvoiceEnabled && validatedRate > 0;
 
     try {
       setIsSavingGst(true);
@@ -687,8 +696,8 @@ export default function SettingsScreen() {
         default_tax_rate: validatedRate,
         tax_rate: validatedRate,
         gst_registered: gstRegistered,
-        is_gst_enabled: isGstEnabled,
-        tax_invoice_enabled: taxInvoiceEnabled,
+        is_gst_enabled: targetIsGst,
+        tax_invoice_enabled: targetTaxInv,
       });
 
       if (persisted) {
@@ -696,7 +705,7 @@ export default function SettingsScreen() {
         setTaxRate(
           persisted.default_tax_rate !== undefined && persisted.default_tax_rate !== null
             ? persisted.default_tax_rate.toString()
-            : '0.0'
+            : '0'
         );
         setGstRegistered(
           persisted.gst_registered !== undefined ? Boolean(persisted.gst_registered) : Boolean(persisted.gstin?.trim())
@@ -714,11 +723,11 @@ export default function SettingsScreen() {
       }
 
       setIsDirty(false);
-      const summary = `GSTIN: ${gstin.trim() || 'None'} • Rate: ${validatedRate}% • Status: ${isGstEnabled ? 'Active' : 'Disabled'}`;
+      const summary = `GSTIN: ${gstin.trim() || 'None'} • Rate: ${validatedRate}% • Status: ${targetIsGst ? 'Active' : 'Disabled'}`;
       showToast('success', 'GST Settings Saved', summary);
       Alert.alert(
         'GST Settings Saved',
-        `GSTIN: ${gstin.trim() || 'None'}\nGST Rate: ${validatedRate}%\nCGST: ${(validatedRate / 2).toFixed(1)}% | SGST: ${(validatedRate / 2).toFixed(1)}%\nStatus: ${isGstEnabled ? 'Active' : 'Disabled'}`
+        `GSTIN: ${gstin.trim() || 'None'}\nGST Rate: ${validatedRate}%\nCGST: ${(validatedRate / 2).toFixed(1)}% | SGST: ${(validatedRate / 2).toFixed(1)}%\nStatus: ${targetIsGst ? 'Active' : 'Disabled'}`
       );
     } catch (err: any) {
       showToast('error', 'Save Failed', err.message || 'Failed to save GST settings.');
@@ -1865,26 +1874,35 @@ export default function SettingsScreen() {
                     <Text style={styles.toggleTitle}>Include GST / Tax on Orders</Text>
                     <TouchableOpacity
                       testID="settings-include-gst-toggle"
-                      disabled={!canManage}
+                      disabled={!canManage || !gstRegistered}
                       style={[
                         styles.toggleBadge,
                         isGstEnabled ? styles.toggleBadgeOn : styles.toggleBadgeOff,
-                        !canManage && { opacity: 0.6 },
+                        (!canManage || !gstRegistered) && { opacity: 0.5 },
                       ]}
                       onPress={() => {
                         if (!canManage) return;
+                        if (!gstRegistered) {
+                          showToast('error', 'Registration Required', 'Enable GST Registered Business first before configuring GST collection.');
+                          Alert.alert('Registration Required', 'Enable GST Registered Business first before configuring GST collection.');
+                          return;
+                        }
                         if (!isGstEnabled) {
-                          if (!gstin.trim()) {
-                            Alert.alert(
-                              'GSTIN Required',
-                              'Please enter a valid GSTIN before enabling GST billing.'
-                            );
+                          const numRate = parseFloat(taxRate);
+                          if (isNaN(numRate) || numRate <= 0 || numRate > 100) {
+                            showToast('error', 'Invalid GST Rate', 'Enter a valid GST rate greater than 0% before enabling GST collection.');
+                            Alert.alert('Invalid GST Rate', 'Enter a valid GST rate greater than 0% before enabling GST collection.');
                             return;
                           }
-                          setGstRegistered(true);
+                          if (!gstin.trim()) {
+                            showToast('error', 'GSTIN Required', 'Please enter a valid GSTIN before enabling GST billing.');
+                            Alert.alert('GSTIN Required', 'Please enter a valid GSTIN before enabling GST billing.');
+                            return;
+                          }
                           setIsGstEnabled(true);
                         } else {
                           setIsGstEnabled(false);
+                          setTaxInvoiceEnabled(false);
                         }
                         setIsDirty(true);
                       }}
@@ -1905,16 +1923,20 @@ export default function SettingsScreen() {
                     <Text style={styles.toggleTitle}>Tax Invoice Labeling</Text>
                     <TouchableOpacity
                       testID="settings-tax-invoice-toggle"
-                      disabled={!canManage}
+                      disabled={!canManage || !gstRegistered || !isGstEnabled}
                       style={[
                         styles.toggleBadge,
                         taxInvoiceEnabled ? styles.toggleBadgeOn : styles.toggleBadgeOff,
-                        !canManage && { opacity: 0.6 },
+                        (!canManage || !gstRegistered || !isGstEnabled) && { opacity: 0.5 },
                       ]}
                       onPress={() => {
                         if (!canManage) return;
+                        if (!gstRegistered || !isGstEnabled) {
+                          showToast('error', 'GST Collection Required', 'Enter a valid GST rate greater than 0% and enable GST collection before enabling Tax Invoice labeling.');
+                          Alert.alert('GST Collection Required', 'Enter a valid GST rate greater than 0% and enable GST collection before enabling Tax Invoice labeling.');
+                          return;
+                        }
                         if (!taxInvoiceEnabled) {
-                          setGstRegistered(true);
                           setTaxInvoiceEnabled(true);
                         } else {
                           setTaxInvoiceEnabled(false);
@@ -1931,6 +1953,15 @@ export default function SettingsScreen() {
                     Label receipts as official Tax Invoices. When OFF, receipts are labeled Retail Bills.
                   </Text>
                 </View>
+
+                {/* GST Rate Validation Notice */}
+                {gstRegistered && (!parseFloat(taxRate) || parseFloat(taxRate) <= 0) && (
+                  <View style={{ backgroundColor: '#fffbeb', borderColor: '#fef08a', borderWidth: 1, borderRadius: 8, padding: 10, marginTop: 8, marginBottom: 8 }}>
+                    <Text style={{ fontSize: 12, color: '#92400e', fontWeight: '600' }}>
+                      Enter a valid GST rate greater than 0% before enabling GST collection.
+                    </Text>
+                  </View>
+                )}
 
                 {/* GSTIN & Tax Rate Inputs */}
                 <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
@@ -1959,6 +1990,13 @@ export default function SettingsScreen() {
                       value={taxRate}
                       onChangeText={(v) => {
                         setTaxRate(v);
+                        const parsed = parseFloat(v);
+                        if (isNaN(parsed) || parsed <= 0 || parsed > 100) {
+                          if (isGstEnabled) {
+                            setIsGstEnabled(false);
+                            setTaxInvoiceEnabled(false);
+                          }
+                        }
                         setIsDirty(true);
                       }}
                       keyboardType="numeric"

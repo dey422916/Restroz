@@ -282,30 +282,167 @@ export const PrinterManagementSection: React.FC<Props> = ({
     }
   };
 
-  const handleTestConnectionPrompt = (p: RestaurantPrinter) => {
-    const msg =
-      p.connection_type === 'bluetooth'
-        ? 'Bluetooth printer discovery & connection testing will become available after Bluetooth printer support is installed.'
-        : p.connection_type === 'usb'
-        ? 'USB printer detection & testing will become available after USB printer support is installed.'
-        : 'Network printer TCP socket testing will become available after direct network printer support is installed.';
+  const [testingPrinterId, setTestingPrinterId] = useState<string | null>(null);
+  const [printerStatuses, setPrinterStatuses] = useState<Record<string, { status: string; text: string; color?: string }>>({});
 
-    if (Platform.OS === 'web') {
-      window.alert(`[${p.name}]\n${msg}`);
-    } else {
-      Alert.alert(p.name, msg);
+  const handleTestConnection = async (p: RestaurantPrinter) => {
+    if (p.connection_type === 'bluetooth') {
+      const msg = 'Bluetooth printer discovery & connection testing will become available after Bluetooth printer support is installed.';
+      if (Platform.OS === 'web') window.alert(`[${p.name}]\n${msg}`);
+      else Alert.alert(p.name, msg);
+      return;
+    }
+    if (p.connection_type === 'usb') {
+      const msg = 'USB printer detection & testing will become available after USB printer support is installed.';
+      if (Platform.OS === 'web') window.alert(`[${p.name}]\n${msg}`);
+      else Alert.alert(p.name, msg);
+      return;
+    }
+
+    setTestingPrinterId(p.id);
+    setPrinterStatuses((prev) => ({
+      ...prev,
+      [p.id]: { status: 'checking', text: 'Checking connection...', color: '#0284c7' },
+    }));
+
+    try {
+      const result = await printerManager.testPrinterConnection(p);
+      if (result.reachable) {
+        setPrinterStatuses((prev) => ({
+          ...prev,
+          [p.id]: { status: 'reachable', text: `Reachable (${result.latencyMs}ms)`, color: '#16a34a' },
+        }));
+        showToast('success', 'Printer Reachable', `${p.name} responded in ${result.latencyMs}ms (${p.ip_address}:${p.port || 9100}).`);
+      } else {
+        setPrinterStatuses((prev) => ({
+          ...prev,
+          [p.id]: { status: 'unreachable', text: result.status.toUpperCase(), color: '#dc2626' },
+        }));
+        showToast('error', 'Connection Failed', result.message);
+      }
+    } catch (err: any) {
+      setPrinterStatuses((prev) => ({
+        ...prev,
+        [p.id]: { status: 'error', text: 'Test failed', color: '#dc2626' },
+      }));
+      showToast('error', 'Test Failed', err.message || 'Unknown network error.');
+    } finally {
+      setTestingPrinterId(null);
     }
   };
 
-  const handleCalibrationTestPrompt = () => {
-    const msg =
-      'Calibration test printing will become available after direct Android printer support is installed in the next phase.';
-    if (Platform.OS === 'web') {
-      window.alert(msg);
-    } else {
-      Alert.alert('Calibration Test', msg);
+  const handleTestPrint = async (p: RestaurantPrinter) => {
+    if (p.connection_type !== 'lan' && p.connection_type !== 'wifi') {
+      const msg = `${p.connection_type.toUpperCase()} test printing will become available after hardware support is installed.`;
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert(p.name, msg);
+      return;
+    }
+
+    setTestingPrinterId(p.id);
+    try {
+      const result = await printerManager.printTestReceipt(p);
+      if (result.success) {
+        showToast('success', 'Print Data Sent', `Test receipt payload sent to ${p.name} (${result.bytesSent} bytes).`);
+      } else if (result.status === 'partial_or_unknown') {
+        const msg = 'Print transmission interrupted. Check the printer output before retrying to prevent duplicate paper waste.';
+        if (Platform.OS === 'web') window.alert(`[${p.name}]\n${msg}`);
+        else Alert.alert('Partial Print Result', msg);
+      } else {
+        showToast('error', 'Print Failed', result.message);
+      }
+    } catch (err: any) {
+      showToast('error', 'Print Error', err?.message || 'Could not send test print.');
+    } finally {
+      setTestingPrinterId(null);
     }
   };
+
+  const handleCalibrationTest = async () => {
+    const activeTarget = editingPrinter || {
+      id: 'preview',
+      restaurant_id: restaurantId,
+      name: name.trim() || 'Preview Printer',
+      connection_type: connectionType,
+      paper_width: paperWidth,
+      printer_role: printerRole,
+      is_active: true,
+      is_primary: isPrimary,
+      ip_address: ipAddress.trim() || null,
+      port: Number(port) || 9100,
+      alignment,
+      horizontal_shift_mm: horizontalShiftMm,
+      margin_left_mm: marginLeftMm,
+      margin_right_mm: marginRightMm,
+      margin_top_mm: marginTopMm,
+      margin_bottom_mm: marginBottomMm,
+    } as RestaurantPrinter;
+
+    if (connectionType !== 'lan' && connectionType !== 'wifi') {
+      const msg = `${connectionType.toUpperCase()} calibration test printing will become available after driver installation.`;
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Calibration Test', msg);
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const calPayload: PrinterCalibration = {
+        alignment,
+        horizontal_shift_mm: horizontalShiftMm,
+        margin_left_mm: marginLeftMm,
+        margin_right_mm: marginRightMm,
+        margin_top_mm: marginTopMm,
+        margin_bottom_mm: marginBottomMm,
+      };
+
+      const result = await printerManager.printCalibrationTest(activeTarget, calPayload);
+      if (result.success) {
+        showToast('success', 'Calibration Sent', `Calibration test sent to ${activeTarget.name} (${result.bytesSent} bytes).`);
+      } else {
+        showToast('error', 'Calibration Failed', result.message);
+      }
+    } catch (err: any) {
+      showToast('error', 'Calibration Error', err.message || 'Could not send calibration receipt.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handlePrintSampleKot = async (p: RestaurantPrinter) => {
+    if (p.connection_type !== 'lan' && p.connection_type !== 'wifi') {
+      showToast('info', 'Hardware Support Pending', 'Available for LAN / Wi-Fi printers in Phase 3.');
+      return;
+    }
+    try {
+      const result = await printerManager.printSampleKot(p);
+      if (result.success) {
+        showToast('success', 'KOT Sample Sent', `Deterministic test KOT sent to ${p.name}.`);
+      } else {
+        showToast('error', 'KOT Print Failed', result.message);
+      }
+    } catch (err: any) {
+      showToast('error', 'Error', err?.message || 'Failed to print test KOT.');
+    }
+  };
+
+  const handlePrintSampleBill = async (p: RestaurantPrinter) => {
+    if (p.connection_type !== 'lan' && p.connection_type !== 'wifi') {
+      showToast('info', 'Hardware Support Pending', 'Available for LAN / Wi-Fi printers in Phase 3.');
+      return;
+    }
+    try {
+      const result = await printerManager.printSampleBill(p);
+      if (result.success) {
+        showToast('success', 'Bill Sample Sent', `Deterministic test Bill sent to ${p.name}.`);
+      } else {
+        showToast('error', 'Bill Print Failed', result.message);
+      }
+    } catch (err: any) {
+      showToast('error', 'Error', err?.message || 'Failed to print test Bill.');
+    }
+  };
+
 
   const toggleCategorySelection = (catId: string) => {
     if (selectedCategoryIds.includes(catId)) {
@@ -413,18 +550,32 @@ export const PrinterManagementSection: React.FC<Props> = ({
                     <b>Sections:</b> {p.section_names.join(', ')}
                   </Text>
                 )}
-                <Text style={styles.statusText}>
-                  <b>Status:</b> Hardware test pending
+                <Text style={[styles.statusText, printerStatuses[p.id]?.color ? { color: printerStatuses[p.id]?.color } : null]}>
+                  <b>Status:</b> {printerStatuses[p.id]?.text || (['lan', 'wifi'].includes(p.connection_type) ? 'Configured (TCP Ready)' : 'Configured')}
                 </Text>
               </View>
 
               <View style={styles.actionsRow}>
                 <TouchableOpacity
                   style={styles.actionBtnSecondary}
-                  onPress={() => handleTestConnectionPrompt(p)}
+                  onPress={() => handleTestConnection(p)}
+                  disabled={testingPrinterId === p.id}
                 >
-                  <Text style={styles.actionBtnTextSecondary}>Test</Text>
+                  {testingPrinterId === p.id ? (
+                    <ActivityIndicator size="small" color="#2563eb" />
+                  ) : (
+                    <Text style={styles.actionBtnTextSecondary}>Test Conn</Text>
+                  )}
                 </TouchableOpacity>
+                {['lan', 'wifi'].includes(p.connection_type) && (
+                  <TouchableOpacity
+                    style={styles.actionBtnSecondary}
+                    onPress={() => handleTestPrint(p)}
+                    disabled={testingPrinterId === p.id}
+                  >
+                    <Text style={styles.actionBtnTextSecondary}>Test Print</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   style={styles.actionBtnSecondary}
                   onPress={() => openEditModal(p)}
@@ -796,7 +947,8 @@ export const PrinterManagementSection: React.FC<Props> = ({
                 <View style={styles.calibrationActionsRow}>
                   <TouchableOpacity
                     style={styles.calTestBtn}
-                    onPress={handleCalibrationTestPrompt}
+                    onPress={handleCalibrationTest}
+                    disabled={isSaving}
                   >
                     <Text style={styles.calTestBtnText}>Print Calibration Test</Text>
                   </TouchableOpacity>
@@ -807,6 +959,28 @@ export const PrinterManagementSection: React.FC<Props> = ({
                     <Text style={styles.calResetBtnText}>Reset to Default</Text>
                   </TouchableOpacity>
                 </View>
+
+                {editingPrinter && ['lan', 'wifi'].includes(editingPrinter.connection_type) && (
+                  <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#e2e8f0' }}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6 }}>
+                      🧪 DEV Test Receipts (No Database Mutation)
+                    </Text>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <TouchableOpacity
+                        style={[styles.calTestBtn, { backgroundColor: '#f59e0b', flex: 1 }]}
+                        onPress={() => handlePrintSampleKot(editingPrinter)}
+                      >
+                        <Text style={styles.calTestBtnText}>Test KOT Slip</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.calTestBtn, { backgroundColor: '#10b981', flex: 1 }]}
+                        onPress={() => handlePrintSampleBill(editingPrinter)}
+                      >
+                        <Text style={styles.calTestBtnText}>Test Bill Receipt</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
               </View>
             </ScrollView>
 

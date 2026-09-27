@@ -45,6 +45,7 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-svg": "15.15.4",
+    "react-native-tcp-socket": "^6.4.3",
     "react-native-web": "^0.21.0",
     "tailwind-merge": "^3.0.1"
   },

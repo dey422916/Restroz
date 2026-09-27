@@ -216,3 +216,62 @@ export function generateSampleCalibrationDocument(paperWidth: '58mm' | '80mm' = 
   const printer = paperWidth === '58mm' ? SAMPLE_PRINTER_POS58 : SAMPLE_PRINTER_POS80;
   return renderCalibrationReceiptToEscPos(printer);
 }
+
+/**
+ * Generates a clean, deterministic network Test Print receipt for LAN / Wi-Fi printers.
+ */
+export function renderNetworkTestReceiptToEscPos(
+  printer: RestaurantPrinter,
+  customCalibration?: import('../../../types').PrinterCalibration
+): EscPosDocument {
+  const { ReceiptCanvas } = require('./documentRenderer');
+  const { encodeRasterToEscPos } = require('./encoder');
+  const { DEFAULT_PRINTER_CALIBRATION } = require('../printerTypes');
+
+  const paperWidth = printer.paper_width || '80mm';
+  const canvas = new ReceiptCanvas(paperWidth);
+
+  canvas.drawBanner('RESTROZ PRINTER TEST', { scaleX: 1, scaleY: 1 });
+  canvas.drawTextLine('RestroZ Network Printing Engine', { align: 'center', bold: true });
+  canvas.drawDivider('solid', 2);
+
+  canvas.drawKeyValue('Printer:', printer.name, { bold: true });
+  canvas.drawKeyValue('Connection:', printer.connection_type.toUpperCase());
+  if (printer.ip_address) {
+    canvas.drawKeyValue('IP Address:', printer.ip_address);
+    canvas.drawKeyValue('Port:', String(printer.port || 9100));
+  }
+  canvas.drawKeyValue('Paper Width:', paperWidth);
+  canvas.drawKeyValue('Status:', 'PRINT TEST');
+
+  canvas.drawDivider('dashed', 1);
+
+  canvas.drawTextLine('RestroZ Network Printing', { align: 'center', bold: true });
+  canvas.drawTextLine('If you can read this receipt, the printer connection is working.', { align: 'center' });
+
+  canvas.drawDivider('dashed', 1);
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  canvas.drawKeyValue('Test Time:', `${dateStr} ${timeStr}`);
+
+  canvas.drawDivider('solid', 2);
+
+  const cal = customCalibration || {
+    alignment: printer.alignment,
+    horizontal_shift_mm: printer.horizontal_shift_mm,
+    margin_left_mm: printer.margin_left_mm,
+    margin_right_mm: printer.margin_right_mm,
+    margin_top_mm: printer.margin_top_mm,
+    margin_bottom_mm: printer.margin_bottom_mm,
+  };
+
+  const finalBitmap = canvas.renderToBitmap(cal);
+  return encodeRasterToEscPos(finalBitmap, {
+    cut: true,
+    feedLines: 4,
+    paperWidth,
+  });
+}
+

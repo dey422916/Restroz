@@ -22,7 +22,12 @@ export type TransportStatus =
   | 'not_configured'
   | 'not_bound'
   | 'bluetooth_disabled'
-  | 'permission_denied';
+  | 'permission_denied'
+  | 'permission_required'
+  | 'device_not_connected'
+  | 'unsupported_usb_interface'
+  | 'usb_host_unsupported'
+  | 'connection_failed';
 
 export interface TcpConnectionConfig {
   host: string;
@@ -40,6 +45,24 @@ export interface BluetoothDeviceInfo {
 export interface BluetoothConnectionConfig {
   address: string;
   name?: string;
+  timeoutMs?: number;
+}
+
+export interface UsbDeviceInfo {
+  deviceId: number;
+  vendorId: number;
+  productId: number;
+  deviceName?: string;
+  serialNumber?: string;
+  isPrinterClass?: boolean;
+}
+
+export interface UsbConnectionConfig {
+  vendorId: number;
+  productId: number;
+  deviceId?: number;
+  serialNumber?: string;
+  baudRate?: number;
   timeoutMs?: number;
 }
 
@@ -63,4 +86,7 @@ export interface PrintTransportResult {
 
 export const DEFAULT_TCP_TIMEOUT_MS = 3000;
 export const DEFAULT_BLUETOOTH_TIMEOUT_MS = 5000;
+export const DEFAULT_USB_TIMEOUT_MS = 5000;
+export const DEFAULT_USB_CHUNK_SIZE = 512;
+export const USB_PRINTER_INTERFACE_CLASS = 7;
 export const SPP_UUID = '00001101-0000-1000-8000-00805F9B34FB';

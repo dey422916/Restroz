@@ -21,6 +21,7 @@ import {
 } from './escpos/testReceiptRenderer';
 import { tcpTransport } from './transports/tcpTransport';
 import { bluetoothTransport } from './transports/bluetoothTransport';
+import { usbTransport } from './transports/usbTransport';
 import { TestConnectionResult, PrintTransportResult } from './transports/types';
 
 export const printerManager = {
@@ -39,8 +40,13 @@ export const printerManager = {
   getBluetoothPairedDevices: () => bluetoothTransport.getPairedDevices(),
   startBluetoothDiscovery: () => bluetoothTransport.startDiscovery(),
 
+  // USB Discovery and Status APIs
+  isUsbHostSupported: () => usbTransport.isUsbHostSupported(),
+  getAttachedUsbDevices: () => usbTransport.getAttachedDevices(),
+  requestUsbPermission: (deviceId: number) => usbTransport.requestPermission(deviceId),
+
   /**
-   * Tests connection to a LAN, Wi-Fi, or Bluetooth thermal printer.
+   * Tests connection to a LAN, Wi-Fi, Bluetooth, or USB thermal printer.
    */
   async testPrinterConnection(printer: RestaurantPrinter): Promise<TestConnectionResult> {
     if (printer.connection_type === 'bluetooth') {
@@ -61,6 +67,26 @@ export const printerManager = {
       });
     }
 
+    if (printer.connection_type === 'usb') {
+      const binding = await devicePrinterBindingService.getDeviceBinding(printer.id);
+      const vendorId = binding?.usb_vendor_id;
+      const productId = binding?.usb_product_id;
+      if (vendorId === undefined || vendorId === null || productId === undefined || productId === null) {
+        return {
+          reachable: false,
+          status: 'not_bound',
+          message: 'USB printer is not bound on this tablet. Select USB device in Settings.',
+          latencyMs: 0,
+        };
+      }
+
+      return usbTransport.testConnection({
+        vendorId,
+        productId,
+        serialNumber: binding?.usb_serial_number || undefined,
+      });
+    }
+
     if (printer.connection_type === 'lan' || printer.connection_type === 'wifi') {
       return tcpTransport.testConnection({
         host: printer.ip_address || '',
@@ -71,13 +97,13 @@ export const printerManager = {
     return {
       reachable: false,
       status: 'not_configured',
-      message: `${printer.connection_type.toUpperCase()} hardware testing will become available in later phases.`,
+      message: `${(printer.connection_type as string).toUpperCase()} hardware testing will become available in later phases.`,
       latencyMs: 0,
     };
   },
 
   /**
-   * Prints a clean, small test receipt to a LAN, Wi-Fi, or Bluetooth thermal printer.
+   * Prints a clean, small test receipt to a LAN, Wi-Fi, Bluetooth, or USB thermal printer.
    */
   async printTestReceipt(
     printer: RestaurantPrinter,
@@ -106,6 +132,32 @@ export const printerManager = {
       );
     }
 
+    if (printer.connection_type === 'usb') {
+      const binding = await devicePrinterBindingService.getDeviceBinding(printer.id);
+      const vendorId = binding?.usb_vendor_id;
+      const productId = binding?.usb_product_id;
+      if (vendorId === undefined || vendorId === null || productId === undefined || productId === null) {
+        return {
+          success: false,
+          status: 'not_bound',
+          bytesSent: 0,
+          totalBytes: doc.bytes.length,
+          message: 'USB printer not bound on this tablet. Please connect and select device in Settings.',
+          durationMs: 0,
+        };
+      }
+
+      return usbTransport.sendPayload(
+        {
+          vendorId,
+          productId,
+          serialNumber: binding?.usb_serial_number || undefined,
+        },
+        doc.bytes,
+        printer.id
+      );
+    }
+
     if (printer.connection_type === 'lan' || printer.connection_type === 'wifi') {
       return tcpTransport.sendPayload(
         {
@@ -122,13 +174,13 @@ export const printerManager = {
       status: 'not_configured',
       bytesSent: 0,
       totalBytes: doc.bytes.length,
-      message: `${printer.connection_type.toUpperCase()} direct printing will become available after hardware driver support is installed.`,
+      message: `${(printer.connection_type as string).toUpperCase()} direct printing will become available after hardware driver support is installed.`,
       durationMs: 0,
     };
   },
 
   /**
-   * Prints a visual calibration test receipt to a LAN, Wi-Fi, or Bluetooth thermal printer.
+   * Prints a visual calibration test receipt to a LAN, Wi-Fi, Bluetooth, or USB thermal printer.
    */
   async printCalibrationTest(
     printer: RestaurantPrinter,
@@ -157,6 +209,32 @@ export const printerManager = {
       );
     }
 
+    if (printer.connection_type === 'usb') {
+      const binding = await devicePrinterBindingService.getDeviceBinding(printer.id);
+      const vendorId = binding?.usb_vendor_id;
+      const productId = binding?.usb_product_id;
+      if (vendorId === undefined || vendorId === null || productId === undefined || productId === null) {
+        return {
+          success: false,
+          status: 'not_bound',
+          bytesSent: 0,
+          totalBytes: doc.bytes.length,
+          message: 'USB printer not bound on this tablet. Please connect and select device in Settings.',
+          durationMs: 0,
+        };
+      }
+
+      return usbTransport.sendPayload(
+        {
+          vendorId,
+          productId,
+          serialNumber: binding?.usb_serial_number || undefined,
+        },
+        doc.bytes,
+        printer.id
+      );
+    }
+
     if (printer.connection_type === 'lan' || printer.connection_type === 'wifi') {
       return tcpTransport.sendPayload(
         {
@@ -173,13 +251,13 @@ export const printerManager = {
       status: 'not_configured',
       bytesSent: 0,
       totalBytes: doc.bytes.length,
-      message: `${printer.connection_type.toUpperCase()} direct printing will become available after hardware driver support is installed.`,
+      message: `${(printer.connection_type as string).toUpperCase()} direct printing will become available after hardware driver support is installed.`,
       durationMs: 0,
     };
   },
 
   /**
-   * Sends deterministic sample KOT to a LAN, Wi-Fi, or Bluetooth thermal printer for DEV validation.
+   * Sends deterministic sample KOT to a LAN, Wi-Fi, Bluetooth, or USB thermal printer for DEV validation.
    */
   async printSampleKot(
     printer: RestaurantPrinter,
@@ -204,6 +282,28 @@ export const printerManager = {
       return bluetoothTransport.sendPayload({ address }, doc.bytes, printer.id);
     }
 
+    if (printer.connection_type === 'usb') {
+      const binding = await devicePrinterBindingService.getDeviceBinding(printer.id);
+      const vendorId = binding?.usb_vendor_id;
+      const productId = binding?.usb_product_id;
+      if (vendorId === undefined || vendorId === null || productId === undefined || productId === null) {
+        return {
+          success: false,
+          status: 'not_bound',
+          bytesSent: 0,
+          totalBytes: doc.bytes.length,
+          message: 'USB printer not bound on this tablet.',
+          durationMs: 0,
+        };
+      }
+
+      return usbTransport.sendPayload(
+        { vendorId, productId, serialNumber: binding?.usb_serial_number || undefined },
+        doc.bytes,
+        printer.id
+      );
+    }
+
     if (printer.connection_type === 'lan' || printer.connection_type === 'wifi') {
       return tcpTransport.sendPayload(
         {
@@ -220,13 +320,13 @@ export const printerManager = {
       status: 'not_configured',
       bytesSent: 0,
       totalBytes: doc.bytes.length,
-      message: `${printer.connection_type.toUpperCase()} printing not supported in this phase.`,
+      message: `${(printer.connection_type as string).toUpperCase()} printing not supported in this phase.`,
       durationMs: 0,
     };
   },
 
   /**
-   * Sends deterministic sample Bill to a LAN, Wi-Fi, or Bluetooth thermal printer for DEV validation.
+   * Sends deterministic sample Bill to a LAN, Wi-Fi, Bluetooth, or USB thermal printer for DEV validation.
    */
   async printSampleBill(
     printer: RestaurantPrinter,
@@ -251,6 +351,28 @@ export const printerManager = {
       return bluetoothTransport.sendPayload({ address }, doc.bytes, printer.id);
     }
 
+    if (printer.connection_type === 'usb') {
+      const binding = await devicePrinterBindingService.getDeviceBinding(printer.id);
+      const vendorId = binding?.usb_vendor_id;
+      const productId = binding?.usb_product_id;
+      if (vendorId === undefined || vendorId === null || productId === undefined || productId === null) {
+        return {
+          success: false,
+          status: 'not_bound',
+          bytesSent: 0,
+          totalBytes: doc.bytes.length,
+          message: 'USB printer not bound on this tablet.',
+          durationMs: 0,
+        };
+      }
+
+      return usbTransport.sendPayload(
+        { vendorId, productId, serialNumber: binding?.usb_serial_number || undefined },
+        doc.bytes,
+        printer.id
+      );
+    }
+
     if (printer.connection_type === 'lan' || printer.connection_type === 'wifi') {
       return tcpTransport.sendPayload(
         {
@@ -267,11 +389,8 @@ export const printerManager = {
       status: 'not_configured',
       bytesSent: 0,
       totalBytes: doc.bytes.length,
-      message: `${printer.connection_type.toUpperCase()} printing not supported in this phase.`,
+      message: `${(printer.connection_type as string).toUpperCase()} printing not supported in this phase.`,
       durationMs: 0,
     };
   },
 };
-
-
-

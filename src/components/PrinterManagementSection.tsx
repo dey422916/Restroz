@@ -75,6 +75,15 @@ export const PrinterManagementSection: React.FC<Props> = ({
   const [selectedBluetoothMac, setSelectedBluetoothMac] = useState('');
   const [discoveredBluetoothDevices, setDiscoveredBluetoothDevices] = useState<import('../services/printerManager/transports/types').BluetoothDeviceInfo[]>([]);
   const [isScanningBt, setIsScanningBt] = useState(false);
+
+  // USB fields
+  const [usbVendorId, setUsbVendorId] = useState('');
+  const [usbProductId, setUsbProductId] = useState('');
+  const [usbSerialNumber, setUsbSerialNumber] = useState('');
+  const [usbDeviceName, setUsbDeviceName] = useState('');
+  const [discoveredUsbDevices, setDiscoveredUsbDevices] = useState<import('../services/printerManager/transports/types').UsbDeviceInfo[]>([]);
+  const [isScanningUsb, setIsScanningUsb] = useState(false);
+
   const [deviceBindings, setDeviceBindings] = useState<Record<string, DevicePrinterBinding>>({});
   // Routing fields
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
@@ -98,7 +107,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
       // Load device bindings for all printers
       const bindingsMap: Record<string, DevicePrinterBinding> = {};
       for (const p of data) {
-        if (p.connection_type === 'bluetooth') {
+        if (p.connection_type === 'bluetooth' || p.connection_type === 'usb') {
           const b = await printerManager.getDeviceBinding(p.id);
           if (b) bindingsMap[p.id] = b;
         }
@@ -134,6 +143,23 @@ export const PrinterManagementSection: React.FC<Props> = ({
     }
   };
 
+  const handleDetectUsbPrinters = async () => {
+    setIsScanningUsb(true);
+    try {
+      const devices = await printerManager.getAttachedUsbDevices();
+      setDiscoveredUsbDevices(devices);
+      if (devices.length === 0) {
+        showToast('info', 'No USB Printers Detected', 'Connect the thermal printer using USB OTG or tablet USB Host port.');
+      } else {
+        showToast('success', 'USB Printers Found', `Found ${devices.length} attached USB device(s).`);
+      }
+    } catch (err: any) {
+      showToast('error', 'USB Error', err?.message || 'Could not detect USB devices.');
+    } finally {
+      setIsScanningUsb(false);
+    }
+  };
+
 
   useEffect(() => {
     loadPrinters();
@@ -152,6 +178,11 @@ export const PrinterManagementSection: React.FC<Props> = ({
     setBluetoothDeviceName('');
     setSelectedBluetoothMac('');
     setDiscoveredBluetoothDevices([]);
+    setUsbVendorId('');
+    setUsbProductId('');
+    setUsbSerialNumber('');
+    setUsbDeviceName('');
+    setDiscoveredUsbDevices([]);
     setSelectedCategoryIds([]);
     setSelectedSections([]);
     resetCalibrationForm();
@@ -171,6 +202,22 @@ export const PrinterManagementSection: React.FC<Props> = ({
     setBluetoothDeviceName(printer.bluetooth_device_name || '');
     setSelectedBluetoothMac(deviceBindings[printer.id]?.bluetooth_mac_address || '');
     setDiscoveredBluetoothDevices([]);
+
+    const b = deviceBindings[printer.id];
+    if (b && b.usb_vendor_id !== undefined && b.usb_vendor_id !== null) {
+      setUsbVendorId(`0x${b.usb_vendor_id.toString(16).toUpperCase()}`);
+    } else {
+      setUsbVendorId('');
+    }
+    if (b && b.usb_product_id !== undefined && b.usb_product_id !== null) {
+      setUsbProductId(`0x${b.usb_product_id.toString(16).toUpperCase()}`);
+    } else {
+      setUsbProductId('');
+    }
+    setUsbSerialNumber(b?.usb_serial_number || '');
+    setUsbDeviceName('');
+    setDiscoveredUsbDevices([]);
+
     setSelectedCategoryIds(printer.category_ids || []);
     setSelectedSections(printer.section_names || []);
 
@@ -243,8 +290,8 @@ export const PrinterManagementSection: React.FC<Props> = ({
           printer_role: printerRole,
           is_primary: isPrimary,
           fallback_printer_id: fallbackPrinterId || null,
-          ip_address: ipAddress.trim() || null,
-          port: portNum || 9100,
+          ip_address: ['lan', 'wifi'].includes(connectionType) ? ipAddress.trim() : null,
+          port: ['lan', 'wifi'].includes(connectionType) ? portNum : null,
           bluetooth_device_name: bluetoothDeviceName.trim() || null,
           category_ids: selectedCategoryIds,
           section_names: selectedSections,
@@ -261,8 +308,8 @@ export const PrinterManagementSection: React.FC<Props> = ({
           is_active: true,
           is_primary: isPrimary,
           fallback_printer_id: fallbackPrinterId || null,
-          ip_address: ipAddress.trim() || null,
-          port: portNum || 9100,
+          ip_address: ['lan', 'wifi'].includes(connectionType) ? ipAddress.trim() : null,
+          port: ['lan', 'wifi'].includes(connectionType) ? portNum : null,
           bluetooth_device_name: bluetoothDeviceName.trim() || null,
           category_ids: selectedCategoryIds,
           section_names: selectedSections,
@@ -280,6 +327,24 @@ export const PrinterManagementSection: React.FC<Props> = ({
           bluetooth_mac_address: selectedBluetoothMac,
           bluetooth_device_name: bluetoothDeviceName || undefined,
         });
+      }
+
+      // Save device-local USB binding if configured
+      if (savedPrinterId && connectionType === 'usb' && usbVendorId.trim() && usbProductId.trim()) {
+        const vIdStr = usbVendorId.trim();
+        const pIdStr = usbProductId.trim();
+        const vId = vIdStr.startsWith('0x') || vIdStr.startsWith('0X') ? parseInt(vIdStr, 16) : parseInt(vIdStr, 10);
+        const pId = pIdStr.startsWith('0x') || pIdStr.startsWith('0X') ? parseInt(pIdStr, 16) : parseInt(pIdStr, 10);
+
+        if (!isNaN(vId) && !isNaN(pId)) {
+          await printerManager.saveDeviceBinding({
+            restaurant_printer_id: savedPrinterId,
+            connection_type: 'usb',
+            usb_vendor_id: vId,
+            usb_product_id: pId,
+            usb_serial_number: usbSerialNumber.trim() || undefined,
+          });
+        }
       }
 
       setModalVisible(false);
@@ -335,19 +400,6 @@ export const PrinterManagementSection: React.FC<Props> = ({
   const [printerStatuses, setPrinterStatuses] = useState<Record<string, { status: string; text: string; color?: string }>>({});
 
   const handleTestConnection = async (p: RestaurantPrinter) => {
-    if (p.connection_type === 'bluetooth') {
-      const msg = 'Bluetooth printer discovery & connection testing will become available after Bluetooth printer support is installed.';
-      if (Platform.OS === 'web') window.alert(`[${p.name}]\n${msg}`);
-      else Alert.alert(p.name, msg);
-      return;
-    }
-    if (p.connection_type === 'usb') {
-      const msg = 'USB printer detection & testing will become available after USB printer support is installed.';
-      if (Platform.OS === 'web') window.alert(`[${p.name}]\n${msg}`);
-      else Alert.alert(p.name, msg);
-      return;
-    }
-
     setTestingPrinterId(p.id);
     setPrinterStatuses((prev) => ({
       ...prev,
@@ -361,7 +413,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
           ...prev,
           [p.id]: { status: 'reachable', text: `Reachable (${result.latencyMs}ms)`, color: '#16a34a' },
         }));
-        showToast('success', 'Printer Reachable', `${p.name} responded in ${result.latencyMs}ms (${p.ip_address}:${p.port || 9100}).`);
+        showToast('success', 'Printer Reachable', `${p.name} responded: ${result.message}`);
       } else {
         setPrinterStatuses((prev) => ({
           ...prev,
@@ -374,20 +426,13 @@ export const PrinterManagementSection: React.FC<Props> = ({
         ...prev,
         [p.id]: { status: 'error', text: 'Test failed', color: '#dc2626' },
       }));
-      showToast('error', 'Test Failed', err.message || 'Unknown network error.');
+      showToast('error', 'Test Failed', err.message || 'Unknown connection error.');
     } finally {
       setTestingPrinterId(null);
     }
   };
 
   const handleTestPrint = async (p: RestaurantPrinter) => {
-    if (p.connection_type !== 'lan' && p.connection_type !== 'wifi') {
-      const msg = `${p.connection_type.toUpperCase()} test printing will become available after hardware support is installed.`;
-      if (Platform.OS === 'web') window.alert(msg);
-      else Alert.alert(p.name, msg);
-      return;
-    }
-
     setTestingPrinterId(p.id);
     try {
       const result = await printerManager.printTestReceipt(p);
@@ -427,13 +472,6 @@ export const PrinterManagementSection: React.FC<Props> = ({
       margin_bottom_mm: marginBottomMm,
     } as RestaurantPrinter;
 
-    if (connectionType !== 'lan' && connectionType !== 'wifi') {
-      const msg = `${connectionType.toUpperCase()} calibration test printing will become available after driver installation.`;
-      if (Platform.OS === 'web') window.alert(msg);
-      else Alert.alert('Calibration Test', msg);
-      return;
-    }
-
     setIsSaving(true);
     try {
       const calPayload: PrinterCalibration = {
@@ -459,14 +497,10 @@ export const PrinterManagementSection: React.FC<Props> = ({
   };
 
   const handlePrintSampleKot = async (p: RestaurantPrinter) => {
-    if (p.connection_type !== 'lan' && p.connection_type !== 'wifi') {
-      showToast('info', 'Hardware Support Pending', 'Available for LAN / Wi-Fi printers in Phase 3.');
-      return;
-    }
     try {
       const result = await printerManager.printSampleKot(p);
       if (result.success) {
-        showToast('success', 'KOT Sample Sent', `Deterministic test KOT sent to ${p.name}.`);
+        showToast('success', 'KOT Sample Sent', `Deterministic test KOT sent to ${p.name} (${result.bytesSent} bytes).`);
       } else {
         showToast('error', 'KOT Print Failed', result.message);
       }
@@ -476,14 +510,10 @@ export const PrinterManagementSection: React.FC<Props> = ({
   };
 
   const handlePrintSampleBill = async (p: RestaurantPrinter) => {
-    if (p.connection_type !== 'lan' && p.connection_type !== 'wifi') {
-      showToast('info', 'Hardware Support Pending', 'Available for LAN / Wi-Fi printers in Phase 3.');
-      return;
-    }
     try {
       const result = await printerManager.printSampleBill(p);
       if (result.success) {
-        showToast('success', 'Bill Sample Sent', `Deterministic test Bill sent to ${p.name}.`);
+        showToast('success', 'Bill Sample Sent', `Deterministic test Bill sent to ${p.name} (${result.bytesSent} bytes).`);
       } else {
         showToast('error', 'Bill Print Failed', result.message);
       }
@@ -578,29 +608,34 @@ export const PrinterManagementSection: React.FC<Props> = ({
               <View style={styles.printerDetails}>
                 {['lan', 'wifi'].includes(p.connection_type) && p.ip_address && (
                   <Text style={styles.detailText}>
-                    <b>Target:</b> {p.ip_address}:{p.port || 9100}
+                    <Text style={{ fontWeight: '700' }}>Target: </Text>{p.ip_address}:{p.port || 9100}
                   </Text>
                 )}
-                {p.connection_type === 'bluetooth' && p.bluetooth_device_name && (
+                {p.connection_type === 'bluetooth' && (
                   <Text style={styles.detailText}>
-                    <b>Device Name:</b> {p.bluetooth_device_name}
+                    <Text style={{ fontWeight: '700' }}>Device: </Text>{p.bluetooth_device_name || 'Generic BT'} {deviceBindings[p.id]?.bluetooth_mac_address ? `(${deviceBindings[p.id]?.bluetooth_mac_address})` : '(Not bound)'}
+                  </Text>
+                )}
+                {p.connection_type === 'usb' && (
+                  <Text style={styles.detailText}>
+                    <Text style={{ fontWeight: '700' }}>USB Target: </Text>{deviceBindings[p.id]?.usb_vendor_id !== undefined && deviceBindings[p.id]?.usb_vendor_id !== null ? `VID: 0x${deviceBindings[p.id]!.usb_vendor_id!.toString(16).toUpperCase()}, PID: 0x${deviceBindings[p.id]!.usb_product_id!.toString(16).toUpperCase()}` : '(Not bound on this tablet)'}
                   </Text>
                 )}
                 <Text style={styles.detailText}>
-                  <b>Calibration:</b> {p.alignment || 'Center'} / {Number(p.horizontal_shift_mm) > 0 ? `+${p.horizontal_shift_mm}` : p.horizontal_shift_mm}mm shift
+                  <Text style={{ fontWeight: '700' }}>Calibration: </Text>{p.alignment || 'Center'} / {Number(p.horizontal_shift_mm) > 0 ? `+${p.horizontal_shift_mm}` : p.horizontal_shift_mm}mm shift
                 </Text>
                 {p.category_ids && p.category_ids.length > 0 && (
                   <Text style={styles.detailText}>
-                    <b>Categories:</b> {p.category_ids.length} assigned
+                    <Text style={{ fontWeight: '700' }}>Categories: </Text>{p.category_ids.length} assigned
                   </Text>
                 )}
                 {p.section_names && p.section_names.length > 0 && (
                   <Text style={styles.detailText}>
-                    <b>Sections:</b> {p.section_names.join(', ')}
+                    <Text style={{ fontWeight: '700' }}>Sections: </Text>{p.section_names.join(', ')}
                   </Text>
                 )}
                 <Text style={[styles.statusText, printerStatuses[p.id]?.color ? { color: printerStatuses[p.id]?.color } : null]}>
-                  <b>Status:</b> {printerStatuses[p.id]?.text || (['lan', 'wifi'].includes(p.connection_type) ? 'Configured (TCP Ready)' : 'Configured')}
+                  <Text style={{ fontWeight: '700' }}>Status: </Text>{printerStatuses[p.id]?.text || (['lan', 'wifi'].includes(p.connection_type) ? 'Configured (TCP Ready)' : p.connection_type === 'bluetooth' ? (deviceBindings[p.id]?.bluetooth_mac_address ? 'Configured (BT Bound)' : 'Not Bound') : (deviceBindings[p.id]?.usb_vendor_id !== undefined && deviceBindings[p.id]?.usb_vendor_id !== null ? 'Configured (USB Bound)' : 'Not Bound'))}
                 </Text>
               </View>
 
@@ -616,15 +651,33 @@ export const PrinterManagementSection: React.FC<Props> = ({
                     <Text style={styles.actionBtnTextSecondary}>Test Conn</Text>
                   )}
                 </TouchableOpacity>
-                {['lan', 'wifi'].includes(p.connection_type) && (
+
+                <TouchableOpacity
+                  style={styles.actionBtnSecondary}
+                  onPress={() => handleTestPrint(p)}
+                  disabled={testingPrinterId === p.id}
+                >
+                  <Text style={styles.actionBtnTextSecondary}>Test Print</Text>
+                </TouchableOpacity>
+
+                {(p.printer_role === 'kot' || p.printer_role === 'both') && (
                   <TouchableOpacity
                     style={styles.actionBtnSecondary}
-                    onPress={() => handleTestPrint(p)}
-                    disabled={testingPrinterId === p.id}
+                    onPress={() => handlePrintSampleKot(p)}
                   >
-                    <Text style={styles.actionBtnTextSecondary}>Test Print</Text>
+                    <Text style={styles.actionBtnTextSecondary}>Test KOT</Text>
                   </TouchableOpacity>
                 )}
+
+                {(p.printer_role === 'bill' || p.printer_role === 'both') && (
+                  <TouchableOpacity
+                    style={styles.actionBtnSecondary}
+                    onPress={() => handlePrintSampleBill(p)}
+                  >
+                    <Text style={styles.actionBtnTextSecondary}>Test Bill</Text>
+                  </TouchableOpacity>
+                )}
+
                 <TouchableOpacity
                   style={styles.actionBtnSecondary}
                   onPress={() => openEditModal(p)}
@@ -896,10 +949,103 @@ export const PrinterManagementSection: React.FC<Props> = ({
               {/* USB Specific Fields */}
               {connectionType === 'usb' && (
                 <View style={styles.infoNoticeBox}>
-                  <Text style={styles.infoNoticeTitle}>USB OTG Detection</Text>
+                  <Text style={styles.infoNoticeTitle}>🔌 USB Host / USB-OTG Printer</Text>
                   <Text style={styles.infoNoticeText}>
-                    USB printer detection will become available after USB printer support is installed in Phase 5.
+                    Connect the thermal printer using USB OTG or the tablet's USB Host port.
                   </Text>
+
+                  <TouchableOpacity
+                    style={[styles.addBtn, { marginTop: 10, alignSelf: 'flex-start', backgroundColor: '#0284c7' }]}
+                    onPress={handleDetectUsbPrinters}
+                    disabled={isScanningUsb}
+                  >
+                    {isScanningUsb ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.addBtnText}>🔍 Detect USB Printers</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  {usbVendorId && usbProductId ? (
+                    <View style={{ marginTop: 8, padding: 8, backgroundColor: '#ecfdf5', borderRadius: 6, borderWidth: 1, borderColor: '#a7f3d0' }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#065f46' }}>
+                        ✓ Bound USB Target: VID {usbVendorId}, PID {usbProductId}
+                      </Text>
+                      {usbSerialNumber ? (
+                        <Text style={{ fontSize: 11, color: '#047857' }}>Serial: {usbSerialNumber}</Text>
+                      ) : null}
+                    </View>
+                  ) : null}
+
+                  {discoveredUsbDevices.length > 0 && (
+                    <View style={{ marginTop: 10, gap: 6 }}>
+                      <Text style={[styles.fieldLabel, { marginBottom: 2 }]}>Attached USB Devices:</Text>
+                      {discoveredUsbDevices.map((d) => {
+                        const vHex = `0x${d.vendorId.toString(16).toUpperCase()}`;
+                        const pHex = `0x${d.productId.toString(16).toUpperCase()}`;
+                        const isSelected = usbVendorId === vHex && usbProductId === pHex;
+                        return (
+                          <TouchableOpacity
+                            key={d.deviceId}
+                            style={{
+                              padding: 8,
+                              backgroundColor: isSelected ? '#dbeafe' : '#f8fafc',
+                              borderRadius: 6,
+                              borderWidth: 1,
+                              borderColor: isSelected ? '#2563eb' : '#cbd5e1',
+                            }}
+                            onPress={() => {
+                              setUsbVendorId(vHex);
+                              setUsbProductId(pHex);
+                              if (d.serialNumber) setUsbSerialNumber(d.serialNumber);
+                              if (d.deviceName && !name) setName(d.deviceName);
+                            }}
+                          >
+                            <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>
+                              {d.deviceName || 'USB Thermal Printer'} {isSelected ? '✓' : ''}
+                            </Text>
+                            <Text style={{ fontSize: 11, color: '#64748b' }}>
+                              VID: {vHex} | PID: {pHex} {d.serialNumber ? `| Serial: ${d.serialNumber}` : ''}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  <View style={[styles.rowTwoCol, { marginTop: 10 }]}>
+                    <View style={styles.col}>
+                      <Text style={styles.fieldLabel}>Vendor ID (VID) *</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="e.g. 0x0416, 0x0483"
+                        placeholderTextColor="#94a3b8"
+                        value={usbVendorId}
+                        onChangeText={setUsbVendorId}
+                        autoCapitalize="characters"
+                      />
+                    </View>
+                    <View style={styles.col}>
+                      <Text style={styles.fieldLabel}>Product ID (PID) *</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="e.g. 0x5011, 0x5740"
+                        placeholderTextColor="#94a3b8"
+                        value={usbProductId}
+                        onChangeText={setUsbProductId}
+                        autoCapitalize="characters"
+                      />
+                    </View>
+                  </View>
+
+                  <Text style={[styles.fieldLabel, { marginTop: 6 }]}>USB Serial Number (Optional)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Leave blank if not applicable"
+                    placeholderTextColor="#94a3b8"
+                    value={usbSerialNumber}
+                    onChangeText={setUsbSerialNumber}
+                  />
                 </View>
               )}
 

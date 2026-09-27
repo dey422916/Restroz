@@ -6,8 +6,9 @@ import { useNotification } from '../../src/context/NotificationContext';
 import { authService } from '../../src/services/api/authService';
 import { storageService } from '../../src/services/api/storageService';
 import { supabase } from '../../src/services/supabase';
-import { UserRole, PaperSize } from '../../src/types';
+import { UserRole, PaperSize, Category } from '../../src/types';
 import { OptimizedImage } from '../../src/components/common/OptimizedImage';
+import { PrinterManagementSection } from '../../src/components/PrinterManagementSection';
 import {
   parseBannerUrls,
   extractBannerCleanUrl,
@@ -117,6 +118,22 @@ export default function SettingsScreen() {
   const [customBannerUrl, setCustomBannerUrl] = useState('');
 
   const canManage = isAdmin || isSuperAdmin || role === 'ADMIN' || role === 'SUPER_ADMIN';
+  const effectiveRestaurantId = activeRestaurantId || settings.restaurant_id || '';
+  const [categories, setCategories] = useState<Category[]>([]);
+
+  useEffect(() => {
+    if (!effectiveRestaurantId) return;
+    supabase
+      .from('categories')
+      .select('*')
+      .eq('restaurant_id', effectiveRestaurantId)
+      .order('display_order', { ascending: true })
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setCategories(data as Category[]);
+        }
+      });
+  }, [effectiveRestaurantId]);
 
   // Sync form values from settings whenever settings change, unless user is actively editing
   useEffect(() => {
@@ -1786,6 +1803,16 @@ export default function SettingsScreen() {
                     <Text style={styles.saveBtnText}>Save Printer Settings</Text>
                   )}
                 </TouchableOpacity>
+
+                {/* 4.1 Advanced Multi-Printer Management & Calibration */}
+                {effectiveRestaurantId ? (
+                  <PrinterManagementSection
+                    restaurantId={effectiveRestaurantId}
+                    categories={categories}
+                    canManage={canManage}
+                    showToast={showToast}
+                  />
+                ) : null}
               </View>
             </View>
 

@@ -3,35 +3,39 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 import crypto from "node:crypto";
 
 /**
- * Public X.509 Digital Certificate for RestroZ POS Printing System.
- * Note: Digital certificates contain ONLY the public key and identity metadata (CN=RestroZ POS, O=RestroZ Technologies).
- * It is completely safe to distribute publicly.
+ * Official RestroZ POS Production Public Signing Certificate.
+ * Subject: CN=RestroZ POS, O=RestroZ Technologies, OU=POS Printing System, C=IN
+ * Issuer: CN=RestroZ Root CA, O=RestroZ Technologies, OU=Security & Trust Infrastructure, C=IN
+ * SHA-1 Fingerprint: f50c94c745587958bbb549596e3d0626ccffe4d6
+ * SHA-256 Fingerprint: 42b080d769ba3023160c363d5d0ba6223bb827da8ea52232d8df15f77deb2e91
  */
 const DEFAULT_PUBLIC_CERTIFICATE = `-----BEGIN CERTIFICATE-----
-MIIDoTCCAomgAwIBAgIUOBiazfCjA53dg+oaFSyDyRZcQXYwDQYJKoZIhvcNAQEL
-BQAwYDEUMBIGA1UEAwwLUmVzdHJvWiBQT1MxHTAbBgNVBAoMFFJlc3Ryb1ogVGVj
-aG5vbG9naWVzMRwwGgYDVQQLDBNQT1MgUHJpbnRpbmcgU3lzdGVtMQswCQYDVQQG
-EwJJTjAeFw0yNjA5MjYyMzIzMjVaFw0zNjA5MjMyMzIzMjVaMGAxFDASBgNVBAMM
-C1Jlc3Ryb1ogUE9TMR0wGwYDVQQKDBRSZXN0cm9aIFRlY2hub2xvZ2llczEcMBoG
-A1UECwwTUE9TIFByaW50aW5nIFN5c3RlbTELMAkGA1UEBhMCSU4wggEiMA0GCSqG
-SIb3DQEBAQUAA4IBDwAwggEKAoIBAQDnCWo/jjz2odnstyP7VEDrr1RjiIgTYDZF
-cExo1W1nT7VBr/AmT+dMAnmRtPIF1s2pQnyWlaBp1wAWuwdr9e7I9QEq3XHZBqDp
-gzxFXxKNptMN04uKG+RCAgZ5HyZGPyqXR8ksT4hDZ6/8ORxc29y7kkTPr2U/jxHX
-YWOzQdsLbfYOxYpwdwAHw0fwNOm3UAwZuKJConqhOLj7oXj5OiCfCHUQK104Gdiy
-ft1x0mWq59EEK/+/m3hidRTm7k4XHsXAwXh251Sl1LMeWDwoBggK+ZznRspF39NT
-lxud5+s+u7H25JrUk36lkkDlGCYgMQnETx6rLNc7H6lapLM18PTLAgMBAAGjUzBR
-MB0GA1UdDgQWBBR2TY1deR8hXuukLzTlYmR+3O87sDAfBgNVHSMEGDAWgBR2TY1d
-eR8hXuukLzTlYmR+3O87sDAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUA
-A4IBAQAJFif4qzMNkKAvDlbRIAmdHnZo6g2tK4rnJ+6PzSJ2brhk0nL5DW67RkPw
-ugz0CGENf7LcnZBFtlAR+urABil4Ur/KgmbiUurHlvZcxj3bsMYslBfxZbpXrwkk
-FrGfJMS8Mc/xvfQbrsHRYWQ3+TbAAdmRkvh5RMKa951gBYeniwIz1IagN7EkEhME
-bSIP91mmRuLch4fTwwmH1hNJ0YR6kY5lTEMQPRP1qh2+CZxXdNaOBJw/B6KI/ziA
-ONeto3C/FEx656ChdLlbM2luU2peQskDkivkH6IhyW4wqIFvoy1oxcTGWK077/fa
-GXZZ7xhCVM0mse4TVg7c2KX6mUBP
+MIIDsTCCApmgAwIBAgIJAuz39mery01vMA0GCSqGSIb3DQEBCwUAMHAxCzAJBgNV
+BAYTAklOMR0wGwYDVQQKExRSZXN0cm9aIFRlY2hub2xvZ2llczEoMCYGA1UECxMf
+U2VjdXJpdHkgJiBUcnVzdCBJbmZyYXN0cnVjdHVyZTEYMBYGA1UEAxMPUmVzdHJv
+WiBSb290IENBMB4XDTI2MDkyNzE0MDk0NVoXDTM2MDkyNzE0MDk0NVowYDELMAkG
+A1UEBhMCSU4xHTAbBgNVBAoTFFJlc3Ryb1ogVGVjaG5vbG9naWVzMRwwGgYDVQQL
+ExNQT1MgUHJpbnRpbmcgU3lzdGVtMRQwEgYDVQQDEwtSZXN0cm9aIFBPUzCCASIw
+DQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAOdzX6Yy3W+v9gDczWGcWYvJNaII
+7aSBoTZ+SuivOcmoCtRwGgowtLDmg5MWQJEwzg/X4KLU5wWMUlZOPPr4s5+wyV1U
+lDskU3moEy0dvdkT7P50zXtIePecNPS/NCWx973ETYWgyV0/HCYlghkO8/mnIOtF
+gpjxpOlggEm8dHvBG7eX2Xz3w8A46EX2OCKZ+Jf+3F4cP0zD6UyDR5JWTZEVNlS9
+22/qjTFJU3EuanXe9LWLGWMMA5d9aklqjWITcPs8qbLV/fzRmyzEUvj/Btd6YJdA
+RPvnMKmqtJ81SY+WklwzUlguRfsujI8o0oK+8jeUvMoJbLH2NLxZ5Mg066ECAwEA
+AaNeMFwwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCBsAwHQYDVR0lBBYwFAYI
+KwYBBQUHAwMGCCsGAQUFBwMCMB0GA1UdDgQWBBTL9l7/1XIPkma7oagrEBdKRrA6
+LDANBgkqhkiG9w0BAQsFAAOCAQEAEMldnmtUZA/mxRDoDFL7/m4RLzh5r2Bdbe/5
+Rq7rhLs7cKFM2MqEgElZsj8saGJ1486EFsSoGVJ9kIY0sZQLnqVR5A50SBCuqMkg
+r9Mof1JLsbIGVt0MLTL1uDaY5hL1/AjH5Z8yLvYDQZpMyarRL5927D5GHQ3nk+YQ
+FvqJNLjQ4kwVgKWQlfWfr6dzIF7YS1dRD6EudS+i6Y4XJMBlir4oqTogQ+ACfNgy
+lfr7EmMkB2acVMgYBzob7XnD8QIn7/9mT1IDcP5ba6Gg+dMQn65jFifdX5aB99lr
+H7bK3h/CzPkmC4In+20RJnZePWl7BOu+73pjLVgZ0+fVvwqFjQ==
 -----END CERTIFICATE-----`;
 
+const MAX_PAYLOAD_BYTES = 64 * 1024; // 64 KB
+
 /**
- * Returns CORS headers tailored to RestroZ authorized domains
+ * Returns CORS headers tailored to RestroZ authorized origins
  */
 function getCorsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get("Origin") || "";
@@ -71,7 +75,7 @@ serve(async (req: Request) => {
       const cert = customCert
         ? (customCert.includes("\\n") ? customCert.replace(/\\n/g, "\n") : customCert)
         : DEFAULT_PUBLIC_CERTIFICATE;
-      return new Response(cert, {
+      return new Response(cert.trim(), {
         status: 200,
         headers: {
           ...corsHeaders,
@@ -82,22 +86,30 @@ serve(async (req: Request) => {
 
     // 2. POST: Securely sign QZ Tray request payload with RSA-SHA512
     if (req.method === "POST") {
-      // Authorization Check: Verify caller is an authenticated RestroZ session
+      // Enforce Payload Size Limit (Max 64 KB)
+      const contentLengthHeader = req.headers.get("content-length");
+      if (contentLengthHeader && parseInt(contentLengthHeader, 10) > MAX_PAYLOAD_BYTES) {
+        return new Response(
+          JSON.stringify({ error: "Payload Too Large: Maximum allowed signing request size is 64 KB." }),
+          { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Authorization Check: Verify caller is an authenticated RestroZ user
       const authHeader = req.headers.get("Authorization") || "";
-      const apiKeyHeader = req.headers.get("apikey") || "";
       const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
       const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
 
-      if (!token && !apiKeyHeader) {
+      if (!token) {
         return new Response(
           JSON.stringify({ error: "Unauthorized: Missing authentication credentials." }),
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      // If a JWT token was provided, verify with Supabase Auth
+      // Verify user JWT token with Supabase Auth
       if (token && token !== supabaseAnonKey) {
         try {
           const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
@@ -111,7 +123,6 @@ serve(async (req: Request) => {
             );
           }
         } catch (authVerificationErr: any) {
-          console.error("[sign-qz-tray] Session verification failed:", authVerificationErr);
           return new Response(
             JSON.stringify({ error: "Unauthorized: Session verification failed." }),
             { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -119,18 +130,30 @@ serve(async (req: Request) => {
         }
       }
 
-      // Extract toSign payload without modification
+      // Parse and extract exact toSign string without modification
       let toSign: string | null = null;
       const contentType = req.headers.get("content-type") || "";
 
       if (contentType.includes("application/json")) {
-        const body = await req.json();
-        if (typeof body.request === "string") {
-          toSign = body.request;
-        } else if (typeof body.toSign === "string") {
-          toSign = body.toSign;
-        } else if (typeof body.data === "string") {
-          toSign = body.data;
+        try {
+          const body = await req.json();
+          if (typeof body?.request === "string") {
+            toSign = body.request;
+          } else if (typeof body?.toSign === "string") {
+            toSign = body.toSign;
+          } else if (typeof body?.data === "string") {
+            toSign = body.data;
+          } else {
+            return new Response(
+              JSON.stringify({ error: "Malformed Request: 'request' field must be a valid non-empty string." }),
+              { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+        } catch {
+          return new Response(
+            JSON.stringify({ error: "Invalid JSON format in request body." }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
         }
       } else {
         toSign = await req.text();
@@ -138,8 +161,15 @@ serve(async (req: Request) => {
 
       if (toSign === null || toSign === undefined || toSign.length === 0) {
         return new Response(
-          JSON.stringify({ error: "Missing 'request' parameter to sign." }),
+          JSON.stringify({ error: "Missing or empty 'request' parameter to sign." }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      if (toSign.length > MAX_PAYLOAD_BYTES) {
+        return new Response(
+          JSON.stringify({ error: "Payload Too Large: Signing data exceeds 64 KB limit." }),
+          { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
@@ -176,7 +206,6 @@ serve(async (req: Request) => {
 
     return new Response("Method Not Allowed", { status: 405, headers: corsHeaders });
   } catch (err: any) {
-    console.error("[sign-qz-tray] Error:", err);
     return new Response(JSON.stringify({ error: err.message || "Internal server signing error." }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

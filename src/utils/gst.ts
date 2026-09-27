@@ -77,15 +77,11 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
   const totalDiscounts = Math.min(discountAmount + couponDiscount, subtotal);
   const netOrderValue = roundToTwoDecimals(Math.max(0, subtotal - totalDiscounts));
 
-  let totalCgst = 0;
-  let totalSgst = 0;
-  let totalIgst = 0;
-  let taxableValue = 0;
-  let nilExemptValue = 0;
-
   const defaultRate = customTaxRate !== undefined && customTaxRate !== null && !isNaN(Number(customTaxRate))
     ? Number(customTaxRate)
     : 5.0;
+
+  const rateBuckets = new Map<number, number>();
 
   if (items.length > 0 && subtotal > 0) {
     const discountRatio = netOrderValue / subtotal;
@@ -97,38 +93,36 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
         ? Number(item.tax_rate)
         : defaultRate;
 
-      if (rate > 0) {
-        taxableValue += itemNet;
-        if (isGstEnabled) {
-          if (isInterState) {
-            totalIgst += (itemNet * rate) / 100;
-          } else {
-            const halfRate = rate / 2;
-            totalCgst += (itemNet * halfRate) / 100;
-            totalSgst += (itemNet * halfRate) / 100;
-          }
-        }
-      } else {
-        nilExemptValue += itemNet;
-      }
+      rateBuckets.set(rate, (rateBuckets.get(rate) || 0) + itemNet);
     });
   } else {
     // When no items array is provided (subtotal fallback only):
-    if (defaultRate > 0) {
-      taxableValue = netOrderValue;
+    rateBuckets.set(defaultRate, netOrderValue);
+  }
+
+  let totalCgst = 0;
+  let totalSgst = 0;
+  let totalIgst = 0;
+  let taxableValue = 0;
+  let nilExemptValue = 0;
+
+  rateBuckets.forEach((bucketNet, rate) => {
+    const roundedBucketNet = roundToTwoDecimals(bucketNet);
+    if (rate > 0) {
+      taxableValue += roundedBucketNet;
       if (isGstEnabled) {
         if (isInterState) {
-          totalIgst = (taxableValue * defaultRate) / 100;
+          totalIgst += roundToTwoDecimals((roundedBucketNet * rate) / 100);
         } else {
-          const halfRate = defaultRate / 2;
-          totalCgst = (taxableValue * halfRate) / 100;
-          totalSgst = (taxableValue * halfRate) / 100;
+          const halfRate = rate / 2;
+          totalCgst += roundToTwoDecimals((roundedBucketNet * halfRate) / 100);
+          totalSgst += roundToTwoDecimals((roundedBucketNet * halfRate) / 100);
         }
       }
     } else {
-      nilExemptValue = netOrderValue;
+      nilExemptValue += roundedBucketNet;
     }
-  }
+  });
 
   const taxableSubtotal = roundToTwoDecimals(taxableValue);
   const nilExemptSubtotal = roundToTwoDecimals(nilExemptValue);
@@ -195,7 +189,7 @@ export function getOrderTaxableBreakdown(order: Partial<Order>, defaultTaxRate: 
 } {
   const subtotal = getOrderSubtotal(order);
   const discount = (order.discount_amount || 0) + (order.coupon_discount || 0);
-  const netOrderValue = Math.max(0, subtotal - discount);
+  const netOrderValue = roundToTwoDecimals(Math.max(0, subtotal - discount));
 
   if (order.items && order.items.length > 0 && subtotal > 0) {
     const discountRatio = netOrderValue / subtotal;
@@ -246,4 +240,34 @@ export function getOrderTaxableBreakdown(order: Partial<Order>, defaultTaxRate: 
     nilExemptAmount: 0,
   };
 }
+
+/**
+ * Single source of truth to compute all invoice financial totals for any order (live or historical).
+ */
+export function getOrderInvoiceTotals(
+  order: Partial<Order>,
+  settings?: { is_gst_enabled?: boolean; default_tax_rate?: number; service_charge_rate?: number }
+): CalculationResult {
+  const dynamicTaxRate =
+    (order as any)?.tax_rate !== undefined && (order as any)?.tax_rate !== null
+      ? Number((order as any).tax_rate)
+      : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
+          ? Number(settings.default_tax_rate)
+          : 5.0);
+
+  const isGstEnabled = settings?.is_gst_enabled !== false;
+
+  return calculateOrderTotals({
+    items: order.items || [],
+    subtotal: getOrderSubtotal(order),
+    discountType: order.discount_type as any,
+    discountValue: order.discount_value,
+    couponDiscount: order.coupon_discount || 0,
+    deliveryCharge: order.delivery_charge || 0,
+    serviceChargeRate: settings?.service_charge_rate,
+    isGstEnabled,
+    taxRate: dynamicTaxRate,
+  });
+}
+
 

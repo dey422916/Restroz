@@ -24,7 +24,7 @@ import { kotService, clearKotsCache } from '../../src/services/api/kotService';
 import { printService, formatLogoDataUri } from '../../src/services/printService';
 import { Order, OrderItem, OrderStatus, PaymentStatus, OrderSource, Product, DiningTable, RestaurantSettings, PaymentMethod } from '../../src/types';
 import { formatCurrency, numberToWords } from '../../src/utils/currency';
-import { getOrderSubtotal, calculateOrderTotals, getOrderTaxableBreakdown } from '../../src/utils/gst';
+import { getOrderSubtotal, calculateOrderTotals, getOrderTaxableBreakdown, getOrderInvoiceTotals } from '../../src/utils/gst';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { useAuth } from '../../src/context/AuthContext';
 import { useSettings } from '../../src/context/SettingsContext';
@@ -1081,38 +1081,12 @@ export default function OrdersScreen() {
 
     const hasManualDiscount = payDiscountType !== 'none' && validatedPayDiscount > 0;
 
-    // If no manual discount is added, and the order already has persisted payable_amount,
-    // read directly from the persisted order fields to ensure 100% fidelity with server order!
-    if (!hasManualDiscount && payOrderModal.payable_amount !== undefined && payOrderModal.payable_amount !== null) {
-      const ordSub = payOrderModal.subtotal || paySubtotal;
-      const cpnDisc = payOrderModal.coupon_discount || 0;
-      const discAmt = payOrderModal.discount_amount || 0;
-      const effectiveRate = (payOrderModal as any)?.tax_rate !== undefined && (payOrderModal as any)?.tax_rate !== null
-        ? Number((payOrderModal as any).tax_rate)
-        : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 5.0);
-      const breakdown = getOrderTaxableBreakdown(payOrderModal, effectiveRate);
-      return {
-        subtotal: ordSub,
-        discountAmount: discAmt,
-        couponDiscount: cpnDisc,
-        taxableSubtotal: breakdown.taxableAmount,
-        nilExemptSubtotal: breakdown.nilExemptAmount,
-        cgstAmount: payOrderModal.cgst_amount || 0,
-        sgstAmount: payOrderModal.sgst_amount || 0,
-        igstAmount: payOrderModal.igst_amount || 0,
-        totalTax: (payOrderModal.cgst_amount || 0) + (payOrderModal.sgst_amount || 0) + (payOrderModal.igst_amount || 0),
-        serviceCharge: payOrderModal.service_charge || 0,
-        deliveryCharge: payOrderModal.delivery_charge || 0,
-        rawTotal: payOrderModal.grand_total ?? payOrderModal.payable_amount ?? 0,
-        roundOff: payOrderModal.round_off || 0,
-        payableAmount: payOrderModal.payable_amount ?? 0,
-      };
-    }
-
     const isGstEnabled = settings?.is_gst_enabled !== undefined && settings?.is_gst_enabled !== null
       ? Boolean(settings.is_gst_enabled)
       : false;
-    const taxRate = settings?.default_tax_rate !== undefined ? settings.default_tax_rate : 5.0;
+    const taxRate = (payOrderModal as any)?.tax_rate !== undefined && (payOrderModal as any)?.tax_rate !== null
+      ? Number((payOrderModal as any).tax_rate)
+      : (settings?.default_tax_rate !== undefined ? Number(settings.default_tax_rate) : 5.0);
 
     return calculateOrderTotals({
       items: payOrderModal.items || [],
@@ -3404,63 +3378,64 @@ export default function OrdersScreen() {
                     )}
 
                     {(() => {
-                      const breakdown = getOrderTaxableBreakdown(viewOrderModal, dynamicTaxRate);
+                      const invoiceTotals = getOrderInvoiceTotals(viewOrderModal, settings);
+                      const isTaxInvoiceDisplay = isTaxInvoice && invoiceTotals.totalTax > 0;
                       return (
                         <>
-                          {breakdown.taxableAmount > 0 && (
+                          {invoiceTotals.taxableSubtotal > 0 && (
                             <View style={styles.invoiceRow}>
                               <Text style={styles.invoiceLabel}>Taxable Value</Text>
-                              <Text style={styles.invoiceVal}>{formatCurrency(breakdown.taxableAmount)}</Text>
+                              <Text style={styles.invoiceVal}>{formatCurrency(invoiceTotals.taxableSubtotal)}</Text>
                             </View>
                           )}
-                          {breakdown.nilExemptAmount > 0 && (
+                          {invoiceTotals.nilExemptSubtotal > 0 && (
                             <View style={styles.invoiceRow}>
                               <Text style={styles.invoiceLabel}>Nil/Exempt Value</Text>
-                              <Text style={styles.invoiceVal}>{formatCurrency(breakdown.nilExemptAmount)}</Text>
+                              <Text style={styles.invoiceVal}>{formatCurrency(invoiceTotals.nilExemptSubtotal)}</Text>
                             </View>
                           )}
-                          {isTaxInvoice && (viewOrderModal.cgst_amount || 0) + (viewOrderModal.sgst_amount || 0) > 0 ? (
+                          {isTaxInvoiceDisplay ? (
                             <>
                               <View style={styles.invoiceRow}>
                                 <Text style={styles.invoiceLabel}>CGST ({halfRate}%)</Text>
-                                <Text style={styles.invoiceVal}>{formatCurrency(viewOrderModal.cgst_amount || 0)}</Text>
+                                <Text style={styles.invoiceVal}>{formatCurrency(invoiceTotals.cgstAmount)}</Text>
                               </View>
                               <View style={styles.invoiceRow}>
                                 <Text style={styles.invoiceLabel}>SGST ({halfRate}%)</Text>
-                                <Text style={styles.invoiceVal}>{formatCurrency(viewOrderModal.sgst_amount || 0)}</Text>
+                                <Text style={styles.invoiceVal}>{formatCurrency(invoiceTotals.sgstAmount)}</Text>
                               </View>
                             </>
                           ) : null}
+
+                          {Boolean(viewOrderModal.delivery_charge && viewOrderModal.delivery_charge > 0) && (
+                            <View style={styles.invoiceRow}>
+                              <Text style={styles.invoiceLabel}>Delivery Charge</Text>
+                              <Text style={styles.invoiceVal}>{formatCurrency(viewOrderModal.delivery_charge)}</Text>
+                            </View>
+                          )}
+
+                          {invoiceTotals.roundOff !== 0 && (
+                            <View style={styles.invoiceRow}>
+                              <Text style={styles.invoiceLabel}>Round Off</Text>
+                              <Text style={styles.invoiceVal}>
+                                {invoiceTotals.roundOff > 0 ? '+' : ''}{formatCurrency(invoiceTotals.roundOff)}
+                              </Text>
+                            </View>
+                          )}
+
+                          {/* Grand Total Banner */}
+                          <View style={styles.invoiceGrandTotalBanner}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <Text style={styles.invoiceGrandTotalLabel}>Grand Total</Text>
+                              <Text style={styles.invoiceGrandTotalVal}>{formatCurrency(invoiceTotals.payableAmount)}</Text>
+                            </View>
+                            <Text style={styles.invoiceWordsText}>
+                              ({numberToWords(invoiceTotals.payableAmount || 0)})
+                            </Text>
+                          </View>
                         </>
                       );
                     })()}
-
-                    {Boolean(viewOrderModal.delivery_charge && viewOrderModal.delivery_charge > 0) && (
-                      <View style={styles.invoiceRow}>
-                        <Text style={styles.invoiceLabel}>Delivery Charge</Text>
-                        <Text style={styles.invoiceVal}>{formatCurrency(viewOrderModal.delivery_charge)}</Text>
-                      </View>
-                    )}
-
-                    {Boolean(viewOrderModal.round_off) && (
-                      <View style={styles.invoiceRow}>
-                        <Text style={styles.invoiceLabel}>Round Off</Text>
-                        <Text style={styles.invoiceVal}>
-                          {viewOrderModal.round_off > 0 ? '+' : ''}{formatCurrency(viewOrderModal.round_off)}
-                        </Text>
-                      </View>
-                    )}
-
-                    {/* Grand Total Banner */}
-                    <View style={styles.invoiceGrandTotalBanner}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Text style={styles.invoiceGrandTotalLabel}>Grand Total</Text>
-                        <Text style={styles.invoiceGrandTotalVal}>{formatCurrency(viewOrderModal.payable_amount)}</Text>
-                      </View>
-                      <Text style={styles.invoiceWordsText}>
-                        ({numberToWords(viewOrderModal.payable_amount || 0)})
-                      </Text>
-                    </View>
                   </View>
 
                   {/* Print and Share buttons */}

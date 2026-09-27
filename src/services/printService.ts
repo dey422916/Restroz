@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import { Order, KOT, RestaurantSettings, OrderItem, DayRegister } from '../types';
 import { formatCurrency, numberToWords } from '../utils/currency';
-import { getOrderSubtotal, getOrderTaxableBreakdown } from '../utils/gst';
+import { getOrderSubtotal, getOrderTaxableBreakdown, getOrderInvoiceTotals } from '../utils/gst';
 import { cleanCustomerOrderNotes } from '../utils/orderNotes';
 import { formatOrderDateTime } from '../utils/dateUtils';
 import { supabase } from './supabase';
@@ -518,21 +518,6 @@ export const printService = {
       })
       .join('');
 
-    const subTotalNum = getOrderSubtotal(order);
-    const subTotalStr = subTotalNum.toFixed(2);
-    const taxTotal = (order.cgst_amount || 0) + (order.sgst_amount || 0) + (order.igst_amount || 0);
-    const roundOffStr = order.round_off
-      ? `INR ${(order.round_off > 0 ? '+' : '') + order.round_off.toFixed(2)}`
-      : 'INR 0.00';
-    const payableAmountStr = `INR ${order.payable_amount.toFixed(2)}`;
-
-    // Preserved Historical Tax & Setting Determination
-    const effectiveGstRegistered =
-      settings.is_gst_enabled !== false &&
-      (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()));
-    const isTaxInvoice =
-      taxTotal > 0 || (effectiveGstRegistered && settings.tax_invoice_enabled !== false && Boolean(settings.gstin?.trim()));
-
     const dynamicTaxRate =
       (order as any).tax_rate !== undefined && (order as any).tax_rate !== null
         ? Number((order as any).tax_rate)
@@ -541,7 +526,30 @@ export const printService = {
             : 5.0);
     const halfTaxRate = dynamicTaxRate / 2;
     const halfTaxRateStr = halfTaxRate % 1 === 0 ? String(halfTaxRate) : halfTaxRate.toFixed(1);
-    const taxableBreakdown = getOrderTaxableBreakdown(order, dynamicTaxRate);
+
+    const calculatedTotals = getOrderInvoiceTotals(order, settings);
+
+    const subTotalNum = calculatedTotals.subtotal;
+    const subTotalStr = subTotalNum.toFixed(2);
+    const taxableAmount = calculatedTotals.taxableSubtotal;
+    const nilExemptAmount = calculatedTotals.nilExemptSubtotal;
+    const cgstAmount = calculatedTotals.cgstAmount;
+    const sgstAmount = calculatedTotals.sgstAmount;
+    const igstAmount = calculatedTotals.igstAmount;
+    const taxTotal = calculatedTotals.totalTax;
+    const roundOffNum = calculatedTotals.roundOff;
+    const roundOffStr = roundOffNum !== 0
+      ? `INR ${(roundOffNum > 0 ? '+' : '') + roundOffNum.toFixed(2)}`
+      : 'INR 0.00';
+    const payableAmountNum = calculatedTotals.payableAmount;
+    const payableAmountStr = `INR ${payableAmountNum.toFixed(2)}`;
+
+    // Preserved Historical Tax & Setting Determination
+    const effectiveGstRegistered =
+      settings.is_gst_enabled !== false &&
+      (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()));
+    const isTaxInvoice =
+      taxTotal > 0 || (effectiveGstRegistered && settings.tax_invoice_enabled !== false && Boolean(settings.gstin?.trim()));
 
     const invoiceNumber = order.invoice_number || order.order_number;
     const customerGstin = order.customer_gstin;
@@ -752,12 +760,12 @@ export const printService = {
                 ? `
             <div class="flex-between">
               <span>Taxable Value:</span>
-              <span>${taxableBreakdown.taxableAmount.toFixed(2)}</span>
+              <span>${taxableAmount.toFixed(2)}</span>
             </div>
 
             ${
-              taxableBreakdown.nilExemptAmount > 0
-                ? `<div class="flex-between"><span>Nil/Exempt Value:</span><span>${taxableBreakdown.nilExemptAmount.toFixed(2)}</span></div>`
+              nilExemptAmount > 0
+                ? `<div class="flex-between"><span>Nil/Exempt Value:</span><span>${nilExemptAmount.toFixed(2)}</span></div>`
                 : ''
             }
 
@@ -766,17 +774,17 @@ export const printService = {
                 ? `
             <div class="flex-between">
               <span>CGST (${halfTaxRateStr}%):</span>
-              <span>${(order.cgst_amount || 0).toFixed(2)}</span>
+              <span>${cgstAmount.toFixed(2)}</span>
             </div>
 
             <div class="flex-between">
               <span>SGST (${halfTaxRateStr}%):</span>
-              <span>${(order.sgst_amount || 0).toFixed(2)}</span>
+              <span>${sgstAmount.toFixed(2)}</span>
             </div>
 
             ${
-              order.igst_amount && order.igst_amount > 0
-                ? `<div class="flex-between"><span>IGST:</span><span>${order.igst_amount.toFixed(2)}</span></div>`
+              igstAmount > 0
+                ? `<div class="flex-between"><span>IGST:</span><span>${igstAmount.toFixed(2)}</span></div>`
                 : ''
             }
             `
@@ -788,19 +796,25 @@ export const printService = {
 
             ${
               order.delivery_charge
-                ? `<div class="flex-between"><span>Delivery Charge:</span><span>${order.delivery_charge.toFixed(2)}</span></div>`
+                ? `<div class="flex-between"><span>Delivery Charge:</span><span>${Number(order.delivery_charge).toFixed(2)}</span></div>`
                 : ''
             }
             ${
               order.service_charge
-                ? `<div class="flex-between"><span>Service Charge:</span><span>${order.service_charge.toFixed(2)}</span></div>`
+                ? `<div class="flex-between"><span>Service Charge:</span><span>${Number(order.service_charge).toFixed(2)}</span></div>`
                 : ''
             }
 
+            ${
+              roundOffNum !== 0
+                ? `
             <div class="flex-between">
               <span>Round Off:</span>
               <span>${roundOffStr}</span>
             </div>
+            `
+                : ''
+            }
 
             <div class="dashed"></div>
 
@@ -915,13 +929,6 @@ export const printService = {
     const isPaid = order.payment_status === 'paid';
     const logoUrl = formatLogoDataUri(settings?.logo_url || (order as any)?.restaurant?.logo_url);
 
-    const taxTotal = (order.cgst_amount || 0) + (order.sgst_amount || 0) + (order.igst_amount || 0);
-    const effectiveGstRegistered =
-      settings.is_gst_enabled !== false &&
-      (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()));
-    const isTaxInvoice =
-      taxTotal > 0 || (effectiveGstRegistered && settings.tax_invoice_enabled !== false && Boolean(settings.gstin?.trim()));
-
     const dynamicTaxRate =
       (order as any).tax_rate !== undefined && (order as any).tax_rate !== null
         ? Number((order as any).tax_rate)
@@ -936,10 +943,24 @@ export const printService = {
     const fssaiNo = (settings as any).fssai_number || (settings as any).fssai_license_number || '';
     const stateName = settings.state || 'West Bengal';
     const stateCode = settings.state_code || '19';
-    const subtotal = getOrderSubtotal(order);
-    const taxableBreakdown = getOrderTaxableBreakdown(order, dynamicTaxRate);
-    const taxableAmount = taxableBreakdown.taxableAmount;
-    const nilExemptAmount = taxableBreakdown.nilExemptAmount;
+
+    const calculatedTotals = getOrderInvoiceTotals(order, settings);
+
+    const subtotal = calculatedTotals.subtotal;
+    const taxableAmount = calculatedTotals.taxableSubtotal;
+    const nilExemptAmount = calculatedTotals.nilExemptSubtotal;
+    const cgstAmount = calculatedTotals.cgstAmount;
+    const sgstAmount = calculatedTotals.sgstAmount;
+    const igstAmount = calculatedTotals.igstAmount;
+    const taxTotal = calculatedTotals.totalTax;
+    const roundOffNum = calculatedTotals.roundOff;
+    const payableAmount = calculatedTotals.payableAmount;
+
+    const effectiveGstRegistered =
+      settings.is_gst_enabled !== false &&
+      (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()));
+    const isTaxInvoice =
+      taxTotal > 0 || (effectiveGstRegistered && settings.tax_invoice_enabled !== false && Boolean(settings.gstin?.trim()));
 
     const paymentMethodStr = order.payments && order.payments.length > 0
       ? order.payments.map((p) => p.payment_method.toUpperCase()).join(', ')
@@ -1326,9 +1347,9 @@ export const printService = {
                       <tr>
                         <td><b>${dynamicTaxRate}%</b></td>
                         <td>${formatCurrency(taxableAmount)}</td>
-                        <td>${formatCurrency(order.cgst_amount || 0)}</td>
-                        <td>${formatCurrency(order.sgst_amount || 0)}</td>
-                        ${order.igst_amount && order.igst_amount > 0 ? `<td>${formatCurrency(order.igst_amount)}</td>` : ''}
+                        <td>${formatCurrency(cgstAmount)}</td>
+                        <td>${formatCurrency(sgstAmount)}</td>
+                        ${igstAmount > 0 ? `<td>${formatCurrency(igstAmount)}</td>` : ''}
                         <td><b>${formatCurrency(taxTotal)}</b></td>
                       </tr>
                     </tbody>
@@ -1338,7 +1359,7 @@ export const printService = {
                 }
 
                 <div class="words-box">
-                  <b>Amount in Words:</b> ${numberToWords(order.payable_amount)}
+                  <b>Amount in Words:</b> ${numberToWords(payableAmount)}
                 </div>
 
                 <div class="terms-box">
@@ -1362,9 +1383,9 @@ export const printService = {
                     ${
                       taxTotal > 0
                         ? `
-                    <div class="total-row"><span>CGST (${halfTaxRateStr}%):</span><b>${formatCurrency(order.cgst_amount || 0)}</b></div>
-                    <div class="total-row"><span>SGST (${halfTaxRateStr}%):</span><b>${formatCurrency(order.sgst_amount || 0)}</b></div>
-                    ${order.igst_amount && order.igst_amount > 0 ? `<div class="total-row"><span>IGST:</span><b>${formatCurrency(order.igst_amount)}</b></div>` : ''}
+                    <div class="total-row"><span>CGST (${halfTaxRateStr}%):</span><b>${formatCurrency(cgstAmount)}</b></div>
+                    <div class="total-row"><span>SGST (${halfTaxRateStr}%):</span><b>${formatCurrency(sgstAmount)}</b></div>
+                    ${igstAmount > 0 ? `<div class="total-row"><span>IGST:</span><b>${formatCurrency(igstAmount)}</b></div>` : ''}
                     `
                         : ''
                     }
@@ -1373,11 +1394,11 @@ export const printService = {
                   }
                   ${order.delivery_charge ? `<div class="total-row"><span>Delivery Charge:</span><b>${formatCurrency(order.delivery_charge)}</b></div>` : ''}
                   ${order.service_charge ? `<div class="total-row"><span>Service Charge:</span><b>${formatCurrency(order.service_charge)}</b></div>` : ''}
-                  ${order.round_off ? `<div class="total-row"><span>Round Off:</span><b>${order.round_off > 0 ? '+' : ''}${formatCurrency(order.round_off)}</b></div>` : ''}
+                  ${roundOffNum !== 0 ? `<div class="total-row"><span>Round Off:</span><b>${roundOffNum > 0 ? '+' : ''}${formatCurrency(roundOffNum)}</b></div>` : ''}
 
                   <div class="grand-total-row">
                     <span>Grand Total:</span>
-                    <span class="grand-total-val">${formatCurrency(order.payable_amount)}</span>
+                    <span class="grand-total-val">${formatCurrency(payableAmount)}</span>
                   </div>
                 </div>
               </div>

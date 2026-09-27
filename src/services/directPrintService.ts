@@ -65,7 +65,38 @@ rdbqM5WL1Q4saBf51ES4RuCEODT5TAaOP2IUnyw458xNHIn/3pnnlaJ//3k8X8Ex
 7wlv8qrnwZlKBUIM7JrxwmcKDbo=
 -----END CERTIFICATE-----`;
 
-export const RESTROZ_PUBLIC_CERTIFICATE = QZ_TRAY_DEMO_CERTIFICATE;
+/**
+ * Official RestroZ POS Production Public Signing Certificate.
+ * Subject: CN=RestroZ POS, O=RestroZ Technologies, OU=POS Printing System, C=IN
+ * Issuer: CN=RestroZ Root CA, O=RestroZ Technologies, OU=Security & Trust Infrastructure, C=IN
+ * SHA-1 Fingerprint: f50c94c745587958bbb549596e3d0626ccffe4d6
+ * SHA-256 Fingerprint: 42b080d769ba3023160c363d5d0ba6223bb827da8ea52232d8df15f77deb2e91
+ * Public asset - safe for distribution.
+ */
+export const RESTROZ_PROD_CERTIFICATE = `-----BEGIN CERTIFICATE-----
+MIIDsTCCApmgAwIBAgIJAuz39mery01vMA0GCSqGSIb3DQEBCwUAMHAxCzAJBgNV
+BAYTAklOMR0wGwYDVQQKExRSZXN0cm9aIFRlY2hub2xvZ2llczEoMCYGA1UECxMf
+U2VjdXJpdHkgJiBUcnVzdCBJbmZyYXN0cnVjdHVyZTEYMBYGA1UEAxMPUmVzdHJv
+WiBSb290IENBMB4XDTI2MDkyNzE0MDk0NVoXDTM2MDkyNzE0MDk0NVowYDELMAkG
+A1UEBhMCSU4xHTAbBgNVBAoTFFJlc3Ryb1ogVGVjaG5vbG9naWVzMRwwGgYDVQQL
+ExNQT1MgUHJpbnRpbmcgU3lzdGVtMRQwEgYDVQQDEwtSZXN0cm9aIFBPUzCCASIw
+DQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAOdzX6Yy3W+v9gDczWGcWYvJNaII
+7aSBoTZ+SuivOcmoCtRwGgowtLDmg5MWQJEwzg/X4KLU5wWMUlZOPPr4s5+wyV1U
+lDskU3moEy0dvdkT7P50zXtIePecNPS/NCWx973ETYWgyV0/HCYlghkO8/mnIOtF
+gpjxpOlggEm8dHvBG7eX2Xz3w8A46EX2OCKZ+Jf+3F4cP0zD6UyDR5JWTZEVNlS9
+22/qjTFJU3EuanXe9LWLGWMMA5d9aklqjWITcPs8qbLV/fzRmyzEUvj/Btd6YJdA
+RPvnMKmqtJ81SY+WklwzUlguRfsujI8o0oK+8jeUvMoJbLH2NLxZ5Mg066ECAwEA
+AaNeMFwwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCBsAwHQYDVR0lBBYwFAYI
+KwYBBQUHAwMGCCsGAQUFBwMCMB0GA1UdDgQWBBTL9l7/1XIPkma7oagrEBdKRrA6
+LDANBgkqhkiG9w0BAQsFAAOCAQEAEMldnmtUZA/mxRDoDFL7/m4RLzh5r2Bdbe/5
+Rq7rhLs7cKFM2MqEgElZsj8saGJ1486EFsSoGVJ9kIY0sZQLnqVR5A50SBCuqMkg
+r9Mof1JLsbIGVt0MLTL1uDaY5hL1/AjH5Z8yLvYDQZpMyarRL5927D5GHQ3nk+YQ
+FvqJNLjQ4kwVgKWQlfWfr6dzIF7YS1dRD6EudS+i6Y4XJMBlir4oqTogQ+ACfNgy
+lfr7EmMkB2acVMgYBzob7XnD8QIn7/9mT1IDcP5ba6Gg+dMQn65jFifdX5aB99lr
+H7bK3h/CzPkmC4In+20RJnZePWl7BOu+73pjLVgZ0+fVvwqFjQ==
+-----END CERTIFICATE-----`;
+
+export const RESTROZ_PUBLIC_CERTIFICATE = RESTROZ_PROD_CERTIFICATE;
 
 /**
  * Checks whether the application is running in development mode
@@ -151,7 +182,8 @@ function setupQzSecurity(qz: any): void {
           }
         });
     } else {
-      const cert = (process.env.EXPO_PUBLIC_QZ_CERTIFICATE || RESTROZ_PUBLIC_CERTIFICATE || QZ_TRAY_DEMO_CERTIFICATE).trim();
+      // In PROD: Use RestroZ Production Leaf Certificate
+      const cert = (process.env.EXPO_PUBLIC_QZ_CERTIFICATE || RESTROZ_PROD_CERTIFICATE).trim();
       resolve(cert);
     }
   });

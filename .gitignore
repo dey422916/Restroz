@@ -16,10 +16,16 @@ dist/
 .env.old-backup
 !.env.example
 
-# Local diagnostic / scratch scripts
+# Local diagnostic / scratch scripts & secrets
 scratch/
+.secrets/
+secrets/
 *.pem
 *.key
+*.pfx
+*.p12
+*.private.pem
+private-key*
 qz-restroz-private.pem
 qz-restroz-certificate.pem
 

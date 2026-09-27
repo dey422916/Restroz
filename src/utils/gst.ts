@@ -92,7 +92,9 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
       items.forEach((item) => {
         const itemGross = Number(item.unit_price) * Number(item.quantity);
         const itemTaxable = itemGross * discountRatio;
-        const rate = customTaxRate !== undefined ? defaultRate : (Number(item.tax_rate) || defaultRate);
+        const rate = (item.tax_rate !== null && item.tax_rate !== undefined && !isNaN(Number(item.tax_rate)))
+          ? Number(item.tax_rate)
+          : defaultRate;
 
         if (isInterState) {
           totalIgst += (itemTaxable * rate) / 100;

@@ -302,6 +302,7 @@ export default function CustomerDigitalMenuScreen() {
         return copy;
       }
       const unitPrice = product.discounted_price || product.price;
+      const prodTax = (product.tax_rate !== undefined && product.tax_rate !== null && !isNaN(Number(product.tax_rate))) ? Number(product.tax_rate) : 5.0;
       return [
         ...prev,
         {
@@ -311,8 +312,8 @@ export default function CustomerDigitalMenuScreen() {
           product_name: product.name,
           unit_price: unitPrice,
           quantity: 1,
-          tax_rate: product.tax_rate,
-          tax_amount: (unitPrice * product.tax_rate) / 100,
+          tax_rate: prodTax,
+          tax_amount: (unitPrice * prodTax) / 100,
           subtotal: unitPrice,
           total_price: unitPrice,
           total: unitPrice,

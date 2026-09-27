@@ -452,8 +452,8 @@ export default function OrdersScreen() {
         unit_price: prodPrice,
         total_price: prodPrice,
         quantity: 1,
-        tax_rate: Number(prod.tax_rate) || 5,
-        tax_amount: (prodPrice * (Number(prod.tax_rate) || 5)) / 100,
+        tax_rate: (prod.tax_rate !== undefined && prod.tax_rate !== null && !isNaN(Number(prod.tax_rate))) ? Number(prod.tax_rate) : 5,
+        tax_amount: (prodPrice * ((prod.tax_rate !== undefined && prod.tax_rate !== null && !isNaN(Number(prod.tax_rate))) ? Number(prod.tax_rate) : 5)) / 100,
         subtotal: prodPrice,
         total: prodPrice,
       };

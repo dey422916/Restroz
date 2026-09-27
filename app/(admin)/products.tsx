@@ -152,7 +152,7 @@ export default function ProductsScreen() {
     setFormStock(String(p.stock_quantity));
     setFormFoodType(p.food_type);
     setFormUnit(p.unit || 'portion');
-    setFormTaxRate(String(p.tax_rate || 5));
+    setFormTaxRate(String(p.tax_rate !== undefined && p.tax_rate !== null ? p.tax_rate : 5));
     setFormHsn(p.hsn_code || '996331');
     setFormPrepTime(String(p.preparation_time_mins || 15));
     setFormImageUrl(p.image_url || '');
@@ -227,7 +227,7 @@ export default function ProductsScreen() {
         stock_quantity: stockNum,
         food_type: formFoodType,
         unit: formUnit.trim() || 'portion',
-        tax_rate: parseFloat(formTaxRate) || 5,
+        tax_rate: (formTaxRate !== '' && !isNaN(parseFloat(formTaxRate))) ? parseFloat(formTaxRate) : 5,
         hsn_code: formHsn.trim() || '996331',
         preparation_time_mins: parseInt(formPrepTime, 10) || 15,
         image_url: formImageUrl.trim() || undefined,

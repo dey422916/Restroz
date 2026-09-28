@@ -452,8 +452,12 @@ export default function OrdersScreen() {
         unit_price: prodPrice,
         total_price: prodPrice,
         quantity: 1,
-        tax_rate: (prod.tax_rate !== undefined && prod.tax_rate !== null && !isNaN(Number(prod.tax_rate))) ? Number(prod.tax_rate) : 5,
-        tax_amount: (prodPrice * ((prod.tax_rate !== undefined && prod.tax_rate !== null && !isNaN(Number(prod.tax_rate))) ? Number(prod.tax_rate) : 5)) / 100,
+        tax_rate: (prod.tax_rate !== undefined && prod.tax_rate !== null && !isNaN(Number(prod.tax_rate)))
+          ? Number(prod.tax_rate)
+          : getOrderTaxRate(editOrderModal || {}, Number(settings?.default_tax_rate) || 5),
+        tax_amount: (prodPrice * ((prod.tax_rate !== undefined && prod.tax_rate !== null && !isNaN(Number(prod.tax_rate)))
+          ? Number(prod.tax_rate)
+          : getOrderTaxRate(editOrderModal || {}, Number(settings?.default_tax_rate) || 5))) / 100,
         subtotal: prodPrice,
         total: prodPrice,
       };
@@ -2324,8 +2328,8 @@ export default function OrdersScreen() {
                         <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.nilExemptSubtotal)}</Text>
                       </View>
                     )}
-                    {Boolean(settings?.is_gst_enabled !== false && (editTotals.cgstAmount + editTotals.sgstAmount > 0)) && (() => {
-                      const editTaxRate = settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 5.0;
+                    {Boolean(editOrderModal && isOrderGstApplicable(editOrderModal, settings?.is_gst_enabled) && (editTotals.cgstAmount + editTotals.sgstAmount > 0)) && (() => {
+                      const editTaxRate = getOrderTaxRate(editOrderModal || {}, Number(settings?.default_tax_rate) || 5.0);
                       const editHalfRate = editTaxRate / 2;
                       const editHalfRateStr = editHalfRate % 1 === 0 ? `${editHalfRate}` : `${editHalfRate.toFixed(1)}`;
                       return (
@@ -2922,10 +2926,8 @@ export default function OrdersScreen() {
                     </View>
                   )}
 
-                  {Boolean(settings?.is_gst_enabled !== false && ((payTotals?.cgstAmount || 0) > 0 || (payTotals?.sgstAmount || 0) > 0)) && (() => {
-                    const payTaxRate = (payOrderModal as any)?.tax_rate !== undefined && (payOrderModal as any)?.tax_rate !== null
-                      ? Number((payOrderModal as any).tax_rate)
-                      : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 5.0);
+                  {Boolean(payOrderModal && isOrderGstApplicable(payOrderModal, settings?.is_gst_enabled) && ((payTotals?.cgstAmount || 0) > 0 || (payTotals?.sgstAmount || 0) > 0)) && (() => {
+                    const payTaxRate = getOrderTaxRate(payOrderModal || {}, Number(settings?.default_tax_rate) || 5.0);
                     const payHalfRate = payTaxRate / 2;
                     const payHalfRateStr = payHalfRate % 1 === 0 ? `${payHalfRate}` : `${payHalfRate.toFixed(1)}`;
                     return (
@@ -3074,7 +3076,7 @@ export default function OrdersScreen() {
                 />
 
                 {/* Customer GSTIN for B2B Billing (Optional) */}
-                {settings?.is_gst_enabled !== false && (
+                {Boolean(payOrderModal && isOrderGstApplicable(payOrderModal, settings?.is_gst_enabled)) && (
                   <View style={{ marginTop: 8 }}>
                     <Text style={styles.fieldLabel}>Customer GSTIN (Optional for B2B Invoice):</Text>
                     <TextInput

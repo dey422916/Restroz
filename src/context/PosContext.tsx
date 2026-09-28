@@ -9,7 +9,7 @@ import {
   KOT,
   PaymentMethod,
 } from '../types';
-import { calculateOrderTotals, CalculationResult } from '../utils/gst';
+import { calculateOrderTotals, CalculationResult, getOrderTaxRate, isOrderGstApplicable } from '../utils/gst';
 import { validateCoupon } from '../utils/validators';
 import { orderService, clearOrdersCache, resolveOrderDiscounts } from '../services/api/orderService';
 import { kotService } from '../services/api/kotService';
@@ -119,6 +119,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
   const [discountValue, setDiscountValue] = useState<number>(0);
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
+  const [loadedOrder, setLoadedOrder] = useState<Order | null>(null);
 
   const [activeOrders, setActiveOrders] = useState<Order[]>([]);
   const [heldOrders, setHeldOrders] = useState<Order[]>([]);
@@ -202,9 +203,11 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setCartItems((prev) => {
       const existingIdx = prev.findIndex((item) => item.product_id === product.id);
-      const defaultTax = (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null && !isNaN(Number(settings.default_tax_rate)))
-        ? Number(settings.default_tax_rate)
-        : 5.0;
+      const defaultTax = loadedOrder
+        ? getOrderTaxRate(loadedOrder, Number(settings.default_tax_rate) || 5.0)
+        : ((settings.default_tax_rate !== undefined && settings.default_tax_rate !== null && !isNaN(Number(settings.default_tax_rate)))
+            ? Number(settings.default_tax_rate)
+            : 5.0);
       const taxRate = (product.tax_rate !== undefined && product.tax_rate !== null && !isNaN(Number(product.tax_rate)))
         ? Number(product.tax_rate)
         : defaultTax;
@@ -299,9 +302,15 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'Invalid coupon code.' };
     }
 
-    const isGstEnabled = (settings.is_gst_enabled !== undefined && settings.is_gst_enabled !== null)
-      ? Boolean(settings.is_gst_enabled)
-      : false;
+    const isPosOrderGst = loadedOrder
+      ? isOrderGstApplicable(loadedOrder, settings.is_gst_enabled)
+      : ((settings.is_gst_enabled !== undefined && settings.is_gst_enabled !== null)
+          ? Boolean(settings.is_gst_enabled)
+          : false);
+
+    const posOrderTaxRate = loadedOrder
+      ? getOrderTaxRate(loadedOrder, Number(settings.default_tax_rate) || 5.0)
+      : (settings.default_tax_rate !== undefined ? Number(settings.default_tax_rate) : 5.0);
 
     const currentTotals = calculateOrderTotals({
       items: cartItems,
@@ -309,8 +318,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       discountValue,
       serviceChargeRate: settings.service_charge_rate,
       deliveryCharge: orderType === 'delivery' ? (customerInfo.deliveryCharge || 0) : 0,
-      isGstEnabled,
-      taxRate: settings.default_tax_rate !== undefined ? Number(settings.default_tax_rate) : 5.0,
+      isGstEnabled: isPosOrderGst,
+      taxRate: posOrderTaxRate,
     });
 
     const validation = validateCoupon(coupon, currentTotals.subtotal);
@@ -327,6 +336,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const clearCart = () => {
+    setLoadedOrder(null);
     setCartItems([]);
     setSelectedTable(null);
     setIsSupplementary(false);
@@ -336,9 +346,15 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAppliedCoupon(null);
   };
 
-  const isGstEnabled = (settings.is_gst_enabled !== undefined && settings.is_gst_enabled !== null)
-    ? Boolean(settings.is_gst_enabled)
-    : false;
+  const isPosOrderGst = loadedOrder
+    ? isOrderGstApplicable(loadedOrder, settings.is_gst_enabled)
+    : ((settings.is_gst_enabled !== undefined && settings.is_gst_enabled !== null)
+        ? Boolean(settings.is_gst_enabled)
+        : false);
+
+  const posOrderTaxRate = loadedOrder
+    ? getOrderTaxRate(loadedOrder, Number(settings.default_tax_rate) || 5.0)
+    : (settings.default_tax_rate !== undefined ? Number(settings.default_tax_rate) : 5.0);
 
   const totals = calculateOrderTotals({
     items: cartItems,
@@ -347,8 +363,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     coupon: appliedCoupon,
     serviceChargeRate: settings.service_charge_rate,
     deliveryCharge: orderType === 'delivery' ? (customerInfo.deliveryCharge || 0) : 0,
-    isGstEnabled,
-    taxRate: settings.default_tax_rate !== undefined ? Number(settings.default_tax_rate) : 5.0,
+    isGstEnabled: isPosOrderGst,
+    taxRate: posOrderTaxRate,
   });
 
   const holdCurrentOrder = async (): Promise<Order | null> => {
@@ -515,6 +531,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const loadOrderIntoCart = (order: Order) => {
     if (!order) return;
+    setLoadedOrder(order);
     setCartItems(order.items || []);
     setOrderTypeState(order.order_type);
     setIsSupplementary(Boolean(order.is_supplementary));

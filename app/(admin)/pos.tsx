@@ -1394,8 +1394,10 @@ export default function PosScreen() {
               </View>
             )}
 
-            {Boolean(settings?.is_gst_enabled !== false && (totals.cgstAmount > 0 || totals.sgstAmount > 0)) && (() => {
-              const totalTaxRate = settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 5.0;
+            {Boolean(totals.cgstAmount > 0 || totals.sgstAmount > 0) && (() => {
+              const totalTaxRate = createdOrder
+                ? getOrderTaxRate(createdOrder, Number(settings?.default_tax_rate) || 5.0)
+                : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 5.0);
               const halfTaxRate = totalTaxRate / 2;
               const halfTaxRateStr = halfTaxRate % 1 === 0 ? `${halfTaxRate}` : `${halfTaxRate.toFixed(1)}`;
 

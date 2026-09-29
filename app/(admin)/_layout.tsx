@@ -372,13 +372,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
+    flexWrap: 'wrap',
   },
   brandBox: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     flex: 1,
-    minWidth: 0,
+    minWidth: 200,
   },
   headerLogo: {
     width: 38,
@@ -400,6 +401,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    flexWrap: 'wrap',
+    flexShrink: 0,
   },
   title: {
     fontSize: 15,
@@ -486,10 +489,19 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: '#e2e8f0',
     paddingVertical: 6,
+    width: '100%',
+    minWidth: 0,
+    ...(Platform.OS === 'web' ? {
+      overflowX: 'auto',
+      WebkitOverflowScrolling: 'touch',
+      scrollbarWidth: 'none',
+    } as any : {}),
   },
   navBarScroll: {
     paddingHorizontal: 16,
     gap: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   tabChip: {
     paddingHorizontal: 14,
@@ -498,6 +510,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#cbd5e1',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' ? {
+      whiteSpace: 'nowrap',
+    } as any : {}),
   },
   tabChipActive: {
     backgroundColor: '#2563eb',

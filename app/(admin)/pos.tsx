@@ -28,7 +28,7 @@ import { useNotification } from '../../src/context/NotificationContext';
 import { useAuth } from '../../src/context/AuthContext';
 import { RegisterClosedError } from '../../src/context/PosContext';
 import { formatCurrency, numberToWords } from '../../src/utils/currency';
-import { getOrderSubtotal } from '../../src/utils/gst';
+import { getOrderSubtotal, getOrderTaxRate } from '../../src/utils/gst';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { printService, handleThermalPrintFallback } from '../../src/services/printService';
 import { dayRegisterService } from '../../src/services/api/dayRegisterService';

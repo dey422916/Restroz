@@ -396,6 +396,74 @@ export interface DaySalesSummary {
   qr_sales: number;
   average_order_value: number;
 }
+// ============================================================================
+// RESTROZ MULTI-PRINTER & CALIBRATION TYPES
+// ============================================================================
+
+export type PrinterConnectionType = 'bluetooth' | 'usb' | 'lan' | 'wifi';
+export type PrinterPaperWidth = '58mm' | '80mm';
+export type PrinterRole = 'kot' | 'bill' | 'both';
+export type PrinterAlignment = 'left' | 'center' | 'right';
+
+export interface PrinterCalibration {
+  alignment: PrinterAlignment;
+  horizontal_shift_mm: number; // -10.0 to +10.0 mm
+  margin_left_mm: number;      // 0.0 to 15.0 mm
+  margin_right_mm: number;     // 0.0 to 15.0 mm
+  margin_top_mm: number;       // 0.0 to 20.0 mm
+  margin_bottom_mm: number;    // 0.0 to 20.0 mm
+}
+
+export interface RestaurantPrinter extends PrinterCalibration {
+  id: string;
+  restaurant_id: string;
+  name: string;
+  connection_type: PrinterConnectionType;
+  paper_width: PrinterPaperWidth;
+  printer_role: PrinterRole;
+  is_active: boolean;
+  is_primary: boolean;
+  fallback_printer_id?: string | null;
+
+  // Network details
+  ip_address?: string | null;
+  port?: number | null; // default 9100
+
+  // Bluetooth details (Cloud metadata)
+  bluetooth_device_name?: string | null;
+
+  // Routing configuration
+  category_ids?: string[];
+  section_names?: TableSection[];
+
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface DevicePrinterBinding {
+  restaurant_printer_id: string;
+  connection_type: PrinterConnectionType;
+  bluetooth_mac_address?: string | null;
+  bluetooth_device_name?: string | null;
+  usb_vendor_id?: number | null;
+  usb_product_id?: number | null;
+  usb_serial_number?: string | null;
+  local_calibration_override?: Partial<PrinterCalibration> | null;
+  last_used_at?: string;
+}
+
+export interface DevicePrinterDefaults {
+  default_kot_printer_id?: string | null;
+  default_bill_printer_id?: string | null;
+}
+
+export type PrinterConnectionStatus =
+  | 'configured'
+  | 'hardware_pending'
+  | 'not_configured_on_device'
+  | 'transport_pending'
+  | 'online'
+  | 'offline';
 
 export interface LoyaltyRewardSettings {
   id?: string;
@@ -471,77 +539,7 @@ export interface CustomerMarketplaceWalletsResponse {
   }>;
 }
 
-// ============================================================================
-// RESTROZ MULTI-PRINTER & CALIBRATION TYPES
-// ============================================================================
-
-export type PrinterConnectionType = 'bluetooth' | 'usb' | 'lan' | 'wifi';
-export type PrinterPaperWidth = '58mm' | '80mm';
-export type PrinterRole = 'kot' | 'bill' | 'both';
-export type PrinterAlignment = 'left' | 'center' | 'right';
-
-export interface PrinterCalibration {
-  alignment: PrinterAlignment;
-  horizontal_shift_mm: number; // -10.0 to +10.0 mm
-  margin_left_mm: number;      // 0.0 to 15.0 mm
-  margin_right_mm: number;     // 0.0 to 15.0 mm
-  margin_top_mm: number;       // 0.0 to 20.0 mm
-  margin_bottom_mm: number;    // 0.0 to 20.0 mm
-}
-
-export interface RestaurantPrinter extends PrinterCalibration {
-  id: string;
-  restaurant_id: string;
-  name: string;
-  connection_type: PrinterConnectionType;
-  paper_width: PrinterPaperWidth;
-  printer_role: PrinterRole;
-  is_active: boolean;
-  is_primary: boolean;
-  fallback_printer_id?: string | null;
-
-  // Network details
-  ip_address?: string | null;
-  port?: number | null; // default 9100
-
-  // Bluetooth details (Cloud metadata)
-  bluetooth_device_name?: string | null;
-
-  // Routing configuration
-  category_ids?: string[];
-  section_names?: TableSection[];
-
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface DevicePrinterBinding {
-  restaurant_printer_id: string;
-  connection_type: PrinterConnectionType;
-  bluetooth_mac_address?: string | null;
-  bluetooth_device_name?: string | null;
-  usb_vendor_id?: number | null;
-  usb_product_id?: number | null;
-  usb_serial_number?: string | null;
-  local_calibration_override?: Partial<PrinterCalibration> | null;
-  last_used_at?: string;
-}
-
-export interface DevicePrinterDefaults {
-  default_kot_printer_id?: string | null;
-  default_bill_printer_id?: string | null;
-}
-
-export type PrinterConnectionStatus =
-  | 'configured'
-  | 'hardware_pending'
-  | 'not_configured_on_device'
-  | 'transport_pending'
-  | 'online'
-  | 'offline';
-
 export * from './saas';
 export * from './marketplace';
 export * from './permissions';
-
 

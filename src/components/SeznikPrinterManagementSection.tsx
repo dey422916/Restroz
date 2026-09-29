@@ -455,7 +455,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.headerRow}>
-        <View>
+        <View style={styles.headerTitleBox}>
           <Text style={styles.title}>Printer Devices</Text>
           <Text style={styles.subtitle}>
             Connect thermal receipt printers via Web Bluetooth, WebUSB, Serial, or RestroZ Print Agent.
@@ -476,8 +476,8 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
       {pairedAgent && (
         <View style={styles.agentBanner}>
           <View style={styles.agentInfoRow}>
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={styles.agentLeftCol}>
+              <View style={styles.agentTitleRow}>
                 <Text style={styles.agentName}>{pairedAgent.deviceName}</Text>
                 <View style={pairedAgent.status === 'online' ? styles.agentOnlineBadge : styles.agentOfflineBadge}>
                   <Text style={pairedAgent.status === 'online' ? styles.agentOnlineText : styles.agentOfflineText}>
@@ -494,7 +494,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
                   : 'Scanning...'}
               </Text>
             </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={styles.agentActionsRow}>
               {canManage && (
                 <TouchableOpacity
                   style={[styles.smallRefreshBtn, isPollingQueues && { opacity: 0.6 }]}
@@ -540,7 +540,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
           {printers.map((p) => (
             <View key={p.id} style={styles.printerCard}>
               <View style={styles.printerHeader}>
-                <View style={{ flex: 1 }}>
+                <View style={styles.printerInfoCol}>
                   <View style={styles.printerNameRow}>
                     <Text style={styles.printerName}>{p.name}</Text>
                     {p.isPrimary && (
@@ -573,7 +573,9 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
                     <Text style={styles.metaText}>{p.role.toUpperCase()}</Text>
                   </View>
                 </View>
-                {getStatusBadge(p)}
+                <View style={styles.printerStatusBox}>
+                  {getStatusBadge(p)}
+                </View>
               </View>
 
               {p.statusMessage ? (
@@ -956,12 +958,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#27272a',
     marginTop: 16,
+    width: '100%',
+    minWidth: 0,
   },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
     marginBottom: 16,
+    width: '100%',
+    minWidth: 0,
+  },
+  headerTitleBox: {
+    flex: 1,
+    minWidth: 200,
   },
   title: {
     fontSize: 16,
@@ -972,18 +984,20 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#a1a1aa',
     marginTop: 2,
-    maxWidth: 500,
+    lineHeight: 18,
   },
   addBtn: {
     backgroundColor: '#f97316',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 8,
+    flexShrink: 0,
   },
   addBtnText: {
     color: '#ffffff',
     fontWeight: '600',
     fontSize: 13,
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
   },
   agentBanner: {
     backgroundColor: '#27272a',
@@ -992,11 +1006,27 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderLeftWidth: 4,
     borderLeftColor: '#22c55e',
+    width: '100%',
+    minWidth: 0,
   },
   agentInfoRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 12,
+    width: '100%',
+    minWidth: 0,
+  },
+  agentLeftCol: {
+    flex: 1,
+    minWidth: 220,
+  },
+  agentTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   agentName: {
     fontSize: 14,
@@ -1008,49 +1038,69 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 4,
+    flexShrink: 0,
   },
   agentOnlineText: {
     color: '#22c55e',
     fontSize: 11,
     fontWeight: '700',
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
   },
   agentOfflineBadge: {
     backgroundColor: 'rgba(239, 68, 68, 0.15)',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 4,
+    flexShrink: 0,
   },
   agentOfflineText: {
     color: '#ef4444',
     fontSize: 11,
     fontWeight: '700',
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
   },
   agentSub: {
     fontSize: 12,
     color: '#a1a1aa',
     marginTop: 4,
+    lineHeight: 16,
+    ...(Platform.OS === 'web' ? {
+      wordBreak: 'break-word' as any,
+      overflowWrap: 'anywhere' as any,
+    } : {}),
+  },
+  agentActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    flexShrink: 0,
   },
   unpairBtn: {
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 6,
     backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    flexShrink: 0,
   },
   unpairBtnText: {
     color: '#ef4444',
     fontSize: 12,
     fontWeight: '600',
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
   },
   smallRefreshBtn: {
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 6,
     backgroundColor: '#3f3f46',
+    flexShrink: 0,
   },
   smallRefreshBtnText: {
     color: '#f97316',
     fontSize: 12,
     fontWeight: '600',
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
   },
   loadingBox: {
     flexDirection: 'row',
@@ -1084,6 +1134,8 @@ const styles = StyleSheet.create({
   },
   printerList: {
     gap: 12,
+    width: '100%',
+    minWidth: 0,
   },
   printerCard: {
     backgroundColor: '#27272a',
@@ -1091,15 +1143,29 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 1,
     borderColor: '#3f3f46',
+    width: '100%',
+    minWidth: 0,
   },
   printerHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    gap: 8,
+    width: '100%',
+    minWidth: 0,
+  },
+  printerInfoCol: {
+    flex: 1,
+    minWidth: 200,
+  },
+  printerStatusBox: {
+    flexShrink: 0,
   },
   printerNameRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 8,
   },
   printerName: {
@@ -1115,6 +1181,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: 4,
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
   },
   primaryWarningBadge: {
     backgroundColor: 'rgba(234, 179, 8, 0.2)',
@@ -1126,6 +1193,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: 4,
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
   },
   primaryOfflineBadge: {
     backgroundColor: 'rgba(161, 161, 170, 0.2)',
@@ -1137,10 +1205,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: 4,
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
   },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 6,
     marginTop: 4,
   },
@@ -1224,16 +1294,22 @@ const styles = StyleSheet.create({
   },
   cardActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     marginTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#3f3f46',
     paddingTop: 10,
+    alignItems: 'center',
+    width: '100%',
   },
   cardBtn: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 6,
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   testBtn: {
     backgroundColor: 'rgba(34, 197, 94, 0.1)',
@@ -1242,6 +1318,7 @@ const styles = StyleSheet.create({
     color: '#22c55e',
     fontSize: 12,
     fontWeight: '600',
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
   },
   editBtn: {
     backgroundColor: '#3f3f46',
@@ -1250,6 +1327,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 12,
     fontWeight: '600',
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
   },
   deleteBtn: {
     backgroundColor: 'rgba(239, 68, 68, 0.1)',
@@ -1258,6 +1336,7 @@ const styles = StyleSheet.create({
     color: '#ef4444',
     fontSize: 12,
     fontWeight: '600',
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
   },
   modalOverlay: {
     flex: 1,
@@ -1275,6 +1354,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#3f3f46',
     overflow: 'hidden',
+    ...(Platform.OS === 'web' ? { maxHeight: '90vh' as any, overflowY: 'auto' as any } : {}),
   },
   modalHeader: {
     flexDirection: 'row',

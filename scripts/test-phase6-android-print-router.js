@@ -527,9 +527,9 @@ async function routeBillSimulation(settings, order, billedBy, options = {}) {
   });
 
   const printServicePath = path.join(__dirname, '../src/services/printService.ts');
-  test('printService maintains QZ_DIRECT for Web and ANDROID_DIRECT_ROUTER for Native', () => {
+  test('printService maintains webDirectPrintService for Web and ANDROID_DIRECT_ROUTER for Native', () => {
     const content = fs.readFileSync(printServicePath, 'utf8');
-    assert.ok(content.includes("Platform.OS === 'web' && autoPrintEnabled"));
+    assert.ok(content.includes("Platform.OS === 'web' && !options?.forceBrowser"));
     assert.ok(content.includes("Platform.OS !== 'web' && autoPrintEnabled"));
     assert.ok(content.includes('androidPrintRouter.printKot'));
     assert.ok(content.includes('androidPrintRouter.printBill'));

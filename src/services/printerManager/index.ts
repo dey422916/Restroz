@@ -23,10 +23,13 @@ import {
   generateSampleKotDocument,
   generateSampleBillDocument,
 } from './escpos/testReceiptRenderer';
-import { tcpTransport } from './transports/tcpTransport';
-import { bluetoothTransport } from './transports/bluetoothTransport';
-import { usbTransport } from './transports/usbTransport';
-import { TestConnectionResult, PrintTransportResult } from './transports/types';
+import {
+  tcpTransport,
+  bluetoothTransport,
+  usbTransport,
+  TestConnectionResult,
+  PrintTransportResult,
+} from './transports';
 
 export const printerManager = {
   ...printerRepository,

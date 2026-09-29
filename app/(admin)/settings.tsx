@@ -32,11 +32,28 @@ import {
 
 export default function SettingsScreen() {
   const { width: windowWidth } = useWindowDimensions();
-  const isDesktop = windowWidth >= 860;
+  const isDesktop = windowWidth >= 1150;
   const { settings, updateSettings, isOnlineOrdersEnabled, toggleOnlineOrders, loading: settingsLoading } = useSettings();
   const { user, role, isSuperAdmin, isAdmin, activeRestaurantId } = useAuth();
   const { showToast } = useNotification();
   const [isTogglingOnline, setIsTogglingOnline] = useState(false);
+  const canManage = isAdmin || isSuperAdmin || role === 'ADMIN' || role === 'SUPER_ADMIN';
+  const effectiveRestaurantId = activeRestaurantId || settings.restaurant_id || settings.id || '';
+  const [categories, setCategories] = useState<Category[]>([]);
+
+  useEffect(() => {
+    if (!effectiveRestaurantId) return;
+    supabase
+      .from('categories')
+      .select('*')
+      .eq('restaurant_id', effectiveRestaurantId)
+      .order('display_order', { ascending: true })
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setCategories(data as Category[]);
+        }
+      });
+  }, [effectiveRestaurantId]);
 
   const [name, setName] = useState(settings.name);
   const [legalName, setLegalName] = useState(settings.legal_name || '');
@@ -120,23 +137,6 @@ export default function SettingsScreen() {
   const [showUrlModal, setShowUrlModal] = useState(false);
   const [customBannerUrl, setCustomBannerUrl] = useState('');
 
-  const canManage = isAdmin || isSuperAdmin || role === 'ADMIN' || role === 'SUPER_ADMIN';
-  const effectiveRestaurantId = activeRestaurantId || settings.restaurant_id || '';
-  const [categories, setCategories] = useState<Category[]>([]);
-
-  useEffect(() => {
-    if (!effectiveRestaurantId) return;
-    supabase
-      .from('categories')
-      .select('*')
-      .eq('restaurant_id', effectiveRestaurantId)
-      .order('display_order', { ascending: true })
-      .then(({ data, error }) => {
-        if (!error && data) {
-          setCategories(data as Category[]);
-        }
-      });
-  }, [effectiveRestaurantId]);
 
   // Sync form values from settings whenever settings change, unless user is actively editing
   useEffect(() => {
@@ -2183,24 +2183,33 @@ const styles = StyleSheet.create({
   },
   dashboardGrid: {
     width: '100%',
+    minWidth: 0,
   },
   dashboardGridRow: {
     flexDirection: 'row',
     gap: 16,
     alignItems: 'flex-start',
+    width: '100%',
+    minWidth: 0,
   },
   dashboardGridCol: {
     flexDirection: 'column',
     gap: 12,
+    width: '100%',
+    minWidth: 0,
   },
   gridCol: {
     gap: 12,
+    width: '100%',
+    minWidth: 0,
   },
   gridColDesktop: {
     flex: 1,
+    minWidth: 0,
   },
   gridColMobile: {
     width: '100%',
+    minWidth: 0,
   },
   card: {
     width: '100%',
@@ -2265,6 +2274,7 @@ const styles = StyleSheet.create({
   },
   formCol: {
     flex: 1,
+    minWidth: 160,
     width: '100%',
   },
   saveBtn: {

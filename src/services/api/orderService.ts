@@ -7,7 +7,7 @@ import { kotService, clearKotsCache } from './kotService';
 import { auditService } from './auditService';
 import { subscriptionService } from './subscriptionService';
 import { couponService } from './couponService';
-import { getOrderSubtotal, calculateOrderTotals } from '../../utils/gst';
+import { getOrderSubtotal, calculateOrderTotals, getOrderTaxRate, isOrderGstApplicable } from '../../utils/gst';
 import { isValidPhoneNumber, validatePhoneNumberOrThrow } from '../../utils/phone';
 import { restaurantService } from './restaurantService';
 import { attachDiscountToNotes, extractDiscountFromNotes, attachGstinToNotes, extractGstinFromNotes } from '../../utils/orderNotes';
@@ -1033,25 +1033,27 @@ export const orderService = {
         if (!orderError && createdDbOrder) {
           // Insert order items atomically
           if (items && items.length > 0) {
-            const hasOrderTax = (Number(newOrder.cgst_amount || 0) > 0) || (Number(newOrder.sgst_amount || 0) > 0) || (Number(newOrder.igst_amount || 0) > 0);
+            const hasOrderTax = isOrderGstApplicable(newOrder as any, false) || (newOrder.items && newOrder.items.some((i) => Number(i.tax_rate) > 0));
+            const fallbackOrderRate = getOrderTaxRate(newOrder as any, 5.0);
             const formattedItems = items.map((i) => {
               const rawItem = i as any;
               const unitPrice = Number(i.unit_price) || 0;
               const quantity = Number(i.quantity) || 1;
-              const itemRate = (i.tax_rate !== null && i.tax_rate !== undefined && !isNaN(Number(i.tax_rate)))
+              const hasExplicitRate = i.tax_rate !== null && i.tax_rate !== undefined && !isNaN(Number(i.tax_rate));
+              const itemRate = hasExplicitRate
                 ? Number(i.tax_rate)
-                : (hasOrderTax ? 5.0 : 0);
-              const taxRate = hasOrderTax ? itemRate : 0;
+                : (hasOrderTax ? fallbackOrderRate : 0);
+              const taxRate = itemRate;
               const halfTaxRate = taxRate / 2;
               const itemSubtotal = Number(i.subtotal) || (unitPrice * quantity);
               const itemTotal = itemSubtotal;
-              const cgst = hasOrderTax && taxRate > 0
+              const cgst = taxRate > 0
                 ? Number(((itemSubtotal * halfTaxRate) / 100).toFixed(2))
                 : 0;
-              const sgst = hasOrderTax && taxRate > 0
+              const sgst = taxRate > 0
                 ? Number(((itemSubtotal * halfTaxRate) / 100).toFixed(2))
                 : 0;
-              const itemTax = hasOrderTax && taxRate > 0
+              const itemTax = taxRate > 0
                 ? Number((cgst + sgst).toFixed(2))
                 : 0;
 

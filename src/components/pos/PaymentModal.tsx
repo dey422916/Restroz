@@ -15,7 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Order, PaymentMethod, CustomerWalletInfo } from '../../types';
 import { formatCurrency, numberToWords } from '../../utils/currency';
-import { calculateOrderTotals, getOrderSubtotal } from '../../utils/gst';
+import { calculateOrderTotals, getOrderSubtotal, getOrderTaxRate, isOrderGstApplicable } from '../../utils/gst';
 import { formatOrderDateTime } from '../../utils/dateUtils';
 import { validateGSTIN } from '../../utils/validators';
 import { useSettings } from '../../context/SettingsContext';

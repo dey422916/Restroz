@@ -32,7 +32,7 @@ import {
 
 export default function SettingsScreen() {
   const { width: windowWidth } = useWindowDimensions();
-  const isDesktop = windowWidth >= 860;
+  const isDesktop = windowWidth >= 1150;
   const { settings, updateSettings, isOnlineOrdersEnabled, toggleOnlineOrders, loading: settingsLoading } = useSettings();
   const { user, role, isSuperAdmin, isAdmin, activeRestaurantId } = useAuth();
   const { showToast } = useNotification();
@@ -2182,24 +2182,33 @@ const styles = StyleSheet.create({
   },
   dashboardGrid: {
     width: '100%',
+    minWidth: 0,
   },
   dashboardGridRow: {
     flexDirection: 'row',
     gap: 16,
     alignItems: 'flex-start',
+    width: '100%',
+    minWidth: 0,
   },
   dashboardGridCol: {
     flexDirection: 'column',
     gap: 12,
+    width: '100%',
+    minWidth: 0,
   },
   gridCol: {
     gap: 12,
+    width: '100%',
+    minWidth: 0,
   },
   gridColDesktop: {
     flex: 1,
+    minWidth: 0,
   },
   gridColMobile: {
     width: '100%',
+    minWidth: 0,
   },
   card: {
     width: '100%',
@@ -2264,6 +2273,7 @@ const styles = StyleSheet.create({
   },
   formCol: {
     flex: 1,
+    minWidth: 160,
     width: '100%',
   },
   saveBtn: {

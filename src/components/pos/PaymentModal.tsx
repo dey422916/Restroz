@@ -57,10 +57,24 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const windowHeight = Dimensions.get('window').height;
   const { settings } = useSettings();
 
-  const isGstEnabled = settings?.is_gst_enabled !== undefined && settings?.is_gst_enabled !== null
-    ? Boolean(settings.is_gst_enabled)
-    : false;
-  const taxRate = settings?.default_tax_rate !== undefined ? settings.default_tax_rate : 5.0;
+  const isOrderTaxPresent = (
+    (order.cgst_amount !== undefined && Number(order.cgst_amount) > 0) ||
+    (order.sgst_amount !== undefined && Number(order.sgst_amount) > 0) ||
+    ((order as any)?.tax_rate !== undefined && (order as any)?.tax_rate !== null && Number((order as any).tax_rate) > 0)
+  );
+
+  const isGstActiveInSettings = Boolean(
+    settings?.is_gst_enabled &&
+    (settings?.gst_registered !== false) &&
+    Number(settings?.default_tax_rate || 0) > 0
+  );
+
+  const isGstEnabled = isOrderTaxPresent ? true : isGstActiveInSettings;
+  const taxRate = (order as any)?.tax_rate !== undefined && (order as any)?.tax_rate !== null && !isNaN(Number((order as any).tax_rate))
+    ? Number((order as any).tax_rate)
+    : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
+        ? Number(settings.default_tax_rate)
+        : 0);
 
   // Discount configuration state
   const resolvedInitialDiscounts = resolveOrderDiscounts(order);
@@ -371,7 +385,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 )}
 
                 {totals.totalTax > 0 && (() => {
-                  const effectiveTaxRate = taxRate !== undefined && taxRate !== null ? Number(taxRate) : 5.0;
+                  const effectiveTaxRate = totals.taxableSubtotal > 0 && totals.cgstAmount > 0
+                    ? (totals.cgstAmount * 2 / totals.taxableSubtotal) * 100
+                    : (taxRate > 0 ? Number(taxRate) : 0);
                   const halfTaxRate = effectiveTaxRate / 2;
                   const halfTaxRateStr = halfTaxRate % 1 === 0 ? `${halfTaxRate}` : `${halfTaxRate.toFixed(1)}`;
                   return (

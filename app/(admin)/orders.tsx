@@ -2401,9 +2401,10 @@ export default function OrdersScreen() {
                         <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.nilExemptSubtotal)}</Text>
                       </View>
                     )}
-                    {Boolean(settings?.is_gst_enabled !== false && (editTotals.cgstAmount + editTotals.sgstAmount > 0)) && (() => {
-                      const editTaxRate = settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 5.0;
-                      const editHalfRate = editTaxRate / 2;
+                    {Boolean(editTotals.cgstAmount + editTotals.sgstAmount > 0) && (() => {
+                      const editHalfRate = editTotals.taxableSubtotal > 0
+                        ? (editTotals.cgstAmount / editTotals.taxableSubtotal) * 100
+                        : ((settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 0) / 2);
                       const editHalfRateStr = editHalfRate % 1 === 0 ? `${editHalfRate}` : `${editHalfRate.toFixed(1)}`;
                       return (
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -2999,10 +3000,12 @@ export default function OrdersScreen() {
                     </View>
                   )}
 
-                  {Boolean(settings?.is_gst_enabled !== false && ((payTotals?.cgstAmount || 0) > 0 || (payTotals?.sgstAmount || 0) > 0)) && (() => {
-                    const payTaxRate = (payOrderModal as any)?.tax_rate !== undefined && (payOrderModal as any)?.tax_rate !== null
+                  {Boolean(((payTotals?.cgstAmount || 0) > 0 || (payTotals?.sgstAmount || 0) > 0)) && (() => {
+                    const payTaxRate = (payOrderModal as any)?.tax_rate !== undefined && (payOrderModal as any)?.tax_rate !== null && !isNaN(Number((payOrderModal as any).tax_rate))
                       ? Number((payOrderModal as any).tax_rate)
-                      : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 5.0);
+                      : ((payTotals?.taxableSubtotal || 0) > 0 && (payTotals?.cgstAmount || 0) > 0
+                          ? ((payTotals?.cgstAmount || 0) * 2 / (payTotals?.taxableSubtotal || 1)) * 100
+                          : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 0));
                     const payHalfRate = payTaxRate / 2;
                     const payHalfRateStr = payHalfRate % 1 === 0 ? `${payHalfRate}` : `${payHalfRate.toFixed(1)}`;
                     return (

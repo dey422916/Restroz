@@ -1378,9 +1378,23 @@ export const orderService = {
     }
 
     const restSettings = await settingsService.getSettings(existingOrder.restaurant_id);
-    const isGstEnabled = (restSettings.is_gst_enabled !== undefined && restSettings.is_gst_enabled !== null)
-      ? Boolean(restSettings.is_gst_enabled)
-      : false;
+    const hasExistingTaxSnapshot = (
+      (existingOrder.cgst_amount !== undefined && Number(existingOrder.cgst_amount) > 0) ||
+      (existingOrder.sgst_amount !== undefined && Number(existingOrder.sgst_amount) > 0) ||
+      ((existingOrder as any)?.tax_rate !== undefined && (existingOrder as any)?.tax_rate !== null && Number((existingOrder as any).tax_rate) > 0)
+    );
+
+    const isGstActiveInSettings = Boolean(
+      restSettings.is_gst_enabled &&
+      (restSettings.gst_registered !== false) &&
+      Number(restSettings.default_tax_rate || 0) > 0
+    );
+
+    const isGstEnabled = hasExistingTaxSnapshot ? true : isGstActiveInSettings;
+
+    const resolvedTaxRate = (existingOrder as any)?.tax_rate !== undefined && (existingOrder as any)?.tax_rate !== null && !isNaN(Number((existingOrder as any).tax_rate))
+      ? Number((existingOrder as any).tax_rate)
+      : (restSettings.default_tax_rate !== undefined && restSettings.default_tax_rate !== null ? Number(restSettings.default_tax_rate) : 0);
 
     const calculated = calculateOrderTotals({
       items: normalizedItems,
@@ -1389,7 +1403,7 @@ export const orderService = {
       couponDiscount: effectiveCouponDiscount,
       deliveryCharge: deliveryCharge,
       isGstEnabled,
-      taxRate: restSettings.default_tax_rate !== undefined ? Number(restSettings.default_tax_rate) : 5.0,
+      taxRate: resolvedTaxRate,
     });
 
     const updatedNotes = attachDiscountToNotes(
@@ -1405,10 +1419,10 @@ export const orderService = {
       const itemSubtotal = Number(i.subtotal) || (unitPrice * quantity);
       const defaultTax = (restSettings.default_tax_rate !== undefined && restSettings.default_tax_rate !== null && !isNaN(Number(restSettings.default_tax_rate)))
         ? Number(restSettings.default_tax_rate)
-        : 5.0;
+        : 0;
       const itemTaxRate = (i.tax_rate !== null && i.tax_rate !== undefined && !isNaN(Number(i.tax_rate)))
         ? Number(i.tax_rate)
-        : defaultTax;
+        : (hasExistingTaxSnapshot ? resolvedTaxRate : (isGstEnabled ? defaultTax : 0));
       const taxRate = isGstEnabled ? itemTaxRate : 0;
       const halfTaxRate = taxRate / 2;
       const cgst = isGstEnabled && taxRate > 0

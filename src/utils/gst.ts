@@ -90,9 +90,9 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
       const itemGross = Number(item.unit_price) * Number(item.quantity);
       const itemNet = itemGross * discountRatio;
       const hasExplicitRate = item.tax_rate !== null && item.tax_rate !== undefined && !isNaN(Number(item.tax_rate));
-      const rate = hasExplicitRate
-        ? Number(item.tax_rate)
-        : (isGstEnabled ? defaultRate : 0);
+      const rate = isGstEnabled
+        ? (hasExplicitRate ? Number(item.tax_rate) : defaultRate)
+        : 0;
 
       rateBuckets.set(rate, (rateBuckets.get(rate) || 0) + itemNet);
     });
@@ -252,20 +252,47 @@ export function getOrderInvoiceTotals(
     ? Boolean(settings.gst_registered)
     : Boolean((settings?.gstin || '').trim());
 
-  const rawTaxRate =
-    (order as any)?.tax_rate !== undefined && (order as any)?.tax_rate !== null && !isNaN(Number((order as any).tax_rate))
-      ? Number((order as any).tax_rate)
-      : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null && !isNaN(Number(settings.default_tax_rate))
-          ? Number(settings.default_tax_rate)
-          : 0);
+  // Check if order has an existing persisted tax snapshot
+  const hasExistingTaxSnapshot = (
+    (order.cgst_amount !== undefined && Number(order.cgst_amount) > 0) ||
+    (order.sgst_amount !== undefined && Number(order.sgst_amount) > 0) ||
+    ((order as any)?.tax_rate !== undefined && (order as any)?.tax_rate !== null && Number((order as any).tax_rate) > 0)
+  );
+
+  const hasExplicitZeroSnapshot = (
+    ((order as any)?.tax_rate !== undefined && (order as any)?.tax_rate !== null && Number((order as any).tax_rate) === 0) ||
+    (order.cgst_amount === 0 && order.sgst_amount === 0 && ((order as any).tax_amount === 0 || (order as any).total_tax === 0) && Boolean(order.id))
+  );
+
+  let rawTaxRate = 0;
+  let isGstEnabled = false;
+
+  if (hasExistingTaxSnapshot) {
+    rawTaxRate = Number((order as any)?.tax_rate || 0);
+    // If tax_rate was not saved directly on order, resolve from cgst_amount / taxable_amount
+    if (rawTaxRate === 0 && order.taxable_amount && Number(order.taxable_amount) > 0 && order.cgst_amount) {
+      rawTaxRate = (Number(order.cgst_amount) * 2 / Number(order.taxable_amount)) * 100;
+    } else if (rawTaxRate === 0) {
+      rawTaxRate = 5.0; // Historical default when tax amount was positive
+    }
+    isGstEnabled = true;
+  } else if (hasExplicitZeroSnapshot) {
+    rawTaxRate = 0;
+    isGstEnabled = false;
+  } else {
+    // New draft order / live cart: resolve from restaurant settings
+    const settingsTaxRate = settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null && !isNaN(Number(settings.default_tax_rate))
+      ? Number(settings.default_tax_rate)
+      : 0;
+    rawTaxRate = settingsTaxRate;
+    isGstEnabled = Boolean(
+      settings?.is_gst_enabled &&
+      isGstRegistered &&
+      rawTaxRate > 0
+    );
+  }
 
   const dynamicTaxRate = rawTaxRate > 0 ? rawTaxRate : 0;
-
-  const isGstEnabled = Boolean(
-    settings?.is_gst_enabled !== false &&
-    isGstRegistered &&
-    dynamicTaxRate > 0
-  );
 
   return calculateOrderTotals({
     items: order.items || [],

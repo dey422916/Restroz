@@ -551,8 +551,10 @@ export default function PosScreen() {
       return;
     }
     try {
-      await printService.printBillThermal(createdOrder, settings);
-      showToast('success', 'Print Bill', `Bill printed for #${createdOrder.order_number}`);
+      const res = await printService.printBillThermal(createdOrder, settings);
+      if (res && res.direct) {
+        showToast('success', 'Print Bill', `Bill printed for #${createdOrder.order_number}`);
+      }
     } catch (err: any) {
       console.warn('[pos.tsx] Print Bill error:', err);
       await handleThermalPrintFallback(err, 'Bill', async () => {
@@ -2140,8 +2142,10 @@ export default function PosScreen() {
                           const currentOrder = viewTableModalData.order;
                           if (currentOrder) {
                             try {
-                              await printService.printKotThermal(currentOrder, settings, undefined, true);
-                              showToast('success', 'KOT Slip', 'KOT reprint sent to printer.');
+                              const res = await printService.printKotThermal(currentOrder, settings, undefined, true);
+                              if (res && res.direct) {
+                                showToast('success', 'KOT Slip', 'KOT reprint sent to printer.');
+                              }
                             } catch (printErr: any) {
                               console.warn('[pos.tsx] Reprint KOT failed:', printErr);
                               await handleThermalPrintFallback(printErr, 'KOT', async () => {
@@ -2160,8 +2164,10 @@ export default function PosScreen() {
                           const currentOrder = viewTableModalData.order;
                           if (currentOrder) {
                             try {
-                              await printService.printBillThermal(currentOrder, settings);
-                              showToast('success', 'Thermal Bill', 'Bill printed.');
+                              const res = await printService.printBillThermal(currentOrder, settings);
+                              if (res && res.direct) {
+                                showToast('success', 'Thermal Bill', 'Bill printed.');
+                              }
                             } catch (err: any) {
                               console.warn('[pos.tsx] modalActionBillBtn error:', err);
                               await handleThermalPrintFallback(err, 'Bill', async () => {

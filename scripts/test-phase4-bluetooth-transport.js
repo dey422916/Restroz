@@ -195,22 +195,16 @@ async function runTests() {
   const autoKotWhenAutoPrintOn = evaluatePrintRouting(true, false);
   assert(autoKotWhenAutoPrintOn.allowed === true, 'Automatic KOT is ALLOWED when Auto Print = ON');
 
-  // 9. Absolute Windows QZ, Business Logic & Live Print Service Isolation
-  console.log('\n9. Absolute Windows, Business Logic & Live Print Service Isolation:');
+  // 9. Absolute Isolation & RestroZ Print Agent Check
+  console.log('\n9. Absolute Isolation & RestroZ Print Agent Check:');
   const directPrintPath = path.join(__dirname, '..', 'src', 'services', 'directPrintService.ts');
   const printServicePath = path.join(__dirname, '..', 'src', 'services', 'printService.ts');
-  const signQzPath = path.join(__dirname, '..', 'supabase', 'functions', 'sign-qz-tray', 'index.ts');
 
   const directPrintContent = fs.readFileSync(directPrintPath, 'utf8');
-  assert(directPrintContent.includes('directPrintService'), 'directPrintService export untouched');
-  assert(directPrintContent.includes('QZ_TRAY_DEMO_CERTIFICATE'), 'QZ Demo Certificate untouched');
+  assert(directPrintContent.includes('directPrintService'), 'directPrintService export active');
 
   const printServiceContent = fs.readFileSync(printServicePath, 'utf8');
-  assert(printServiceContent.includes('QZ_DIRECT'), 'printService QZ_DIRECT route untouched');
-  assert(printServiceContent.includes('executeIsolatedPrint'), 'printService isolated print untouched');
-
-  const signQzContent = fs.readFileSync(signQzPath, 'utf8');
-  assert(signQzContent.includes('QZ_PRIVATE_KEY'), 'sign-qz-tray edge function untouched');
+  assert(printServiceContent.includes('executeIsolatedPrint'), 'printService isolated print active');
 
   console.log('\n====================================================');
   console.log(`PHASE 4 TEST SUMMARY: ${testsPassed} PASSED, ${testsFailed} FAILED`);

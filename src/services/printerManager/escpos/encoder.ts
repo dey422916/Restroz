@@ -13,6 +13,7 @@ export interface EscPosDocument {
   widthDots: number;
   estimatedHeightDots: number;
   profile: PrinterRasterProfile;
+  textLines?: string[];
 }
 
 export interface EncodeOptions {

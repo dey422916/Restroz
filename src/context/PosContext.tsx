@@ -693,7 +693,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast('success', 'Payment Completed & Bill Closed', `Order #${updatedOrder.order_number} finalized.`);
     }
 
-    // Print final thermal receipt with persisted numbers (Auto Print ON -> QZ, Auto Print OFF -> Browser)
+    // Print final thermal receipt with persisted numbers (Auto Print ON -> Direct/Print Agent, Auto Print OFF -> Browser)
     try {
       await printService.printFinalReceiptThermal(updatedOrder, settings);
     } catch (printErr: any) {

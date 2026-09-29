@@ -5,6 +5,7 @@ import { getOrderSubtotal, getOrderTaxableBreakdown, getOrderInvoiceTotals } fro
 import { cleanCustomerOrderNotes } from '../utils/orderNotes';
 import { formatOrderDateTime } from '../utils/dateUtils';
 import { directPrintService, resolveKotPrinterName, resolveBillPrinterName, isAutoPrintEnabled, DirectPrintError } from './directPrintService';
+import { webDirectPrintService } from './webDirectPrintService';
 import { androidPrintRouter } from './printerManager/androidPrintRouter';
 import { supabase } from './supabase';
 
@@ -27,7 +28,7 @@ export async function handleThermalPrintFallback(
   }
 
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    const message = `Auto Print failed.\n\nQZ Tray / thermal printer could not print ${documentTitle} automatically.\n\nPrint using browser instead?`;
+    const message = `Auto Print failed.\n\nThermal printer could not print ${documentTitle} automatically.\n\nPrint using browser instead?`;
     const proceed = window.confirm(message);
     if (proceed) {
       try {
@@ -518,7 +519,7 @@ export const printService = {
 
   /**
    * Dedicated Thermal / Standard KOT Slip (58mm / 80mm / A4 Kitchen Ticket)
-   * On Web: Sends print job directly & silently to configured POS80 printer via QZ Tray without Chrome print dialog.
+   * On Web: Sends print job directly & silently to configured thermal printer via RestroZ Print Agent / direct Web transport without Chrome print dialog.
    * If direct printing fails, throws DirectPrintError so caller can notify user and offer browser fallback.
    * On Native: Uses expo-print printAsync.
    */
@@ -542,27 +543,31 @@ export const printService = {
 
     const autoPrintEnabled = isAutoPrintEnabled(settings);
 
-    // Auto Print ON: use direct QZ printing to configured KOT printer
-    if (Platform.OS === 'web' && autoPrintEnabled && !options?.forceBrowser) {
-      if (__DEV__) {
-        console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: true\nRoute: QZ_DIRECT');
-      }
+    // Web: use direct Web Bluetooth, WebUSB, Serial, or RestroZ Print Agent
+    if (Platform.OS === 'web' && !options?.forceBrowser) {
       try {
-        const kotNum = kot?.kot_number || (order.kots && order.kots[0]?.kot_number) || order.order_number;
-        const restId = order.restaurant_id || settings.restaurant_id || (settings as any).id;
-        const targetPrinter = resolveKotPrinterName(settings, restId);
-        const result = await directPrintService.printThermalDirect(html, {
-          printerName: targetPrinter,
-          jobName: `KOT_${kotNum}`,
-          paperSize,
-        });
-        if (__DEV__) {
-          console.log('[THERMAL PRINT]\nDocument: KOT\nRoute: QZ_DIRECT\nResult: SUCCESS\nPrinter: ' + result.printerName);
+        const webResult = await webDirectPrintService.printKot(order, settings, kot, { isReprint });
+        if (webResult && webResult.success) {
+          if (__DEV__) {
+            console.log(`[THERMAL PRINT]\nDocument: KOT\nRoute: ${webResult.transport.toUpperCase()}_DIRECT\nResult: SUCCESS\nPrinter: ${webResult.printerName}`);
+          }
+          return { direct: true, printerName: webResult.printerName };
         }
-        return { direct: true, printerName: result.printerName };
+        if (webResult && !webResult.success) {
+          const err: any = new Error(webResult.message || 'Bluetooth printer could not print the KOT.');
+          err.code = webResult.code || 'BLE_PRINT_FAILED';
+          throw err;
+        }
+        // If no direct printer configured:
+        if (autoPrintEnabled) {
+          return { direct: false };
+        }
       } catch (err: any) {
         if (__DEV__) {
-          console.warn('[THERMAL PRINT]\nDocument: KOT\nRoute: QZ_DIRECT\nResult: FAILED\nReason: ' + (err?.message || err));
+          console.warn('[THERMAL PRINT]\nDocument: KOT\nResult: FAILED\nReason: ' + (err?.message || err));
+        }
+        if (autoPrintEnabled) {
+          return { direct: false };
         }
         throw err;
       }
@@ -1034,8 +1039,8 @@ export const printService = {
 
   /**
    * Final Bill / Customer Receipt (80mm / 58mm Thermal Format)
-   * On Web: Sends print job directly to configured POS80 / thermal printer via QZ Tray without Chrome print dialog.
-   * If direct printing fails or QZ is unavailable, gracefully falls back to browser printing.
+   * On Web: Sends print job directly to configured thermal printer via RestroZ Print Agent / direct Web transport without Chrome print dialog.
+   * If direct printing fails, gracefully falls back to browser printing.
    * On Native: Uses expo-print printAsync.
    */
   async printFinalReceiptThermal(
@@ -1057,26 +1062,31 @@ export const printService = {
 
     const autoPrintEnabled = isAutoPrintEnabled(settings);
 
-    // Auto Print ON: use direct QZ printing to configured Bill printer
-    if (Platform.OS === 'web' && autoPrintEnabled && !options?.forceBrowser) {
-      if (__DEV__) {
-        console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nAuto Print: true\nRoute: QZ_DIRECT');
-      }
+    // Web: use direct Web Bluetooth, WebUSB, Serial, or RestroZ Print Agent
+    if (Platform.OS === 'web' && !options?.forceBrowser) {
       try {
-        const restId = order.restaurant_id || settings.restaurant_id || (settings as any).id;
-        const targetPrinter = resolveBillPrinterName(settings, restId);
-        const result = await directPrintService.printThermalDirect(html, {
-          printerName: targetPrinter,
-          jobName: `Bill_${order.invoice_number || order.order_number}`,
-          paperSize: billPaperSize,
-        });
-        if (__DEV__) {
-          console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: QZ_DIRECT\nResult: SUCCESS\nPrinter: ' + result.printerName);
+        const webResult = await webDirectPrintService.printBill(order, settings, billedBy);
+        if (webResult && webResult.success) {
+          if (__DEV__) {
+            console.log(`[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ${webResult.transport.toUpperCase()}_DIRECT\nResult: SUCCESS\nPrinter: ${webResult.printerName}`);
+          }
+          return { direct: true, printerName: webResult.printerName };
         }
-        return { direct: true, printerName: result.printerName };
+        if (webResult && !webResult.success) {
+          const err: any = new Error(webResult.message || 'Bluetooth printer could not print the Bill.');
+          err.code = webResult.code || 'BLE_PRINT_FAILED';
+          throw err;
+        }
+        // If no direct printer configured:
+        if (autoPrintEnabled) {
+          return { direct: false };
+        }
       } catch (err: any) {
         if (__DEV__) {
-          console.warn('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: QZ_DIRECT\nResult: FAILED\nReason: ' + (err?.message || err));
+          console.warn('[THERMAL PRINT]\nDocument: Thermal Bill\nResult: FAILED\nReason: ' + (err?.message || err));
+        }
+        if (autoPrintEnabled) {
+          return { direct: false };
         }
         throw err;
       }
@@ -1110,7 +1120,7 @@ export const printService = {
     }
 
     // Auto Print OFF, forceBrowser fallback, or Native manual fallback:
-    // Completely bypass QZ and invoke original browser / native printing
+    // Invoke original browser / native printing
     if (__DEV__) {
       console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nAuto Print: false\nRoute: BROWSER_MANUAL');
     }

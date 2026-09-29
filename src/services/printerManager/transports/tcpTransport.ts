@@ -85,7 +85,7 @@ export const tcpTransport = {
         return {
           reachable: false,
           status: 'invalid_config',
-          message: 'Direct TCP socket printing is not supported in web browser sandbox. Use Android device or Windows QZ Tray.',
+          message: 'Direct TCP socket printing is not supported in web browser sandbox. Use Android device or RestroZ Print Agent.',
           latencyMs: 0,
         };
       }

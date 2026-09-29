@@ -275,3 +275,44 @@ export function renderNetworkTestReceiptToEscPos(
   });
 }
 
+/**
+ * Temporary DEV-only physical width diagnostic for determining exact hardware character width.
+ * Prints calibration lines of 40, 42, 44, 46, and 48 characters directly in raw Font A ESC/POS.
+ * Never printed on customer bills.
+ */
+export function renderWidthDiagnosticToEscPos(
+  printerName: string = 'RP3150 STAR(U) 1',
+  transport: string = 'agent'
+): EscPosDocument {
+  const { EscPosTextBuilder } = require('./escposBuilder');
+  const builder = new EscPosTextBuilder('80mm', printerName, { transport });
+
+  builder.addBanner('*** PHYSICAL WIDTH DIAGNOSTIC ***');
+  builder.addLine('Font: Standard Font A (12x24)', { align: 'center' });
+  builder.addLine('Test: Physical Column Limits', { align: 'center' });
+  builder.addDivider('-');
+
+  const testLengths = [40, 42, 44, 46, 48];
+  for (const len of testLengths) {
+    builder.addLine(`[WIDTH: ${len} CHARACTERS]`, { bold: true });
+    // Numbered line: 12345678901234567890...
+    let nums = '';
+    for (let i = 1; i <= len; i++) {
+      nums += String(i % 10);
+    }
+    builder.addLine(nums);
+    // Boundary line: |--------------------------------------|
+    const innerDash = len >= 2 ? '-'.repeat(len - 2) : '';
+    const boundary = `|${innerDash}|`;
+    builder.addLine(boundary);
+    builder.addLine('');
+  }
+
+  builder.addDivider('-');
+  builder.addLine('Check which line wraps on paper.', { align: 'center', bold: true });
+  builder.addFeedAndCut(3);
+
+  return builder.build();
+}
+
+

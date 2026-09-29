@@ -509,18 +509,20 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ? newOrder.kots[0]
       : await kotService.generateKot(newOrder, orderNotes);
 
-    // Print KOT slip upon order placement if Auto Print is ON
-    if (settings.auto_print_kot) {
-      try {
-        await printService.printKotThermal(newOrder, settings, initialKot, false);
+    // Print KOT slip upon order placement / KOT Print button action
+    try {
+      await printService.printKotThermal(newOrder, settings, initialKot, false);
+      if (settings.auto_print_kot) {
         await printedKotTracker.markKotAsAutoPrinted(initialKot.id, initialKot.kitchen_notes);
-      } catch (printErr: any) {
-        console.warn('[PosContext] Auto-print initial KOT handled safely:', printErr);
-        await handleThermalPrintFallback(printErr, 'KOT', async () => {
-          await printService.printKotThermalBrowser(newOrder, settings, initialKot, false);
-          await printedKotTracker.markKotAsAutoPrinted(initialKot.id, initialKot.kitchen_notes);
-        });
       }
+    } catch (printErr: any) {
+      console.warn('[PosContext] KOT print handled safely:', printErr);
+      await handleThermalPrintFallback(printErr, 'KOT', async () => {
+        await printService.printKotThermalBrowser(newOrder, settings, initialKot, false);
+        if (settings.auto_print_kot) {
+          await printedKotTracker.markKotAsAutoPrinted(initialKot.id, initialKot.kitchen_notes);
+        }
+      });
     }
 
     showToast('success', 'Order & KOT Dispatched!', `Order #${newOrder.order_number} sent to Kitchen (KOT #${initialKot.kot_number}).`);
@@ -599,17 +601,19 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if ((updated as any).latest_kot) {
       const deltaKot = (updated as any).latest_kot;
-      if (settings.auto_print_kot) {
-        try {
-          await printService.printKotThermal(updated, settings, deltaKot, false);
+      try {
+        await printService.printKotThermal(updated, settings, deltaKot, false);
+        if (settings.auto_print_kot) {
           await printedKotTracker.markKotAsAutoPrinted(deltaKot.id, deltaKot.kitchen_notes);
-        } catch (printErr: any) {
-          console.warn('[PosContext] Auto-print delta KOT handled safely:', printErr);
-          await handleThermalPrintFallback(printErr, 'KOT', async () => {
-            await printService.printKotThermalBrowser(updated, settings, deltaKot, false);
-            await printedKotTracker.markKotAsAutoPrinted(deltaKot.id, deltaKot.kitchen_notes);
-          });
         }
+      } catch (printErr: any) {
+        console.warn('[PosContext] Delta KOT print handled safely:', printErr);
+        await handleThermalPrintFallback(printErr, 'KOT', async () => {
+          await printService.printKotThermalBrowser(updated, settings, deltaKot, false);
+          if (settings.auto_print_kot) {
+            await printedKotTracker.markKotAsAutoPrinted(deltaKot.id, deltaKot.kitchen_notes);
+          }
+        });
       }
       showToast('success', 'New Item KOT Saved', `Sent KOT #${deltaKot.kot_number} for new items.`);
     } else {

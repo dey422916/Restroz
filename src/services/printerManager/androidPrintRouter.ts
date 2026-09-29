@@ -19,9 +19,7 @@ import { devicePrinterBindingService } from './devicePrinterBindings';
 import { printerRoutingService, CategoryPrintSplit } from './routing';
 import { renderKotToEscPos } from './escpos/kotRenderer';
 import { renderBillToEscPos } from './escpos/billRenderer';
-import { tcpTransport } from './transports/tcpTransport';
-import { bluetoothTransport } from './transports/bluetoothTransport';
-import { usbTransport } from './transports/usbTransport';
+import { tcpTransport, bluetoothTransport, usbTransport } from './transports';
 import { isAutoPrintEnabled } from '../directPrintService';
 import { printedKotTracker } from '../../utils/printedKotTracker';
 

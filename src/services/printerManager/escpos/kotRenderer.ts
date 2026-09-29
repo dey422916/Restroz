@@ -5,7 +5,7 @@
  */
 
 import { Order, KOT, RestaurantSettings, RestaurantPrinter, PrinterCalibration, PrinterPaperWidth } from '../../../types';
-import { formatOrderDateTime } from '../../../utils/dateUtils';
+import { formatOrderDateTime, formatOrderDate, formatOrderTime } from '../../../utils/dateUtils';
 import { EscPosDocument } from './encoder';
 import { EscPosTextBuilder } from './escposBuilder';
 
@@ -99,18 +99,11 @@ export function renderKotToEscPos(
   builder.addDivider('-');
 
   // 5. Bill / Order Meta (Key-Value pairs strictly within 48 chars on 80mm / 32 chars on 58mm)
-  builder.addKeyValue('Bill No:', order.order_number || 'N/A', { bold: true });
+  builder.addKeyValue('Bill No:', order.order_number || (order as any).invoice_number || 'N/A', { bold: true });
 
   const rawCreatedAt = activeKot?.created_at || order.updated_at || order.created_at;
-  const fullDateTime = formatOrderDateTime(rawCreatedAt);
-  // Split Date & Time for clean layout if possible
-  const dateParts = fullDateTime.split(',');
-  if (dateParts.length >= 2) {
-    builder.addKeyValue('Date:', dateParts[0].trim());
-    builder.addKeyValue('Time:', dateParts.slice(1).join(',').trim());
-  } else {
-    builder.addKeyValue('Date/Time:', fullDateTime);
-  }
+  builder.addKeyValue('Date:', formatOrderDate(rawCreatedAt));
+  builder.addKeyValue('Time:', formatOrderTime(rawCreatedAt));
 
   // 6. Table / Section Info
   const tableName = order.table_number || (order as any).dining_tables?.table_number || order.table_id || 'Quick Order';

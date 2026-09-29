@@ -5,7 +5,7 @@
  */
 
 import { Order, RestaurantSettings, RestaurantPrinter, PrinterCalibration, PrinterPaperWidth } from '../../../types';
-import { formatOrderDateTime } from '../../../utils/dateUtils';
+import { formatOrderDateTime, formatOrderDate, formatOrderTime } from '../../../utils/dateUtils';
 import { getOrderInvoiceTotals } from '../../../utils/gst';
 import { EscPosDocument } from './encoder';
 import { EscPosTextBuilder } from './escposBuilder';
@@ -79,14 +79,10 @@ export function renderBillToEscPos(
   builder.addBanner(title);
   builder.addKeyValue('Bill No:', invoiceNumber, { bold: true });
 
-  const formattedDateTime = formatOrderDateTime(order.created_at);
-  const dateParts = formattedDateTime.split(',');
-  if (dateParts.length >= 2) {
-    builder.addKeyValue('Date:', dateParts[0].trim());
-    builder.addKeyValue('Time:', dateParts.slice(1).join(',').trim());
-  } else {
-    builder.addKeyValue('Date/Time:', formattedDateTime);
-  }
+  const orderDate = formatOrderDate(order.created_at);
+  const orderTime = formatOrderTime(order.created_at);
+  builder.addKeyValue('Date:', orderDate);
+  builder.addKeyValue('Time:', orderTime);
 
   // Table / Order Type
   const tableName = order.table_number || (order as any).dining_tables?.table_number || order.table_id || 'Quick Order';

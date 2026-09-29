@@ -130,14 +130,27 @@ export class EscPosTextBuilder {
     this.disableCutCmd = Boolean(options?.disableCutCmd || options?.isBle || this.paperWidth === '58mm');
 
     const transportStr = options?.transport ? options.transport.toUpperCase() : (this.isBle ? 'BLUETOOTH' : 'PRINT_AGENT');
-    console.log(
-      `[ESC_POS_LAYOUT]\n` +
-      `Printer: ${printerName || (this.paperWidth === '58mm' ? 'POS58 Printer' : 'POS80 Printer')}\n` +
-      `Configured Width: ${this.paperWidth}\n` +
-      `Renderer Width: ${this.lineWidth}\n` +
-      `Font: A\n` +
-      `Transport: ${transportStr}`
-    );
+    if (this.paperWidth === '80mm') {
+      console.log(
+        `[80MM_RUNTIME]\n` +
+        `Printer: ${printerName || 'RP3150 STAR(U) 1'}\n` +
+        `Paper Width: 80mm\n` +
+        `Renderer Width: 48\n` +
+        `Font: Font A\n` +
+        `Scale: normal 1x1\n` +
+        `Transport: ${transportStr}`
+      );
+    } else {
+      console.log(
+        `[58MM_RUNTIME]\n` +
+        `Printer: ${printerName || 'POS58 Printer'}\n` +
+        `Paper Width: 58mm\n` +
+        `Renderer Width: 32\n` +
+        `Font: Font A\n` +
+        `Scale: normal 1x1\n` +
+        `Transport: ${transportStr}`
+      );
+    }
 
     // 1. Initialize printer hardware state (ESC @)
     this.appendBytes(ESC_POS_COMMANDS.INITIALIZE);
@@ -166,8 +179,8 @@ export class EscPosTextBuilder {
   public resetToNormal(): this {
     this.appendBytes(ESC_POS_COMMANDS.FONT_A);
     this.appendBytes(ESC_POS_COMMANDS.TEXT_NORMAL);
-    this.appendBytes(ESC_POS_COMMANDS.ALIGN_LEFT);
     this.appendBytes(ESC_POS_COMMANDS.BOLD_OFF);
+    this.appendBytes(ESC_POS_COMMANDS.ALIGN_LEFT);
     return this;
   }
 
@@ -286,8 +299,9 @@ export class EscPosTextBuilder {
   }
 
   /**
-   * Adds a Key-Value pair line (e.g. "Bill No:" (left) ... "INV-2026-00018" (right)).
-   * Line length strictly equals lineWidth (32 chars for 58mm, 48 chars for 80mm).
+   * Adds a Key-Value pair line.
+   * On 80mm: strictly uses dedicated 16-char LABEL AREA + 32-char VALUE AREA (48 chars total).
+   * On 58mm: strictly uses standard 32-char format (single line if fits, else 2 lines).
    */
   public addKeyValue(key: string, value: string, style: EscPosTextStyle = {}): this {
     const scale = style.scale || 'normal';
@@ -297,13 +311,35 @@ export class EscPosTextBuilder {
     const sanitizedKey = key.trim();
     const sanitizedVal = value.trim().replace(/₹/g, 'INR ');
 
-    // Check if key + value fits on 1 line
+    if (this.paperWidth === '80mm' && !isDoubleWidth) {
+      // Dedicated 80mm Formatter: LABEL AREA 16 chars, VALUE AREA 32 chars
+      const labelAreaWidth = 16;
+      const valueAreaWidth = 32;
+
+      const labelPart = sanitizedKey.padEnd(labelAreaWidth, ' ');
+
+      if (sanitizedVal.length <= valueAreaWidth) {
+        const valPart = sanitizedVal.padStart(valueAreaWidth, ' ');
+        this.addLine(labelPart + valPart, style);
+      } else {
+        const valLines = wrapText(sanitizedVal, valueAreaWidth);
+        for (let i = 0; i < valLines.length; i++) {
+          if (i === 0) {
+            this.addLine(labelPart + valLines[i].padStart(valueAreaWidth, ' '), style);
+          } else {
+            this.addLine(' '.repeat(labelAreaWidth) + valLines[i].padStart(valueAreaWidth, ' '), style);
+          }
+        }
+      }
+      return this;
+    }
+
+    // Standard 58mm or double-width formatting
     if (sanitizedKey.length + sanitizedVal.length + 1 <= maxChars) {
       const spaceCount = maxChars - (sanitizedKey.length + sanitizedVal.length);
       const combined = sanitizedKey + ' '.repeat(spaceCount) + sanitizedVal;
       this.addLine(combined, style);
     } else {
-      // Key on line 1, Value right-aligned or wrapped on line 2
       this.addLine(sanitizedKey, style);
       const valLines = wrapText(sanitizedVal, maxChars);
       for (const valLine of valLines) {
@@ -398,11 +434,11 @@ export class EscPosTextBuilder {
 
       if (isLast) {
         const fullLine = `${namePart} ${qtyStr} ${rateStr} ${amtStr}`;
-        this.addLine(fullLine, { bold: true });
+        this.addLine(fullLine, { bold: false });
       } else {
         const emptyColumns = ' '.repeat(qtyWidth + 1 + rateWidth + 1 + amtWidth);
         const fullLine = `${namePart} ${emptyColumns}`;
-        this.addLine(fullLine, { bold: true });
+        this.addLine(fullLine, { bold: false });
       }
     }
 

@@ -41,6 +41,7 @@ import { PaymentModal } from '../../src/components/pos/PaymentModal';
 import { isValidPhoneNumber, normalizePhoneNumber } from '../../src/utils/phone';
 import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError } from '../../src/utils/validation';
 import { naturalTableCompare } from '../../src/utils/sortUtils';
+import { getCurrentLoggedInUserDisplayName } from '../../src/utils/receiptIdentity';
 
 export default function PosScreen() {
   const router = useRouter();
@@ -551,14 +552,16 @@ export default function PosScreen() {
       return;
     }
     try {
-      const res = await printService.printBillThermal(createdOrder, settings);
+      const billedBy = getCurrentLoggedInUserDisplayName(user);
+      const res = await printService.printBillThermal(createdOrder, settings, billedBy);
       if (res && res.direct) {
         showToast('success', 'Print Bill', `Bill printed for #${createdOrder.order_number}`);
       }
     } catch (err: any) {
       console.warn('[pos.tsx] Print Bill error:', err);
       await handleThermalPrintFallback(err, 'Bill', async () => {
-        await printService.printFinalReceiptThermalBrowser(createdOrder, settings);
+        const billedBy = getCurrentLoggedInUserDisplayName(user);
+        await printService.printFinalReceiptThermalBrowser(createdOrder, settings, billedBy);
       });
     }
   };
@@ -2164,14 +2167,16 @@ export default function PosScreen() {
                           const currentOrder = viewTableModalData.order;
                           if (currentOrder) {
                             try {
-                              const res = await printService.printBillThermal(currentOrder, settings);
+                              const billedBy = getCurrentLoggedInUserDisplayName(user);
+                              const res = await printService.printBillThermal(currentOrder, settings, billedBy);
                               if (res && res.direct) {
                                 showToast('success', 'Thermal Bill', 'Bill printed.');
                               }
                             } catch (err: any) {
                               console.warn('[pos.tsx] modalActionBillBtn error:', err);
                               await handleThermalPrintFallback(err, 'Bill', async () => {
-                                await printService.printFinalReceiptThermalBrowser(currentOrder, settings);
+                                const billedBy = getCurrentLoggedInUserDisplayName(user);
+                                await printService.printFinalReceiptThermalBrowser(currentOrder, settings, billedBy);
                               });
                             }
                           }

@@ -47,9 +47,9 @@ export function renderBillToEscPos(
     builder.addLine(settings.address, { align: 'center' });
   }
 
-  const phone = settings.phone || (settings as any).contact_number;
-  if (phone) {
-    builder.addLine(`Phone: ${phone}`, { align: 'center' });
+  const phone = settings.phone || (settings as any).contact_number || '';
+  if (phone && String(phone).trim() && String(phone).trim() !== 'undefined' && String(phone).trim() !== 'null') {
+    builder.addLine(`Phone: ${String(phone).trim()}`, { align: 'center' });
   }
 
   if (settings.gstin && settings.gstin.trim()) {
@@ -92,9 +92,11 @@ export function renderBillToEscPos(
   const orderType = order.order_type === 'dine_in' ? 'Dine In' : order.order_type === 'takeaway' ? 'Takeaway' : 'Delivery';
   builder.addKeyValue('Table / Type:', `${tableName} (${orderType})`);
 
-  // Billed by / Staff
-  const server = (order as any).waiter_name || billedBy || options.billedBy || 'Cashier';
-  builder.addKeyValue('Billed By:', server);
+  // Billed by / Staff (Always current logged-in user at print time)
+  const resolvedBilledBy = (billedBy && billedBy !== 'Staff' && billedBy !== 'Ratnadeep Dey')
+    ? billedBy
+    : (options.billedBy || billedBy || 'Staff');
+  builder.addKeyValue('Billed By:', resolvedBilledBy);
 
   // Customer GSTIN if B2B
   if (order.customer_gstin && order.customer_gstin.trim()) {

@@ -36,6 +36,7 @@ import { validateGSTIN } from '../../src/utils/validators';
 import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
 import { useNotification } from '../../src/context/NotificationContext';
 import { useNewOrderTracker } from '../../src/hooks/useNewOrderTracker';
+import { getCurrentLoggedInUserDisplayName } from '../../src/utils/receiptIdentity';
 
 export default function OrdersScreen() {
   const router = useRouter();
@@ -2026,14 +2027,16 @@ export default function OrdersScreen() {
                           style={[styles.gridActionBtn, styles.actionPrintThermalBg]}
                           onPress={async () => {
                             try {
-                              const res = await printService.printFinalReceiptThermal(order, settings, user?.full_name);
+                              const billedBy = getCurrentLoggedInUserDisplayName(user);
+                              const res = await printService.printFinalReceiptThermal(order, settings, billedBy);
                               if (res && res.direct) {
                                 showAlert('🖨️ Bill Printed', `Thermal bill printed for Order #${order.order_number}.`);
                               }
                             } catch (err: any) {
                               console.warn('[orders.tsx] Thermal bill print error:', err);
                               await handleThermalPrintFallback(err, 'Bill', async () => {
-                                await printService.printFinalReceiptThermalBrowser(order, settings, user?.full_name);
+                                const billedBy = getCurrentLoggedInUserDisplayName(user);
+                                await printService.printFinalReceiptThermalBrowser(order, settings, billedBy);
                               });
                             }
                           }}
@@ -2043,7 +2046,10 @@ export default function OrdersScreen() {
 
                         <TouchableOpacity
                           style={[styles.gridActionBtn, styles.actionShareBg]}
-                          onPress={() => printService.printTaxInvoiceA4(order, settings)}
+                          onPress={() => {
+                            const billedBy = getCurrentLoggedInUserDisplayName(user);
+                            printService.printTaxInvoiceA4(order, settings, billedBy);
+                          }}
                         >
                           <Text style={styles.actionBtnTextWhite}>📄 A4</Text>
                         </TouchableOpacity>
@@ -3521,14 +3527,16 @@ export default function OrdersScreen() {
                       style={[styles.invoiceActionBtn, styles.invoiceBtnThermal]}
                       onPress={async () => {
                         try {
-                          const res = await printService.printFinalReceiptThermal(viewOrderModal, settings, user?.full_name);
+                          const billedBy = getCurrentLoggedInUserDisplayName(user);
+                          const res = await printService.printFinalReceiptThermal(viewOrderModal, settings, billedBy);
                           if (res && res.direct) {
                             showAlert('🖨️ Bill Printed', `Thermal bill printed for Order #${viewOrderModal.order_number}.`);
                           }
                         } catch (err: any) {
                           console.warn('[orders.tsx] viewOrderModal thermal bill print error:', err);
                           await handleThermalPrintFallback(err, 'Bill', async () => {
-                            await printService.printFinalReceiptThermalBrowser(viewOrderModal, settings, user?.full_name);
+                            const billedBy = getCurrentLoggedInUserDisplayName(user);
+                            await printService.printFinalReceiptThermalBrowser(viewOrderModal, settings, billedBy);
                           });
                         }
                       }}
@@ -3557,7 +3565,10 @@ export default function OrdersScreen() {
 
                     <TouchableOpacity
                       style={[styles.invoiceActionBtn, styles.invoiceBtnA4]}
-                      onPress={() => printService.printTaxInvoiceA4(viewOrderModal, settings)}
+                      onPress={() => {
+                        const billedBy = getCurrentLoggedInUserDisplayName(user);
+                        printService.printTaxInvoiceA4(viewOrderModal, settings, billedBy);
+                      }}
                     >
                       <Text style={styles.invoiceBtnText}>📄 Tax Invoice A4</Text>
                     </TouchableOpacity>

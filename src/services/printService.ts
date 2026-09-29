@@ -8,6 +8,7 @@ import { directPrintService, resolveKotPrinterName, resolveBillPrinterName, isAu
 import { webDirectPrintService } from './webDirectPrintService';
 import { androidPrintRouter } from './printerManager/androidPrintRouter';
 import { supabase } from './supabase';
+import { resolveReceiptIdentity } from '../utils/receiptIdentity';
 
 /**
  * Handles thermal print errors with explicit user confirmation before opening browser/system print preview.
@@ -616,9 +617,10 @@ export const printService = {
   async printBillThermal(
     order: Order,
     settings: RestaurantSettings,
+    billedBy?: string,
     options?: { forceBrowser?: boolean }
   ): Promise<{ direct: boolean; printerName?: string }> {
-    return this.printFinalReceiptThermal(order, settings, undefined, options);
+    return this.printFinalReceiptThermal(order, settings, billedBy, options);
   },
 
   /**
@@ -628,8 +630,11 @@ export const printService = {
   generateFinalReceiptHtml(
     order: Order,
     settings: RestaurantSettings,
-    billedBy: string = 'Ratnadeep Dey'
+    billedBy?: string
   ): string {
+    const identity = resolveReceiptIdentity(settings, undefined, billedBy);
+    const resolvedBilledBy = identity.billedBy;
+    const resolvedPhone = identity.restaurantPhone;
     const formattedOrderDateTime = formatOrderDateTime(order.created_at);
 
     const kotRefs =
@@ -862,7 +867,7 @@ export const printService = {
             </div>
             ${settings.address ? `<div class="center legal-meta">${settings.address}</div>` : ''}
             ${isTaxInvoice && settings.gstin ? `<div class="center legal-meta">GSTIN: <b>${settings.gstin}</b></div>` : ''}
-            ${settings.phone ? `<div class="center legal-meta">Phone: ${settings.phone}</div>` : ''}
+            ${resolvedPhone ? `<div class="center legal-meta">Phone: ${resolvedPhone}</div>` : ''}
 
             <div class="dashed"></div>
 
@@ -1012,7 +1017,7 @@ export const printService = {
             <div class="center" style="font-size: 9px; margin-top: 2px;">All prices are in Indian Rupee (INR)</div>
             
             <div class="center" style="margin-top: 4px; font-size: 9.5px;">
-              <b>Billed By:</b> ${billedBy}
+              <b>Billed By:</b> ${resolvedBilledBy}
             </div>
 
             <div class="center bold" style="margin-top: 5px; font-size: 11.5px; letter-spacing: 0.3px;">
@@ -1031,7 +1036,7 @@ export const printService = {
   async printFinalReceiptThermalBrowser(
     order: Order,
     settings: RestaurantSettings,
-    billedBy: string = 'Ratnadeep Dey'
+    billedBy?: string
   ): Promise<void> {
     const html = this.generateFinalReceiptHtml(order, settings, billedBy);
     await executeIsolatedPrint(html);
@@ -1046,10 +1051,12 @@ export const printService = {
   async printFinalReceiptThermal(
     order: Order,
     settings: RestaurantSettings,
-    billedBy: string = 'Ratnadeep Dey',
+    billedBy?: string,
     options?: { forceBrowser?: boolean }
   ): Promise<{ direct: boolean; printerName?: string }> {
-    const html = this.generateFinalReceiptHtml(order, settings, billedBy);
+    const identity = resolveReceiptIdentity(settings, undefined, billedBy);
+    const resolvedBilledBy = identity.billedBy;
+    const html = this.generateFinalReceiptHtml(order, settings, resolvedBilledBy);
     const billPaperSize = settings.bill_paper_size || settings.kot_paper_size || '80mm';
 
     if (billPaperSize === 'A4') {
@@ -1065,7 +1072,7 @@ export const printService = {
     // Web: use direct Web Bluetooth, WebUSB, Serial, or RestroZ Print Agent
     if (Platform.OS === 'web' && !options?.forceBrowser) {
       try {
-        const webResult = await webDirectPrintService.printBill(order, settings, billedBy);
+        const webResult = await webDirectPrintService.printBill(order, settings, resolvedBilledBy);
         if (webResult && webResult.success) {
           if (__DEV__) {
             console.log(`[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ${webResult.transport.toUpperCase()}_DIRECT\nResult: SUCCESS\nPrinter: ${webResult.printerName}`);
@@ -1203,7 +1210,13 @@ export const printService = {
   /**
    * Tax Invoice (A4 Standard Format for PDF & Printing)
    */
-  async printTaxInvoiceA4(order: Order, settings: RestaurantSettings): Promise<void> {
+  async printTaxInvoiceA4(
+    order: Order,
+    settings: RestaurantSettings,
+    billedBy?: string
+  ): Promise<void> {
+    const identity = resolveReceiptIdentity(settings, undefined, billedBy);
+    const resolvedPhone = identity.restaurantPhone;
     const kotRefs = (order.kots || []).map((k) => k.kot_number).join(', ') || 'N/A';
     const isPaid = order.payment_status === 'paid';
     const logoUrl = formatLogoDataUri(settings?.logo_url || (order as any)?.restaurant?.logo_url);
@@ -1549,7 +1562,7 @@ export const printService = {
                   <div class="brand-name">${settings.name || 'Restaurant'}</div>
                   ${settings.legal_name ? `<div class="legal-name">${settings.legal_name}</div>` : ''}
                   <div class="rest-meta">${settings.address || ''}</div>
-                  <div class="rest-meta">Phone: <b>${settings.phone || 'N/A'}</b> ${settings.email ? `• Email: ${settings.email}` : ''}</div>
+                  <div class="rest-meta">${resolvedPhone ? `Phone: <b>${resolvedPhone}</b> ` : ''}${settings.email ? `• Email: ${settings.email}` : ''}</div>
                   ${isTaxInvoice && settings.gstin ? `<div class="rest-meta">GSTIN: <b>${settings.gstin}</b></div>` : ''}
                   ${fssaiNo ? `<div class="rest-meta">FSSAI Lic No: <b>${fssaiNo}</b></div>` : ''}
                 </div>

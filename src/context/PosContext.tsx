@@ -22,6 +22,7 @@ import { useAuth } from './AuthContext';
 import { printService, handleThermalPrintFallback } from '../services/printService';
 import { supabase, isSupabaseConfigured } from '../services/supabase';
 import { printedKotTracker } from '../utils/printedKotTracker';
+import { getCurrentLoggedInUserDisplayName } from '../utils/receiptIdentity';
 
 // Custom error to represent expected register closed validation
 export class RegisterClosedError extends Error {
@@ -694,12 +695,13 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     // Print final thermal receipt with persisted numbers (Auto Print ON -> Direct/Print Agent, Auto Print OFF -> Browser)
+    const billedBy = getCurrentLoggedInUserDisplayName(user);
     try {
-      await printService.printFinalReceiptThermal(updatedOrder, settings);
+      await printService.printFinalReceiptThermal(updatedOrder, settings, billedBy);
     } catch (printErr: any) {
       console.warn('[PosContext] Thermal receipt print handled safely:', printErr);
       await handleThermalPrintFallback(printErr, 'Receipt', async () => {
-        await printService.printFinalReceiptThermalBrowser(updatedOrder, settings);
+        await printService.printFinalReceiptThermalBrowser(updatedOrder, settings, billedBy);
       });
     }
 

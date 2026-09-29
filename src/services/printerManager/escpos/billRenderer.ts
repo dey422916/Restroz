@@ -30,9 +30,10 @@ export function renderBillToEscPos(
   const rawPaperSize = options.printer?.paper_width || settings.bill_paper_size || settings.kot_paper_size || '80mm';
   const paperSize: PrinterPaperWidth = rawPaperSize === '58mm' ? '58mm' : '80mm';
   const printerName = (options.printer as any)?.name || (paperSize === '58mm' ? 'POS58 Printer' : 'POS80 Printer');
-  const isBle = Boolean(options.isBle || (options.printer as any)?.transport === 'bluetooth' || (options.printer as any)?.isBle || paperSize === '58mm');
+  const transport = (options.printer as any)?.transport || (options.isBle ? 'bluetooth' : 'agent');
+  const isBle = Boolean(options.isBle || transport === 'bluetooth' || (options.printer as any)?.isBle || paperSize === '58mm');
 
-  const builder = new EscPosTextBuilder(paperSize, printerName, { isBle });
+  const builder = new EscPosTextBuilder(paperSize, printerName, { isBle, transport });
 
   // 1. Restaurant Brand Logo (Centered monochrome raster bitmap, if provided)
   if (options.logoRasterBytes && options.logoRasterBytes.length > 0) {
@@ -177,7 +178,6 @@ export function renderBillToEscPos(
   // GRAND TOTAL / PAYABLE AMOUNT (Using INR to prevent corruption)
   builder.addKeyValue('TOTAL PAYABLE:', `INR ${calculatedTotals.payableAmount.toFixed(2)}`, {
     bold: true,
-    scale: 'double_height',
   });
 
   builder.addDivider('=');
@@ -203,7 +203,7 @@ export function renderBillToEscPos(
   builder.addLine(footerText, { align: 'center', bold: true });
 
   // 8. Feed and Cut
-  builder.addFeedAndCut(4);
+  builder.addFeedAndCut(3);
 
   return builder.build();
 }

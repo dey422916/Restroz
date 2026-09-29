@@ -41,7 +41,8 @@ export function renderKotToEscPos(
   const rawPaperSize = options.printer?.paper_width || settings.kot_paper_size || '80mm';
   const paperSize: PrinterPaperWidth = rawPaperSize === '58mm' ? '58mm' : '80mm';
   const printerName = (options.printer as any)?.name || (paperSize === '58mm' ? 'POS58 Printer' : 'POS80 Printer');
-  const isBle = Boolean(options.isBle || (options.printer as any)?.transport === 'bluetooth' || (options.printer as any)?.isBle || paperSize === '58mm');
+  const transport = (options.printer as any)?.transport || (options.isBle ? 'bluetooth' : 'agent');
+  const isBle = Boolean(options.isBle || transport === 'bluetooth' || (options.printer as any)?.isBle || paperSize === '58mm');
 
   const isReprint = options.isReprint || Boolean(activeKot?.kitchen_notes && activeKot.kitchen_notes.includes('[AUTO_PRINTED]'));
   const isSupplementary = activeKot
@@ -72,7 +73,7 @@ export function renderKotToEscPos(
     }
   }
 
-  const builder = new EscPosTextBuilder(paperSize, printerName, { isBle });
+  const builder = new EscPosTextBuilder(paperSize, printerName, { isBle, transport });
 
   // 1. Restaurant Name (Centered, Bold, Normal Font A)
   const restaurantName = settings.name || (settings as any).restaurant_name;
@@ -97,12 +98,12 @@ export function renderKotToEscPos(
   builder.addLine(displayTitle, { align: 'center', bold: true, scale: 'double_height' });
   builder.addDivider('-');
 
-  // 5. Bill / Order Meta (Key-Value pairs strictly within 32 chars)
+  // 5. Bill / Order Meta (Key-Value pairs strictly within 48 chars on 80mm / 32 chars on 58mm)
   builder.addKeyValue('Bill No:', order.order_number || 'N/A', { bold: true });
 
   const rawCreatedAt = activeKot?.created_at || order.updated_at || order.created_at;
   const fullDateTime = formatOrderDateTime(rawCreatedAt);
-  // Split Date & Time for clean 32-char layout if possible
+  // Split Date & Time for clean layout if possible
   const dateParts = fullDateTime.split(',');
   if (dateParts.length >= 2) {
     builder.addKeyValue('Date:', dateParts[0].trim());
@@ -159,7 +160,7 @@ export function renderKotToEscPos(
   builder.addDivider('-');
 
   // 13. Paper Feed & Partial Cut
-  builder.addFeedAndCut(4);
+  builder.addFeedAndCut(3);
 
   return builder.build();
 }

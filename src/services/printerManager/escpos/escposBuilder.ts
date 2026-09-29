@@ -16,7 +16,7 @@ export interface EscPosTextStyle {
 }
 
 /**
- * Word wraps text into lines that do not exceed maxChars.
+ * Word wraps text into lines that do not exceed maxChars without splitting words unnecessarily.
  */
 export function wrapText(text: string, maxChars: number): string[] {
   if (!text) return [''];
@@ -75,8 +75,38 @@ export function wrapText(text: string, maxChars: number): string[] {
   return resultLines.length > 0 ? resultLines : [''];
 }
 
+/**
+ * Formats key-value pair line right-padded and right-aligned to width
+ */
+export function formatKeyValue(key: string, value: string, width: number): string {
+  const k = key.trim();
+  const v = value.trim().replace(/₹/g, 'INR ');
+  if (k.length + v.length + 1 <= width) {
+    const spaces = width - (k.length + v.length);
+    return k + ' '.repeat(spaces) + v;
+  }
+  return k + '\n' + ' '.repeat(Math.max(0, width - v.length)) + v;
+}
+
+/**
+ * Formats multi-column row with specified column widths and single space separator
+ */
+export function formatColumns(cols: Array<{ text: string; width: number; align?: 'left' | 'right' }>): string {
+  return cols
+    .map((c) => {
+      const align = c.align || 'left';
+      const text = c.text || '';
+      if (align === 'right') {
+        return text.padStart(c.width, ' ').substring(0, c.width);
+      }
+      return text.padEnd(c.width, ' ').substring(0, c.width);
+    })
+    .join(' ');
+}
+
 export interface EscPosTextBuilderOptions {
   isBle?: boolean;
+  transport?: string;
   disablePaperAreaCmds?: boolean;
   disableCutCmd?: boolean;
 }
@@ -99,9 +129,15 @@ export class EscPosTextBuilder {
     this.isBle = Boolean(options?.isBle || options?.disablePaperAreaCmds || this.paperWidth === '58mm');
     this.disableCutCmd = Boolean(options?.disableCutCmd || options?.isBle || this.paperWidth === '58mm');
 
-    if (typeof __DEV__ !== 'undefined' && __DEV__) {
-      console.log(`[EscPosBuilder] Printer: ${printerName || (this.paperWidth === '58mm' ? 'POS58 Printer' : 'POS80 Printer')} | Paper Width: ${this.paperWidth} | Renderer Width: ${this.lineWidth} chars | Safe BLE Mode: ${this.isBle}`);
-    }
+    const transportStr = options?.transport ? options.transport.toUpperCase() : (this.isBle ? 'BLUETOOTH' : 'PRINT_AGENT');
+    console.log(
+      `[ESC_POS_LAYOUT]\n` +
+      `Printer: ${printerName || (this.paperWidth === '58mm' ? 'POS58 Printer' : 'POS80 Printer')}\n` +
+      `Configured Width: ${this.paperWidth}\n` +
+      `Renderer Width: ${this.lineWidth}\n` +
+      `Font: A\n` +
+      `Transport: ${transportStr}`
+    );
 
     // 1. Initialize printer hardware state (ESC @)
     this.appendBytes(ESC_POS_COMMANDS.INITIALIZE);
@@ -112,13 +148,11 @@ export class EscPosTextBuilder {
     // 3. Reset text scale to normal 1x1 (GS ! 0x00)
     this.appendBytes(ESC_POS_COMMANDS.TEXT_NORMAL);
 
-    // 4 & 5. Margins & Print Area Width:
-    // Only sent for standard 80mm non-BLE desktop printers.
-    // 58mm BLE portable printers (e.g. Seznik-Veer 925C) omit GS L and GS W for maximum firmware compatibility.
-    if (this.paperWidth === '80mm' && !options?.isBle && !options?.disablePaperAreaCmds) {
-      this.appendBytes(ESC_POS_COMMANDS.MARGIN_LEFT_ZERO);
-      this.appendBytes(ESC_POS_COMMANDS.PRINT_AREA_80MM);
-    }
+    // 4. Align left (ESC a 0)
+    this.appendBytes(ESC_POS_COMMANDS.ALIGN_LEFT);
+
+    // 5. Bold off (ESC E 0)
+    this.appendBytes(ESC_POS_COMMANDS.BOLD_OFF);
   }
 
   private appendBytes(bytes: Uint8Array): void {
@@ -126,11 +160,25 @@ export class EscPosTextBuilder {
   }
 
   /**
+   * Resets printer formatting state cleanly to standard Font A, 1x1 scale, left-aligned, not bold.
+   * Prevents font width, double height, or alignment from leaking across sections.
+   */
+  public resetToNormal(): this {
+    this.appendBytes(ESC_POS_COMMANDS.FONT_A);
+    this.appendBytes(ESC_POS_COMMANDS.TEXT_NORMAL);
+    this.appendBytes(ESC_POS_COMMANDS.ALIGN_LEFT);
+    this.appendBytes(ESC_POS_COMMANDS.BOLD_OFF);
+    return this;
+  }
+
+  /**
    * Appends raw binary command sequence (e.g. raster image bytes) directly to the document
+   * and immediately resets font and alignment state.
    */
   public addRawBytes(bytes: Uint8Array): this {
     if (bytes && bytes.length > 0) {
       this.appendBytes(bytes);
+      this.resetToNormal();
     }
     return this;
   }
@@ -186,7 +234,8 @@ export class EscPosTextBuilder {
   }
 
   /**
-   * Adds a single or multi-line text block with automatic word wrapping to lineWidth
+   * Adds a single or multi-line text block with automatic word wrapping to lineWidth.
+   * Strictly enforces line length <= lineWidth (32 for 58mm, 48 for 80mm).
    */
   public addLine(text: string, style: EscPosTextStyle = {}): this {
     const scale = style.scale || 'normal';
@@ -208,16 +257,14 @@ export class EscPosTextBuilder {
       this.appendBytes(ESC_POS_COMMANDS.LINE_FEED);
     }
 
-    // Always reset scale, bold, and align back to normal
-    this.setScale('normal');
-    this.setBold(false);
-    this.setAlign('left');
+    // Always reset font, scale, bold, and align back to clean normal state
+    this.resetToNormal();
 
     return this;
   }
 
   /**
-   * Adds a horizontal divider line
+   * Adds a horizontal divider line strictly matching lineWidth (32 or 48 chars).
    */
   public addDivider(char: '-' | '=' | '*' = '-'): this {
     const line = char.repeat(this.lineWidth);
@@ -227,6 +274,7 @@ export class EscPosTextBuilder {
     this.textLines.push(line);
     this.appendString(line);
     this.appendBytes(ESC_POS_COMMANDS.LINE_FEED);
+    this.resetToNormal();
     return this;
   }
 
@@ -238,8 +286,8 @@ export class EscPosTextBuilder {
   }
 
   /**
-   * Adds a Key-Value pair line (e.g. "Bill No:" (left) ... "INV-001" (right))
-   * Pads with spaces so total length strictly equals lineWidth (32 chars for 58mm).
+   * Adds a Key-Value pair line (e.g. "Bill No:" (left) ... "INV-2026-00018" (right)).
+   * Line length strictly equals lineWidth (32 chars for 58mm, 48 chars for 80mm).
    */
   public addKeyValue(key: string, value: string, style: EscPosTextStyle = {}): this {
     const scale = style.scale || 'normal';
@@ -255,20 +303,23 @@ export class EscPosTextBuilder {
       const combined = sanitizedKey + ' '.repeat(spaceCount) + sanitizedVal;
       this.addLine(combined, style);
     } else {
-      // Key on line 1, Value right-aligned on line 2 (or wrapped)
+      // Key on line 1, Value right-aligned or wrapped on line 2
       this.addLine(sanitizedKey, style);
-      const valSpaceCount = Math.max(0, maxChars - sanitizedVal.length);
-      const valLine = ' '.repeat(valSpaceCount) + sanitizedVal;
-      this.addLine(valLine, style);
+      const valLines = wrapText(sanitizedVal, maxChars);
+      for (const valLine of valLines) {
+        const valSpaceCount = Math.max(0, maxChars - valLine.length);
+        const formattedValLine = ' '.repeat(valSpaceCount) + valLine;
+        this.addLine(formattedValLine, style);
+      }
     }
 
     return this;
   }
 
   /**
-   * Adds a KOT line item with guaranteed right-aligned QTY
-   * 58mm layout: Item Name (27 chars max) + 1 space + QTY (4 chars right-aligned) = 32 chars
-   * 80mm layout: Item Name (42 chars max) + 1 space + QTY (5 chars right-aligned) = 48 chars
+   * Adds a KOT line item with guaranteed right-aligned QTY on the SAME row.
+   * 58mm layout: ITEM (27 chars) + 1 space + QTY (4 chars) = 32 chars
+   * 80mm layout: ITEM (42 chars) + 1 space + QTY (5 chars) = 48 chars
    */
   public addKotItem(item: { name: string; quantity: number | string; notes?: string }): this {
     const qtyStr = String(item.quantity);
@@ -302,14 +353,14 @@ export class EscPosTextBuilder {
   }
 
   /**
-   * Adds a Bill line item with structured columns and word wrapping
+   * Adds a Bill line item with structured columns and word wrapping.
    * 58mm column layout:
    * ITEM: 14 chars | QTY: 3 chars | RATE: 6 chars | AMT: 6 chars
    * 14 + 1 + 3 + 1 + 6 + 1 + 6 = 32 characters
    *
    * 80mm column layout:
-   * ITEM: 28 chars | QTY: 4 chars | RATE: 6 chars | AMT: 7 chars
-   * 28 + 1 + 4 + 1 + 6 + 1 + 7 = 48 characters
+   * ITEM: 25 chars | QTY: 3 chars | RATE: 8 chars | AMT: 9 chars
+   * 25 + 1 + 3 + 1 + 8 + 1 + 9 = 48 characters
    */
   public addBillItem(item: {
     name: string;
@@ -318,16 +369,15 @@ export class EscPosTextBuilder {
     amount: number | string;
   }): this {
     const is58 = this.paperWidth === '58mm';
-    const itemWidth = is58 ? 14 : 28;
-    const qtyWidth = is58 ? 3 : 4;
-    const rateWidth = 6;
-    const amtWidth = is58 ? 6 : 7;
+    const itemWidth = is58 ? 14 : 25;
+    const qtyWidth = 3;
+    const rateWidth = is58 ? 6 : 8;
+    const amtWidth = is58 ? 6 : 9;
 
     const qtyNum = Number(item.quantity) || 1;
     const rateNum = Number(item.rate) || 0;
     const amtNum = Number(item.amount) || 0;
 
-    // Format numbers compactly: if decimal is .00, format as integer to save space if needed
     const formatNum = (num: number, maxW: number): string => {
       const withDec = num.toFixed(2);
       if (withDec.length <= maxW) return withDec;
@@ -360,14 +410,16 @@ export class EscPosTextBuilder {
   }
 
   /**
-   * Adds the Bill table column header line
+   * Adds the Bill table column header line.
+   * 58mm: ITEM (14) QTY (3) RATE (6) AMT (6) = 32 chars
+   * 80mm: ITEM (25) QTY (3) RATE (8) AMT (9) = 48 chars
    */
   public addBillTableHeader(): this {
     const is58 = this.paperWidth === '58mm';
-    const itemWidth = is58 ? 14 : 28;
-    const qtyWidth = is58 ? 3 : 4;
-    const rateWidth = 6;
-    const amtWidth = is58 ? 6 : 7;
+    const itemWidth = is58 ? 14 : 25;
+    const qtyWidth = 3;
+    const rateWidth = is58 ? 6 : 8;
+    const amtWidth = is58 ? 6 : 9;
 
     const itemH = 'ITEM'.padEnd(itemWidth, ' ');
     const qtyH = 'QTY'.padStart(qtyWidth, ' ');
@@ -380,11 +432,13 @@ export class EscPosTextBuilder {
   }
 
   /**
-   * Adds the KOT table column header line
+   * Adds the KOT table column header line.
+   * 58mm: ITEM (27) QTY (4) = 32 chars
+   * 80mm: ITEM (42) QTY (5) = 48 chars
    */
   public addKotTableHeader(): this {
     const qtyColWidth = this.paperWidth === '58mm' ? 4 : 5;
-    const nameColWidth = this.lineWidth - qtyColWidth - 1;
+    const nameColWidth = this.lineWidth - qtyColWidth - 1; // 27 for 58mm, 42 for 80mm
 
     const itemH = 'ITEM'.padEnd(nameColWidth, ' ');
     const qtyH = 'QTY'.padStart(qtyColWidth, ' ');
@@ -395,15 +449,15 @@ export class EscPosTextBuilder {
   }
 
   /**
-   * Feeds lines and executes paper cut (when supported)
+   * Feeds lines compactly and executes paper cut (when supported)
    */
-  public addFeedAndCut(feedLines: number = 4): this {
+  public addFeedAndCut(feedLines: number = 3): this {
     if (feedLines > 0) {
       this.appendBytes(ESC_POS_COMMANDS.FEED_LINES(feedLines));
     }
     // Only send GS V if cutter is NOT disabled (portable BLE 58mm printers lack cutter and may stall or ignore on GS V)
     if (!this.disableCutCmd) {
-      this.appendBytes(ESC_POS_COMMANDS.PAPER_CUT_FEED_PARTIAL(feedLines > 0 ? 0 : 3));
+      this.appendBytes(ESC_POS_COMMANDS.PAPER_CUT_FEED_PARTIAL(0));
     }
     return this;
   }

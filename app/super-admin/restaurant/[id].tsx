@@ -50,6 +50,7 @@ import {
   copyRestaurantUrlToClipboard,
   openRestaurantWebsite,
 } from '../../../src/utils/restaurantUrl';
+import { resolveSubscriptionDisplay } from '../../../src/utils/subscriptionUtils';
 
 const getStaffDisplayRole = (m: any): { label: string; bg: string; color: string } => {
   if (m.role === 'ADMIN') {
@@ -853,6 +854,7 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
   }
 
   const activeSub = subscriptions.find((s) => s.status === 'active') || null;
+  const activeSubDisplay = resolveSubscriptionDisplay(activeSub, plans);
 
   return (
     <ScrollView
@@ -1086,13 +1088,13 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
               )}
             </View>
 
-            {activeSub ? (
+            {activeSub && activeSubDisplay ? (
               <View style={styles.subDetailBox}>
-                <Text style={styles.subPlanTitle}>{activeSub.plan?.name || 'Custom Plan'}</Text>
+                <Text style={styles.subPlanTitle}>{activeSubDisplay.planName}</Text>
                 <Text style={styles.subPlanPrice}>
-                  ₹{(activeSub.amount || 0).toLocaleString('en-IN')}{' '}
+                  {activeSubDisplay.priceDisplay}{' '}
                   <Text style={{ fontSize: 13, color: '#64748B' }}>
-                    / {activeSub.plan?.billing_cycle || 'yearly'}
+                    / {activeSubDisplay.billingCycleDisplay}
                   </Text>
                 </Text>
 
@@ -1100,22 +1102,22 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
                   <View style={styles.subMetaItem}>
                     <Text style={styles.subMetaLabel}>START DATE</Text>
                     <Text style={styles.subMetaValue}>
-                      {new Date(activeSub.start_date).toLocaleDateString()}
+                      {activeSubDisplay.startDateDisplay}
                     </Text>
                   </View>
                   <View style={styles.subMetaItem}>
                     <Text style={styles.subMetaLabel}>EXPIRY DATE</Text>
                     <Text style={styles.subMetaValue}>
-                      {new Date(activeSub.end_date).toLocaleDateString()}
+                      {activeSubDisplay.endDateDisplay}
                     </Text>
                   </View>
                   <View style={styles.subMetaItem}>
                     <Text style={styles.subMetaLabel}>MAX TABLES</Text>
-                    <Text style={styles.subMetaValue}>{activeSub.plan?.max_tables || 'Unlimited'}</Text>
+                    <Text style={styles.subMetaValue}>{activeSubDisplay.maxTablesDisplay}</Text>
                   </View>
                   <View style={styles.subMetaItem}>
                     <Text style={styles.subMetaLabel}>MAX PRODUCTS</Text>
-                    <Text style={styles.subMetaValue}>{activeSub.plan?.max_products || 'Unlimited'}</Text>
+                    <Text style={styles.subMetaValue}>{activeSubDisplay.maxProductsDisplay}</Text>
                   </View>
                 </View>
               </View>
@@ -1280,32 +1282,35 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
             {subscriptions.length === 0 ? (
               <Text style={styles.emptySub}>No prior subscription records.</Text>
             ) : (
-              subscriptions.map((s) => (
-                <View key={s.id} style={styles.historyItem}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.historyPlan}>{s.plan?.name || 'Subscription'}</Text>
-                    <Text style={styles.historyDates}>
-                      {new Date(s.start_date).toLocaleDateString()} →{' '}
-                      {new Date(s.end_date).toLocaleDateString()}
-                    </Text>
-                  </View>
-                  <View
-                    style={[
-                      styles.badge,
-                      s.status === 'active' ? styles.badgeActive : styles.badgeNeutral,
-                    ]}
-                  >
-                    <Text
+              subscriptions.map((s) => {
+                const sDisplay = resolveSubscriptionDisplay(s, plans);
+                return (
+                  <View key={s.id} style={styles.historyItem}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.historyPlan}>{sDisplay?.planName || s.plan?.name || 'Subscription'}</Text>
+                      <Text style={styles.historyDates}>
+                        {sDisplay?.startDateDisplay || new Date(s.start_date).toLocaleDateString()} →{' '}
+                        {sDisplay?.endDateDisplay || new Date(s.end_date).toLocaleDateString()}
+                      </Text>
+                    </View>
+                    <View
                       style={[
-                        styles.badgeText,
-                        s.status === 'active' ? styles.badgeTextActive : styles.badgeTextNeutral,
+                        styles.badge,
+                        s.status === 'active' ? styles.badgeActive : styles.badgeNeutral,
                       ]}
                     >
-                      {s.status.toUpperCase()}
-                    </Text>
+                      <Text
+                        style={[
+                          styles.badgeText,
+                          s.status === 'active' ? styles.badgeTextActive : styles.badgeTextNeutral,
+                        ]}
+                      >
+                        {s.status.toUpperCase()}
+                      </Text>
+                    </View>
                   </View>
-                </View>
-              ))
+                );
+              })
             )}
           </View>
         </View>

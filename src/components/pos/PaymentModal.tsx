@@ -54,13 +54,24 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const windowHeight = Dimensions.get('window').height;
   const { settings } = useSettings();
 
-  const orderTaxRate = useMemo(() => {
-    return getOrderTaxRate(order, Number(settings?.default_tax_rate) || 0);
-  }, [order, settings?.default_tax_rate]);
+  const isOrderTaxPresent = (
+    (order.cgst_amount !== undefined && Number(order.cgst_amount) > 0) ||
+    (order.sgst_amount !== undefined && Number(order.sgst_amount) > 0) ||
+    ((order as any)?.tax_rate !== undefined && (order as any)?.tax_rate !== null && Number((order as any).tax_rate) > 0)
+  );
 
-  const isOrderGst = useMemo(() => {
-    return isOrderGstApplicable(order, settings?.is_gst_enabled);
-  }, [order, settings?.is_gst_enabled]);
+  const isGstActiveInSettings = Boolean(
+    settings?.is_gst_enabled &&
+    (settings?.gst_registered !== false) &&
+    Number(settings?.default_tax_rate || 0) > 0
+  );
+
+  const isGstEnabled = isOrderTaxPresent ? true : isGstActiveInSettings;
+  const taxRate = (order as any)?.tax_rate !== undefined && (order as any)?.tax_rate !== null && !isNaN(Number((order as any).tax_rate))
+    ? Number((order as any).tax_rate)
+    : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
+        ? Number(settings.default_tax_rate)
+        : 0);
 
   // Discount configuration state
   const resolvedInitialDiscounts = resolveOrderDiscounts(order);
@@ -140,10 +151,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           }
         : undefined,
       deliveryCharge: order.delivery_charge || 0,
-      isGstEnabled: isOrderGst,
-      taxRate: orderTaxRate,
+      isGstEnabled,
+      taxRate,
     });
-  }, [order, discountType, validatedDiscount, isOrderGst, orderTaxRate]);
+  }, [order, discountType, validatedDiscount, isGstEnabled, taxRate]);
 
   const alreadyPaid = Number(order?.paid_amount || 0);
   const remainingBalance = Math.max(0, totals.payableAmount - alreadyPaid);
@@ -315,14 +326,14 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   </View>
                 )}
 
-                {isOrderGst && totals.taxableSubtotal > 0 && (
+                {isGstEnabled && totals.taxableSubtotal > 0 && (
                   <View style={styles.billRow}>
                     <Text style={styles.billLabel}>Taxable Value:</Text>
                     <Text style={styles.billVal}>{formatCurrency(totals.taxableSubtotal)}</Text>
                   </View>
                 )}
 
-                {isOrderGst && totals.nilExemptSubtotal > 0 && (
+                {isGstEnabled && totals.nilExemptSubtotal > 0 && (
                   <View style={styles.billRow}>
                     <Text style={styles.billLabel}>Nil/Exempt Value:</Text>
                     <Text style={styles.billVal}>{formatCurrency(totals.nilExemptSubtotal)}</Text>
@@ -330,7 +341,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 )}
 
                 {totals.totalTax > 0 && (() => {
-                  const effectiveTaxRate = orderTaxRate !== undefined && orderTaxRate !== null ? Number(orderTaxRate) : 5.0;
+                  const effectiveTaxRate = totals.taxableSubtotal > 0 && totals.cgstAmount > 0
+                    ? (totals.cgstAmount * 2 / totals.taxableSubtotal) * 100
+                    : (taxRate > 0 ? Number(taxRate) : 0);
                   const halfTaxRate = effectiveTaxRate / 2;
                   const halfTaxRateStr = halfTaxRate % 1 === 0 ? `${halfTaxRate}` : `${halfTaxRate.toFixed(1)}`;
                   return (
@@ -433,7 +446,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               )}
 
               {/* B2B Customer GSTIN (Optional) */}
-              {isOrderGst && (
+              {isGstEnabled && (
                 <View style={{ marginBottom: 8 }}>
                   <Text style={styles.fieldLabel}>Customer GSTIN (Optional for B2B Invoice)</Text>
                   <TextInput

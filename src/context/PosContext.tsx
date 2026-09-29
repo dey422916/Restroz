@@ -203,14 +203,27 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setCartItems((prev) => {
       const existingIdx = prev.findIndex((item) => item.product_id === product.id);
-      const defaultTax = loadedOrder
-        ? getOrderTaxRate(loadedOrder, Number(settings.default_tax_rate) || 5.0)
-        : ((settings.default_tax_rate !== undefined && settings.default_tax_rate !== null && !isNaN(Number(settings.default_tax_rate)))
-            ? Number(settings.default_tax_rate)
-            : 5.0);
-      const taxRate = (product.tax_rate !== undefined && product.tax_rate !== null && !isNaN(Number(product.tax_rate)))
-        ? Number(product.tax_rate)
-        : defaultTax;
+      const isLoadedOrderTaxPresent = loadedOrder ? (
+        (loadedOrder.cgst_amount !== undefined && Number(loadedOrder.cgst_amount) > 0) ||
+        (loadedOrder.sgst_amount !== undefined && Number(loadedOrder.sgst_amount) > 0) ||
+        ((loadedOrder as any)?.tax_rate !== undefined && (loadedOrder as any)?.tax_rate !== null && Number((loadedOrder as any).tax_rate) > 0)
+      ) : false;
+
+      const isGstActive = isLoadedOrderTaxPresent || Boolean(
+        settings.is_gst_enabled &&
+        (settings.gst_registered !== false) &&
+        Number(settings.default_tax_rate || 0) > 0
+      );
+
+      const defaultTax = isLoadedOrderTaxPresent
+        ? Number((loadedOrder as any)?.tax_rate || 5.0)
+        : (isGstActive ? Number(settings.default_tax_rate || 0) : 0);
+
+      const taxRate = isGstActive
+        ? ((product.tax_rate !== undefined && product.tax_rate !== null && !isNaN(Number(product.tax_rate)))
+            ? Number(product.tax_rate)
+            : defaultTax)
+        : 0;
 
       if (existingIdx !== -1) {
         const updated = [...prev];
@@ -302,15 +315,21 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'Invalid coupon code.' };
     }
 
-    const isPosOrderGst = loadedOrder
-      ? isOrderGstApplicable(loadedOrder, settings.is_gst_enabled)
-      : ((settings.is_gst_enabled !== undefined && settings.is_gst_enabled !== null)
-          ? Boolean(settings.is_gst_enabled)
-          : false);
+    const isLoadedOrderTaxPresent = loadedOrder ? (
+      (loadedOrder.cgst_amount !== undefined && Number(loadedOrder.cgst_amount) > 0) ||
+      (loadedOrder.sgst_amount !== undefined && Number(loadedOrder.sgst_amount) > 0) ||
+      ((loadedOrder as any)?.tax_rate !== undefined && (loadedOrder as any)?.tax_rate !== null && Number((loadedOrder as any).tax_rate) > 0)
+    ) : false;
 
-    const posOrderTaxRate = loadedOrder
-      ? getOrderTaxRate(loadedOrder, Number(settings.default_tax_rate) || 5.0)
-      : (settings.default_tax_rate !== undefined ? Number(settings.default_tax_rate) : 5.0);
+    const isGstEnabled = isLoadedOrderTaxPresent || Boolean(
+      settings.is_gst_enabled &&
+      (settings.gst_registered !== false) &&
+      Number(settings.default_tax_rate || 0) > 0
+    );
+
+    const effectiveTaxRate = isLoadedOrderTaxPresent
+      ? Number((loadedOrder as any)?.tax_rate || 5.0)
+      : (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null ? Number(settings.default_tax_rate) : 0);
 
     const currentTotals = calculateOrderTotals({
       items: cartItems,
@@ -318,8 +337,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       discountValue,
       serviceChargeRate: settings.service_charge_rate,
       deliveryCharge: orderType === 'delivery' ? (customerInfo.deliveryCharge || 0) : 0,
-      isGstEnabled: isPosOrderGst,
-      taxRate: posOrderTaxRate,
+      isGstEnabled,
+      taxRate: effectiveTaxRate,
     });
 
     const validation = validateCoupon(coupon, currentTotals.subtotal);
@@ -346,15 +365,21 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAppliedCoupon(null);
   };
 
-  const isPosOrderGst = loadedOrder
-    ? isOrderGstApplicable(loadedOrder, settings.is_gst_enabled)
-    : ((settings.is_gst_enabled !== undefined && settings.is_gst_enabled !== null)
-        ? Boolean(settings.is_gst_enabled)
-        : false);
+  const isLoadedOrderTaxPresent = loadedOrder ? (
+    (loadedOrder.cgst_amount !== undefined && Number(loadedOrder.cgst_amount) > 0) ||
+    (loadedOrder.sgst_amount !== undefined && Number(loadedOrder.sgst_amount) > 0) ||
+    ((loadedOrder as any)?.tax_rate !== undefined && (loadedOrder as any)?.tax_rate !== null && Number((loadedOrder as any).tax_rate) > 0)
+  ) : false;
 
-  const posOrderTaxRate = loadedOrder
-    ? getOrderTaxRate(loadedOrder, Number(settings.default_tax_rate) || 5.0)
-    : (settings.default_tax_rate !== undefined ? Number(settings.default_tax_rate) : 5.0);
+  const isGstEnabled = isLoadedOrderTaxPresent || Boolean(
+    settings.is_gst_enabled &&
+    (settings.gst_registered !== false) &&
+    Number(settings.default_tax_rate || 0) > 0
+  );
+
+  const effectiveTaxRate = isLoadedOrderTaxPresent
+    ? Number((loadedOrder as any)?.tax_rate || 5.0)
+    : (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null ? Number(settings.default_tax_rate) : 0);
 
   const totals = calculateOrderTotals({
     items: cartItems,
@@ -363,8 +388,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     coupon: appliedCoupon,
     serviceChargeRate: settings.service_charge_rate,
     deliveryCharge: orderType === 'delivery' ? (customerInfo.deliveryCharge || 0) : 0,
-    isGstEnabled: isPosOrderGst,
-    taxRate: posOrderTaxRate,
+    isGstEnabled,
+    taxRate: effectiveTaxRate,
   });
 
   const holdCurrentOrder = async (): Promise<Order | null> => {

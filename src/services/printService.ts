@@ -544,65 +544,60 @@ export const printService = {
 
     const autoPrintEnabled = isAutoPrintEnabled(settings);
 
-    // Web: use direct Web Bluetooth, WebUSB, Serial, or RestroZ Print Agent
-    if (Platform.OS === 'web' && !options?.forceBrowser) {
-      try {
-        const webResult = await webDirectPrintService.printKot(order, settings, kot, { isReprint });
-        if (webResult && webResult.success) {
-          if (__DEV__) {
-            console.log(`[THERMAL PRINT]\nDocument: KOT\nRoute: ${webResult.transport.toUpperCase()}_DIRECT\nResult: SUCCESS\nPrinter: ${webResult.printerName}`);
+    // Auto Print ON: use direct thermal printer path (Web Bluetooth, WebUSB, Serial, RestroZ Print Agent, Android Direct)
+    if (autoPrintEnabled && !options?.forceBrowser) {
+      if (Platform.OS === 'web') {
+        try {
+          const webResult = await webDirectPrintService.printKot(order, settings, kot, { isReprint });
+          if (webResult && webResult.success) {
+            if (__DEV__) {
+              console.log(`[THERMAL PRINT]\nDocument: KOT\nRoute: ${webResult.transport.toUpperCase()}_DIRECT\nResult: SUCCESS\nPrinter: ${webResult.printerName}`);
+            }
+            return { direct: true, printerName: webResult.printerName };
           }
-          return { direct: true, printerName: webResult.printerName };
-        }
-        if (webResult && !webResult.success) {
-          const err: any = new Error(webResult.message || 'Bluetooth printer could not print the KOT.');
-          err.code = webResult.code || 'BLE_PRINT_FAILED';
+          if (webResult && !webResult.success) {
+            const err: any = new Error(webResult.message || 'Bluetooth printer could not print the KOT.');
+            err.code = webResult.code || 'BLE_PRINT_FAILED';
+            throw err;
+          }
+          // If autoPrintEnabled is true but no direct printer configured, fallback gracefully
+          return { direct: false };
+        } catch (err: any) {
+          if (__DEV__) {
+            console.warn('[THERMAL PRINT]\nDocument: KOT\nResult: FAILED\nReason: ' + (err?.message || err));
+          }
           throw err;
         }
-        // If no direct printer configured:
-        if (autoPrintEnabled) {
-          return { direct: false };
-        }
-      } catch (err: any) {
-        if (__DEV__) {
-          console.warn('[THERMAL PRINT]\nDocument: KOT\nResult: FAILED\nReason: ' + (err?.message || err));
-        }
-        if (autoPrintEnabled) {
-          return { direct: false };
-        }
-        throw err;
-      }
-    }
-
-    // Auto Print ON: Android / Native platform -> Unified Android Print Router
-    if (Platform.OS !== 'web' && autoPrintEnabled && !options?.forceBrowser) {
-      if (__DEV__) {
-        console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: true\nPlatform: ANDROID\nRoute: ANDROID_DIRECT_ROUTER');
-      }
-      const routerResult = await androidPrintRouter.printKot(order, settings, kot, {
-        isReprint,
-      });
-
-      if (routerResult.success || routerResult.allSucceeded) {
-        const printerNames = routerResult.destinations.map((d) => d.printerName).join(', ');
-        if (__DEV__) {
-          console.log('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinters: ' + printerNames);
-        }
-        return { direct: true, printerName: printerNames };
       } else {
+        // Android / Native platform -> Unified Android Print Router
         if (__DEV__) {
-          console.warn('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
+          console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: true\nPlatform: ANDROID\nRoute: ANDROID_DIRECT_ROUTER');
         }
-        const firstErr = routerResult.destinations.find((d) => d.status !== 'success' && d.status !== 'skipped_dedup');
-        const errObj: any = new Error(routerResult.summary || 'Android direct KOT print failed');
-        errObj.status = firstErr?.status || 'failed_before_write';
-        errObj.destinationResults = routerResult.destinations;
-        throw errObj;
+        const routerResult = await androidPrintRouter.printKot(order, settings, kot, {
+          isReprint,
+        });
+
+        if (routerResult.success || routerResult.allSucceeded) {
+          const printerNames = routerResult.destinations.map((d) => d.printerName).join(', ');
+          if (__DEV__) {
+            console.log('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinters: ' + printerNames);
+          }
+          return { direct: true, printerName: printerNames };
+        } else {
+          if (__DEV__) {
+            console.warn('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
+          }
+          const firstErr = routerResult.destinations.find((d) => d.status !== 'success' && d.status !== 'skipped_dedup');
+          const errObj: any = new Error(routerResult.summary || 'Android direct KOT print failed');
+          errObj.status = firstErr?.status || 'failed_before_write';
+          errObj.destinationResults = routerResult.destinations;
+          throw errObj;
+        }
       }
     }
 
-    // Auto Print OFF, forceBrowser fallback, or Native platform manual print:
-    // Completely bypass direct transport and invoke original browser / native print dialog
+    // Auto Print OFF (or forceBrowser fallback):
+    // Manual user action with Auto Print OFF -> Completely bypass direct transport and open Chrome / browser print dialog
     if (__DEV__) {
       console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: false\nRoute: BROWSER_MANUAL');
     }
@@ -688,16 +683,20 @@ export const printService = {
       })
       .join('');
 
-    const dynamicTaxRate =
-      (order as any).tax_rate !== undefined && (order as any).tax_rate !== null
-        ? Number((order as any).tax_rate)
-        : (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
-            ? Number(settings.default_tax_rate)
-            : 5.0);
-    const halfTaxRate = dynamicTaxRate / 2;
-    const halfTaxRateStr = halfTaxRate % 1 === 0 ? String(halfTaxRate) : halfTaxRate.toFixed(1);
-
     const calculatedTotals = getOrderInvoiceTotals(order, settings);
+
+    const dynamicTaxRate =
+      (order as any).tax_rate !== undefined && (order as any).tax_rate !== null && !isNaN(Number((order as any).tax_rate))
+        ? Number((order as any).tax_rate)
+        : (calculatedTotals.taxableSubtotal > 0 && calculatedTotals.totalTax > 0
+            ? (calculatedTotals.totalTax / calculatedTotals.taxableSubtotal) * 100
+            : (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
+                ? Number(settings.default_tax_rate)
+                : 0));
+    const halfTaxRate = calculatedTotals.taxableSubtotal > 0 && calculatedTotals.cgstAmount > 0
+      ? (calculatedTotals.cgstAmount / calculatedTotals.taxableSubtotal) * 100
+      : (dynamicTaxRate / 2);
+    const halfTaxRateStr = halfTaxRate % 1 === 0 ? String(halfTaxRate) : halfTaxRate.toFixed(1);
 
     const subTotalNum = calculatedTotals.subtotal;
     const subTotalStr = subTotalNum.toFixed(2);
@@ -1221,15 +1220,6 @@ export const printService = {
     const isPaid = order.payment_status === 'paid';
     const logoUrl = formatLogoDataUri(settings?.logo_url || (order as any)?.restaurant?.logo_url);
 
-    const dynamicTaxRate =
-      (order as any).tax_rate !== undefined && (order as any).tax_rate !== null
-        ? Number((order as any).tax_rate)
-        : (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
-            ? Number(settings.default_tax_rate)
-            : 5.0);
-    const halfTaxRate = dynamicTaxRate / 2;
-    const halfTaxRateStr = halfTaxRate % 1 === 0 ? String(halfTaxRate) : halfTaxRate.toFixed(1);
-
     const invoiceNumber = order.invoice_number || order.order_number;
     const customerGstin = order.customer_gstin;
     const fssaiNo = (settings as any).fssai_number || (settings as any).fssai_license_number || '';
@@ -1237,6 +1227,19 @@ export const printService = {
     const stateCode = settings.state_code || '19';
 
     const calculatedTotals = getOrderInvoiceTotals(order, settings);
+
+    const dynamicTaxRate =
+      (order as any).tax_rate !== undefined && (order as any).tax_rate !== null && !isNaN(Number((order as any).tax_rate))
+        ? Number((order as any).tax_rate)
+        : (calculatedTotals.taxableSubtotal > 0 && calculatedTotals.totalTax > 0
+            ? (calculatedTotals.totalTax / calculatedTotals.taxableSubtotal) * 100
+            : (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
+                ? Number(settings.default_tax_rate)
+                : 0));
+    const halfTaxRate = calculatedTotals.taxableSubtotal > 0 && calculatedTotals.cgstAmount > 0
+      ? (calculatedTotals.cgstAmount / calculatedTotals.taxableSubtotal) * 100
+      : (dynamicTaxRate / 2);
+    const halfTaxRateStr = halfTaxRate % 1 === 0 ? String(halfTaxRate) : halfTaxRate.toFixed(1);
 
     const subtotal = calculatedTotals.subtotal;
     const taxableAmount = calculatedTotals.taxableSubtotal;

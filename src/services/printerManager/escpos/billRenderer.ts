@@ -146,12 +146,16 @@ export function renderBillToEscPos(
     builder.addKeyValue('Taxable Amount:', calculatedTotals.taxableSubtotal.toFixed(2));
 
     const dynamicTaxRate =
-      (order as any).tax_rate !== undefined && (order as any).tax_rate !== null
+      (order as any).tax_rate !== undefined && (order as any).tax_rate !== null && !isNaN(Number((order as any).tax_rate))
         ? Number((order as any).tax_rate)
-        : (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
-            ? Number(settings.default_tax_rate)
-            : 5.0);
-    const halfTaxRate = dynamicTaxRate / 2;
+        : (calculatedTotals.taxableSubtotal > 0 && calculatedTotals.totalTax > 0
+            ? (calculatedTotals.totalTax / calculatedTotals.taxableSubtotal) * 100
+            : (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
+                ? Number(settings.default_tax_rate)
+                : 0));
+    const halfTaxRate = calculatedTotals.taxableSubtotal > 0 && calculatedTotals.cgstAmount > 0
+      ? (calculatedTotals.cgstAmount / calculatedTotals.taxableSubtotal) * 100
+      : (dynamicTaxRate / 2);
     const halfTaxRateStr = halfTaxRate % 1 === 0 ? String(halfTaxRate) : halfTaxRate.toFixed(1);
 
     if (calculatedTotals.cgstAmount > 0) {

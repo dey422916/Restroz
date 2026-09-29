@@ -1407,10 +1407,9 @@ export default function PosScreen() {
             )}
 
             {Boolean(totals.cgstAmount > 0 || totals.sgstAmount > 0) && (() => {
-              const totalTaxRate = createdOrder
-                ? getOrderTaxRate(createdOrder, Number(settings?.default_tax_rate) || 5.0)
-                : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 5.0);
-              const halfTaxRate = totalTaxRate / 2;
+              const halfTaxRate = totals.taxableSubtotal > 0
+                ? (totals.cgstAmount / totals.taxableSubtotal) * 100
+                : ((settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 0) / 2);
               const halfTaxRateStr = halfTaxRate % 1 === 0 ? `${halfTaxRate}` : `${halfTaxRate.toFixed(1)}`;
 
               return (
@@ -2086,7 +2085,13 @@ export default function PosScreen() {
                         </View>
                       )}
                       {Boolean(((viewTableModalData.order.cgst_amount || 0) + (viewTableModalData.order.sgst_amount || 0)) > 0) && (() => {
-                        const tableOrderTaxRate = getOrderTaxRate(viewTableModalData.order, settings?.default_tax_rate);
+                        const tableOrderTaxRate = Number((viewTableModalData.order as any).tax_rate) > 0
+                          ? Number((viewTableModalData.order as any).tax_rate)
+                          : (viewTableModalData.order.taxable_amount && Number(viewTableModalData.order.taxable_amount) > 0 && viewTableModalData.order.cgst_amount
+                              ? ((Number(viewTableModalData.order.cgst_amount) * 2) / Number(viewTableModalData.order.taxable_amount)) * 100
+                              : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
+                                  ? Number(settings.default_tax_rate)
+                                  : 0));
                         const halfTaxRate = tableOrderTaxRate / 2;
                         const halfTaxRateStr = halfTaxRate % 1 === 0 ? `${halfTaxRate}` : `${halfTaxRate.toFixed(1)}`;
                         return (

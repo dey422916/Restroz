@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
+import { useStorefront } from '../../src/context/StorefrontContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { Restaurant, RestaurantPublicProfile, CustomerAddress } from '../../src/types';
 import { customerColors } from '../../src/utils/colors';
@@ -39,6 +40,11 @@ export default function MarketplaceHomeScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
   const { user } = useAuth();
+  const { setMarketplaceMode } = useStorefront();
+
+  useEffect(() => {
+    setMarketplaceMode();
+  }, [setMarketplaceMode]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [restaurants, setRestaurants] = useState<

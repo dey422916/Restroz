@@ -16,6 +16,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { marketplaceService } from '../../../src/services/api/marketplaceService';
 import { couponService } from '../../../src/services/api/couponService';
 import { useCustomerCart } from '../../../src/context/CustomerCartContext';
+import { useStorefront } from '../../../src/context/StorefrontContext';
 import { Restaurant, RestaurantPublicProfile, Category, Product, Coupon } from '../../../src/types';
 import { customerColors } from '../../../src/utils/colors';
 import { supabase, isSupabaseConfigured } from '../../../src/services/supabase';
@@ -73,6 +74,7 @@ export default function RestaurantMenuScreen() {
 
   const { cart, itemCount, addToCart, updateQuantity, applyCoupon, removeCoupon, conflictModal, resolveConflict } =
     useCustomerCart();
+  const { isDedicated, setDedicatedMode } = useStorefront();
 
   useEffect(() => {
     if (!id) return;
@@ -86,6 +88,7 @@ export default function RestaurantMenuScreen() {
         setRestaurant(rest);
 
         if (rest) {
+          setDedicatedMode(id, rest);
           const actualRestaurantId = rest.id;
           const [menu, cpnList] = await Promise.all([
             marketplaceService.getRestaurantMenu(actualRestaurantId),
@@ -250,17 +253,30 @@ export default function RestaurantMenuScreen() {
     <View style={styles.container}>
       {/* Top Header Bar */}
       <View style={styles.headerBar}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => router.replace('/(marketplace)')}
-        >
-          <Text style={{ fontSize: 14, fontWeight: '700', color: customerColors.primary }}>
-            ← Restaurants
+        {!isDedicated && (
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => router.replace('/(marketplace)')}
+          >
+            <Text style={{ fontSize: 14, fontWeight: '700', color: customerColors.primary }}>
+              ← Restaurants
+            </Text>
+          </TouchableOpacity>
+        )}
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {isDedicated && restaurant.logo_url ? (
+            <Image
+              source={{ uri: restaurant.logo_url }}
+              style={{ width: 28, height: 28, borderRadius: 6 }}
+              resizeMode="contain"
+            />
+          ) : isDedicated ? (
+            <Text style={{ fontSize: 18 }}>🍽️</Text>
+          ) : null}
+          <Text style={[styles.headerTitle, isDedicated && { marginLeft: 0 }]} numberOfLines={1}>
+            {restaurant.name}
           </Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          {restaurant.name}
-        </Text>
+        </View>
         <TouchableOpacity
           style={styles.cartIconBtn}
           onPress={() => router.push('/(marketplace)/cart')}

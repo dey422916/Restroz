@@ -4,6 +4,7 @@ import { Slot, useRouter, usePathname } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCustomerCart } from '../../src/context/CustomerCartContext';
 import { useAuth } from '../../src/context/AuthContext';
+import { useStorefront } from '../../src/context/StorefrontContext';
 import { customerColors } from '../../src/utils/colors';
 
 export default function MarketplaceLayout() {
@@ -14,6 +15,7 @@ export default function MarketplaceLayout() {
   const isDesktop = width >= 768;
   const { itemCount } = useCustomerCart();
   const { user, role, loading, superAdminMarketplacePreview, setSuperAdminMarketplacePreview } = useAuth();
+  const { isDedicated, dedicatedRestaurant, dedicatedSlug, dedicatedRestaurantId, getMenuRoute } = useStorefront();
 
   // Authoritative Route Guard:
   // 1. Restaurant ADMIN & STAFF must NEVER access customer marketplace directly -> Redirect to POS
@@ -35,17 +37,37 @@ export default function MarketplaceLayout() {
       </View>
     );
   }
-  const tabs = [
-    { name: 'Explore', icon: '🏠', route: '/(marketplace)', path: '/' },
-    { name: 'Cart', icon: '🛍️', route: '/(marketplace)/cart', path: '/cart' },
-    { name: 'My Orders', icon: '📋', route: '/(marketplace)/orders', path: '/orders' },
-    { name: 'Addresses', icon: '📍', route: '/(marketplace)/addresses', path: '/addresses' },
-    user
-      ? { name: 'Profile', icon: '👤', route: '/(marketplace)/profile', path: '/profile' }
-      : { name: 'Login', icon: '👤', route: '/(auth)/login', path: '/login' },
-  ];
+
+  const menuRoute = getMenuRoute();
+
+  const tabs = isDedicated
+    ? [
+        { name: 'Menu', icon: '🍽️', route: menuRoute, path: menuRoute },
+        { name: 'Cart', icon: '🛍️', route: '/(marketplace)/cart', path: '/cart' },
+        { name: 'My Orders', icon: '📋', route: '/(marketplace)/orders', path: '/orders' },
+        { name: 'Addresses', icon: '📍', route: '/(marketplace)/addresses', path: '/addresses' },
+        user
+          ? { name: 'Profile', icon: '👤', route: '/(marketplace)/profile', path: '/profile' }
+          : { name: 'Login', icon: '👤', route: '/(auth)/login', path: '/login' },
+      ]
+    : [
+        { name: 'Explore', icon: '🏠', route: '/(marketplace)', path: '/' },
+        { name: 'Cart', icon: '🛍️', route: '/(marketplace)/cart', path: '/cart' },
+        { name: 'My Orders', icon: '📋', route: '/(marketplace)/orders', path: '/orders' },
+        { name: 'Addresses', icon: '📍', route: '/(marketplace)/addresses', path: '/addresses' },
+        user
+          ? { name: 'Profile', icon: '👤', route: '/(marketplace)/profile', path: '/profile' }
+          : { name: 'Login', icon: '👤', route: '/(auth)/login', path: '/login' },
+      ];
 
   const isTabActive = (tab: { name: string; icon: string; route: string; path: string }) => {
+    if (tab.name === 'Menu') {
+      return (
+        pathname.includes('/restaurant') ||
+        pathname.includes('/r/') ||
+        pathname === menuRoute
+      );
+    }
     if (tab.name === 'Explore') {
       return (
         pathname === '/(marketplace)' ||
@@ -119,21 +141,49 @@ export default function MarketplaceLayout() {
         {isDesktop && (
           <View style={styles.desktopNavbar}>
             <View style={styles.desktopNavInner}>
-              <TouchableOpacity
-                style={styles.desktopLogoWrap}
-                onPress={() => router.push('/(marketplace)')}
-                activeOpacity={0.8}
-              >
-                <Image
-                  source={require('../../assets/images/restroz_logo.png')}
-                  style={styles.desktopLogo}
-                  resizeMode="contain"
-                />
-                <View>
-                  <Text style={styles.desktopBrandName}>RestroZ</Text>
-                  <Text style={styles.desktopBrandSub}>Every flavor, one place</Text>
-                </View>
-              </TouchableOpacity>
+              {isDedicated ? (
+                <TouchableOpacity
+                  style={styles.desktopLogoWrap}
+                  onPress={() => router.push(menuRoute as any)}
+                  activeOpacity={0.8}
+                >
+                  {dedicatedRestaurant?.logo_url ? (
+                    <Image
+                      source={{ uri: dedicatedRestaurant.logo_url }}
+                      style={styles.desktopLogo}
+                      resizeMode="contain"
+                    />
+                  ) : (
+                    <View style={[styles.desktopLogo, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#EFF6FF', borderRadius: 8 }]}>
+                      <Text style={{ fontSize: 20 }}>🍽️</Text>
+                    </View>
+                  )}
+                  <View>
+                    <Text style={styles.desktopBrandName}>
+                      {dedicatedRestaurant?.name || 'Restaurant Online'}
+                    </Text>
+                    <Text style={styles.desktopBrandSub}>
+                      {dedicatedRestaurant?.address || dedicatedRestaurant?.city || 'Online Ordering Storefront'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.desktopLogoWrap}
+                  onPress={() => router.push('/(marketplace)')}
+                  activeOpacity={0.8}
+                >
+                  <Image
+                    source={require('../../assets/images/restroz_logo.png')}
+                    style={styles.desktopLogo}
+                    resizeMode="contain"
+                  />
+                  <View>
+                    <Text style={styles.desktopBrandName}>RestroZ</Text>
+                    <Text style={styles.desktopBrandSub}>Every flavor, one place</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
 
               <View style={styles.desktopNavLinks}>
                 {tabs.map((tab) => {

@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
+import { useStorefront } from '../../src/context/StorefrontContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { storageService } from '../../src/services/api/storageService';
 import { loyaltyService } from '../../src/services/api/loyaltyService';
@@ -24,6 +25,7 @@ import { CustomerMarketplaceWalletsResponse } from '../../src/types';
 export default function CustomerProfileScreen() {
   const router = useRouter();
   const { user, logout, loading: authLoading, updateUserProfileState } = useAuth();
+  const { isDedicated, dedicatedRestaurantId, dedicatedRestaurant } = useStorefront();
 
   const [fullName, setFullName] = useState(user?.full_name || '');
   const [phone, setPhone] = useState(user?.phone || '');
@@ -179,10 +181,18 @@ export default function CustomerProfileScreen() {
     );
   }
 
-  // Compute aggregated metrics across all restaurant wallets
-  const totalWalletBalance = walletData.wallets.reduce((sum, w) => sum + Number(w.balance || 0), 0);
-  const totalEarnedAll = walletData.wallets.reduce((sum, w) => sum + Number(w.total_earned || 0), 0);
-  const totalRedeemedAll = walletData.wallets.reduce((sum, w) => sum + Number(w.total_redeemed || 0), 0);
+  // Compute scoped metrics across restaurant wallets (scoped to dedicated restaurant if in dedicated mode)
+  const scopedWallets = isDedicated && dedicatedRestaurantId
+    ? walletData.wallets.filter((w) => w.restaurant_id === dedicatedRestaurantId)
+    : walletData.wallets;
+
+  const scopedTransactions = isDedicated && dedicatedRestaurantId
+    ? walletData.transactions.filter((t) => t.restaurant_id === dedicatedRestaurantId)
+    : walletData.transactions;
+
+  const totalWalletBalance = scopedWallets.reduce((sum, w) => sum + Number(w.balance || 0), 0);
+  const totalEarnedAll = scopedWallets.reduce((sum, w) => sum + Number(w.total_earned || 0), 0);
+  const totalRedeemedAll = scopedWallets.reduce((sum, w) => sum + Number(w.total_redeemed || 0), 0);
 
   return (
     <View style={styles.container}>
@@ -191,15 +201,29 @@ export default function CustomerProfileScreen() {
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>
-              <Image
-                source={require('../../assets/images/restroz_logo.png')}
-                style={styles.headerLogo}
-                resizeMode="contain"
-              />
+              {isDedicated && dedicatedRestaurant?.logo_url ? (
+                <Image
+                  source={{ uri: dedicatedRestaurant.logo_url }}
+                  style={styles.headerLogo}
+                  resizeMode="contain"
+                />
+              ) : isDedicated ? (
+                <View style={[styles.headerLogo, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#EFF6FF', borderRadius: 8 }]}>
+                  <Text style={{ fontSize: 20 }}>🍽️</Text>
+                </View>
+              ) : (
+                <Image
+                  source={require('../../assets/images/restroz_logo.png')}
+                  style={styles.headerLogo}
+                  resizeMode="contain"
+                />
+              )}
               <View style={{ flex: 1 }}>
-                <Text style={styles.headerTitle}>My Profile</Text>
+                <Text style={styles.headerTitle}>
+                  {isDedicated ? `${dedicatedRestaurant?.name || 'Restaurant'} Profile` : 'My Profile'}
+                </Text>
                 <Text style={styles.headerSubtitle} numberOfLines={1}>
-                  Account details, preferences & loyalty wallet
+                  {isDedicated ? 'Account details & loyalty cashback balance' : 'Account details, preferences & loyalty wallet'}
                 </Text>
               </View>
             </View>
@@ -386,20 +410,24 @@ export default function CustomerProfileScreen() {
                 <ActivityIndicator size="small" color={customerColors.primary} />
                 <Text style={{ fontSize: 12, color: '#64748B', marginTop: 6 }}>Loading wallet details...</Text>
               </View>
-            ) : walletData.wallets.length === 0 ? (
+            ) : scopedWallets.length === 0 ? (
               <View style={styles.walletEmptyBox}>
                 <Text style={{ fontSize: 24 }}>🪙</Text>
                 <Text style={styles.walletEmptyTitle}>No Cashback Balance Yet</Text>
                 <Text style={styles.walletEmptySub}>
-                  Dine in or order from partner restaurants to automatically accumulate reward cash on your settled orders!
+                  {isDedicated
+                    ? `Dine in or order from ${dedicatedRestaurant?.name || 'our restaurant'} to automatically accumulate reward cash on your settled orders!`
+                    : 'Dine in or order from partner restaurants to automatically accumulate reward cash on your settled orders!'}
                 </Text>
               </View>
             ) : (
               <>
                 {/* Per-Restaurant Wallets */}
                 <View style={styles.restaurantWalletsWrap}>
-                  <Text style={styles.walletSubHeader}>Restaurant Wallet Breakdown</Text>
-                  {walletData.wallets.map((w) => (
+                  <Text style={styles.walletSubHeader}>
+                    {isDedicated ? `${dedicatedRestaurant?.name || 'Restaurant'} Wallet Balance` : 'Restaurant Wallet Breakdown'}
+                  </Text>
+                  {scopedWallets.map((w) => (
                     <View key={w.id} style={styles.restWalletItem}>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.restWalletName}>{w.restaurant_name}</Text>
@@ -416,10 +444,12 @@ export default function CustomerProfileScreen() {
                 </View>
 
                 {/* Recent Transactions Ledger */}
-                {walletData.transactions.length > 0 && (
+                {scopedTransactions.length > 0 && (
                   <View style={styles.txnsWrap}>
-                    <Text style={styles.walletSubHeader}>Recent Reward Activity</Text>
-                    {walletData.transactions.slice(0, 8).map((t) => {
+                    <Text style={styles.walletSubHeader}>
+                      {isDedicated ? `Recent ${dedicatedRestaurant?.name || 'Restaurant'} Reward Activity` : 'Recent Reward Activity'}
+                    </Text>
+                    {scopedTransactions.slice(0, 8).map((t) => {
                       const isEarn = t.transaction_type === 'earn';
                       return (
                         <View key={t.id} style={styles.txnItem}>

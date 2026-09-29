@@ -6,8 +6,15 @@ import { useNotification } from '../../src/context/NotificationContext';
 import { authService } from '../../src/services/api/authService';
 import { storageService } from '../../src/services/api/storageService';
 import { supabase } from '../../src/services/supabase';
-import { UserRole, PaperSize } from '../../src/types';
+import { UserRole, PaperSize, Category } from '../../src/types';
 import { OptimizedImage } from '../../src/components/common/OptimizedImage';
+import { PrinterManagementSection } from '../../src/components/PrinterManagementSection';
+import { SeznikPrinterManagementSection } from '../../src/components/SeznikPrinterManagementSection';
+import {
+  directPrintService,
+  getLocalKotPrinter,
+  setLocalKotPrinter,
+} from '../../src/services/directPrintService';
 import {
   parseBannerUrls,
   extractBannerCleanUrl,
@@ -30,6 +37,23 @@ export default function SettingsScreen() {
   const { user, role, isSuperAdmin, isAdmin, activeRestaurantId } = useAuth();
   const { showToast } = useNotification();
   const [isTogglingOnline, setIsTogglingOnline] = useState(false);
+  const canManage = isAdmin || isSuperAdmin || role === 'ADMIN' || role === 'SUPER_ADMIN';
+  const effectiveRestaurantId = activeRestaurantId || settings.restaurant_id || settings.id || '';
+  const [categories, setCategories] = useState<Category[]>([]);
+
+  useEffect(() => {
+    if (!effectiveRestaurantId) return;
+    supabase
+      .from('categories')
+      .select('*')
+      .eq('restaurant_id', effectiveRestaurantId)
+      .order('display_order', { ascending: true })
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setCategories(data as Category[]);
+        }
+      });
+  }, [effectiveRestaurantId]);
 
   const [name, setName] = useState(settings.name);
   const [legalName, setLegalName] = useState(settings.legal_name || '');
@@ -112,8 +136,6 @@ export default function SettingsScreen() {
   const [isUploadingBanner, setIsUploadingBanner] = useState(false);
   const [showUrlModal, setShowUrlModal] = useState(false);
   const [customBannerUrl, setCustomBannerUrl] = useState('');
-
-  const canManage = isAdmin || isSuperAdmin || role === 'ADMIN' || role === 'SUPER_ADMIN';
 
   // Sync form values from settings whenever settings change, unless user is actively editing
   useEffect(() => {
@@ -280,6 +302,16 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleToggleAutoPrint = (enable: boolean) => {
+    if (!canManage) {
+      showToast('error', 'Permission Denied', 'Only ADMIN users can update printer settings.');
+      Alert.alert('Permission Denied', 'Only ADMIN users can update printer settings.');
+      return;
+    }
+    setAutoPrintKot(enable);
+    setIsDirty(true);
+  };
+
   const handleSavePrinterSettings = async () => {
     if (!canManage) {
       showToast('error', 'Permission Denied', 'Only ADMIN users can update printer settings.');
@@ -293,11 +325,11 @@ export default function SettingsScreen() {
         bill_paper_size: billPaperSize,
         auto_print_kot: autoPrintKot,
       });
-      const summary = `KOT Paper: ${kotPaperSize} • Bill Paper: ${billPaperSize} • Auto-Print: ${autoPrintKot ? 'ON' : 'OFF'}`;
+      const summary = `KOT Paper: ${kotPaperSize} • Bill Paper: ${billPaperSize} • Auto Print: ${autoPrintKot ? 'ON' : 'OFF'}`;
       showToast('success', 'Printer Settings Saved', summary);
       Alert.alert(
         'Printer Settings Saved',
-        `KOT Paper: ${kotPaperSize}\nBill Paper: ${billPaperSize}\nAuto-Print KOT: ${autoPrintKot ? 'ON' : 'OFF'}`
+        `KOT Paper: ${kotPaperSize}\nBill Paper: ${billPaperSize}\nAuto Print: ${autoPrintKot ? 'ON' : 'OFF'}`
       );
     } catch (e: any) {
       showToast('error', 'Save Failed', e.message || 'Failed to save printer settings.');
@@ -1695,10 +1727,12 @@ export default function SettingsScreen() {
 
               {/* 4. Printer Settings */}
               <View style={styles.card}>
-                <Text style={styles.cardHeader}>🖨️ Printer Settings</Text>
-                <Text style={styles.cardSubHeader}>
-                  Configure thermal receipt dimensions and automatic printing per restaurant.
-                </Text>
+                <View style={{ marginBottom: 12 }}>
+                  <Text style={styles.cardHeader}>🖨️ Printer Settings</Text>
+                  <Text style={styles.cardSubHeader}>
+                    Configure default receipt dimensions and auto-printing.
+                  </Text>
+                </View>
 
                 <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
                   {/* KOT Paper Size */}
@@ -1775,8 +1809,8 @@ export default function SettingsScreen() {
                   </View>
                   <Text style={styles.toggleDesc}>
                     {autoPrintKot
-                      ? 'Clicking KOT triggers the kitchen thermal printer immediately with zero extra steps.'
-                      : 'Clicking KOT follows manual confirmation & print flow.'}
+                      ? 'Thermal prints (KOT & Bills) are sent directly and immediately to the configured thermal printer (Bluetooth / USB / Serial / Print Agent).'
+                      : 'Thermal prints open the browser print preview for manual confirmation & printing.'}
                   </Text>
                 </View>
 
@@ -1795,6 +1829,26 @@ export default function SettingsScreen() {
                     <Text style={styles.saveBtnText}>Save Printer Settings</Text>
                   )}
                 </TouchableOpacity>
+
+                {/* Seznik Direct Bluetooth & USB Printer Management (Web Bluetooth & WebUSB) */}
+                {effectiveRestaurantId ? (
+                  <SeznikPrinterManagementSection
+                    restaurantId={effectiveRestaurantId}
+                    canManage={canManage}
+                    settings={settings}
+                    showToast={showToast}
+                  />
+                ) : null}
+
+                {/* 4.1 Advanced Multi-Printer Management & Calibration (Native/Android) */}
+                {Platform.OS !== 'web' && effectiveRestaurantId ? (
+                  <PrinterManagementSection
+                    restaurantId={effectiveRestaurantId}
+                    categories={categories}
+                    canManage={canManage}
+                    showToast={showToast}
+                  />
+                ) : null}
               </View>
             </View>
 

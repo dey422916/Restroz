@@ -1,13 +1,67 @@
-import { Platform } from 'react-native';
+import { Platform, Alert } from 'react-native';
 import { Order, KOT, RestaurantSettings, OrderItem, DayRegister } from '../types';
 import { formatCurrency, numberToWords } from '../utils/currency';
-import { getOrderSubtotal, getOrderTaxableBreakdown, getOrderInvoiceTotals, getOrderTaxRate } from '../utils/gst';
+import { getOrderSubtotal, getOrderTaxableBreakdown, getOrderInvoiceTotals } from '../utils/gst';
 import { cleanCustomerOrderNotes } from '../utils/orderNotes';
 import { formatOrderDateTime } from '../utils/dateUtils';
+import { directPrintService, resolveKotPrinterName, resolveBillPrinterName, isAutoPrintEnabled, DirectPrintError } from './directPrintService';
+import { webDirectPrintService } from './webDirectPrintService';
+import { androidPrintRouter } from './printerManager/androidPrintRouter';
 import { supabase } from './supabase';
 
+/**
+ * Handles thermal print errors with explicit user confirmation before opening browser/system print preview.
+ * When Auto Print is ON and fails, this prevents unwanted dialogs and warns against duplicate prints on partial writes.
+ */
+export async function handleThermalPrintFallback(
+  error: any,
+  documentTitle: string,
+  onFallback: () => Promise<void>
+): Promise<boolean> {
+  if (error?.code === 'PRINT_IN_PROGRESS') {
+    if (Platform.OS === 'web') {
+      window.alert('A print job is already in progress. Please wait.');
+    } else {
+      Alert.alert('Print In Progress', 'A print job is already in progress. Please wait.');
+    }
+    return false;
+  }
 
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    const message = `Auto Print failed.\n\nThermal printer could not print ${documentTitle} automatically.\n\nPrint using browser instead?`;
+    const proceed = window.confirm(message);
+    if (proceed) {
+      try {
+        await onFallback();
+        return true;
+      } catch (fallbackErr) {
+        console.warn(`[printService] Browser fallback for ${documentTitle} failed:`, fallbackErr);
+      }
+    }
+    return false;
+  } else {
+    // Native (Android / iOS)
+    const isPartial =
+      error?.status === 'partial_or_unknown' ||
+      error?.message?.includes('interrupted after') ||
+      error?.message?.includes('partially printed');
 
+    const alertTitle = isPartial ? 'Print Interrupted' : 'Auto Print Failed';
+    const alertMessage = isPartial
+      ? 'Printer connection was interrupted after print data started sending.\n\nThe receipt may already have printed.\n\nCheck the printer before reprinting.'
+      : `Auto Print failed for ${documentTitle}.\n\nNo print data was sent.\n\nPrint manually instead?`;
+
+    Alert.alert(
+      alertTitle,
+      alertMessage,
+      [
+        { text: isPartial ? 'Close' : 'Cancel', style: 'cancel' },
+        { text: 'Print Manually', onPress: () => { onFallback().catch(console.warn); } },
+      ]
+    );
+    return false;
+  }
+}
 
 export function formatLogoDataUri(urlOrBase64?: string | null): string {
   if (!urlOrBase64) return '';
@@ -173,10 +227,10 @@ async function executeIsolatedPrint(html: string): Promise<void> {
 
 export const printService = {
   /**
-   * Dedicated Thermal / Standard KOT Slip (58mm / 80mm / A4 Kitchen Ticket)
-   * Matches the official KOT reference specification with responsive layout per paper size.
+   * Generates the canonical HTML for a Thermal / Standard KOT Slip (58mm / 80mm / A4 Kitchen Ticket).
+   * Exact physical calibration is preserved.
    */
-  async printKotThermal(order: Order, settings: RestaurantSettings, kot?: KOT, isReprint: boolean = false): Promise<void> {
+  generateKotHtml(order: Order, settings: RestaurantSettings, kot?: KOT, isReprint: boolean = false): string {
     const activeKot = kot;
     let kotNum = activeKot?.kot_number;
     if (!kotNum) {
@@ -322,7 +376,12 @@ export const printService = {
          .reprint-banner { font-size: 11px; font-weight: 900; letter-spacing: 1px; color: #000; margin-bottom: 2px; }
          .sup-banner { font-size: 11px; font-weight: 900; letter-spacing: 1px; color: #000; margin-bottom: 2px; }
          table th { font-size: 10.5px; font-weight: 900; padding: 3px 0; border-bottom: 1px solid #000; }`
-      : `@page { size: 80mm auto; margin: 0; }
+      : `/*
+          * POS80 PHYSICAL PRINT CALIBRATION
+          * Verified on physical printer.
+          * DO NOT RECENTER OR MODIFY WITHOUT PHYSICAL PRINTER TESTING.
+          */
+          @page { size: 80mm auto; margin: 0; }
           html, body { width: 80mm; margin: 0; padding: 0; font-size: 10.5px; line-height: 1.20; color: #000; }
           .receipt-container { width: 72mm; max-width: 72mm; margin: 0 8mm 0 0mm; padding: 1mm 1.5mm; }
           .kot-title { font-size: 16px; font-weight: 900; letter-spacing: 0.5px; margin: 2px 0; }
@@ -332,7 +391,7 @@ export const printService = {
           .sup-banner { font-size: 12px; font-weight: 900; letter-spacing: 1px; color: #000; margin-bottom: 3px; }
           table th { font-size: 11px; font-weight: 900; padding: 2.5px 0; border-bottom: 1px solid #000; }`;
 
-    const html = `
+    return `
       <!DOCTYPE html>
       <html>
         <head>
@@ -448,23 +507,129 @@ export const printService = {
         </body>
       </html>
     `;
+  },
 
+  /**
+   * Browser / Native Print Dialog fallback for KOT slip.
+   */
+  async printKotThermalBrowser(order: Order, settings: RestaurantSettings, kot?: KOT, isReprint: boolean = false): Promise<void> {
+    const html = this.generateKotHtml(order, settings, kot, isReprint);
     await executeIsolatedPrint(html);
+  },
+
+  /**
+   * Dedicated Thermal / Standard KOT Slip (58mm / 80mm / A4 Kitchen Ticket)
+   * On Web: Sends print job directly & silently to configured thermal printer via RestroZ Print Agent / direct Web transport without Chrome print dialog.
+   * If direct printing fails, throws DirectPrintError so caller can notify user and offer browser fallback.
+   * On Native: Uses expo-print printAsync.
+   */
+  async printKotThermal(
+    order: Order,
+    settings: RestaurantSettings,
+    kot?: KOT,
+    isReprint: boolean = false,
+    options?: { forceBrowser?: boolean }
+  ): Promise<{ direct: boolean; printerName?: string }> {
+    const html = this.generateKotHtml(order, settings, kot, isReprint);
+    const paperSize = settings.kot_paper_size || '80mm';
+
+    if (paperSize === 'A4') {
+      if (__DEV__) {
+        console.log('[THERMAL PRINT]\nDocument: KOT\nPaper: A4\nRoute: BROWSER_MANUAL');
+      }
+      await executeIsolatedPrint(html);
+      return { direct: false };
+    }
+
+    const autoPrintEnabled = isAutoPrintEnabled(settings);
+
+    // Web: use direct Web Bluetooth, WebUSB, Serial, or RestroZ Print Agent
+    if (Platform.OS === 'web' && !options?.forceBrowser) {
+      try {
+        const webResult = await webDirectPrintService.printKot(order, settings, kot, { isReprint });
+        if (webResult && webResult.success) {
+          if (__DEV__) {
+            console.log(`[THERMAL PRINT]\nDocument: KOT\nRoute: ${webResult.transport.toUpperCase()}_DIRECT\nResult: SUCCESS\nPrinter: ${webResult.printerName}`);
+          }
+          return { direct: true, printerName: webResult.printerName };
+        }
+        if (webResult && !webResult.success) {
+          const err: any = new Error(webResult.message || 'Bluetooth printer could not print the KOT.');
+          err.code = webResult.code || 'BLE_PRINT_FAILED';
+          throw err;
+        }
+        // If no direct printer configured:
+        if (autoPrintEnabled) {
+          return { direct: false };
+        }
+      } catch (err: any) {
+        if (__DEV__) {
+          console.warn('[THERMAL PRINT]\nDocument: KOT\nResult: FAILED\nReason: ' + (err?.message || err));
+        }
+        if (autoPrintEnabled) {
+          return { direct: false };
+        }
+        throw err;
+      }
+    }
+
+    // Auto Print ON: Android / Native platform -> Unified Android Print Router
+    if (Platform.OS !== 'web' && autoPrintEnabled && !options?.forceBrowser) {
+      if (__DEV__) {
+        console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: true\nPlatform: ANDROID\nRoute: ANDROID_DIRECT_ROUTER');
+      }
+      const routerResult = await androidPrintRouter.printKot(order, settings, kot, {
+        isReprint,
+      });
+
+      if (routerResult.success || routerResult.allSucceeded) {
+        const printerNames = routerResult.destinations.map((d) => d.printerName).join(', ');
+        if (__DEV__) {
+          console.log('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinters: ' + printerNames);
+        }
+        return { direct: true, printerName: printerNames };
+      } else {
+        if (__DEV__) {
+          console.warn('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
+        }
+        const firstErr = routerResult.destinations.find((d) => d.status !== 'success' && d.status !== 'skipped_dedup');
+        const errObj: any = new Error(routerResult.summary || 'Android direct KOT print failed');
+        errObj.status = firstErr?.status || 'failed_before_write';
+        errObj.destinationResults = routerResult.destinations;
+        throw errObj;
+      }
+    }
+
+    // Auto Print OFF, forceBrowser fallback, or Native platform manual print:
+    // Completely bypass direct transport and invoke original browser / native print dialog
+    if (__DEV__) {
+      console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: false\nRoute: BROWSER_MANUAL');
+    }
+    await executeIsolatedPrint(html);
+    return { direct: false };
   },
 
   /**
    * Final Bill / Customer Receipt (80mm Thermal Format)
    * Matches the official Ratnadeep Restaurant Final Bill reference layout.
    */
-  async printBillThermal(order: Order, settings: RestaurantSettings): Promise<void> {
-    return this.printFinalReceiptThermal(order, settings);
+  async printBillThermal(
+    order: Order,
+    settings: RestaurantSettings,
+    options?: { forceBrowser?: boolean }
+  ): Promise<{ direct: boolean; printerName?: string }> {
+    return this.printFinalReceiptThermal(order, settings, undefined, options);
   },
 
-  async printFinalReceiptThermal(
+  /**
+   * Generates the canonical HTML for Final Bill / Customer Receipt (80mm / 58mm / A4 Thermal Format)
+   * Matches the official Ratnadeep Restaurant Final Bill reference layout.
+   */
+  generateFinalReceiptHtml(
     order: Order,
     settings: RestaurantSettings,
     billedBy: string = 'Ratnadeep Dey'
-  ): Promise<void> {
+  ): string {
     const formattedOrderDateTime = formatOrderDateTime(order.created_at);
 
     const kotRefs =
@@ -518,7 +683,12 @@ export const printService = {
       })
       .join('');
 
-    const dynamicTaxRate = getOrderTaxRate(order, Number(settings.default_tax_rate) || 0);
+    const dynamicTaxRate =
+      (order as any).tax_rate !== undefined && (order as any).tax_rate !== null
+        ? Number((order as any).tax_rate)
+        : (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
+            ? Number(settings.default_tax_rate)
+            : 5.0);
     const halfTaxRate = dynamicTaxRate / 2;
     const halfTaxRateStr = halfTaxRate % 1 === 0 ? String(halfTaxRate) : halfTaxRate.toFixed(1);
 
@@ -544,9 +714,7 @@ export const printService = {
       settings.is_gst_enabled !== false &&
       (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()));
     const isTaxInvoice =
-      taxTotal > 0 ||
-      Boolean(order.customer_gstin?.trim()) ||
-      (effectiveGstRegistered && settings.tax_invoice_enabled !== false && Boolean(settings.gstin?.trim()));
+      taxTotal > 0 || (effectiveGstRegistered && settings.tax_invoice_enabled !== false && Boolean(settings.gstin?.trim()));
 
     const invoiceNumber = order.invoice_number || order.order_number;
     const customerGstin = order.customer_gstin;
@@ -580,7 +748,12 @@ export const printService = {
          .flex-between { font-size: 10px; margin: 1.5px 0; }
          table th { font-size: 10px; padding: 2px 0; }
          .paid-badge { font-size: 10px; font-weight: 900; padding: 1px 4px; }`
-      : `@page { size: 80mm auto; margin: 0; }
+      : `/*
+          * POS80 PHYSICAL PRINT CALIBRATION
+          * Verified on physical printer.
+          * DO NOT RECENTER OR MODIFY WITHOUT PHYSICAL PRINTER TESTING.
+          */
+          @page { size: 80mm auto; margin: 0; }
           html, body { width: 80mm; margin: 0; padding: 0; font-size: 10.5px; line-height: 1.20; color: #000; }
           .receipt-container { width: 72mm; max-width: 72mm; margin: 0 8mm 0 0mm; padding: 1mm 1.5mm; }
           .restaurant-title { font-size: 14px; font-weight: 900; letter-spacing: 0.3px; line-height: 1.15; }
@@ -849,14 +1022,116 @@ export const printService = {
         </body>
       </html>
     `;
+    return html;
+  },
 
+  /**
+   * Browser / Native Print Dialog fallback for Final Bill / Customer Receipt.
+   */
+  async printFinalReceiptThermalBrowser(
+    order: Order,
+    settings: RestaurantSettings,
+    billedBy: string = 'Ratnadeep Dey'
+  ): Promise<void> {
+    const html = this.generateFinalReceiptHtml(order, settings, billedBy);
     await executeIsolatedPrint(html);
+  },
+
+  /**
+   * Final Bill / Customer Receipt (80mm / 58mm Thermal Format)
+   * On Web: Sends print job directly to configured thermal printer via RestroZ Print Agent / direct Web transport without Chrome print dialog.
+   * If direct printing fails, gracefully falls back to browser printing.
+   * On Native: Uses expo-print printAsync.
+   */
+  async printFinalReceiptThermal(
+    order: Order,
+    settings: RestaurantSettings,
+    billedBy: string = 'Ratnadeep Dey',
+    options?: { forceBrowser?: boolean }
+  ): Promise<{ direct: boolean; printerName?: string }> {
+    const html = this.generateFinalReceiptHtml(order, settings, billedBy);
+    const billPaperSize = settings.bill_paper_size || settings.kot_paper_size || '80mm';
+
+    if (billPaperSize === 'A4') {
+      if (__DEV__) {
+        console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nPaper: A4\nRoute: BROWSER_MANUAL');
+      }
+      await executeIsolatedPrint(html);
+      return { direct: false };
+    }
+
+    const autoPrintEnabled = isAutoPrintEnabled(settings);
+
+    // Web: use direct Web Bluetooth, WebUSB, Serial, or RestroZ Print Agent
+    if (Platform.OS === 'web' && !options?.forceBrowser) {
+      try {
+        const webResult = await webDirectPrintService.printBill(order, settings, billedBy);
+        if (webResult && webResult.success) {
+          if (__DEV__) {
+            console.log(`[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ${webResult.transport.toUpperCase()}_DIRECT\nResult: SUCCESS\nPrinter: ${webResult.printerName}`);
+          }
+          return { direct: true, printerName: webResult.printerName };
+        }
+        if (webResult && !webResult.success) {
+          const err: any = new Error(webResult.message || 'Bluetooth printer could not print the Bill.');
+          err.code = webResult.code || 'BLE_PRINT_FAILED';
+          throw err;
+        }
+        // If no direct printer configured:
+        if (autoPrintEnabled) {
+          return { direct: false };
+        }
+      } catch (err: any) {
+        if (__DEV__) {
+          console.warn('[THERMAL PRINT]\nDocument: Thermal Bill\nResult: FAILED\nReason: ' + (err?.message || err));
+        }
+        if (autoPrintEnabled) {
+          return { direct: false };
+        }
+        throw err;
+      }
+    }
+
+    // Auto Print ON: Android / Native platform -> Unified Android Print Router
+    if (Platform.OS !== 'web' && autoPrintEnabled && !options?.forceBrowser) {
+      if (__DEV__) {
+        console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nAuto Print: true\nPlatform: ANDROID\nRoute: ANDROID_DIRECT_ROUTER');
+      }
+      const routerResult = await androidPrintRouter.printBill(order, settings, billedBy, {
+        isReprint: options?.forceBrowser ? false : false,
+      });
+
+      if (routerResult.success || routerResult.allSucceeded) {
+        const printerNames = routerResult.destinations.map((d) => d.printerName).join(', ');
+        if (__DEV__) {
+          console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinter: ' + printerNames);
+        }
+        return { direct: true, printerName: printerNames };
+      } else {
+        if (__DEV__) {
+          console.warn('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
+        }
+        const firstErr = routerResult.destinations.find((d) => d.status !== 'success' && d.status !== 'skipped_dedup');
+        const errObj: any = new Error(routerResult.summary || 'Android direct Bill print failed');
+        errObj.status = firstErr?.status || 'failed_before_write';
+        errObj.destinationResults = routerResult.destinations;
+        throw errObj;
+      }
+    }
+
+    // Auto Print OFF, forceBrowser fallback, or Native manual fallback:
+    // Invoke original browser / native printing
+    if (__DEV__) {
+      console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nAuto Print: false\nRoute: BROWSER_MANUAL');
+    }
+    await executeIsolatedPrint(html);
+    return { direct: false };
   },
 
   /**
    * Reprint an existing persisted KOT without generating a new KOT number.
    */
-  async reprintKot(kotId: string, settings: RestaurantSettings): Promise<void> {
+  async reprintKot(kotId: string, settings: RestaurantSettings, forceBrowser: boolean = false): Promise<void> {
     const { data: kotData, error: kotErr } = await supabase
       .from('kots')
       .select('*, items:kot_items(*)')
@@ -897,14 +1172,21 @@ export const printService = {
         created_at: kotData.created_at,
       },
       settings,
-      kotData
+      kotData,
+      true,
+      { forceBrowser }
     );
   },
 
   /**
    * Reprint Final Tax Receipt for an existing Order.
    */
-  async reprintFinalBill(orderId: string, settings: RestaurantSettings, billedBy?: string): Promise<void> {
+  async reprintFinalBill(
+    orderId: string,
+    settings: RestaurantSettings,
+    billedBy?: string,
+    forceBrowser: boolean = false
+  ): Promise<void> {
     const { data: orderData, error: orderErr } = await supabase
       .from('orders')
       .select('*, items:order_items(*), kots(*), payments(*)')
@@ -915,7 +1197,7 @@ export const printService = {
       throw new Error(`Could not load Order: ${orderErr?.message || 'Not found'}`);
     }
 
-    await this.printFinalReceiptThermal(orderData, settings, billedBy);
+    await this.printFinalReceiptThermal(orderData, settings, billedBy, { forceBrowser });
   },
 
   /**
@@ -926,7 +1208,12 @@ export const printService = {
     const isPaid = order.payment_status === 'paid';
     const logoUrl = formatLogoDataUri(settings?.logo_url || (order as any)?.restaurant?.logo_url);
 
-    const dynamicTaxRate = getOrderTaxRate(order, Number(settings.default_tax_rate) || 0);
+    const dynamicTaxRate =
+      (order as any).tax_rate !== undefined && (order as any).tax_rate !== null
+        ? Number((order as any).tax_rate)
+        : (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
+            ? Number(settings.default_tax_rate)
+            : 5.0);
     const halfTaxRate = dynamicTaxRate / 2;
     const halfTaxRateStr = halfTaxRate % 1 === 0 ? String(halfTaxRate) : halfTaxRate.toFixed(1);
 
@@ -952,9 +1239,7 @@ export const printService = {
       settings.is_gst_enabled !== false &&
       (settings.gst_registered !== undefined ? Boolean(settings.gst_registered) : Boolean(settings.gstin?.trim()));
     const isTaxInvoice =
-      taxTotal > 0 ||
-      Boolean(order.customer_gstin?.trim()) ||
-      (effectiveGstRegistered && settings.tax_invoice_enabled !== false && Boolean(settings.gstin?.trim()));
+      taxTotal > 0 || (effectiveGstRegistered && settings.tax_invoice_enabled !== false && Boolean(settings.gstin?.trim()));
 
     const paymentMethodStr = order.payments && order.payments.length > 0
       ? order.payments.map((p) => p.payment_method.toUpperCase()).join(', ')

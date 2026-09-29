@@ -18,7 +18,7 @@ import { mockStorage } from '../services/mockStorage';
 import { useSettings } from './SettingsContext';
 import { useNotification } from './NotificationContext';
 import { useAuth } from './AuthContext';
-import { printService } from '../services/printService';
+import { printService, handleThermalPrintFallback } from '../services/printService';
 import { supabase, isSupabaseConfigured } from '../services/supabase';
 import { printedKotTracker } from '../utils/printedKotTracker';
 
@@ -680,8 +680,16 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     showToast('success', 'Payment Completed & Bill Closed', `Order #${updatedOrder.order_number} finalized.`);
-    // Auto-print final thermal receipt with persisted numbers
-    await printService.printFinalReceiptThermal(updatedOrder, settings);
+    
+    // Print final thermal receipt with persisted numbers (Auto Print ON -> Direct/Print Agent, Auto Print OFF -> Browser)
+    try {
+      await printService.printFinalReceiptThermal(updatedOrder, settings);
+    } catch (printErr: any) {
+      console.warn('[PosContext] Thermal receipt print handled safely:', printErr);
+      await handleThermalPrintFallback(printErr, 'Receipt', async () => {
+        await printService.printFinalReceiptThermalBrowser(updatedOrder, settings);
+      });
+    }
 
     clearCart();
     await refreshOrders();

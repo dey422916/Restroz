@@ -21,7 +21,7 @@ import { orderService, resolveOrderSource, clearOrdersCache, resolveOrderDiscoun
 import { productService } from '../../src/services/api/productService';
 import { tableService } from '../../src/services/api/tableService';
 import { kotService, clearKotsCache } from '../../src/services/api/kotService';
-import { printService, formatLogoDataUri } from '../../src/services/printService';
+import { printService, formatLogoDataUri, handleThermalPrintFallback } from '../../src/services/printService';
 import { Order, OrderItem, OrderStatus, PaymentStatus, OrderSource, Product, DiningTable, RestaurantSettings, PaymentMethod } from '../../src/types';
 import { formatCurrency, numberToWords } from '../../src/utils/currency';
 import { getOrderSubtotal, calculateOrderTotals, getOrderTaxableBreakdown, getOrderInvoiceTotals, getOrderTaxRate, isOrderGstApplicable } from '../../src/utils/gst';
@@ -607,7 +607,14 @@ export default function OrdersScreen() {
       });
 
       if ((updated as any).latest_kot) {
-        printService.printKotThermal(updated, settings, (updated as any).latest_kot).catch((e) => console.warn('KOT Print warning:', e));
+        try {
+          await printService.printKotThermal(updated, settings, (updated as any).latest_kot);
+        } catch (e: any) {
+          console.warn('KOT Print warning:', e);
+          await handleThermalPrintFallback(e, 'KOT', async () => {
+            await printService.printKotThermalBrowser(updated, settings, (updated as any).latest_kot);
+          });
+        }
       }
 
       clearOrdersCache(updated.restaurant_id || activeRestaurantId);
@@ -859,20 +866,41 @@ export default function OrdersScreen() {
         clearKotsCache(order.restaurant_id || activeRestaurantId);
         await loadData(true);
 
-        if (!settings.auto_print_kot) {
-          Alert.alert(
-            '🖨️ KOT Generated & Printed',
-            hasExistingKot
-              ? `Supplementary KOT #${newKot.kot_number} generated for new items.`
-              : `KOT #${newKot.kot_number} generated for kitchen.`
-          );
+        try {
+          const res = await printService.printKotThermal(order, settings, newKot, false);
+          if (res && res.direct) {
+            await printedKotTracker.markKotAsAutoPrinted(newKot.id, newKot.kitchen_notes);
+            if (!settings.auto_print_kot) {
+              showAlert(
+                '🖨️ KOT Generated & Printed',
+                hasExistingKot
+                  ? `Supplementary KOT #${newKot.kot_number} generated for new items.`
+                  : `KOT #${newKot.kot_number} generated for kitchen.`
+              );
+            }
+          }
+        } catch (printErr: any) {
+          console.warn('[orders.tsx] Direct KOT print failed:', printErr);
+          await handleThermalPrintFallback(printErr, 'KOT', async () => {
+            await printService.printKotThermalBrowser(order, settings, newKot, false);
+            await printedKotTracker.markKotAsAutoPrinted(newKot.id, newKot.kitchen_notes);
+          });
         }
       } else {
         // Manual reprint of existing KOT - same KOT is printed
         const activeKot = order.kots && order.kots.length > 0 ? order.kots[order.kots.length - 1] : undefined;
-        await printService.printKotThermal(order, settings, activeKot, true);
-        if (!settings.auto_print_kot) {
-          Alert.alert('🖨️ KOT Reprinted', `Kitchen slip reprinted for Order #${order.order_number}.`);
+        try {
+          const res = await printService.printKotThermal(order, settings, activeKot, true);
+          if (res && res.direct) {
+            if (!settings.auto_print_kot) {
+              showAlert('🖨️ KOT Reprinted', `Kitchen slip reprinted for Order #${order.order_number}.`);
+            }
+          }
+        } catch (printErr: any) {
+          console.warn('[orders.tsx] Direct KOT reprint failed:', printErr);
+          await handleThermalPrintFallback(printErr, 'KOT', async () => {
+            await printService.printKotThermalBrowser(order, settings, activeKot, true);
+          });
         }
       }
     } catch (err: any) {
@@ -3437,14 +3465,38 @@ export default function OrdersScreen() {
                   <View style={[styles.invoiceActionsRow, isMobile && styles.invoiceActionsCol]}>
                     <TouchableOpacity
                       style={[styles.invoiceActionBtn, styles.invoiceBtnThermal]}
-                      onPress={() => printService.printFinalReceiptThermal(viewOrderModal, settings, user?.full_name)}
+                      onPress={async () => {
+                        try {
+                          const res = await printService.printFinalReceiptThermal(viewOrderModal, settings, user?.full_name);
+                          if (res && res.direct) {
+                            showAlert('🖨️ Bill Printed', `Thermal bill printed for Order #${viewOrderModal.order_number}.`);
+                          }
+                        } catch (err: any) {
+                          console.warn('[orders.tsx] viewOrderModal thermal bill print error:', err);
+                          await handleThermalPrintFallback(err, 'Bill', async () => {
+                            await printService.printFinalReceiptThermalBrowser(viewOrderModal, settings, user?.full_name);
+                          });
+                        }
+                      }}
                     >
                       <Text style={styles.invoiceBtnText}>🖨️ Thermal Bill</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
                       style={[styles.invoiceActionBtn, styles.invoiceBtnKot]}
-                      onPress={() => printService.printKotThermal(viewOrderModal, settings)}
+                      onPress={async () => {
+                        try {
+                          const res = await printService.printKotThermal(viewOrderModal, settings);
+                          if (res && res.direct) {
+                            showAlert('🖨️ KOT Printed', `Kitchen slip printed for Order #${viewOrderModal.order_number}.`);
+                          }
+                        } catch (err: any) {
+                          console.warn('[orders.tsx] viewOrderModal KOT print failed:', err);
+                          await handleThermalPrintFallback(err, 'KOT', async () => {
+                            await printService.printKotThermalBrowser(viewOrderModal, settings);
+                          });
+                        }
+                      }}
                     >
                       <Text style={styles.invoiceBtnText}>🖨️ KOT Slip</Text>
                     </TouchableOpacity>

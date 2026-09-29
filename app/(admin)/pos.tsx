@@ -30,7 +30,7 @@ import { RegisterClosedError } from '../../src/context/PosContext';
 import { formatCurrency, numberToWords } from '../../src/utils/currency';
 import { getOrderSubtotal, getOrderTaxRate } from '../../src/utils/gst';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
-import { printService } from '../../src/services/printService';
+import { printService, handleThermalPrintFallback } from '../../src/services/printService';
 import { dayRegisterService } from '../../src/services/api/dayRegisterService';
 import { subscriptionGuardService } from '../../src/services/api/subscriptionGuardService';
 import { isSupabaseConfigured } from '../../src/services/supabase';
@@ -550,8 +550,17 @@ export default function PosScreen() {
       else Alert.alert('Order Required', 'Please generate KOT before printing the bill.');
       return;
     }
-    await printService.printBillThermal(createdOrder, settings);
-    showToast('success', 'Print Bill', `Bill printed for #${createdOrder.order_number}`);
+    try {
+      const res = await printService.printBillThermal(createdOrder, settings);
+      if (res && res.direct) {
+        showToast('success', 'Print Bill', `Bill printed for #${createdOrder.order_number}`);
+      }
+    } catch (err: any) {
+      console.warn('[pos.tsx] Print Bill error:', err);
+      await handleThermalPrintFallback(err, 'Bill', async () => {
+        await printService.printFinalReceiptThermalBrowser(createdOrder, settings);
+      });
+    }
   };
 
   const handleUpdateOrderAction = async () => {
@@ -2127,10 +2136,20 @@ export default function PosScreen() {
 
                       <TouchableOpacity
                         style={styles.modalActionKotBtn}
-                        onPress={() => {
-                          if (viewTableModalData.order) {
-                            printService.printKotThermal(viewTableModalData.order, settings, undefined, true);
-                            showToast('success', 'KOT Slip', 'KOT reprint sent to printer.');
+                        onPress={async () => {
+                          const currentOrder = viewTableModalData.order;
+                          if (currentOrder) {
+                            try {
+                              const res = await printService.printKotThermal(currentOrder, settings, undefined, true);
+                              if (res && res.direct) {
+                                showToast('success', 'KOT Slip', 'KOT reprint sent to printer.');
+                              }
+                            } catch (printErr: any) {
+                              console.warn('[pos.tsx] Reprint KOT failed:', printErr);
+                              await handleThermalPrintFallback(printErr, 'KOT', async () => {
+                                await printService.printKotThermalBrowser(currentOrder, settings, undefined, true);
+                              });
+                            }
                           }
                         }}
                       >
@@ -2139,10 +2158,20 @@ export default function PosScreen() {
 
                       <TouchableOpacity
                         style={styles.modalActionBillBtn}
-                        onPress={() => {
-                          if (viewTableModalData.order) {
-                            printService.printBillThermal(viewTableModalData.order, settings);
-                            showToast('success', 'Thermal Bill', 'Bill printed.');
+                        onPress={async () => {
+                          const currentOrder = viewTableModalData.order;
+                          if (currentOrder) {
+                            try {
+                              const res = await printService.printBillThermal(currentOrder, settings);
+                              if (res && res.direct) {
+                                showToast('success', 'Thermal Bill', 'Bill printed.');
+                              }
+                            } catch (err: any) {
+                              console.warn('[pos.tsx] modalActionBillBtn error:', err);
+                              await handleThermalPrintFallback(err, 'Bill', async () => {
+                                await printService.printFinalReceiptThermalBrowser(currentOrder, settings);
+                              });
+                            }
                           }
                         }}
                       >

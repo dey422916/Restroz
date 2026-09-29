@@ -278,20 +278,11 @@ export const loyaltyService = {
     const cleanMobile = normalizeIndianPhone(customerMobile);
     if (!cleanMobile) return [];
 
-    // First find wallet
-    const { data: wallet } = await supabase
-      .from('customer_wallets')
-      .select('id')
-      .eq('restaurant_id', restaurantId)
-      .eq('customer_mobile', cleanMobile)
-      .maybeSingle();
-
-    if (!wallet) return [];
-
     const { data, error } = await supabase
       .from('customer_wallet_transactions')
       .select('id, transaction_type, amount, order_id, notes, created_at')
-      .eq('wallet_id', wallet.id)
+      .eq('restaurant_id', restaurantId)
+      .eq('customer_mobile', cleanMobile)
       .order('created_at', { ascending: false })
       .limit(limit);
 
@@ -309,5 +300,86 @@ export const loyaltyService = {
       created_at: t.created_at,
     }));
   },
+
+  /**
+   * Adjust customer wallet balance manually (Admin / Super Admin Only)
+   */
+  async adjustCustomerWallet(params: {
+    restaurant_id: string;
+    customer_mobile: string;
+    amount: number;
+    notes: string;
+    type?: 'adjustment' | 'earn' | 'redeem' | 'refund';
+  }): Promise<{
+    success: boolean;
+    customer_mobile: string;
+    adjustment_amount: number;
+    new_balance: number;
+    transaction_id?: string;
+    notes?: string;
+  }> {
+    const { restaurant_id, customer_mobile, amount, notes, type = 'adjustment' } = params;
+    if (!restaurant_id) throw new Error('Restaurant ID is required.');
+    const cleanMobile = normalizeIndianPhone(customer_mobile);
+    if (!cleanMobile) throw new Error('Valid 10-digit customer mobile number is required.');
+    if (amount === 0) throw new Error('Adjustment amount cannot be zero.');
+    if (!notes?.trim()) throw new Error('Adjustment reason / note is required.');
+
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.rpc('adjust_customer_wallet', {
+        p_restaurant_id: restaurant_id,
+        p_customer_mobile: cleanMobile,
+        p_amount: amount,
+        p_notes: notes.trim(),
+        p_type: type,
+      });
+
+      if (error) {
+        console.error('[loyaltyService] adjust_customer_wallet error:', error);
+        throw new Error(error.message || 'Failed to adjust customer wallet balance.');
+      }
+
+      return data;
+    }
+
+    return {
+      success: true,
+      customer_mobile: cleanMobile,
+      adjustment_amount: amount,
+      new_balance: amount,
+      notes,
+    };
+  },
+
+  /**
+   * Refund order settlement: restores redeemed wallet and reverses earned reward
+   */
+  async refundOrderSettlement(orderId: string, reason: string): Promise<{
+    success: boolean;
+    order: any;
+    wallet_restored: number;
+    reward_reversed: number;
+    new_wallet_balance: number;
+  }> {
+    if (!orderId) throw new Error('Order ID is required.');
+    if (!reason?.trim()) throw new Error('Refund reason is required.');
+
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.rpc('refund_order_settlement', {
+        p_order_id: orderId,
+        p_reason: reason.trim(),
+      });
+
+      if (error) {
+        console.error('[loyaltyService] refund_order_settlement error:', error);
+        throw new Error(error.message || 'Failed to refund order settlement on database.');
+      }
+
+      return data;
+    }
+
+    throw new Error('Supabase client is not configured.');
+  },
 };
+
 

@@ -83,6 +83,14 @@ export default function CouponsScreen() {
   const [expiryDate, setExpiryDate] = useState('');
   const [isActive, setIsActive] = useState(true);
 
+  // Manual Wallet Adjustment Modal State
+  const [adjustModalVisible, setAdjustModalVisible] = useState(false);
+  const [adjustMobile, setAdjustMobile] = useState('');
+  const [adjustAmount, setAdjustAmount] = useState('');
+  const [adjustType, setAdjustType] = useState<'credit' | 'debit'>('credit');
+  const [adjustReason, setAdjustReason] = useState('');
+  const [adjusting, setAdjusting] = useState(false);
+
   // Authoritative Role check: Admin or Super Admin only
   const normalizedRole = (role || user?.role || '').toUpperCase();
   const isAdmin = isSuperAdmin || authIsAdmin || normalizedRole === 'ADMIN' || normalizedRole === 'SUPER_ADMIN';
@@ -152,6 +160,58 @@ export default function CouponsScreen() {
       Alert.alert('Lookup Error', e.message || 'Failed to fetch customer wallet details.');
     } finally {
       setLookupLoading(false);
+    }
+  };
+
+  const handleOpenAdjustModal = (mobile: string) => {
+    setAdjustMobile(mobile);
+    setAdjustAmount('');
+    setAdjustType('credit');
+    setAdjustReason('');
+    setAdjustModalVisible(true);
+  };
+
+  const handlePerformAdjustment = async () => {
+    if (!activeRestaurantId) return;
+    const cleanMobile = normalizeIndianPhone(adjustMobile);
+    if (!cleanMobile) {
+      Alert.alert('Validation Error', 'Invalid customer mobile number.');
+      return;
+    }
+    const val = parseFloat(adjustAmount);
+    if (isNaN(val) || val <= 0) {
+      Alert.alert('Validation Error', 'Please enter a valid positive adjustment amount.');
+      return;
+    }
+    if (!adjustReason.trim()) {
+      Alert.alert('Validation Error', 'Please enter a reason or note for this wallet adjustment.');
+      return;
+    }
+
+    const signedAmount = adjustType === 'credit' ? val : -val;
+    setAdjusting(true);
+    try {
+      const res = await loyaltyService.adjustCustomerWallet({
+        restaurant_id: activeRestaurantId,
+        customer_mobile: cleanMobile,
+        amount: signedAmount,
+        notes: adjustReason.trim(),
+        type: 'adjustment',
+      });
+
+      Alert.alert(
+        'Adjustment Successful',
+        `${adjustType === 'credit' ? 'Credited' : 'Debited'} ${formatCurrency(val)} ${adjustType === 'credit' ? 'to' : 'from'} customer wallet. New Balance: ${formatCurrency(res.new_balance)}`
+      );
+      setAdjustModalVisible(false);
+      loadCustomerWallets();
+      if (hasSearched && (lookupWallet?.customer_mobile === cleanMobile || lookupPhone === cleanMobile)) {
+        handleLookupCustomer(cleanMobile);
+      }
+    } catch (e: any) {
+      Alert.alert('Adjustment Error', e.message || 'Failed to adjust customer wallet balance.');
+    } finally {
+      setAdjusting(false);
     }
   };
 
@@ -767,6 +827,19 @@ export default function CouponsScreen() {
                         </View>
                       </View>
 
+                      {/* Manual Adjustment Action Button */}
+                      {isAdmin && (
+                        <View style={{ marginTop: 12, marginBottom: 8, flexDirection: 'row', justifyContent: 'flex-end' }}>
+                          <TouchableOpacity
+                            style={styles.adjustCreditBtn}
+                            onPress={() => handleOpenAdjustModal(lookupWallet.customer_mobile || lookupPhone)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.adjustCreditBtnText}>⚡ Adjust Store Credit / Wallet</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+
                       {/* Transaction Ledger History */}
                       <View style={styles.ledgerHeaderRow}>
                         <Text style={styles.ledgerTitle}>
@@ -928,7 +1001,7 @@ export default function CouponsScreen() {
                       <View style={[styles.tdCell, { flex: 1.5, alignItems: 'flex-end' }]}>
                         <Text style={styles.tdRedeemedText}>-{formatCurrency(w.total_redeemed)}</Text>
                       </View>
-                      <View style={[styles.tdCell, { flex: 1.5, alignItems: 'center' }]}>
+                      <View style={[styles.tdCell, { flex: 2.2, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 }]}>
                         <TouchableOpacity
                           style={styles.inspectBtn}
                           onPress={() => {
@@ -939,6 +1012,15 @@ export default function CouponsScreen() {
                         >
                           <Text style={styles.inspectBtnText}>Inspect</Text>
                         </TouchableOpacity>
+                        {isAdmin && (
+                          <TouchableOpacity
+                            style={[styles.inspectBtn, { backgroundColor: '#f0fdf4', borderColor: '#86efac' }]}
+                            onPress={() => handleOpenAdjustModal(w.customer_mobile)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={[styles.inspectBtnText, { color: '#16a34a' }]}>Adjust</Text>
+                          </TouchableOpacity>
+                        )}
                       </View>
                     </View>
                   ))}
@@ -949,6 +1031,85 @@ export default function CouponsScreen() {
         )}
         </ScrollView>
       )}
+
+      {/* MANUAL WALLET ADJUSTMENT MODAL */}
+      <Modal visible={adjustModalVisible} transparent animationType="fade" onRequestClose={() => setAdjustModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxWidth: 440 }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Adjust Customer Wallet</Text>
+                <Text style={{ fontSize: 12, color: '#64748b', fontWeight: '600', marginTop: 2 }}>
+                  Mobile: +91 {adjustMobile}
+                </Text>
+              </View>
+              <TouchableOpacity style={styles.closeBtn} onPress={() => setAdjustModalVisible(false)}>
+                <Text style={{ fontSize: 18, color: '#64748B', fontWeight: 'bold' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.modalForm}>
+              <Text style={styles.label}>Adjustment Type *</Text>
+              <View style={styles.typeSelectorRow}>
+                <TouchableOpacity
+                  style={[styles.typeBtn, adjustType === 'credit' && styles.typeBtnSelected]}
+                  onPress={() => setAdjustType('credit')}
+                >
+                  <Text style={[styles.typeBtnText, adjustType === 'credit' && styles.typeBtnTextSelected]}>
+                    ➕ Add Credit (Deposit)
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.typeBtn, adjustType === 'debit' && { backgroundColor: '#fef2f2', borderColor: '#ef4444' }]}
+                  onPress={() => setAdjustType('debit')}
+                >
+                  <Text style={[styles.typeBtnText, adjustType === 'debit' && { color: '#dc2626', fontWeight: 'bold' }]}>
+                    ➖ Deduct Credit
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.label}>Amount in ₹ *</Text>
+              <TextInput
+                style={styles.input}
+                value={adjustAmount}
+                onChangeText={(t) => setAdjustAmount(t.replace(/[^0-9.]/g, ''))}
+                keyboardType="numeric"
+                placeholder="e.g. 100"
+                placeholderTextColor="#94a3b8"
+              />
+
+              <Text style={styles.label}>Reason / Note *</Text>
+              <TextInput
+                style={[styles.input, { minHeight: 60 }]}
+                value={adjustReason}
+                onChangeText={setAdjustReason}
+                placeholder="e.g. Loyalty compensation, manual refund, manager goodwill"
+                placeholderTextColor="#94a3b8"
+                multiline
+              />
+
+              <TouchableOpacity
+                style={[
+                  styles.saveBtn,
+                  adjustType === 'debit' && { backgroundColor: '#dc2626' },
+                  adjusting && { opacity: 0.6 }
+                ]}
+                onPress={handlePerformAdjustment}
+                disabled={adjusting}
+              >
+                {adjusting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.saveBtnText}>
+                    {adjustType === 'credit' ? 'Confirm Add Credit' : 'Confirm Deduct Credit'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* CREATE / EDIT COUPON MODAL */}
       <Modal visible={modalVisible} transparent animationType="fade" onRequestClose={() => setModalVisible(false)}>
@@ -1099,6 +1260,19 @@ export default function CouponsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
+  adjustCreditBtn: {
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#93c5fd',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  adjustCreditBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#1d4ed8',
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',

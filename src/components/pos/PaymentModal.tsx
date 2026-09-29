@@ -548,6 +548,28 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                           </View>
                         </View>
                       )}
+
+                      {/* Loyalty Reward Earning Preview */}
+                      {(() => {
+                        const eligible = Math.max(0, totals.payableAmount - walletRedeemAmount);
+                        const spendAmt = walletInfo?.spend_amount || 100;
+                        const rewAmt = walletInfo?.reward_amount || 1;
+                        const previewEarn = spendAmt > 0 && rewAmt > 0 && eligible > 0
+                          ? Math.round((eligible / spendAmt) * rewAmt * 100) / 100
+                          : 0;
+
+                        if (previewEarn > 0) {
+                          return (
+                            <View style={{ marginTop: 8, padding: 8, backgroundColor: '#f0fdf4', borderRadius: 8, borderWidth: 1, borderColor: '#bbf7d0', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <Text style={{ fontSize: 13 }}>✨</Text>
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: '#166534', flex: 1 }}>
+                                Customer will earn {formatCurrency(previewEarn)} wallet cashback after payment.
+                              </Text>
+                            </View>
+                          );
+                        }
+                        return null;
+                      })()}
                     </>
                   ) : null}
                 </View>

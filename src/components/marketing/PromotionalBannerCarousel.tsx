@@ -10,17 +10,22 @@ import {
   Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { marketingService } from '../../services/api/marketingService';
+import { marketingService, DEFAULT_MARKETING_BANNERS } from '../../services/api/marketingService';
 import { WebsiteBanner } from '../../types/marketing';
+
+const LOCAL_BANNER_ASSETS: Record<string, any> = {
+  '/banners/banner-complete-management.jpg': require('../../../assets/images/banner-complete-management.jpg'),
+  '/banners/banner-durga-puja-offer.jpg': require('../../../assets/images/banner-durga-puja-offer.jpg'),
+};
 
 export function PromotionalBannerCarousel() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
-  const [banners, setBanners] = useState<WebsiteBanner[]>([]);
+  const [banners, setBanners] = useState<WebsiteBanner[]>(DEFAULT_MARKETING_BANNERS);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const timerRef = useRef<any>(null);
 
   useEffect(() => {
@@ -30,11 +35,11 @@ export function PromotionalBannerCarousel() {
   const loadBanners = async () => {
     try {
       const activeBanners = await marketingService.getActiveBanners();
-      setBanners(activeBanners);
+      if (activeBanners && activeBanners.length > 0) {
+        setBanners(activeBanners);
+      }
     } catch (e) {
       console.warn('Failed to load banners:', e);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -42,19 +47,35 @@ export function PromotionalBannerCarousel() {
     if (banners.length > 1) {
       timerRef.current = setInterval(() => {
         setCurrentIndex((prev) => (prev + 1) % banners.length);
-      }, 5000);
+      }, 6000);
       return () => clearInterval(timerRef.current);
     }
   }, [banners.length]);
 
-  if (loading || banners.length === 0) {
-    return null; // Don't render empty space if no banners exist
+  const handlePrev = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setCurrentIndex((prev) => (prev === 0 ? banners.length - 1 : prev - 1));
+  };
+
+  const handleNext = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setCurrentIndex((prev) => (prev + 1) % banners.length);
+  };
+
+  if (banners.length === 0) {
+    return null;
   }
 
   const currentBanner = banners[currentIndex];
-  const imageUrl = isMobile && currentBanner.mobile_image_url
+  const rawImageUrl = isMobile && currentBanner.mobile_image_url
     ? currentBanner.mobile_image_url
     : currentBanner.desktop_image_url;
+
+  const imageSource = rawImageUrl && LOCAL_BANNER_ASSETS[rawImageUrl]
+    ? LOCAL_BANNER_ASSETS[rawImageUrl]
+    : rawImageUrl
+    ? { uri: rawImageUrl }
+    : null;
 
   const handleCta = () => {
     if (!currentBanner.cta_url) return;
@@ -67,60 +88,77 @@ export function PromotionalBannerCarousel() {
 
   return (
     <View style={styles.carouselContainer}>
-      <View style={styles.bannerCard}>
-        {/* Background Image if available */}
-        {imageUrl ? (
+      <TouchableOpacity
+        style={styles.bannerCard}
+        onPress={handleCta}
+        activeOpacity={0.92}
+      >
+        {/* Banner Graphic Image */}
+        {imageSource ? (
           <Image
-            source={{ uri: imageUrl }}
-            style={styles.bannerImageBg}
-            resizeMode="cover"
+            source={imageSource}
+            style={[
+              styles.bannerImage,
+              { height: isMobile ? 320 : 440 }
+            ]}
+            resizeMode="contain"
           />
-        ) : null}
-
-        {/* Gradient Overlay */}
-        <View style={styles.bannerOverlay}>
-          <View style={styles.contentCol}>
-            {currentBanner.badge_text ? (
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>{currentBanner.badge_text}</Text>
-              </View>
-            ) : null}
-
-            <Text style={styles.headline} numberOfLines={2}>
-              {currentBanner.headline}
-            </Text>
-
+        ) : (
+          <View style={styles.fallbackCard}>
+            <Text style={styles.headline}>{currentBanner.headline}</Text>
             {currentBanner.subheadline ? (
-              <Text style={styles.subheadline} numberOfLines={2}>
-                {currentBanner.subheadline}
-              </Text>
-            ) : null}
-
-            {currentBanner.cta_label ? (
-              <TouchableOpacity
-                style={styles.ctaBtn}
-                onPress={handleCta}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.ctaBtnText}>{currentBanner.cta_label} →</Text>
-              </TouchableOpacity>
+              <Text style={styles.subheadline}>{currentBanner.subheadline}</Text>
             ) : null}
           </View>
+        )}
 
-          {/* Pagination Indicators */}
-          {banners.length > 1 && (
-            <View style={styles.dotsRow}>
-              {banners.map((_, idx) => (
-                <TouchableOpacity
-                  key={`dot-${idx}`}
-                  onPress={() => setCurrentIndex(idx)}
-                  style={[styles.dot, idx === currentIndex && styles.dotActive]}
-                />
-              ))}
-            </View>
-          )}
-        </View>
-      </View>
+        {/* Previous Button */}
+        {banners.length > 1 && (
+          <TouchableOpacity
+            style={[styles.arrowBtn, styles.arrowLeft]}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              handlePrev();
+            }}
+            activeOpacity={0.8}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <Text style={styles.arrowText}>❮</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Next Button */}
+        {banners.length > 1 && (
+          <TouchableOpacity
+            style={[styles.arrowBtn, styles.arrowRight]}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              handleNext();
+            }}
+            activeOpacity={0.8}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <Text style={styles.arrowText}>❯</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Bottom Pagination Dots */}
+        {banners.length > 1 && (
+          <View style={styles.dotsRow}>
+            {banners.map((_, idx) => (
+              <TouchableOpacity
+                key={`dot-${idx}`}
+                onPress={(e) => {
+                  e.stopPropagation?.();
+                  if (timerRef.current) clearInterval(timerRef.current);
+                  setCurrentIndex(idx);
+                }}
+                style={[styles.dot, idx === currentIndex && styles.dotActive]}
+              />
+            ))}
+          </View>
+        )}
+      </TouchableOpacity>
     </View>
   );
 }
@@ -131,86 +169,91 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'center',
     paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingTop: 24,
+    paddingBottom: 8,
   },
   bannerCard: {
-    backgroundColor: '#1E293B',
-    borderRadius: 16,
+    backgroundColor: '#0F172A',
+    borderRadius: 20,
     overflow: 'hidden',
     position: 'relative',
-    minHeight: 140,
+    borderWidth: 1,
+    borderColor: '#334155',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 8,
+    alignItems: 'center',
     justifyContent: 'center',
   },
-  bannerImageBg: {
-    ...(StyleSheet.absoluteFill as any),
+  bannerImage: {
     width: '100%',
-    height: '100%',
+    backgroundColor: '#0B1120',
   },
-  bannerOverlay: {
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
-    paddingHorizontal: 24,
-    paddingVertical: 18,
-    flexDirection: 'row',
+  fallbackCard: {
+    padding: 32,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    minHeight: 140,
-  },
-  contentCol: {
-    flex: 1,
-    gap: 6,
-  },
-  badge: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#FC8019',
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  badgeText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    justifyContent: 'center',
+    minHeight: 200,
   },
   headline: {
     color: '#FFFFFF',
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '800',
-    letterSpacing: -0.3,
+    textAlign: 'center',
   },
   subheadline: {
-    color: '#CBD5E1',
-    fontSize: 14,
-    lineHeight: 18,
+    color: '#94A3B8',
+    fontSize: 15,
+    marginTop: 8,
+    textAlign: 'center',
   },
-  ctaBtn: {
-    alignSelf: 'flex-start',
-    marginTop: 6,
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
+  arrowBtn: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -22,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
   },
-  ctaBtnText: {
-    color: '#0F172A',
-    fontSize: 13,
+  arrowLeft: {
+    left: 16,
+  },
+  arrowRight: {
+    right: 16,
+  },
+  arrowText: {
+    color: '#FFFFFF',
+    fontSize: 18,
     fontWeight: '700',
   },
   dotsRow: {
+    position: 'absolute',
+    bottom: 14,
     flexDirection: 'row',
-    gap: 6,
-    alignSelf: 'flex-end',
-    paddingBottom: 4,
+    gap: 8,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    zIndex: 10,
   },
   dot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
   },
   dotActive: {
-    width: 22,
+    width: 24,
     backgroundColor: '#FC8019',
   },
 });

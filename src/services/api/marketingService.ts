@@ -1,12 +1,47 @@
 import { supabase, isSupabaseConfigured } from '../supabase';
 import { CreateWebsiteLeadPayload, WebsiteBanner, WebsiteLead } from '../../types/marketing';
 
+export const DEFAULT_MARKETING_BANNERS: WebsiteBanner[] = [
+  {
+    id: 'banner-complete-management-default',
+    title: 'Complete Restaurant Management',
+    headline: 'Complete Restaurant Management',
+    subheadline: 'From Orders to Happy Customers Everything in One System',
+    badge_text: 'ALL-IN-ONE POS',
+    desktop_image_url: '/banners/banner-complete-management.jpg',
+    mobile_image_url: '/banners/banner-complete-management.jpg',
+    cta_label: 'Book a Free Demo',
+    cta_url: '/info/book-demo',
+    is_external_link: false,
+    display_order: 1,
+    is_active: true,
+    created_at: '2026-10-04T00:00:00.000Z',
+    updated_at: '2026-10-04T00:00:00.000Z',
+  },
+  {
+    id: 'banner-durga-puja-offer-default',
+    title: 'Special Durga Puja Rush Offer',
+    headline: 'Make This Durga Puja Rush Hassle-Free!',
+    subheadline: 'RestroZ POS Available on App & Web + Free Dedicated Restaurant Website',
+    badge_text: 'FESTIVE SPECIAL',
+    desktop_image_url: '/banners/banner-durga-puja-offer.jpg',
+    mobile_image_url: '/banners/banner-durga-puja-offer.jpg',
+    cta_label: 'Contact for Demo',
+    cta_url: '/info/contact',
+    is_external_link: false,
+    display_order: 2,
+    is_active: true,
+    created_at: '2026-10-04T00:00:00.000Z',
+    updated_at: '2026-10-04T00:00:00.000Z',
+  },
+];
+
 export const marketingService = {
   /**
    * Fetch currently active & scheduled promotional banners for public display
    */
   async getActiveBanners(): Promise<WebsiteBanner[]> {
-    if (!isSupabaseConfigured) return [];
+    if (!isSupabaseConfigured) return DEFAULT_MARKETING_BANNERS;
     try {
       const now = new Date().toISOString();
       const { data, error } = await supabase
@@ -19,13 +54,13 @@ export const marketingService = {
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.warn('[marketingService] Failed to load active banners:', error);
-        return [];
+        console.warn('[marketingService] Failed to load active banners from DB, using defaults:', error);
+        return DEFAULT_MARKETING_BANNERS;
       }
-      return data || [];
+      return data && data.length > 0 ? data : DEFAULT_MARKETING_BANNERS;
     } catch (err) {
-      console.warn('[marketingService] Banner fetch exception:', err);
-      return [];
+      console.warn('[marketingService] Banner fetch exception, using defaults:', err);
+      return DEFAULT_MARKETING_BANNERS;
     }
   },
 

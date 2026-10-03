@@ -1057,10 +1057,15 @@ export const orderService = {
                 ? Number((cgst + sgst).toFixed(2))
                 : 0;
 
+              const isValidUuid = (val?: string | null) => {
+                if (!val) return false;
+                return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+              };
+
               return {
                 id: i.id?.startsWith('item-') ? i.id : 'item-' + Date.now() + Math.random().toString(36).substr(2, 4),
                 order_id: createdDbOrder.id,
-                product_id: i.product_id,
+                product_id: isValidUuid(i.product_id) ? i.product_id : null,
                 product_name: i.product_name,
                 unit_price: unitPrice,
                 quantity: quantity,
@@ -1103,8 +1108,12 @@ export const orderService = {
 
           // Deduct product stock quantities
           if (items && items.length > 0) {
+            const isValidUuid = (val?: string | null) => {
+              if (!val) return false;
+              return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+            };
             for (const itm of items) {
-              if (itm.product_id && itm.quantity > 0) {
+              if (itm.product_id && isValidUuid(itm.product_id) && itm.quantity > 0) {
                 try {
                   const { data: curP } = await supabase
                     .from('products')

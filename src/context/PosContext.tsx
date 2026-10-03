@@ -60,6 +60,17 @@ interface PosContextType {
   setCustomerInfo: (info: Partial<CustomerInfo>) => void;
   setOrderNotes: (notes: string) => void;
   addToCart: (product: Product, quantity?: number, notes?: string) => void;
+  addQuickBillItem: (params: {
+    name: string;
+    price: number;
+    quantity: number;
+    taxRate: number;
+    categoryId: string;
+    categoryName?: string;
+    isTaxInclusive?: boolean;
+    notes?: string;
+    savedProduct?: Product;
+  }) => void;
   updateQuantity: (productId: string, quantity: number) => void;
   removeItem: (productId: string) => void;
   setItemNotes: (productId: string, notes: string) => void;
@@ -269,6 +280,77 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  const addQuickBillItem = (params: {
+    name: string;
+    price: number;
+    quantity: number;
+    taxRate: number;
+    categoryId: string;
+    categoryName?: string;
+    isTaxInclusive?: boolean;
+    notes?: string;
+    savedProduct?: Product;
+  }) => {
+    if (orderType === 'dine_in' && !selectedTable) {
+      showToast('error', 'Select Table First', 'Please select a dining table before adding items for Dine In.');
+      return;
+    }
+
+    const {
+      name,
+      price,
+      quantity,
+      taxRate,
+      categoryId,
+      categoryName,
+      isTaxInclusive,
+      notes = '',
+      savedProduct,
+    } = params;
+
+    let baseUnitPrice = price;
+    if (isTaxInclusive && taxRate > 0) {
+      baseUnitPrice = Number((price / (1 + taxRate / 100)).toFixed(2));
+    }
+
+    const subtotal = Number((baseUnitPrice * quantity).toFixed(2));
+    const taxAmount = Number(((subtotal * taxRate) / 100).toFixed(2));
+    const productId = savedProduct?.id || ('quick-' + Date.now() + Math.random().toString(36).substr(2, 4));
+
+    const newItem: OrderItem = {
+      id: 'item-' + Date.now() + Math.random().toString(36).substr(2, 4),
+      order_id: '',
+      product_id: productId,
+      product_name: name.trim(),
+      unit_price: baseUnitPrice,
+      total_price: subtotal,
+      quantity,
+      tax_rate: taxRate,
+      tax_amount: taxAmount,
+      item_notes: notes,
+      subtotal,
+      total: subtotal,
+      product: savedProduct || {
+        id: productId,
+        name: name.trim(),
+        price: baseUnitPrice,
+        tax_rate: taxRate,
+        category_id: categoryId,
+        category_name: categoryName || 'General',
+        sku: 'QUICK-BILL',
+        food_type: 'veg',
+        stock_quantity: 999999,
+        unit: 'portion',
+        preparation_time_mins: 0,
+        is_available: true,
+        is_active: true,
+        hsn_code: '996331',
+      },
+    };
+
+    setCartItems((prev) => [...prev, newItem]);
+  };
+
   const updateQuantity = (productId: string, quantity: number) => {
     if (quantity <= 0) {
       removeItem(productId);
@@ -276,9 +358,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     setCartItems((prev) =>
       prev.map((item) => {
-        if (item.product_id === productId) {
-          const subtotal = quantity * item.unit_price;
-          const taxAmount = (subtotal * item.tax_rate) / 100;
+        if (item.product_id === productId || item.id === productId) {
+          const subtotal = Number((quantity * item.unit_price).toFixed(2));
+          const taxAmount = Number(((subtotal * item.tax_rate) / 100).toFixed(2));
           return {
             ...item,
             quantity,
@@ -294,12 +376,12 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const removeItem = (productId: string) => {
-    setCartItems((prev) => prev.filter((item) => item.product_id !== productId));
+    setCartItems((prev) => prev.filter((item) => item.product_id !== productId && item.id !== productId));
   };
 
   const setItemNotes = (productId: string, notes: string) => {
     setCartItems((prev) =>
-      prev.map((item) => (item.product_id === productId ? { ...item, item_notes: notes } : item))
+      prev.map((item) => (item.product_id === productId || item.id === productId ? { ...item, item_notes: notes } : item))
     );
   };
 
@@ -777,6 +859,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCustomerInfo,
         setOrderNotes,
         addToCart,
+        addQuickBillItem,
         updateQuantity,
         removeItem,
         setItemNotes,

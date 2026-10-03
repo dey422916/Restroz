@@ -38,6 +38,7 @@ import { TableSelectorModal } from '../../src/components/pos/TableSelectorModal'
 import { SplitBillModal } from '../../src/components/pos/SplitBillModal';
 import { HoldOrdersModal } from '../../src/components/pos/HoldOrdersModal';
 import { PaymentModal } from '../../src/components/pos/PaymentModal';
+import { QuickBillModal } from '../../src/components/pos/QuickBillModal';
 import { isValidPhoneNumber, normalizePhoneNumber } from '../../src/utils/phone';
 import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError } from '../../src/utils/validation';
 import { naturalTableCompare } from '../../src/utils/sortUtils';
@@ -58,6 +59,7 @@ export default function PosScreen() {
     customerInfo,
     setCustomerInfo,
     addToCart,
+    addQuickBillItem,
     removeItem,
     updateQuantity,
     clearCart,
@@ -109,6 +111,7 @@ export default function PosScreen() {
   const [showHoldModal, setShowHoldModal] = useState<boolean>(false);
   const [showSplitModal, setShowSplitModal] = useState<boolean>(false);
   const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false);
+  const [showQuickBillModal, setShowQuickBillModal] = useState<boolean>(false);
   const [showRegisterClosedModal, setShowRegisterClosedModal] = useState<boolean>(false);
   const [openingFloatInput, setOpeningFloatInput] = useState<string>('0');
   const [isOpeningRegisterFromPos, setIsOpeningRegisterFromPos] = useState<boolean>(false);
@@ -1602,15 +1605,24 @@ export default function PosScreen() {
         {/* LEFT / MAIN CATALOG SCREEN (Always visible on Tablet, or when mobileTab === 'menu' on Mobile) */}
         {(isTablet || mobileTab === 'menu') && (
           <View style={styles.catalogArea}>
-            {/* Search Input */}
-            <View style={styles.searchBar}>
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search food item or SKU..."
-                placeholderTextColor="#64748b"
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-              />
+            {/* Search Input & Quick Bill Button */}
+            <View style={styles.searchBarRow}>
+              <View style={styles.searchBar}>
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search food item or SKU..."
+                  placeholderTextColor="#64748b"
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                />
+              </View>
+              <TouchableOpacity
+                testID="pos-quick-bill-btn"
+                style={styles.quickBillBtn}
+                onPress={() => setShowQuickBillModal(true)}
+              >
+                <Text style={styles.quickBillBtnText}>⚡ Quick Bill</Text>
+              </TouchableOpacity>
             </View>
 
             {/* Grouped Categories Horizontal Scroll (FOOD / LIQUOR) */}
@@ -1896,6 +1908,23 @@ export default function PosScreen() {
         onResumeOrder={(orderId) => {
           resumeHeldOrder(orderId);
           setPosStep('catalog');
+        }}
+      />
+
+      {/* Quick Bill Modal */}
+      <QuickBillModal
+        isOpen={showQuickBillModal}
+        onClose={() => setShowQuickBillModal(false)}
+        categories={categories}
+        activeRestaurantId={activeRestaurantId}
+        settings={settings}
+        canManageProducts={isSuperAdmin || role === 'ADMIN' || hasPermission('can_manage_products')}
+        onAddToCart={(item) => {
+          addQuickBillItem(item);
+          showToast('success', 'Item Added', `"${item.name}" added to cart`);
+        }}
+        onProductCreated={(newProd) => {
+          setProducts((prev) => [...prev, newProd]);
         }}
       />
 
@@ -3131,8 +3160,14 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 10,
   },
-  searchBar: {
+  searchBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     marginBottom: 8,
+  },
+  searchBar: {
+    flex: 1,
   },
   searchInput: {
     backgroundColor: '#ffffff',
@@ -3140,10 +3175,28 @@ const styles = StyleSheet.create({
     borderColor: '#94a3b8',
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingVertical: 8,
+    height: 38,
     fontSize: 13,
     color: '#0f172a',
     fontWeight: '500',
+  },
+  quickBillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 38,
+    paddingHorizontal: 14,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1.5,
+    borderColor: '#2563eb',
+    borderRadius: 10,
+    elevation: 1,
+  },
+  quickBillBtnText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#2563eb',
   },
   catScrollWrapper: {
     marginBottom: 8,

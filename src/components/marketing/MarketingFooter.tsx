@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   useWindowDimensions,
   Linking,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 
@@ -52,9 +53,11 @@ export function MarketingFooter() {
           {/* Brand Col */}
           <View style={styles.brandCol}>
             <View style={styles.logoRow}>
-              <View style={styles.logoBadge}>
-                <Text style={styles.logoIcon}>⚡</Text>
-              </View>
+              <Image
+                source={require('../../../assets/images/restroz-logo.png')}
+                style={styles.logoImg}
+                resizeMode="contain"
+              />
               <Text style={styles.logoText}>
                 Restro<Text style={styles.logoTextAccent}>Z</Text>
               </Text>
@@ -261,17 +264,11 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 16,
   },
-  logoBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#FC8019',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logoIcon: {
-    fontSize: 18,
-    color: '#FFFFFF',
+  logoImg: {
+    width: 38,
+    height: 38,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
   },
   logoText: {
     fontSize: 22,

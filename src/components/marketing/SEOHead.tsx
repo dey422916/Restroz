@@ -4,7 +4,7 @@ import Head from 'expo-router/head';
 import { MarketingSEOMetadata } from '../../types/marketing';
 
 const SITE_DOMAIN = 'https://restroz.shop';
-const DEFAULT_OG_IMAGE = 'https://restroz.shop/assets/images/restroz_logo.png';
+const DEFAULT_OG_IMAGE = 'https://restroz.shop/restroz-logo.png';
 
 export function SEOHead({
   title,

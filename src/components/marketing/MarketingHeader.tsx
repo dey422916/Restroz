@@ -91,9 +91,11 @@ export function MarketingHeader() {
           onPress={() => handleNav('/info')}
           activeOpacity={0.8}
         >
-          <View style={styles.logoBadge}>
-            <Text style={styles.logoIcon}>⚡</Text>
-          </View>
+          <Image
+            source={require('../../../assets/images/restroz-logo.png')}
+            style={styles.logoImg}
+            resizeMode="contain"
+          />
           <View>
             <Text style={styles.logoText}>
               Restro<Text style={styles.logoTextAccent}>Z</Text>
@@ -202,9 +204,11 @@ export function MarketingHeader() {
                   onPress={() => handleNav('/info')}
                   activeOpacity={0.8}
                 >
-                  <View style={styles.logoBadge}>
-                    <Text style={styles.logoIcon}>⚡</Text>
-                  </View>
+                  <Image
+                    source={require('../../../assets/images/restroz-logo.png')}
+                    style={styles.logoImg}
+                    resizeMode="contain"
+                  />
                   <Text style={styles.logoText}>
                     Restro<Text style={styles.logoTextAccent}>Z</Text>
                   </Text>
@@ -308,22 +312,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  logoBadge: {
+  logoImg: {
     width: 38,
     height: 38,
-    borderRadius: 10,
-    backgroundColor: '#FC8019',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#FC8019',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  logoIcon: {
-    fontSize: 20,
-    color: '#FFFFFF',
+    borderRadius: 8,
   },
   logoText: {
     fontSize: 22,

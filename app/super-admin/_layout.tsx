@@ -9,6 +9,7 @@ import {
   Modal,
   Platform,
   Alert,
+  Image,
 } from 'react-native';
 import { Slot, useRouter, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -86,9 +87,11 @@ export default function SuperAdminLayout() {
     <View style={[styles.sidebarInner, isDrawer && styles.drawerSidebarInner]}>
       {/* Brand Header */}
       <View style={styles.brandHeader}>
-        <View style={styles.brandBadge}>
-          <Text style={{ fontSize: 18 }}>⚡</Text>
-        </View>
+        <Image
+          source={require('../../assets/images/restroz-logo.png')}
+          style={styles.brandLogoImg}
+          resizeMode="contain"
+        />
         <View style={{ flex: 1 }}>
           <Text style={styles.brandTitle}>RESTROZ</Text>
           <Text style={styles.brandSubtitle}>SUPER ADMIN SAAS</Text>
@@ -448,13 +451,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     marginBottom: 16,
   },
-  brandBadge: {
+  brandLogoImg: {
     width: 36,
     height: 36,
-    borderRadius: 10,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
   },
   brandTitle: {
     color: '#FFFFFF',

@@ -571,6 +571,165 @@ assert(modalFileContent.includes("minWidth: 0"), 'Test V: Input wrappers and fie
 // ----------------------------------------------------
 assert(modalFileContent.includes('placeholderTextColor="#64748b"'), 'Test W: Custom GST and inputs use #64748b for crisp readable placeholder visibility');
 
+// ----------------------------------------------------
+// TEST X: Mixed GST Rates (12% + 5% with ₹50 Discount)
+// ----------------------------------------------------
+const brownieItem = {
+  id: 'item-brownie-1',
+  order_id: 'ord-mix-1',
+  product_id: 'prod-brownie',
+  product_name: 'Brownie',
+  unit_price: 100,
+  quantity: 1,
+  tax_rate: 12,
+  subtotal: 100,
+  total: 100,
+};
+
+const naanItem = {
+  id: 'item-naan-1',
+  order_id: 'ord-mix-1',
+  product_id: 'prod-naan',
+  product_name: 'Butter Garlic Naan',
+  unit_price: 55,
+  quantity: 1,
+  tax_rate: 5,
+  subtotal: 55,
+  total: 55,
+};
+
+const pakodaItem = {
+  id: 'item-pakoda-1',
+  order_id: 'ord-mix-1',
+  product_id: 'prod-pakoda',
+  product_name: 'Chicken Pakoda',
+  unit_price: 250,
+  quantity: 1,
+  tax_rate: 5,
+  subtotal: 250,
+  total: 250,
+};
+
+const mixedGstTotals = calculateOrderTotals({
+  items: [brownieItem, naanItem, pakodaItem],
+  discountType: 'fixed',
+  discountValue: 50,
+  isGstEnabled: true,
+});
+
+assert(mixedGstTotals.subtotal === 405, 'Test X: Subtotal is exactly ₹405');
+assert(mixedGstTotals.discountAmount === 50, 'Test X: Discount is ₹50');
+assert(mixedGstTotals.taxableSubtotal === 355, 'Test X: Taxable Value is ₹355');
+assert(mixedGstTotals.totalTax === 23.88, 'Test X: Total GST is exactly ₹23.88');
+assert(mixedGstTotals.payableAmount === 379, 'Test X: Grand Total rounded is ₹379');
+assert(mixedGstTotals.roundOff === 0.12, 'Test X: Round off is +₹0.12');
+assert(mixedGstTotals.gstBreakdown.length === 2, 'Test X: GST breakdown contains exactly 2 slabs (12% and 5%)');
+
+const slab12 = mixedGstTotals.gstBreakdown.find(s => s.rate === 12);
+assert(slab12 !== undefined, 'Test X: 12% slab exists in breakdown');
+assert(slab12.halfRate === 6 && slab12.halfRateStr === '6', 'Test X: 12% slab has CGST 6% and SGST 6%');
+assert(slab12.taxableValue === 87.65, 'Test X: 12% slab taxable value is ₹87.65');
+assert(slab12.cgstAmount === 5.26, 'Test X: 12% slab CGST is ₹5.26');
+assert(slab12.sgstAmount === 5.26, 'Test X: 12% slab SGST is ₹5.26');
+
+const slab5 = mixedGstTotals.gstBreakdown.find(s => s.rate === 5);
+assert(slab5 !== undefined, 'Test X: 5% slab exists in breakdown');
+assert(slab5.halfRate === 2.5 && slab5.halfRateStr === '2.5', 'Test X: 5% slab has CGST 2.5% and SGST 2.5%');
+assert(slab5.taxableValue === 267.35, 'Test X: 5% slab taxable value is ₹267.35');
+assert(slab5.cgstAmount === 6.68, 'Test X: 5% slab CGST is ₹6.68');
+assert(slab5.sgstAmount === 6.68, 'Test X: 5% slab SGST is ₹6.68');
+
+// ----------------------------------------------------
+// TEST Y: Single GST Rate Order (All 5%)
+// ----------------------------------------------------
+const all5GstTotals = calculateOrderTotals({
+  items: [naanItem, pakodaItem],
+  isGstEnabled: true,
+});
+
+assert(all5GstTotals.subtotal === 305, 'Test Y: Subtotal is ₹305');
+assert(all5GstTotals.gstBreakdown.length === 1, 'Test Y: Exactly 1 slab in single-rate order');
+assert(all5GstTotals.gstBreakdown[0].rate === 5, 'Test Y: Single slab rate is 5%');
+assert(all5GstTotals.gstBreakdown[0].halfRateStr === '2.5', 'Test Y: Single slab half rate is 2.5%');
+assert(all5GstTotals.cgstAmount === 7.63, 'Test Y: CGST amount is ₹7.63');
+assert(all5GstTotals.sgstAmount === 7.63, 'Test Y: SGST amount is ₹7.63');
+
+// ----------------------------------------------------
+// TEST Z: 0% + 5% Mixed Order
+// ----------------------------------------------------
+const zeroGstItem = {
+  id: 'item-zero-1',
+  order_id: 'ord-zero-1',
+  product_id: 'prod-milk',
+  product_name: 'Fresh Organic Milk',
+  unit_price: 60,
+  quantity: 1,
+  tax_rate: 0,
+  subtotal: 60,
+  total: 60,
+};
+
+const zeroPlus5Totals = calculateOrderTotals({
+  items: [zeroGstItem, naanItem],
+  isGstEnabled: true,
+});
+
+assert(zeroPlus5Totals.subtotal === 115, 'Test Z: Subtotal is ₹115 (60 + 55)');
+assert(zeroPlus5Totals.nilExemptSubtotal === 60, 'Test Z: Nil/Exempt subtotal is ₹60');
+assert(zeroPlus5Totals.taxableSubtotal === 55, 'Test Z: Taxable subtotal is ₹55');
+assert(zeroPlus5Totals.gstBreakdown.length === 1, 'Test Z: 0% item produces no tax slab, only 5% slab present');
+assert(zeroPlus5Totals.gstBreakdown[0].rate === 5, 'Test Z: Tax slab is 5%');
+assert(zeroPlus5Totals.totalTax === 2.76, 'Test Z: Total tax is ₹2.76 (from 5% item only)');
+
+// ----------------------------------------------------
+// TEST AA: Historical Snapshot Preservation with getOrderInvoiceTotals
+// ----------------------------------------------------
+const { getOrderGstBreakdown } = gstModule;
+
+const historicalOrder = {
+  id: 'ord-hist-999',
+  order_number: 'INV-HIST-999',
+  items: [brownieItem], // stored with 12%
+  subtotal: 100,
+  taxable_amount: 100,
+  cgst_amount: 6,
+  sgst_amount: 6,
+  total_tax: 12,
+  grand_total: 112,
+  payable_amount: 112,
+};
+
+// Restaurant settings currently set to 5% GST:
+const currentRestaurantSettings = {
+  is_gst_enabled: true,
+  default_tax_rate: 5,
+  gst_registered: true,
+};
+
+const historicalTotals = getOrderInvoiceTotals(historicalOrder, currentRestaurantSettings);
+const historicalBreakdown = getOrderGstBreakdown(historicalOrder, currentRestaurantSettings);
+
+assert(historicalTotals.totalTax === 12, 'Test AA: Historical order total tax is ₹12 based on stored 12% item snapshot');
+assert(historicalBreakdown.length === 1, 'Test AA: Historical breakdown has 1 slab');
+assert(historicalBreakdown[0].rate === 12, 'Test AA: Historical item retains 12% rate despite restaurant currently set to 5%');
+assert(historicalBreakdown[0].cgstAmount === 6 && historicalBreakdown[0].sgstAmount === 6, 'Test AA: Historical CGST/SGST are ₹6 each (6%)');
+
+// ----------------------------------------------------
+// TEST AB: Mixed GST with Percentage Discount
+// ----------------------------------------------------
+const percentageDiscountMixedTotals = calculateOrderTotals({
+  items: [brownieItem, naanItem, pakodaItem], // ₹405 total
+  discountType: 'percentage',
+  discountValue: 10, // 10% discount = ₹40.50 -> Net ₹364.50
+  isGstEnabled: true,
+});
+
+assert(percentageDiscountMixedTotals.discountAmount === 40.5, 'Test AB: 10% discount on ₹405 is ₹40.50');
+assert(percentageDiscountMixedTotals.taxableSubtotal === 364.5, 'Test AB: Taxable amount is ₹364.50');
+assert(percentageDiscountMixedTotals.gstBreakdown.length === 2, 'Test AB: Percentage discount maintains 2 slabs');
+assert(percentageDiscountMixedTotals.gstBreakdown[0].rate === 12, 'Test AB: 12% slab preserved');
+assert(percentageDiscountMixedTotals.gstBreakdown[1].rate === 5, 'Test AB: 5% slab preserved');
+
 console.log('\n====================================================');
 console.log(`RESULTS: ${passedTests} / ${totalTests} tests passed (${Math.round((passedTests/totalTests)*100)}%)`);
 console.log('====================================================\n');

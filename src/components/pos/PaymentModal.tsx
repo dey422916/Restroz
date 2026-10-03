@@ -385,11 +385,33 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 )}
 
                 {totals.totalTax > 0 && (() => {
-                  const effectiveTaxRate = totals.taxableSubtotal > 0 && totals.cgstAmount > 0
-                    ? (totals.cgstAmount * 2 / totals.taxableSubtotal) * 100
-                    : (taxRate > 0 ? Number(taxRate) : 0);
-                  const halfTaxRate = effectiveTaxRate / 2;
-                  const halfTaxRateStr = halfTaxRate % 1 === 0 ? `${halfTaxRate}` : `${halfTaxRate.toFixed(1)}`;
+                  if (totals.gstBreakdown && totals.gstBreakdown.length > 1) {
+                    return (
+                      <>
+                        {totals.gstBreakdown.map((slab) => (
+                          <React.Fragment key={slab.rate}>
+                            <View style={styles.billRow}>
+                              <Text style={styles.billLabel}>CGST ({slab.halfRateStr}%):</Text>
+                              <Text style={styles.billVal}>{formatCurrency(slab.cgstAmount)}</Text>
+                            </View>
+                            <View style={styles.billRow}>
+                              <Text style={styles.billLabel}>SGST ({slab.halfRateStr}%):</Text>
+                              <Text style={styles.billVal}>{formatCurrency(slab.sgstAmount)}</Text>
+                            </View>
+                          </React.Fragment>
+                        ))}
+                        <View style={styles.billRow}>
+                          <Text style={[styles.billLabel, { fontWeight: '700' }]}>Total GST:</Text>
+                          <Text style={[styles.billVal, { fontWeight: '700' }]}>{formatCurrency(totals.totalTax)}</Text>
+                        </View>
+                      </>
+                    );
+                  }
+
+                  const singleSlab = totals.gstBreakdown?.[0];
+                  const halfTaxRateStr = singleSlab ? singleSlab.halfRateStr : (
+                    taxRate > 0 ? `${taxRate / 2}` : '2.5'
+                  );
                   return (
                     <>
                       <View style={styles.billRow}>

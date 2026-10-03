@@ -1268,18 +1268,10 @@ export default function OrdersScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Search & Status Filters in compact toolbar */}
+        {/* Search & Status Filters toolbar - Left 50% Status Filters, Right 50% Search */}
         <View style={[styles.toolbarRow, isMobile && styles.toolbarRowMobile]}>
-          <TextInput
-            style={[styles.search, !isMobile && { flex: 1, marginBottom: 0 }]}
-            placeholder="Search by Order #, Customer, Phone, Table..."
-            placeholderTextColor="#64748b"
-            value={search}
-            onChangeText={setSearch}
-          />
-
-          {/* Status Sub-filter Pills */}
-          <View style={styles.tabRow}>
+          {/* Status Sub-filter Pills - LEFT 50% */}
+          <View style={[styles.tabRow, !isMobile && styles.tabRowDesktop]}>
             {[
               { id: 'active', label: '🔥 Active' },
               { id: 'completed', label: '✓ Completed' },
@@ -1291,11 +1283,25 @@ export default function OrdersScreen() {
                 style={[styles.tabBtn, tabFilter === tab.id && styles.tabBtnActive]}
                 onPress={() => setTabFilter(tab.id as any)}
               >
-                <Text style={[styles.tabText, tabFilter === tab.id && styles.tabTextActive]}>
+                <Text
+                  numberOfLines={1}
+                  style={[styles.tabText, tabFilter === tab.id && styles.tabTextActive]}
+                >
                   {tab.label}
                 </Text>
               </TouchableOpacity>
             ))}
+          </View>
+
+          {/* Search Bar - RIGHT 50% */}
+          <View style={[styles.searchContainer, !isMobile && styles.searchContainerDesktop]}>
+            <TextInput
+              style={styles.search}
+              placeholder="Search by Order #, Customer, Phone, Table..."
+              placeholderTextColor="#64748b"
+              value={search}
+              onChangeText={setSearch}
+            />
           </View>
         </View>
       </View>
@@ -3765,16 +3771,24 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   search: {
+    width: '100%',
     backgroundColor: '#ffffff',
     borderRadius: 8,
     borderWidth: 1.5,
     borderColor: '#94a3b8',
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    height: 32,
+    paddingVertical: 0,
+    height: 34,
     fontSize: 12,
     color: '#0f172a',
     fontWeight: '500',
+  },
+  searchContainer: {
+    width: '100%',
+    justifyContent: 'center',
+  },
+  searchContainerDesktop: {
+    flex: 1,
   },
   categoryTabRow: {
     flexDirection: 'row',
@@ -3823,15 +3837,23 @@ const styles = StyleSheet.create({
   },
   tabRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 4,
+    width: '100%',
+  },
+  tabRowDesktop: {
+    flex: 1,
   },
   tabBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    flex: 1,
+    height: 34,
+    paddingHorizontal: 4,
+    borderRadius: 8,
     backgroundColor: '#f1f5f9',
     borderWidth: 1,
     borderColor: '#e2e8f0',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   tabBtnActive: {
     backgroundColor: '#0f172a',
@@ -3841,6 +3863,7 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     fontWeight: '700',
     color: '#475569',
+    textAlign: 'center',
   },
   tabTextActive: {
     color: '#ffffff',

@@ -1191,33 +1191,36 @@ export default function PosScreen() {
             <Text style={styles.emptyCartSub}>Select items from the dishes menu to add</Text>
           </View>
         ) : (
-          cartItems.map((item) => (
-            <View key={item.product_id} style={styles.cartRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cartItemName} numberOfLines={1}>
-                  {item.product_name}
-                </Text>
-                <Text style={styles.cartItemSub}>
-                  {formatCurrency(item.unit_price)} × {item.quantity}
-                </Text>
+          cartItems.map((item, idx) => {
+            const itemKey = item.id || (item.product_id ? `prod-${item.product_id}` : `cart-item-${idx}`);
+            return (
+              <View key={itemKey} style={styles.cartRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cartItemName} numberOfLines={1}>
+                    {item.product_name}
+                  </Text>
+                  <Text style={styles.cartItemSub}>
+                    {formatCurrency(item.unit_price)} × {item.quantity}
+                  </Text>
+                </View>
+                <View style={styles.stepper}>
+                  <TouchableOpacity
+                    style={styles.stepBtn}
+                    onPress={() => handleQuantityChange(item.id || item.product_id, item.quantity - 1)}
+                  >
+                    <Text style={styles.stepBtnText}>-</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.stepQty}>{item.quantity}</Text>
+                  <TouchableOpacity
+                    style={[styles.stepBtn, styles.stepBtnAdd]}
+                    onPress={() => handleQuantityChange(item.id || item.product_id, item.quantity + 1)}
+                  >
+                    <Text style={[styles.stepBtnText, { color: '#ffffff' }]}>+</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-              <View style={styles.stepper}>
-                <TouchableOpacity
-                  style={styles.stepBtn}
-                  onPress={() => handleQuantityChange(item.product_id, item.quantity - 1)}
-                >
-                  <Text style={styles.stepBtnText}>-</Text>
-                </TouchableOpacity>
-                <Text style={styles.stepQty}>{item.quantity}</Text>
-                <TouchableOpacity
-                  style={[styles.stepBtn, styles.stepBtnAdd]}
-                  onPress={() => handleQuantityChange(item.product_id, item.quantity + 1)}
-                >
-                  <Text style={[styles.stepBtnText, { color: '#ffffff' }]}>+</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ))
+            );
+          })
         )}
 
         {/* Discount Section: Amount (₹) & Percentage (%) */}

@@ -1287,10 +1287,14 @@ export const orderService = {
     // Calculate item differences for KOT supplementary generation
     const addedItems: OrderItem[] = [];
     const oldItemMap = new Map<string, OrderItem>();
-    oldItems.forEach((i) => oldItemMap.set(i.product_id, i));
+    oldItems.forEach((i, idx) => {
+      const key = i.id || (i as any).order_item_id || (i.product_id ? `prod-${i.product_id}` : `item-${i.product_name}-${idx}`);
+      oldItemMap.set(key, i);
+    });
 
     for (const newItem of updatedItems) {
-      const oldItem = oldItemMap.get(newItem.product_id);
+      const key = newItem.id || (newItem as any).order_item_id || (newItem.product_id ? `prod-${newItem.product_id}` : `item-${newItem.product_name}`);
+      const oldItem = oldItemMap.get(key) || (newItem.product_id ? oldItems.find((o) => o.product_id === newItem.product_id) : undefined);
       if (!oldItem) {
         addedItems.push(newItem);
       } else if (Number(newItem.quantity || 0) > Number(oldItem.quantity || 0)) {
@@ -1326,7 +1330,7 @@ export const orderService = {
       const taxAmount = (itemSubtotal * taxRate) / 100;
       return {
         ...i,
-        id: i.id?.startsWith('item-') ? i.id : `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
+        id: i.id || (i as any).order_item_id || `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
         order_id: orderId,
         quantity: qty,
         unit_price: unitPrice,
@@ -1448,7 +1452,7 @@ export const orderService = {
       const itemTotal = itemSubtotal;
 
       return {
-        id: i.id?.startsWith('item-') ? i.id : `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
+        id: i.id || (i as any).order_item_id || `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
         product_id: i.product_id || null,
         product_name: i.product_name || rawItem.name || 'Unnamed Item',
         unit_price: unitPrice,

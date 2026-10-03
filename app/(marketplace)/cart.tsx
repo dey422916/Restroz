@@ -183,7 +183,7 @@ export default function CustomerCartScreen() {
                 <Text style={styles.boxHeaderTitle}>Order Items ({cart.items.length})</Text>
                 {cart.items.map((item, idx) => (
                   <View
-                    key={item.product_id}
+                    key={item.product_id || idx}
                     style={[styles.itemRow, idx > 0 && styles.itemRowBorder]}
                   >
                     <View style={styles.itemInfo}>

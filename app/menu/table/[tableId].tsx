@@ -1143,13 +1143,14 @@ export default function CustomerDigitalMenuScreen() {
                   </Text>
                 </View>
               )}
-              {cartItems.map((item) => {
+              {cartItems.map((item, idx) => {
                 const prod = products.find((p) => p.id === item.product_id);
                 const isItemAvailable = prod ? isProductAvailable(prod) : true;
+                const itemKey = item.id || (item.product_id ? `prod-${item.product_id}` : `cart-item-${idx}`);
 
                 return (
                   <View
-                    key={item.product_id}
+                    key={itemKey}
                     style={[styles.cartModalRow, !isItemAvailable && styles.cartModalRowOutOfStock]}
                   >
                     <View style={{ flex: 1 }}>

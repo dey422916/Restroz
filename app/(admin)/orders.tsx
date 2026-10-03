@@ -414,12 +414,14 @@ export default function OrdersScreen() {
     }
     setEditOrderModal(ord);
     setEditItems(
-      (ord.items || []).map((i) => {
+      (ord.items || []).map((i, idx) => {
         const qty = Number(i.quantity) || 1;
         const unitPrice = Number(i.unit_price) || (Number(i.subtotal) && qty ? Number(i.subtotal) / qty : (Number(i.total) && qty ? Number(i.total) / qty : 0));
         const subtotal = qty * unitPrice;
+        const lineId = i.id || (i as any).order_item_id || `line-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`;
         return {
           ...i,
+          id: lineId,
           quantity: qty,
           unit_price: unitPrice,
           subtotal,
@@ -448,7 +450,7 @@ export default function OrdersScreen() {
       );
       return;
     }
-    const existingIdx = editItems.findIndex((i) => i.product_id === prod.id);
+    const existingIdx = editItems.findIndex((i) => Boolean(i.product_id && i.product_id === prod.id));
     const prodPrice = Number(prod.price) || 0;
     if (existingIdx !== -1) {
       const updated = [...editItems];
@@ -486,9 +488,9 @@ export default function OrdersScreen() {
   };
 
   // Adjust item quantity in Edit modal
-  const handleAdjustEditQty = (productId: string, newQty: number) => {
+  const handleAdjustEditQty = (itemIdentifier: string, newQty: number) => {
     if (isDispatchedDeliveryOrder(editOrderModal)) {
-      const origItem = editOrderModal?.items?.find((i) => i.product_id === productId);
+      const origItem = editOrderModal?.items?.find((i) => i.id === itemIdentifier || (i.product_id && i.product_id === itemIdentifier));
       const origQty = origItem ? Number(origItem.quantity) || 0 : 0;
       if (newQty > origQty) {
         showAlert(
@@ -499,11 +501,11 @@ export default function OrdersScreen() {
       }
     }
     if (newQty <= 0) {
-      setEditItems(editItems.filter((i) => i.product_id !== productId));
+      setEditItems(editItems.filter((i) => i.id !== itemIdentifier && (!i.id || i.product_id !== itemIdentifier)));
     } else {
       setEditItems(
         editItems.map((i) => {
-          if (i.product_id === productId) {
+          if (i.id === itemIdentifier || (!i.id && i.product_id === itemIdentifier)) {
             const unitPrice = Number(i.unit_price) || 0;
             const subtotal = newQty * unitPrice;
             return {
@@ -570,9 +572,13 @@ export default function OrdersScreen() {
 
     if (isDispatchedDeliveryOrder(editOrderModal)) {
       const oldItemsMap = new Map<string, number>();
-      (editOrderModal.items || []).forEach((i) => oldItemsMap.set(i.product_id, Number(i.quantity) || 0));
-      const hasAddedItems = editItems.some((i) => {
-        const prev = oldItemsMap.get(i.product_id);
+      (editOrderModal.items || []).forEach((i, idx) => {
+        const k = i.id || (i.product_id ? `prod-${i.product_id}` : `line-${idx}`);
+        oldItemsMap.set(k, Number(i.quantity) || 0);
+      });
+      const hasAddedItems = editItems.some((i, idx) => {
+        const k = i.id || (i.product_id ? `prod-${i.product_id}` : `line-${idx}`);
+        const prev = oldItemsMap.get(k);
         return prev === undefined || (Number(i.quantity) || 0) > prev;
       });
       if (hasAddedItems) {
@@ -1555,15 +1561,18 @@ export default function OrdersScreen() {
                 {/* Items List - Compact Container */}
                 <View style={styles.itemsBox}>
                   <Text style={styles.itemsTitle}>Items ({order.items?.length || 0}):</Text>
-                  {(order.items || []).map((i) => (
-                    <View key={i.id} style={styles.itemRow}>
-                      <Text style={styles.itemQty}>{i.quantity}x</Text>
-                      <Text style={styles.itemName} numberOfLines={1}>{i.product_name}</Text>
-                      <Text style={styles.itemPrice}>
-                        {formatCurrency((Number(i.unit_price) && Number(i.quantity)) ? (Number(i.unit_price) * Number(i.quantity)) : (Number(i.subtotal) || Number(i.total) || 0))}
-                      </Text>
-                    </View>
-                  ))}
+                  {(order.items || []).map((i, idx) => {
+                    const itemKey = i.id || (i as any).order_item_id || (i.product_id ? `prod-${i.product_id}` : `order-item-${idx}`);
+                    return (
+                      <View key={itemKey} style={styles.itemRow}>
+                        <Text style={styles.itemQty}>{i.quantity}x</Text>
+                        <Text style={styles.itemName} numberOfLines={1}>{i.product_name}</Text>
+                        <Text style={styles.itemPrice}>
+                          {formatCurrency((Number(i.unit_price) && Number(i.quantity)) ? (Number(i.unit_price) * Number(i.quantity)) : (Number(i.subtotal) || Number(i.total) || 0))}
+                        </Text>
+                      </View>
+                    );
+                  })}
                 </View>
 
                 {/* Order Notes / Instructions / Source info */}
@@ -2163,38 +2172,41 @@ export default function OrdersScreen() {
               >
                 {/* Current Items Stepper List */}
                 <Text style={styles.fieldSectionHeader}>Ordered Items:</Text>
-                {editItems.map((itm) => (
-                  <View key={itm.product_id} style={styles.editItemRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.editItemName}>{itm.product_name}</Text>
-                      <Text style={styles.editItemRate}>{formatCurrency(itm.unit_price)} each</Text>
-                    </View>
+                {editItems.map((itm, idx) => {
+                  const itemKey = itm.id || (itm as any).order_item_id || (itm.product_id ? `prod-${itm.product_id}` : `edit-item-${idx}`);
+                  return (
+                    <View key={itemKey} style={styles.editItemRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.editItemName}>{itm.product_name}</Text>
+                        <Text style={styles.editItemRate}>{formatCurrency(itm.unit_price)} each</Text>
+                      </View>
 
-                    <View style={styles.stepperBox}>
-                      <TouchableOpacity
-                        style={styles.stepperBtn}
-                        onPress={() => handleAdjustEditQty(itm.product_id, itm.quantity - 1)}
-                      >
-                        <Text style={styles.stepperBtnText}>-</Text>
-                      </TouchableOpacity>
-                      <Text style={styles.stepperQty}>{itm.quantity}</Text>
-                      <TouchableOpacity
-                        style={[
-                          styles.stepperBtn,
-                          isDispatchedDeliveryOrder(editOrderModal) && { opacity: 0.3 }
-                        ]}
-                        disabled={isDispatchedDeliveryOrder(editOrderModal)}
-                        onPress={() => handleAdjustEditQty(itm.product_id, itm.quantity + 1)}
-                      >
-                        <Text style={styles.stepperBtnText}>+</Text>
-                      </TouchableOpacity>
-                    </View>
+                      <View style={styles.stepperBox}>
+                        <TouchableOpacity
+                          style={styles.stepperBtn}
+                          onPress={() => handleAdjustEditQty(itemKey, itm.quantity - 1)}
+                        >
+                          <Text style={styles.stepperBtnText}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.stepperQty}>{itm.quantity}</Text>
+                        <TouchableOpacity
+                          style={[
+                            styles.stepperBtn,
+                            isDispatchedDeliveryOrder(editOrderModal) && { opacity: 0.3 }
+                          ]}
+                          disabled={isDispatchedDeliveryOrder(editOrderModal)}
+                          onPress={() => handleAdjustEditQty(itemKey, itm.quantity + 1)}
+                        >
+                          <Text style={styles.stepperBtnText}>+</Text>
+                        </TouchableOpacity>
+                      </View>
 
-                    <Text style={styles.editItemTotal}>
-                      {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
-                    </Text>
-                  </View>
-                ))}
+                      <Text style={styles.editItemTotal}>
+                        {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
+                      </Text>
+                    </View>
+                  );
+                })}
 
                 {/* Search & Add New Products */}
                 {isDispatchedDeliveryOrder(editOrderModal) ? (

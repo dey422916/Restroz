@@ -730,6 +730,195 @@ assert(percentageDiscountMixedTotals.gstBreakdown.length === 2, 'Test AB: Percen
 assert(percentageDiscountMixedTotals.gstBreakdown[0].rate === 12, 'Test AB: 12% slab preserved');
 assert(percentageDiscountMixedTotals.gstBreakdown[1].rate === 5, 'Test AB: 5% slab preserved');
 
+// ----------------------------------------------------
+// TEST AC: Two Quick Bill Items with product_id = null have unique line identities
+// ----------------------------------------------------
+const qbItemA = {
+  id: 'item-qb-choc-1',
+  order_id: 'ord-qb-null-1',
+  product_id: null,
+  product_name: 'Custom Handmade Chocolate',
+  unit_price: 120,
+  quantity: 2,
+  tax_rate: 18,
+  subtotal: 240,
+  total: 240,
+};
+
+const qbItemB = {
+  id: 'item-qb-tea-2',
+  order_id: 'ord-qb-null-1',
+  product_id: null,
+  product_name: 'Special Kashmiri Chai',
+  unit_price: 60,
+  quantity: 3,
+  tax_rate: 5,
+  subtotal: 180,
+  total: 180,
+};
+
+const keyA = qbItemA.id || (qbItemA.product_id ? `prod-${qbItemA.product_id}` : 'line-0');
+const keyB = qbItemB.id || (qbItemB.product_id ? `prod-${qbItemB.product_id}` : 'line-1');
+
+assert(keyA !== keyB, 'Test AC: Two null product_id items have distinct unique line keys');
+assert(keyA === 'item-qb-choc-1', 'Test AC: Item A key uses its canonical line ID');
+assert(keyB === 'item-qb-tea-2', 'Test AC: Item B key uses its canonical line ID');
+
+// ----------------------------------------------------
+// TEST AD: Independent Quantity Increment on Quick Bill Item A
+// ----------------------------------------------------
+let editTestItems = [ { ...qbItemA }, { ...qbItemB } ];
+
+function testAdjustQty(items, targetIdentifier, newQty) {
+  if (newQty <= 0) {
+    return items.filter((i) => i.id !== targetIdentifier && (!i.id || i.product_id !== targetIdentifier));
+  }
+  return items.map((i) => {
+    if (i.id === targetIdentifier || (!i.id && i.product_id === targetIdentifier)) {
+      const unitPrice = Number(i.unit_price) || 0;
+      const subtotal = newQty * unitPrice;
+      return {
+        ...i,
+        quantity: newQty,
+        unit_price: unitPrice,
+        subtotal,
+        total: subtotal,
+      };
+    }
+    return i;
+  });
+}
+
+// Increment Item A from 2 -> 3
+editTestItems = testAdjustQty(editTestItems, qbItemA.id, 3);
+assert(editTestItems.length === 2, 'Test AD: Item count remains 2 after adjusting A');
+assert(editTestItems[0].quantity === 3, 'Test AD: Only Item A quantity increased to 3');
+assert(editTestItems[0].subtotal === 360, 'Test AD: Item A subtotal updated to 360');
+assert(editTestItems[1].quantity === 3, 'Test AD: Item B quantity remains strictly unchanged (3)');
+assert(editTestItems[1].subtotal === 180, 'Test AD: Item B subtotal remains strictly unchanged (180)');
+
+// ----------------------------------------------------
+// TEST AE: Independent Quantity Decrement on Quick Bill Item B
+// ----------------------------------------------------
+// Decrement Item B from 3 -> 1
+editTestItems = testAdjustQty(editTestItems, qbItemB.id, 1);
+assert(editTestItems.length === 2, 'Test AE: Item count remains 2 after adjusting B');
+assert(editTestItems[1].quantity === 1, 'Test AE: Only Item B quantity decreased to 1');
+assert(editTestItems[1].subtotal === 60, 'Test AE: Item B subtotal updated to 60');
+assert(editTestItems[0].quantity === 3, 'Test AE: Item A quantity remains strictly untouched (3)');
+assert(editTestItems[0].subtotal === 360, 'Test AE: Item A subtotal remains strictly untouched (360)');
+
+// ----------------------------------------------------
+// TEST AF: Independent Removal of Quick Bill Item A
+// ----------------------------------------------------
+// Remove Item A (set qty <= 0)
+editTestItems = testAdjustQty(editTestItems, qbItemA.id, 0);
+assert(editTestItems.length === 1, 'Test AF: Only 1 item remains after removing A');
+assert(editTestItems[0].id === qbItemB.id, 'Test AF: Surviving item is exactly Item B');
+assert(editTestItems[0].product_name === 'Special Kashmiri Chai', 'Test AF: Surviving item name matches Item B');
+assert(editTestItems[0].quantity === 1, 'Test AF: Item B quantity preserved');
+
+// ----------------------------------------------------
+// TEST AG: Reload / Edit Order Initialization with Null Product IDs
+// ----------------------------------------------------
+const reloadedOrder = {
+  id: 'ord-reloaded-888',
+  order_number: 'ORD-888',
+  items: [
+    {
+      id: 'db-item-uuid-1',
+      order_id: 'ord-reloaded-888',
+      product_id: null,
+      product_name: 'Live Dosa Counter Extra',
+      unit_price: 80,
+      quantity: 2,
+      subtotal: 160,
+      tax_rate: 5,
+    },
+    {
+      id: 'db-item-uuid-2',
+      order_id: 'ord-reloaded-888',
+      product_id: null,
+      product_name: 'Cold Pressed Cane Juice',
+      unit_price: 50,
+      quantity: 1,
+      subtotal: 50,
+      tax_rate: 0,
+    },
+  ],
+};
+
+const initializedEditItems = (reloadedOrder.items || []).map((i, idx) => {
+  const qty = Number(i.quantity) || 1;
+  const unitPrice = Number(i.unit_price) || (Number(i.subtotal) && qty ? Number(i.subtotal) / qty : 0);
+  const subtotal = qty * unitPrice;
+  const lineId = i.id || `line-${Date.now()}-${idx}`;
+  return {
+    ...i,
+    id: lineId,
+    quantity: qty,
+    unit_price: unitPrice,
+    subtotal,
+    total: subtotal,
+  };
+});
+
+assert(initializedEditItems.length === 2, 'Test AG: Reloaded 2 items in edit state');
+assert(initializedEditItems[0].id === 'db-item-uuid-1', 'Test AG: First item preserves db UUID');
+assert(initializedEditItems[1].id === 'db-item-uuid-2', 'Test AG: Second item preserves db UUID');
+assert(initializedEditItems[0].product_id === null, 'Test AG: First item retains null product_id');
+assert(initializedEditItems[1].product_id === null, 'Test AG: Second item retains null product_id');
+
+// ----------------------------------------------------
+// TEST AH: Same Catalog Product represented as two separate order lines
+// ----------------------------------------------------
+const splitCatalogItem1 = {
+  id: 'item-naan-line-1',
+  order_id: 'ord-split-1',
+  product_id: 'prod-naan',
+  product_name: 'Butter Garlic Naan',
+  unit_price: 55,
+  quantity: 2,
+  item_notes: 'Extra crispy',
+  tax_rate: 5,
+};
+
+const splitCatalogItem2 = {
+  id: 'item-naan-line-2',
+  order_id: 'ord-split-1',
+  product_id: 'prod-naan',
+  product_name: 'Butter Garlic Naan',
+  unit_price: 55,
+  quantity: 1,
+  item_notes: 'No butter / plain',
+  tax_rate: 5,
+};
+
+const keySplit1 = splitCatalogItem1.id || `prod-${splitCatalogItem1.product_id}`;
+const keySplit2 = splitCatalogItem2.id || `prod-${splitCatalogItem2.product_id}`;
+
+assert(keySplit1 !== keySplit2, 'Test AH: Same product on different order lines has unique line keys');
+assert(keySplit1 === 'item-naan-line-1', 'Test AH: First naan line key uses its own line ID');
+assert(keySplit2 === 'item-naan-line-2', 'Test AH: Second naan line key uses its own line ID');
+
+let splitLines = [ { ...splitCatalogItem1 }, { ...splitCatalogItem2 } ];
+splitLines = testAdjustQty(splitLines, splitCatalogItem1.id, 4);
+assert(splitLines[0].quantity === 4, 'Test AH: First naan line quantity modified to 4');
+assert(splitLines[1].quantity === 1, 'Test AH: Second naan line quantity unaffected (1)');
+
+// ----------------------------------------------------
+// TEST AI: Mixed order (1 catalog product + 2 Quick Bill null items)
+// ----------------------------------------------------
+const mixedCatalogAndQbOrder = [
+  { id: 'line-cat-1', product_id: 'prod-brownie', product_name: 'Brownie', unit_price: 100, quantity: 1, tax_rate: 12 },
+  { id: 'line-qb-1', product_id: null, product_name: 'Custom Chef Special Soup', unit_price: 150, quantity: 2, tax_rate: 5 },
+  { id: 'line-qb-2', product_id: null, product_name: 'Fresh Mint Cooler', unit_price: 70, quantity: 1, tax_rate: 12 },
+];
+
+const mixedKeys = mixedCatalogAndQbOrder.map((i, idx) => i.id || (i.product_id ? `prod-${i.product_id}` : `line-${idx}`));
+const uniqueMixedKeys = new Set(mixedKeys);
+assert(uniqueMixedKeys.size === 3, 'Test AI: All 3 lines (catalog + 2 Quick Bill items) produce 100% unique React keys');
+
 console.log('\n====================================================');
 console.log(`RESULTS: ${passedTests} / ${totalTests} tests passed (${Math.round((passedTests/totalTests)*100)}%)`);
 console.log('====================================================\n');

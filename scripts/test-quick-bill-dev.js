@@ -559,6 +559,18 @@ const modalFileContent = fs.readFileSync(path.join(__dirname, '..', 'src', 'comp
 assert(modalFileContent.includes("outlineStyle: 'none'"), 'Test U: QuickBillModal includes outlineStyle none for web focus');
 assert(modalFileContent.includes("outlineWidth: 0"), 'Test U: QuickBillModal includes outlineWidth 0 for web focus');
 
+// ----------------------------------------------------
+// TEST V: Quantity Stepper Layout & Buttons
+// ----------------------------------------------------
+assert(modalFileContent.includes("flexShrink: 0"), 'Test V: Stepper buttons include flexShrink: 0 to prevent right-side clipping');
+assert(modalFileContent.includes("width: 44"), 'Test V: Stepper buttons have balanced fixed width (44px)');
+assert(modalFileContent.includes("minWidth: 0"), 'Test V: Input wrappers and fields define minWidth: 0 for proper flex sizing');
+
+// ----------------------------------------------------
+// TEST W: Custom GST Placeholder Visibility
+// ----------------------------------------------------
+assert(modalFileContent.includes('placeholderTextColor="#64748b"'), 'Test W: Custom GST and inputs use #64748b for crisp readable placeholder visibility');
+
 console.log('\n====================================================');
 console.log(`RESULTS: ${passedTests} / ${totalTests} tests passed (${Math.round((passedTests/totalTests)*100)}%)`);
 console.log('====================================================\n');

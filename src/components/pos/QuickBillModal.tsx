@@ -420,7 +420,7 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
               <TextInput
                 style={styles.textInput}
                 placeholder="e.g. Special Thali, Extra Butter Roti..."
-                placeholderTextColor="#94a3b8"
+                placeholderTextColor="#64748b"
                 value={name}
                 onChangeText={(t) => {
                   setName(t);
@@ -434,7 +434,7 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
             {/* 2. Price & Quantity in 2-column row */}
             <View style={styles.twoColRow}>
               {/* Price */}
-              <View style={[styles.fieldGroup, { flex: 1.2 }]}>
+              <View style={[styles.fieldGroup, styles.twoColField]}>
                 <Text style={styles.fieldLabel}>
                   Price (₹) <Text style={styles.requiredStar}>*</Text>
                 </Text>
@@ -443,7 +443,7 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
                   <TextInput
                     style={styles.priceInput}
                     placeholder="0.00"
-                    placeholderTextColor="#94a3b8"
+                    placeholderTextColor="#64748b"
                     keyboardType="decimal-pad"
                     value={priceInput}
                     onChangeText={(t) => {
@@ -457,7 +457,7 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
               </View>
 
               {/* Quantity Stepper */}
-              <View style={[styles.fieldGroup, { flex: 1 }]}>
+              <View style={[styles.fieldGroup, styles.twoColField]}>
                 <Text style={styles.fieldLabel}>
                   Quantity <Text style={styles.requiredStar}>*</Text>
                 </Text>
@@ -466,6 +466,7 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
                     style={[styles.stepperBtn, quantity <= 1 && styles.stepperBtnDisabled]}
                     onPress={() => handleQuantityStep(-1)}
                     disabled={quantity <= 1}
+                    activeOpacity={0.7}
                   >
                     <Text style={[styles.stepperBtnText, quantity <= 1 && styles.stepperBtnTextDisabled]}>−</Text>
                   </TouchableOpacity>
@@ -483,6 +484,7 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
                   <TouchableOpacity
                     style={styles.stepperBtn}
                     onPress={() => handleQuantityStep(1)}
+                    activeOpacity={0.7}
                   >
                     <Text style={styles.stepperBtnText}>+</Text>
                   </TouchableOpacity>
@@ -547,7 +549,7 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
                   <TextInput
                     style={[styles.customGstInput, isCustomTax && styles.customGstInputActive]}
                     placeholder="Custom %"
-                    placeholderTextColor="#94a3b8"
+                    placeholderTextColor="#64748b"
                     keyboardType="decimal-pad"
                     value={customTaxInput}
                     onChangeText={handleCustomTaxChange}
@@ -602,7 +604,7 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
               <TextInput
                 style={[styles.textInput, { height: 36 }]}
                 placeholder="e.g. Less spicy, Extra crispy..."
-                placeholderTextColor="#94a3b8"
+                placeholderTextColor="#64748b"
                 value={itemNotes}
                 onChangeText={(t) => {
                   setItemNotes(t);
@@ -822,6 +824,12 @@ const styles = StyleSheet.create({
   twoColRow: {
     flexDirection: 'row',
     gap: 12,
+    alignItems: 'flex-start',
+    width: '100%',
+  },
+  twoColField: {
+    flex: 1,
+    minWidth: 0,
   },
   priceInputWrapper: {
     flexDirection: 'row',
@@ -832,6 +840,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     height: 40,
     paddingHorizontal: 10,
+    width: '100%',
   },
   currencyPrefix: {
     fontSize: 14,
@@ -841,6 +850,7 @@ const styles = StyleSheet.create({
   },
   priceInput: {
     flex: 1,
+    minWidth: 0,
     height: 40,
     fontSize: 14,
     color: '#0f172a',
@@ -860,11 +870,13 @@ const styles = StyleSheet.create({
     borderColor: '#cbd5e1',
     borderRadius: 8,
     height: 40,
+    width: '100%',
     overflow: 'hidden',
   },
   stepperBtn: {
-    width: 38,
+    width: 44,
     height: 40,
+    flexShrink: 0,
     backgroundColor: '#e2e8f0',
     alignItems: 'center',
     justifyContent: 'center',
@@ -876,12 +888,16 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
     color: '#0f172a',
+    lineHeight: 20,
   },
   stepperBtnTextDisabled: {
     color: '#cbd5e1',
   },
   stepperValueInput: {
     flex: 1,
+    minWidth: 0,
+    height: 40,
+    paddingHorizontal: 0,
     textAlign: 'center',
     fontSize: 14,
     fontWeight: '800',
@@ -959,7 +975,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#e2e8f0',
     height: 33,
-    minWidth: 80,
+    minWidth: 84,
   },
   customGstWrapperActive: {
     backgroundColor: '#ffffff',
@@ -969,7 +985,7 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     fontWeight: '700',
     color: '#475569',
-    width: 50,
+    width: 54,
     padding: 0,
     ...Platform.select({
       web: {
@@ -980,11 +996,12 @@ const styles = StyleSheet.create({
   },
   customGstInputActive: {
     color: '#0f172a',
+    fontWeight: '800',
   },
   customGstSymbol: {
     fontSize: 11.5,
     fontWeight: '800',
-    color: '#94a3b8',
+    color: '#64748b',
   },
   customGstSymbolActive: {
     color: '#2563eb',

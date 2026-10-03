@@ -45,23 +45,37 @@ export default function AdminLayout() {
         router.replace('/(auth)/login');
       } else if (role === 'CUSTOMER') {
         router.replace('/(marketplace)');
-      } else if (role === 'STAFF' && !isSuperAdmin) {
-        const adminOnlyMatches = [
-          '/dashboard', '/(admin)/dashboard',
-          '/products', '/(admin)/products',
-          '/categories', '/(admin)/categories',
-          '/coupons', '/(admin)/coupons',
-          '/bulk-import', '/(admin)/bulk-import',
-          '/settings', '/(admin)/settings',
-          '/staff', '/(admin)/staff',
-          '/my-plan', '/(admin)/my-plan',
-        ];
-        if (adminOnlyMatches.some((m) => pathname === m || pathname.startsWith(`${m}/`))) {
+      } else if (!isAdmin && !isSuperAdmin) {
+        const currentPath = (pathname || '').trim();
+        const isDashboard = currentPath === '/dashboard' || currentPath === '/(admin)/dashboard' || currentPath.startsWith('/(admin)/dashboard/');
+        const isProducts = currentPath === '/products' || currentPath === '/(admin)/products' || currentPath.startsWith('/(admin)/products/');
+        const isCategories = currentPath === '/categories' || currentPath === '/(admin)/categories' || currentPath.startsWith('/(admin)/categories/');
+        const isCoupons = currentPath === '/coupons' || currentPath === '/(admin)/coupons' || currentPath.startsWith('/(admin)/coupons/');
+        const isBulkImport = currentPath === '/bulk-import' || currentPath === '/(admin)/bulk-import';
+        const isSettings = currentPath === '/settings' || currentPath === '/(admin)/settings' || currentPath.startsWith('/(admin)/settings/');
+        const isStaff = currentPath === '/staff' || currentPath === '/(admin)/staff' || currentPath.startsWith('/(admin)/staff/');
+        const isMyPlan = currentPath === '/my-plan' || currentPath === '/(admin)/my-plan' || currentPath.startsWith('/(admin)/my-plan/');
+        const isOrders = currentPath === '/orders' || currentPath === '/(admin)/orders' || currentPath.startsWith('/(admin)/orders/');
+        const isTables = currentPath === '/tables' || currentPath === '/(admin)/tables' || currentPath.startsWith('/(admin)/tables/');
+
+        if (isDashboard && !hasPermission('can_view_reports')) {
+          router.replace('/(admin)/pos');
+        } else if ((isProducts || isCategories || isBulkImport) && !hasPermission('can_manage_products')) {
+          router.replace('/(admin)/pos');
+        } else if (isCoupons && !hasPermission('can_manage_coupons')) {
+          router.replace('/(admin)/pos');
+        } else if (isStaff && !hasPermission('can_manage_staff')) {
+          router.replace('/(admin)/pos');
+        } else if ((isSettings || isMyPlan) && !hasPermission('can_view_settings')) {
+          router.replace('/(admin)/pos');
+        } else if (isOrders && !hasPermission('can_view_orders')) {
+          router.replace('/(admin)/pos');
+        } else if (isTables && !hasPermission('can_manage_tables')) {
           router.replace('/(admin)/pos');
         }
       }
     }
-  }, [user, role, loading, pathname, isSuperAdmin]);
+  }, [user, role, loading, pathname, isSuperAdmin, isAdmin]);
 
   if (loading || !user) {
     return (

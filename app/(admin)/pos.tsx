@@ -1547,23 +1547,6 @@ export default function PosScreen() {
               : 'Home delivery order'}
           </Text>
         </View>
-
-        <View style={styles.activeOrderBannerActions}>
-          {orderType === 'dine_in' && (
-            <TouchableOpacity
-              style={styles.bannerTableChangeBtn}
-              onPress={handleChangeTablePrompt}
-            >
-              <Text style={styles.bannerTableChangeBtnText}>🪑 Change Table</Text>
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity
-            style={styles.bannerTypeChangeBtn}
-            onPress={handleChangeOrderTypePrompt}
-          >
-            <Text style={styles.bannerTypeChangeBtnText}>🔄 Change Type</Text>
-          </TouchableOpacity>
-        </View>
       </View>
 
       {/* Mobile Mode Segmented Switcher (Visible only on mobile) */}
@@ -1602,15 +1585,34 @@ export default function PosScreen() {
         {/* LEFT / MAIN CATALOG SCREEN (Always visible on Tablet, or when mobileTab === 'menu' on Mobile) */}
         {(isTablet || mobileTab === 'menu') && (
           <View style={styles.catalogArea}>
-            {/* Search Input */}
-            <View style={styles.searchBar}>
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search food item or SKU..."
-                placeholderTextColor="#64748b"
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-              />
+            {/* Search Input and Action Buttons Row */}
+            <View style={styles.searchBarRow}>
+              <View style={styles.searchBarFlex}>
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search food item or SKU..."
+                  placeholderTextColor="#64748b"
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                />
+              </View>
+
+              <View style={styles.searchActionsGroup}>
+                {orderType === 'dine_in' && (
+                  <TouchableOpacity
+                    style={styles.bannerTableChangeBtn}
+                    onPress={handleChangeTablePrompt}
+                  >
+                    <Text style={styles.bannerTableChangeBtnText}>🪑 Change Table</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={styles.bannerTypeChangeBtn}
+                  onPress={handleChangeOrderTypePrompt}
+                >
+                  <Text style={styles.bannerTypeChangeBtnText}>🔄 Change Type</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
             {/* Grouped Categories Horizontal Scroll (FOOD / LIQUOR) */}
@@ -3072,27 +3074,31 @@ const styles = StyleSheet.create({
   },
   bannerTableChangeBtn: {
     backgroundColor: '#eff6ff',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1.5,
     borderColor: '#bfdbfe',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   bannerTableChangeBtnText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '800',
     color: '#1d4ed8',
   },
   bannerTypeChangeBtn: {
     backgroundColor: '#f1f5f9',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1.5,
     borderColor: '#cbd5e1',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   bannerTypeChangeBtnText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '800',
     color: '#334155',
   },
@@ -3130,6 +3136,24 @@ const styles = StyleSheet.create({
   catalogArea: {
     flex: 1,
     padding: 10,
+  },
+  searchBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 8,
+    flexWrap: 'wrap',
+  },
+  searchBarFlex: {
+    flex: 1,
+    minWidth: 200,
+  },
+  searchActionsGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
   },
   searchBar: {
     marginBottom: 8,

@@ -5,6 +5,7 @@ const ts = require('typescript');
 process.env.EXPO_PUBLIC_SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://mock.supabase.co';
 process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'mock-anon-key';
 
+const mockSessionStorageStore = {};
 if (typeof global.window === 'undefined') {
   global.window = {
     localStorage: {
@@ -13,24 +14,63 @@ if (typeof global.window === 'undefined') {
       removeItem: () => {},
       clear: () => {},
     },
+    sessionStorage: {
+      getItem: (key) => (Object.prototype.hasOwnProperty.call(mockSessionStorageStore, key) ? mockSessionStorageStore[key] : null),
+      setItem: (key, val) => { mockSessionStorageStore[key] = String(val); },
+      removeItem: (key) => { delete mockSessionStorageStore[key]; },
+      clear: () => { Object.keys(mockSessionStorageStore).forEach((k) => delete mockSessionStorageStore[k]); },
+    },
+  };
+} else if (!global.window.sessionStorage) {
+  global.window.sessionStorage = {
+    getItem: (key) => (Object.prototype.hasOwnProperty.call(mockSessionStorageStore, key) ? mockSessionStorageStore[key] : null),
+    setItem: (key, val) => { mockSessionStorageStore[key] = String(val); },
+    removeItem: (key) => { delete mockSessionStorageStore[key]; },
+    clear: () => { Object.keys(mockSessionStorageStore).forEach((k) => delete mockSessionStorageStore[k]); },
   };
 }
 
 function loadTsModule(filePath) {
   const fileContent = fs.readFileSync(filePath, 'utf8');
   const transpiledJs = ts.transpileModule(fileContent, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2020,
+      jsx: ts.JsxEmit.React,
+    },
   }).outputText;
 
   const moduleExports = {};
   const moduleObj = { exports: moduleExports };
   
   const customRequire = (importPath) => {
+    if (importPath === 'react') {
+      return {
+        createElement: () => null,
+        useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
+        useEffect: () => {},
+        useMemo: (fn) => fn(),
+        useRef: (initial) => ({ current: initial }),
+      };
+    }
+    if (importPath === 'react-native-safe-area-context') {
+      return {
+        useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+      };
+    }
     if (importPath === 'react-native') {
       return {
-        Platform: { OS: 'web' },
+        Platform: { OS: 'web', select: (obj) => (obj && obj.web !== undefined ? obj.web : obj && obj.default) },
         Dimensions: { get: () => ({ width: 1024, height: 768 }) },
         StyleSheet: { create: (s) => s },
+        View: 'View',
+        Text: 'Text',
+        TextInput: 'TextInput',
+        TouchableOpacity: 'TouchableOpacity',
+        Modal: 'Modal',
+        ScrollView: 'ScrollView',
+        ActivityIndicator: 'ActivityIndicator',
+        KeyboardAvoidingView: 'KeyboardAvoidingView',
       };
     }
     if (importPath.startsWith('.')) {
@@ -426,6 +466,98 @@ const terminalBProduct = { name: 'Chef Special Kheer', restaurant_id: 'rest-001'
 
 const isDuplicate = checkDuplicateProductName(terminalBProduct.name, terminalBProduct.restaurant_id, [terminalAProduct]);
 assert(isDuplicate === true, 'Test Q: Multi-terminal duplicate save prevented when normalized product name already exists in restaurant');
+
+// ----------------------------------------------------
+// TEST R: Quick Bill Draft Preservation & Restoration
+// ----------------------------------------------------
+const quickBillModule = loadTsModule(path.join(__dirname, '..', 'src', 'components', 'pos', 'QuickBillModal.tsx'));
+const { loadQuickBillDraft, saveQuickBillDraft, clearQuickBillDraft, QUICK_BILL_DRAFT_KEY_PREFIX } = quickBillModule;
+
+const sampleDraftRestA = {
+  name: 'Test Chocolate',
+  priceInput: '150',
+  quantity: 4,
+  taxRate: 12,
+  customTaxInput: '',
+  isCustomTax: false,
+  taxMode: 'exclusive',
+  selectedCategoryId: 'cat-snacks-1',
+  saveToMenu: true,
+  itemNotes: 'Extra crispy',
+};
+
+// Save draft for Restaurant A
+saveQuickBillDraft('rest-A', sampleDraftRestA);
+
+// Verify draft saved to sessionStorage under correct key
+const rawStoredA = global.window.sessionStorage.getItem(`${QUICK_BILL_DRAFT_KEY_PREFIX}rest-A`);
+assert(rawStoredA !== null, 'Test R: Draft saved in sessionStorage with key prefix and restaurantId');
+
+// Restore draft for Restaurant A
+const loadedDraftA = loadQuickBillDraft('rest-A');
+assert(loadedDraftA !== null, 'Test R: Draft successfully loaded for Restaurant A');
+assert(loadedDraftA.name === 'Test Chocolate', 'Test R: Draft name matches "Test Chocolate"');
+assert(loadedDraftA.priceInput === '150', 'Test R: Draft price matches "150"');
+assert(loadedDraftA.quantity === 4, 'Test R: Draft quantity matches 4');
+assert(loadedDraftA.taxRate === 12, 'Test R: Draft tax rate matches 12');
+assert(loadedDraftA.taxMode === 'exclusive', 'Test R: Draft taxMode matches exclusive');
+assert(loadedDraftA.saveToMenu === true, 'Test R: Draft saveToMenu matches true');
+assert(loadedDraftA.itemNotes === 'Extra crispy', 'Test R: Draft itemNotes preserved');
+
+// ----------------------------------------------------
+// TEST S: Explicit Draft Clear (Cancel / Add to Cart)
+// ----------------------------------------------------
+clearQuickBillDraft('rest-A');
+const clearedDraftA = loadQuickBillDraft('rest-A');
+assert(clearedDraftA === null, 'Test S: Draft is null after clearQuickBillDraft on Cancel/Add to Cart');
+
+// ----------------------------------------------------
+// TEST T: Multi-tenant / Restaurant-scoped Draft Isolation
+// ----------------------------------------------------
+saveQuickBillDraft('rest-001', {
+  name: 'Burger Supreme',
+  priceInput: '180',
+  quantity: 2,
+  taxRate: 5,
+  customTaxInput: '',
+  isCustomTax: false,
+  taxMode: 'inclusive',
+  selectedCategoryId: 'cat-burgers',
+  saveToMenu: false,
+  itemNotes: '',
+});
+
+saveQuickBillDraft('rest-002', {
+  name: 'Cold Coffee Frappe',
+  priceInput: '90',
+  quantity: 1,
+  taxRate: 18,
+  customTaxInput: '',
+  isCustomTax: false,
+  taxMode: 'exclusive',
+  selectedCategoryId: 'cat-drinks',
+  saveToMenu: true,
+  itemNotes: 'No sugar',
+});
+
+const draft001 = loadQuickBillDraft('rest-001');
+const draft002 = loadQuickBillDraft('rest-002');
+const draft003 = loadQuickBillDraft('rest-003');
+
+assert(draft001 !== null && draft001.name === 'Burger Supreme', 'Test T: Restaurant 001 retrieves only its own draft (Burger Supreme)');
+assert(draft002 !== null && draft002.name === 'Cold Coffee Frappe', 'Test T: Restaurant 002 retrieves only its own draft (Cold Coffee Frappe)');
+assert(draft003 === null, 'Test T: Restaurant 003 has no draft from 001 or 002');
+
+// Cleanup
+clearQuickBillDraft('rest-001');
+clearQuickBillDraft('rest-002');
+
+// ----------------------------------------------------
+// TEST U: Focus styling verification in QuickBillModal styles
+// ----------------------------------------------------
+const modalFileContent = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'pos', 'QuickBillModal.tsx'), 'utf8');
+assert(modalFileContent.includes("outlineStyle: 'none'"), 'Test U: QuickBillModal includes outlineStyle none for web focus');
+assert(modalFileContent.includes("outlineWidth: 0"), 'Test U: QuickBillModal includes outlineWidth 0 for web focus');
 
 console.log('\n====================================================');
 console.log(`RESULTS: ${passedTests} / ${totalTests} tests passed (${Math.round((passedTests/totalTests)*100)}%)`);

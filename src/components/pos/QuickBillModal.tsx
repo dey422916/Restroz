@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,6 @@ import {
   ScrollView,
   Dimensions,
   ActivityIndicator,
-  Alert,
   Platform,
   KeyboardAvoidingView,
 } from 'react-native';
@@ -18,6 +17,68 @@ import { Category, Product, RestaurantSettings } from '../../types';
 import { formatCurrency, roundToTwoDecimals } from '../../utils/currency';
 import { productService } from '../../services/api/productService';
 import { subscriptionGuardService } from '../../services/api/subscriptionGuardService';
+
+export const QUICK_BILL_DRAFT_KEY_PREFIX = 'restroz_quick_bill_draft_';
+
+export interface QuickBillDraftData {
+  name: string;
+  priceInput: string;
+  quantity: number;
+  taxRate: number;
+  customTaxInput: string;
+  isCustomTax: boolean;
+  taxMode: 'exclusive' | 'inclusive';
+  selectedCategoryId: string;
+  saveToMenu: boolean;
+  itemNotes: string;
+  restaurantId: string;
+}
+
+export const loadQuickBillDraft = (restaurantId?: string): QuickBillDraftData | null => {
+  if (Platform.OS !== 'web' || !restaurantId || typeof window === 'undefined' || !window.sessionStorage) {
+    return null;
+  }
+  try {
+    const raw = window.sessionStorage.getItem(`${QUICK_BILL_DRAFT_KEY_PREFIX}${restaurantId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw) as QuickBillDraftData;
+      if (parsed && parsed.restaurantId === restaurantId) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('[QuickBillModal] Error reading sessionStorage draft:', err);
+  }
+  return null;
+};
+
+export const saveQuickBillDraft = (
+  restaurantId: string | undefined,
+  draft: Omit<QuickBillDraftData, 'restaurantId'>
+) => {
+  if (Platform.OS !== 'web' || !restaurantId || typeof window === 'undefined' || !window.sessionStorage) {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(
+      `${QUICK_BILL_DRAFT_KEY_PREFIX}${restaurantId}`,
+      JSON.stringify({ ...draft, restaurantId })
+    );
+  } catch (err) {
+    console.warn('[QuickBillModal] Error saving sessionStorage draft:', err);
+  }
+};
+
+export const clearQuickBillDraft = (restaurantId?: string) => {
+  if (Platform.OS !== 'web' || !restaurantId || typeof window === 'undefined' || !window.sessionStorage) {
+    return;
+  }
+  try {
+    window.sessionStorage.removeItem(`${QUICK_BILL_DRAFT_KEY_PREFIX}${restaurantId}`);
+  } catch (err) {
+    console.warn('[QuickBillModal] Error clearing sessionStorage draft:', err);
+  }
+};
 
 interface QuickBillModalProps {
   isOpen: boolean;
@@ -69,36 +130,93 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
-  // Auto-select first category or default when modal opens
-  useEffect(() => {
-    if (isOpen) {
-      setName('');
-      setPriceInput('');
-      setQuantity(1);
-      const defaultTax = settings?.is_gst_enabled && Number(settings.default_tax_rate || 0) > 0
-        ? Number(settings.default_tax_rate)
-        : 0;
-      setTaxRate(defaultTax);
-      setCustomTaxInput('');
-      setIsCustomTax(!COMMON_GST_RATES.includes(defaultTax));
-      setTaxMode('exclusive');
-      setSaveToMenu(false);
-      setItemNotes('');
-      setErrorMessage('');
+  const prevIsOpenRef = useRef<boolean>(false);
+  const currentRestaurantRef = useRef<string | undefined>(activeRestaurantId);
 
-      if (categories.length > 0) {
-        setSelectedCategoryId(categories[0].id);
-      } else {
-        setSelectedCategoryId('');
+  // Helper to persist current form values to session draft
+  const persistDraft = (updates?: Partial<QuickBillDraftData>) => {
+    if (!activeRestaurantId) return;
+    const draft: Omit<QuickBillDraftData, 'restaurantId'> = {
+      name: updates?.name !== undefined ? updates.name : name,
+      priceInput: updates?.priceInput !== undefined ? updates.priceInput : priceInput,
+      quantity: updates?.quantity !== undefined ? updates.quantity : quantity,
+      taxRate: updates?.taxRate !== undefined ? updates.taxRate : taxRate,
+      customTaxInput: updates?.customTaxInput !== undefined ? updates.customTaxInput : customTaxInput,
+      isCustomTax: updates?.isCustomTax !== undefined ? updates.isCustomTax : isCustomTax,
+      taxMode: updates?.taxMode !== undefined ? updates.taxMode : taxMode,
+      selectedCategoryId: updates?.selectedCategoryId !== undefined ? updates.selectedCategoryId : selectedCategoryId,
+      saveToMenu: updates?.saveToMenu !== undefined ? updates.saveToMenu : saveToMenu,
+      itemNotes: updates?.itemNotes !== undefined ? updates.itemNotes : itemNotes,
+    };
+    saveQuickBillDraft(activeRestaurantId, draft);
+  };
+
+  // Reset local state fields
+  const resetFormFields = () => {
+    const defaultTax = settings?.is_gst_enabled && Number(settings.default_tax_rate || 0) > 0
+      ? Number(settings.default_tax_rate)
+      : 0;
+
+    setName('');
+    setPriceInput('');
+    setQuantity(1);
+    setTaxRate(defaultTax);
+    setCustomTaxInput('');
+    setIsCustomTax(!COMMON_GST_RATES.includes(defaultTax));
+    setTaxMode('exclusive');
+    setSelectedCategoryId(categories.length > 0 ? categories[0].id : '');
+    setSaveToMenu(false);
+    setItemNotes('');
+    setErrorMessage('');
+  };
+
+  // Load draft or initialize ONLY on modal open transition (false -> true) or restaurant change
+  useEffect(() => {
+    const isOpening = !prevIsOpenRef.current && isOpen;
+    const restaurantChanged = currentRestaurantRef.current !== activeRestaurantId;
+
+    if (restaurantChanged) {
+      currentRestaurantRef.current = activeRestaurantId;
+    }
+
+    if (isOpen && (isOpening || restaurantChanged)) {
+      const existingDraft = loadQuickBillDraft(activeRestaurantId);
+
+      if (existingDraft) {
+        setName(existingDraft.name || '');
+        setPriceInput(existingDraft.priceInput || '');
+        setQuantity(existingDraft.quantity || 1);
+        setTaxRate(existingDraft.taxRate ?? 0);
+        setCustomTaxInput(existingDraft.customTaxInput || '');
+        setIsCustomTax(Boolean(existingDraft.isCustomTax));
+        setTaxMode(existingDraft.taxMode || 'exclusive');
+        setSelectedCategoryId(
+          existingDraft.selectedCategoryId || (categories.length > 0 ? categories[0].id : '')
+        );
+        setSaveToMenu(Boolean(existingDraft.saveToMenu));
+        setItemNotes(existingDraft.itemNotes || '');
+        setErrorMessage('');
+      } else if (isOpening) {
+        resetFormFields();
       }
     }
-  }, [isOpen, categories, settings]);
+
+    prevIsOpenRef.current = isOpen;
+  }, [isOpen, activeRestaurantId]);
+
+  // Fallback category assignment if categories load after modal was opened with empty categories
+  useEffect(() => {
+    if (isOpen && !selectedCategoryId && categories.length > 0) {
+      setSelectedCategoryId(categories[0].id);
+      persistDraft({ selectedCategoryId: categories[0].id });
+    }
+  }, [isOpen, categories, selectedCategoryId]);
 
   const selectedCategory = useMemo(() => {
     return categories.find((c) => c.id === selectedCategoryId) || null;
   }, [categories, selectedCategoryId]);
 
-  // Derived calculation
+  // Derived calculations
   const numericPrice = parseFloat(priceInput) || 0;
   const effectiveTaxRate = isCustomTax ? (parseFloat(customTaxInput) || 0) : taxRate;
 
@@ -142,16 +260,26 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
     setIsCustomTax(false);
     setTaxRate(rate);
     setCustomTaxInput('');
+    persistDraft({ taxRate: rate, isCustomTax: false, customTaxInput: '' });
   };
 
   const handleCustomTaxChange = (text: string) => {
     const clean = text.replace(/[^0-9.]/g, '');
     setCustomTaxInput(clean);
     setIsCustomTax(true);
+    persistDraft({ customTaxInput: clean, isCustomTax: true });
   };
 
   const handleQuantityStep = (delta: number) => {
-    setQuantity((prev) => Math.max(1, prev + delta));
+    const newQty = Math.max(1, quantity + delta);
+    setQuantity(newQty);
+    persistDraft({ quantity: newQty });
+  };
+
+  const handleCancelAndDiscard = () => {
+    clearQuickBillDraft(activeRestaurantId);
+    resetFormFields();
+    onClose();
   };
 
   const handleSubmit = async () => {
@@ -198,7 +326,6 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
         );
 
         if (duplicate) {
-          // If duplicate product already exists, reuse it and update price if needed
           savedProduct = duplicate;
         } else {
           // 3. Generate SKU and Save New Product
@@ -244,6 +371,9 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
         savedProduct,
       });
 
+      // Clear draft on successful Add to Cart
+      clearQuickBillDraft(activeRestaurantId);
+      resetFormFields();
       onClose();
     } catch (err: any) {
       console.error('[QuickBillModal] Submit error:', err);
@@ -254,7 +384,7 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
   };
 
   return (
-    <Modal visible={isOpen} animationType="fade" transparent onRequestClose={onClose}>
+    <Modal visible={isOpen} animationType="fade" transparent onRequestClose={handleCancelAndDiscard}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={[styles.overlay, { paddingBottom: insets.bottom + 12, paddingTop: insets.top + 12 }]}
@@ -269,7 +399,7 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
                 <Text style={styles.subTitle}>Add on-the-go custom item to order</Text>
               </View>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <TouchableOpacity onPress={handleCancelAndDiscard} style={styles.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Text style={styles.closeText}>✕</Text>
             </TouchableOpacity>
           </View>
@@ -294,6 +424,7 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
                 value={name}
                 onChangeText={(t) => {
                   setName(t);
+                  persistDraft({ name: t });
                   if (errorMessage) setErrorMessage('');
                 }}
                 autoFocus
@@ -318,6 +449,7 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
                     onChangeText={(t) => {
                       const clean = t.replace(/[^0-9.]/g, '');
                       setPriceInput(clean);
+                      persistDraft({ priceInput: clean });
                       if (errorMessage) setErrorMessage('');
                     }}
                   />
@@ -343,7 +475,9 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
                     value={String(quantity)}
                     onChangeText={(t) => {
                       const num = parseInt(t.replace(/[^0-9]/g, ''), 10);
-                      setQuantity(isNaN(num) ? 1 : Math.max(1, num));
+                      const safeNum = isNaN(num) ? 1 : Math.max(1, num);
+                      setQuantity(safeNum);
+                      persistDraft({ quantity: safeNum });
                     }}
                   />
                   <TouchableOpacity
@@ -362,7 +496,10 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
               <View style={styles.taxModeRow}>
                 <TouchableOpacity
                   style={[styles.taxModeBtn, taxMode === 'exclusive' && styles.taxModeBtnActive]}
-                  onPress={() => setTaxMode('exclusive')}
+                  onPress={() => {
+                    setTaxMode('exclusive');
+                    persistDraft({ taxMode: 'exclusive' });
+                  }}
                 >
                   <Text style={[styles.taxModeText, taxMode === 'exclusive' && styles.taxModeTextActive]}>
                     + GST (Exclusive)
@@ -371,7 +508,10 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
 
                 <TouchableOpacity
                   style={[styles.taxModeBtn, taxMode === 'inclusive' && styles.taxModeBtnActive]}
-                  onPress={() => setTaxMode('inclusive')}
+                  onPress={() => {
+                    setTaxMode('inclusive');
+                    persistDraft({ taxMode: 'inclusive' });
+                  }}
                 >
                   <Text style={[styles.taxModeText, taxMode === 'inclusive' && styles.taxModeTextActive]}>
                     Incl. GST (Inclusive)
@@ -441,7 +581,10 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
                       <TouchableOpacity
                         key={c.id}
                         style={[styles.catChip, isSelected && styles.catChipActive]}
-                        onPress={() => setSelectedCategoryId(c.id)}
+                        onPress={() => {
+                          setSelectedCategoryId(c.id);
+                          persistDraft({ selectedCategoryId: c.id });
+                        }}
                       >
                         <Text style={[styles.catChipText, isSelected && styles.catChipTextActive]}>
                           {c.name}
@@ -461,7 +604,10 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
                 placeholder="e.g. Less spicy, Extra crispy..."
                 placeholderTextColor="#94a3b8"
                 value={itemNotes}
-                onChangeText={setItemNotes}
+                onChangeText={(t) => {
+                  setItemNotes(t);
+                  persistDraft({ itemNotes: t });
+                }}
               />
             </View>
 
@@ -473,7 +619,11 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
                   !canManageProducts && styles.saveMenuCheckboxRowDisabled,
                 ]}
                 disabled={!canManageProducts}
-                onPress={() => setSaveToMenu(!saveToMenu)}
+                onPress={() => {
+                  const nextVal = !saveToMenu;
+                  setSaveToMenu(nextVal);
+                  persistDraft({ saveToMenu: nextVal });
+                }}
                 activeOpacity={0.7}
               >
                 <View style={[styles.checkboxSquare, saveToMenu && styles.checkboxSquareChecked]}>
@@ -517,7 +667,7 @@ export const QuickBillModal: React.FC<QuickBillModalProps> = ({
           <View style={styles.footer}>
             <TouchableOpacity
               style={styles.cancelBtn}
-              onPress={onClose}
+              onPress={handleCancelAndDiscard}
               disabled={isSubmitting}
             >
               <Text style={styles.cancelBtnText}>Cancel</Text>
@@ -662,6 +812,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#0f172a',
     fontWeight: '500',
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   twoColRow: {
     flexDirection: 'row',
@@ -689,6 +845,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#0f172a',
     fontWeight: '700',
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   stepperWrapper: {
     flexDirection: 'row',
@@ -724,6 +886,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     color: '#0f172a',
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   taxModeRow: {
     flexDirection: 'row',
@@ -803,6 +971,12 @@ const styles = StyleSheet.create({
     color: '#475569',
     width: 50,
     padding: 0,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   customGstInputActive: {
     color: '#0f172a',

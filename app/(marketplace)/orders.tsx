@@ -176,6 +176,22 @@ export default function CustomerOrdersScreen() {
     loadOrders();
   };
 
+  const filteredLiveOrders = React.useMemo(() => {
+    if (isDedicated && dedicatedRestaurantId) {
+      return liveOrders.filter((o) => o.restaurant_id === dedicatedRestaurantId);
+    }
+    return liveOrders;
+  }, [liveOrders, isDedicated, dedicatedRestaurantId]);
+
+  const filteredHistoryOrders = React.useMemo(() => {
+    if (isDedicated && dedicatedRestaurantId) {
+      return historyOrders.filter((o) => o.restaurant_id === dedicatedRestaurantId);
+    }
+    return historyOrders;
+  }, [historyOrders, isDedicated, dedicatedRestaurantId]);
+
+  const displayOrders = activeTab === 'live' ? filteredLiveOrders : filteredHistoryOrders;
+
   if (authLoading || loading) {
     return (
       <View style={styles.center}>
@@ -202,22 +218,6 @@ export default function CustomerOrdersScreen() {
       </View>
     );
   }
-
-  const filteredLiveOrders = React.useMemo(() => {
-    if (isDedicated && dedicatedRestaurantId) {
-      return liveOrders.filter((o) => o.restaurant_id === dedicatedRestaurantId);
-    }
-    return liveOrders;
-  }, [liveOrders, isDedicated, dedicatedRestaurantId]);
-
-  const filteredHistoryOrders = React.useMemo(() => {
-    if (isDedicated && dedicatedRestaurantId) {
-      return historyOrders.filter((o) => o.restaurant_id === dedicatedRestaurantId);
-    }
-    return historyOrders;
-  }, [historyOrders, isDedicated, dedicatedRestaurantId]);
-
-  const displayOrders = activeTab === 'live' ? filteredLiveOrders : filteredHistoryOrders;
 
   const render3StageProgress = (status: string) => {
     const isStage1Active = true; // Ordered is always done if active

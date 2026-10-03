@@ -251,9 +251,9 @@ export default function RestaurantMenuScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Top Header Bar */}
-      <View style={styles.headerBar}>
-        {!isDedicated && (
+      {/* Top Header Bar - only in marketplace mode (dedicated mode uses dedicated top navbar) */}
+      {!isDedicated && (
+        <View style={styles.headerBar}>
           <TouchableOpacity
             style={styles.backBtn}
             onPress={() => router.replace('/(marketplace)')}
@@ -262,33 +262,22 @@ export default function RestaurantMenuScreen() {
               ← Restaurants
             </Text>
           </TouchableOpacity>
-        )}
-        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          {isDedicated && restaurant.logo_url ? (
-            <Image
-              source={{ uri: restaurant.logo_url }}
-              style={{ width: 28, height: 28, borderRadius: 6 }}
-              resizeMode="contain"
-            />
-          ) : isDedicated ? (
-            <Text style={{ fontSize: 18 }}>🍽️</Text>
-          ) : null}
-          <Text style={[styles.headerTitle, isDedicated && { marginLeft: 0 }]} numberOfLines={1}>
+          <Text style={styles.headerTitle} numberOfLines={1}>
             {restaurant.name}
           </Text>
+          <TouchableOpacity
+            style={styles.cartIconBtn}
+            onPress={() => router.push('/(marketplace)/cart')}
+          >
+            <Text style={{ fontSize: 18 }}>🛍️</Text>
+            {itemCount > 0 && (
+              <View style={styles.cartBadge}>
+                <Text style={styles.cartBadgeText}>{itemCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          style={styles.cartIconBtn}
-          onPress={() => router.push('/(marketplace)/cart')}
-        >
-          <Text style={{ fontSize: 18 }}>🛍️</Text>
-          {itemCount > 0 && (
-            <View style={styles.cartBadge}>
-              <Text style={styles.cartBadgeText}>{itemCount}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
+      )}
 
       <ScrollView
         style={styles.scrollArea}

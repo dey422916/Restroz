@@ -2407,16 +2407,10 @@ export default function OrdersScreen() {
                         return (
                           <>
                             {editTotals.gstBreakdown.map((slab) => (
-                              <React.Fragment key={slab.rate}>
-                                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
-                                  <Text style={{ fontSize: 12, color: '#64748b' }}>CGST ({slab.halfRateStr}%):</Text>
-                                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(slab.cgstAmount)}</Text>
-                                </View>
-                                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-                                  <Text style={{ fontSize: 12, color: '#64748b' }}>SGST ({slab.halfRateStr}%):</Text>
-                                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(slab.sgstAmount)}</Text>
-                                </View>
-                              </React.Fragment>
+                              <View key={slab.rate} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                                <Text style={{ fontSize: 12, color: '#64748b' }}>GST @ {slab.rate}%:</Text>
+                                <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(slab.totalTax)}</Text>
+                              </View>
                             ))}
                             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
                               <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748b' }}>Total GST:</Text>
@@ -2427,15 +2421,15 @@ export default function OrdersScreen() {
                       }
 
                       const singleSlab = editTotals.gstBreakdown?.[0];
-                      const editHalfRateStr = singleSlab?.halfRateStr || (
+                      const rateStr = singleSlab ? `${singleSlab.rate}` : (
                         settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
-                          ? (Number(settings.default_tax_rate) / 2).toString()
-                          : '2.5'
+                          ? `${Number(settings.default_tax_rate)}`
+                          : '5'
                       );
                       return (
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-                          <Text style={{ fontSize: 12, color: '#64748b' }}>CGST ({editHalfRateStr}%) + SGST ({editHalfRateStr}%):</Text>
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.cgstAmount + editTotals.sgstAmount)}</Text>
+                          <Text style={{ fontSize: 12, color: '#64748b' }}>GST @ {rateStr}%:</Text>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.totalTax)}</Text>
                         </View>
                       );
                     })()}
@@ -3031,16 +3025,10 @@ export default function OrdersScreen() {
                       return (
                         <>
                           {payTotals.gstBreakdown.map((slab) => (
-                            <React.Fragment key={slab.rate}>
-                              <View style={styles.billRow}>
-                                <Text style={styles.billLabel}>CGST ({slab.halfRateStr}%):</Text>
-                                <Text style={styles.billVal}>{formatCurrency(slab.cgstAmount)}</Text>
-                              </View>
-                              <View style={styles.billRow}>
-                                <Text style={styles.billLabel}>SGST ({slab.halfRateStr}%):</Text>
-                                <Text style={styles.billVal}>{formatCurrency(slab.sgstAmount)}</Text>
-                              </View>
-                            </React.Fragment>
+                            <View key={slab.rate} style={styles.billRow}>
+                              <Text style={styles.billLabel}>GST @ {slab.rate}%:</Text>
+                              <Text style={styles.billVal}>{formatCurrency(slab.totalTax)}</Text>
+                            </View>
                           ))}
                           <View style={styles.billRow}>
                             <Text style={[styles.billLabel, { fontWeight: '700' }]}>Total GST:</Text>
@@ -3051,23 +3039,16 @@ export default function OrdersScreen() {
                     }
 
                     const singleSlab = payTotals?.gstBreakdown?.[0];
-                    const payHalfRateStr = singleSlab?.halfRateStr || (
+                    const rateStr = singleSlab ? `${singleSlab.rate}` : (
                       settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
-                        ? (Number(settings.default_tax_rate) / 2).toString()
-                        : '2.5'
+                        ? `${Number(settings.default_tax_rate)}`
+                        : '5'
                     );
                     return (
-                      <>
-                        <View style={styles.billRow}>
-                          <Text style={styles.billLabel}>CGST ({payHalfRateStr}%):</Text>
-                          <Text style={styles.billVal}>{formatCurrency(payTotals?.cgstAmount || 0)}</Text>
-                        </View>
-
-                        <View style={styles.billRow}>
-                          <Text style={styles.billLabel}>SGST ({payHalfRateStr}%):</Text>
-                          <Text style={styles.billVal}>{formatCurrency(payTotals?.sgstAmount || 0)}</Text>
-                        </View>
-                      </>
+                      <View style={styles.billRow}>
+                        <Text style={styles.billLabel}>GST @ {rateStr}%:</Text>
+                        <Text style={styles.billVal}>{formatCurrency((payTotals?.cgstAmount || 0) + (payTotals?.sgstAmount || 0))}</Text>
+                      </View>
                     );
                   })()}
 

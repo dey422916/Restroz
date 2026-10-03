@@ -1414,16 +1414,10 @@ export default function PosScreen() {
                 return (
                   <>
                     {totals.gstBreakdown.map((slab) => (
-                      <React.Fragment key={slab.rate}>
-                        <View style={styles.summaryRow}>
-                          <Text style={styles.summaryLabel}>CGST ({slab.halfRateStr}%)</Text>
-                          <Text style={styles.summaryVal}>{formatCurrency(slab.cgstAmount)}</Text>
-                        </View>
-                        <View style={styles.summaryRow}>
-                          <Text style={styles.summaryLabel}>SGST ({slab.halfRateStr}%)</Text>
-                          <Text style={styles.summaryVal}>{formatCurrency(slab.sgstAmount)}</Text>
-                        </View>
-                      </React.Fragment>
+                      <View key={slab.rate} style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>GST @ {slab.rate}%</Text>
+                        <Text style={styles.summaryVal}>{formatCurrency(slab.totalTax)}</Text>
+                      </View>
                     ))}
                     <View style={styles.summaryRow}>
                       <Text style={[styles.summaryLabel, { fontWeight: '700' }]}>Total GST</Text>
@@ -1434,24 +1428,17 @@ export default function PosScreen() {
               }
 
               const singleSlab = totals.gstBreakdown?.[0];
-              const halfTaxRateStr = singleSlab ? singleSlab.halfRateStr : (
+              const rateStr = singleSlab ? `${singleSlab.rate}` : (
                 settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
-                  ? (Number(settings.default_tax_rate) / 2).toString()
-                  : '2.5'
+                  ? `${Number(settings.default_tax_rate)}`
+                  : '5'
               );
 
               return (
-                <>
-                  <View style={styles.summaryRow}>
-                    <Text style={styles.summaryLabel}>CGST ({halfTaxRateStr}%)</Text>
-                    <Text style={styles.summaryVal}>{formatCurrency(totals.cgstAmount)}</Text>
-                  </View>
-
-                  <View style={styles.summaryRow}>
-                    <Text style={styles.summaryLabel}>SGST ({halfTaxRateStr}%)</Text>
-                    <Text style={styles.summaryVal}>{formatCurrency(totals.sgstAmount)}</Text>
-                  </View>
-                </>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>GST @ {rateStr}%</Text>
+                  <Text style={styles.summaryVal}>{formatCurrency(totals.totalTax)}</Text>
+                </View>
               );
             })()}
 
@@ -2145,8 +2132,8 @@ export default function PosScreen() {
                             <>
                               {tableTotals.gstBreakdown.map((slab) => (
                                 <View key={slab.rate} style={styles.modalTotalRow}>
-                                  <Text style={styles.modalTotalLabel}>CGST ({slab.halfRateStr}%) + SGST ({slab.halfRateStr}%):</Text>
-                                  <Text style={styles.modalTotalVal}>{formatCurrency(slab.cgstAmount + slab.sgstAmount)}</Text>
+                                  <Text style={styles.modalTotalLabel}>GST @ {slab.rate}%:</Text>
+                                  <Text style={styles.modalTotalVal}>{formatCurrency(slab.totalTax)}</Text>
                                 </View>
                               ))}
                               <View style={styles.modalTotalRow}>
@@ -2158,10 +2145,14 @@ export default function PosScreen() {
                         }
 
                         const singleSlab = tableTotals.gstBreakdown?.[0];
-                        const halfTaxRateStr = singleSlab?.halfRateStr || '2.5';
+                        const rateStr = singleSlab ? `${singleSlab.rate}` : (
+                          settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
+                            ? `${Number(settings.default_tax_rate)}`
+                            : '5'
+                        );
                         return (
                           <View style={styles.modalTotalRow}>
-                            <Text style={styles.modalTotalLabel}>CGST ({halfTaxRateStr}%) + SGST ({halfTaxRateStr}%):</Text>
+                            <Text style={styles.modalTotalLabel}>GST @ {rateStr}%:</Text>
                             <Text style={styles.modalTotalVal}>
                               {formatCurrency(
                                 (viewTableModalData.order.cgst_amount || 0) +

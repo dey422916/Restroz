@@ -590,179 +590,230 @@ export default function CouponsScreen() {
               <Text style={{ marginTop: 10, color: '#64748B' }}>Loading rewards configuration...</Text>
             </View>
           ) : (
-            <>
+            <View style={styles.rewardsContentWrap}>
+              {/* Card 1: Configuration */}
               <View style={styles.rewardsCard}>
-              <View style={styles.rewardsCardHeader}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.rewardsTitle}>🎁 Loyalty Cashback & Customer Wallet</Text>
-                  <Text style={styles.rewardsSubtitle}>
-                    Automatically reward repeat customers with wallet cash balance on every settled order.
-                  </Text>
-                </View>
-                <View style={styles.rewardsSwitchWrap}>
-                  <Text style={[styles.rewardsSwitchLabel, rewardsEnabled && styles.rewardsSwitchLabelActive]}>
-                    {rewardsEnabled ? 'ENABLED' : 'DISABLED'}
-                  </Text>
-                  <Switch
-                    value={rewardsEnabled}
-                    onValueChange={setRewardsEnabled}
-                    trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
-                    thumbColor={rewardsEnabled ? '#2563EB' : '#FFFFFF'}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.rewardsDivider} />
-
-              {/* Earn Rule Inputs */}
-              <Text style={styles.rewardsSectionTitle}>💰 Cashback Earning Rule</Text>
-              <Text style={styles.rewardsSectionSub}>
-                Set how much a customer must spend to earn wallet cashback on settled orders.
-              </Text>
-
-              <View style={[styles.rewardsInputGrid, isMobile && styles.rewardsInputGridMobile]}>
-                <View style={styles.rewardsInputCol}>
-                  <Text style={styles.rewardsInputLabel}>Spend Amount (₹)</Text>
-                  <View style={styles.currencyInputWrap}>
-                    <Text style={styles.currencyPrefix}>₹</Text>
-                    <TextInput
-                      style={styles.currencyInput}
-                      value={spendAmount}
-                      onChangeText={setSpendAmount}
-                      keyboardType="numeric"
-                      placeholder="100"
-                    />
+                {/* 1. Header Card */}
+                <View style={[styles.rewardsCardHeader, isMobile && styles.rewardsCardHeaderMobile]}>
+                  <View style={styles.rewardsHeaderLeft}>
+                    <View style={styles.rewardsTitleRow}>
+                      <Text style={styles.rewardsTitle}>🎁 Loyalty Cashback & Customer Wallet</Text>
+                    </View>
+                    <Text style={styles.rewardsSubtitle}>
+                      Automatically reward repeat customers with wallet cash balance on every settled order.
+                    </Text>
                   </View>
-                  <Text style={styles.rewardsInputHint}>Base spend benchmark</Text>
-                </View>
 
-                <View style={styles.rewardsInputCol}>
-                  <Text style={styles.rewardsInputLabel}>Earn Reward Amount (₹)</Text>
-                  <View style={styles.currencyInputWrap}>
-                    <Text style={styles.currencyPrefix}>₹</Text>
-                    <TextInput
-                      style={styles.currencyInput}
-                      value={rewardAmount}
-                      onChangeText={setRewardAmount}
-                      keyboardType="numeric"
-                      placeholder="1"
-                    />
-                  </View>
-                  <Text style={styles.rewardsInputHint}>Wallet credit earned per spend</Text>
-                </View>
-              </View>
-
-              <View style={styles.rewardsDivider} />
-
-              {/* Redemption Rule */}
-              <Text style={styles.rewardsSectionTitle}>💳 Wallet Balance Redemption Rule</Text>
-              <Text style={styles.rewardsSectionSub}>
-                Customer can redeem their accumulated wallet balance at POS checkout once they meet this threshold.
-              </Text>
-
-              <View style={[styles.rewardsInputGrid, isMobile && styles.rewardsInputGridMobile]}>
-                <View style={styles.rewardsInputCol}>
-                  <Text style={styles.rewardsInputLabel}>Minimum Wallet Balance to Redeem (₹)</Text>
-                  <View style={styles.currencyInputWrap}>
-                    <Text style={styles.currencyPrefix}>₹</Text>
-                    <TextInput
-                      style={styles.currencyInput}
-                      value={minRedeemBalance}
-                      onChangeText={setMinRedeemBalance}
-                      keyboardType="numeric"
-                      placeholder="50"
-                    />
-                  </View>
-                  <Text style={styles.rewardsInputHint}>
-                    Prevents tiny partial redemptions before loyalty threshold is reached
-                  </Text>
-                </View>
-              </View>
-
-              {/* Live Rule Simulation Box */}
-              <View style={styles.previewBox}>
-                <Text style={styles.previewTitle}>🔍 Live Rule Simulation</Text>
-                <Text style={styles.previewText}>
-                  • Customer spends <Text style={styles.previewBold}>₹{previewExampleSpend}</Text> on a meal.
-                </Text>
-                <Text style={styles.previewText}>
-                  • Reward earned: <Text style={styles.previewBold}>₹{previewCalculatedReward}</Text> added to their wallet upon settlement.
-                </Text>
-                <Text style={styles.previewText}>
-                  • Redemption unlocked when wallet balance reaches <Text style={styles.previewBold}>₹{minRedeemBalance || '0'}</Text>.
-                </Text>
-                <Text style={styles.previewSubtext}>
-                  * Customer is uniquely identified across visits by their normalized 10-digit mobile number.
-                </Text>
-              </View>
-
-              {/* Save Button */}
-              <TouchableOpacity
-                style={[styles.saveRewardsBtn, savingRewards && styles.saveRewardsBtnDisabled]}
-                onPress={handleSaveRewards}
-                disabled={savingRewards}
-                activeOpacity={0.8}
-              >
-                {savingRewards ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.saveRewardsBtnText}>💾 Save Rewards Settings</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-
-            {/* CUSTOMER WALLET BALANCE LOOKUP TOOL */}
-            <View style={styles.walletLookupCard}>
-              <View style={styles.walletLookupHeader}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.walletLookupTitle}>🔍 Customer Wallet Balance Lookup</Text>
-                  <Text style={styles.walletLookupSubtitle}>
-                    Search by 10-digit mobile number to view live wallet balance, redemption status, and transaction history.
-                  </Text>
-                </View>
-              </View>
-
-              <View style={[styles.lookupInputRow, isMobile && styles.lookupInputRowMobile]}>
-                <View style={styles.phoneInputWrap}>
-                  <Text style={styles.phoneInputPrefix}>🇮🇳 +91</Text>
-                  <TextInput
-                    style={styles.phoneInput}
-                    value={lookupPhone}
-                    onChangeText={(val) => setLookupPhone(val.replace(/[^\d]/g, ''))}
-                    placeholder="Enter 10-digit customer mobile"
-                    placeholderTextColor="#94A3B8"
-                    keyboardType="phone-pad"
-                    maxLength={10}
-                    onSubmitEditing={() => handleLookupCustomer()}
-                  />
-                  {Boolean(lookupPhone) && (
-                    <TouchableOpacity
-                      style={styles.clearPhoneBtn}
-                      onPress={() => {
-                        setLookupPhone('');
-                        setLookupWallet(null);
-                        setLookupTransactions([]);
-                        setHasSearched(false);
-                      }}
+                  <View style={styles.rewardsHeaderRight}>
+                    <View
+                      style={[
+                        styles.rewardsStatusBadge,
+                        rewardsEnabled ? styles.rewardsStatusBadgeActive : styles.rewardsStatusBadgeInactive,
+                      ]}
                     >
-                      <Text style={{ fontSize: 13, color: '#94A3B8' }}>✕</Text>
-                    </TouchableOpacity>
-                  )}
+                      <Text
+                        style={[
+                          styles.rewardsStatusText,
+                          rewardsEnabled ? styles.rewardsStatusTextActive : styles.rewardsStatusTextInactive,
+                        ]}
+                      >
+                        {rewardsEnabled ? 'ENABLED' : 'DISABLED'}
+                      </Text>
+                    </View>
+                    <Switch
+                      value={rewardsEnabled}
+                      onValueChange={setRewardsEnabled}
+                      trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                      thumbColor={rewardsEnabled ? '#2563EB' : '#FFFFFF'}
+                    />
+                  </View>
                 </View>
 
-                <TouchableOpacity
-                  style={[styles.lookupBtn, lookupLoading && styles.lookupBtnDisabled]}
-                  onPress={() => handleLookupCustomer()}
-                  disabled={lookupLoading}
-                  activeOpacity={0.8}
-                >
-                  {lookupLoading ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <Text style={styles.lookupBtnText}>Check Balance</Text>
-                  )}
-                </TouchableOpacity>
+                {/* 2. Cashback Earning Rule */}
+                <View style={styles.rewardsSection}>
+                  <Text style={styles.rewardsSectionTitle}>💰 Cashback Earning Rule</Text>
+                  <Text style={styles.rewardsSectionSub}>
+                    Set how much a customer must spend to earn wallet cashback on settled orders.
+                  </Text>
+
+                  <View style={[styles.rewardsInputGrid, isMobile && styles.rewardsInputGridMobile]}>
+                    <View style={styles.rewardsInputCol}>
+                      <Text style={styles.rewardsInputLabel}>Spend Amount (₹)</Text>
+                      <View style={styles.currencyInputWrap}>
+                        <Text style={styles.currencyPrefix}>₹</Text>
+                        <TextInput
+                          style={[
+                            styles.currencyInput,
+                            Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : {},
+                          ]}
+                          value={spendAmount}
+                          onChangeText={setSpendAmount}
+                          keyboardType="numeric"
+                          placeholder="100"
+                          placeholderTextColor="#94A3B8"
+                        />
+                      </View>
+                      <Text style={styles.rewardsInputHint}>Base spend benchmark required to qualify for cashback.</Text>
+                    </View>
+
+                    <View style={styles.rewardsInputCol}>
+                      <Text style={styles.rewardsInputLabel}>Earn Reward Amount (₹)</Text>
+                      <View style={styles.currencyInputWrap}>
+                        <Text style={styles.currencyPrefix}>₹</Text>
+                        <TextInput
+                          style={[
+                            styles.currencyInput,
+                            Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : {},
+                          ]}
+                          value={rewardAmount}
+                          onChangeText={setRewardAmount}
+                          keyboardType="numeric"
+                          placeholder="1"
+                          placeholderTextColor="#94A3B8"
+                        />
+                      </View>
+                      <Text style={styles.rewardsInputHint}>Wallet credit earned per qualifying spend benchmark.</Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* 3. Wallet Redemption Rule */}
+                <View style={styles.rewardsSection}>
+                  <Text style={styles.rewardsSectionTitle}>💳 Wallet Balance Redemption Rule</Text>
+                  <Text style={styles.rewardsSectionSub}>
+                    Customer can redeem their accumulated wallet balance at POS checkout once they meet this threshold.
+                  </Text>
+
+                  <View style={[styles.rewardsInputGrid, isMobile && styles.rewardsInputGridMobile]}>
+                    <View style={styles.rewardsInputCol}>
+                      <Text style={styles.rewardsInputLabel}>Minimum Wallet Balance to Redeem (₹)</Text>
+                      <View style={styles.currencyInputWrap}>
+                        <Text style={styles.currencyPrefix}>₹</Text>
+                        <TextInput
+                          style={[
+                            styles.currencyInput,
+                            Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : {},
+                          ]}
+                          value={minRedeemBalance}
+                          onChangeText={setMinRedeemBalance}
+                          keyboardType="numeric"
+                          placeholder="50"
+                          placeholderTextColor="#94A3B8"
+                        />
+                      </View>
+                      <Text style={styles.rewardsInputHint}>
+                        Prevents tiny partial redemptions before loyalty threshold is reached.
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* 4. Live Rule Simulation */}
+                <View style={styles.previewBox}>
+                  <View style={styles.previewHeaderRow}>
+                    <Text style={styles.previewTitle}>🔍 Live Rule Simulation</Text>
+                    <View style={styles.previewBadge}>
+                      <Text style={styles.previewBadgeText}>Auto-calculated Example</Text>
+                    </View>
+                  </View>
+
+                  <View style={[styles.previewCardsGrid, isMobile && styles.previewCardsGridMobile]}>
+                    <View style={styles.previewCard}>
+                      <Text style={styles.previewCardLabel}>Example Order Spend</Text>
+                      <Text style={styles.previewCardVal}>₹{previewExampleSpend}.00</Text>
+                      <Text style={styles.previewCardHint}>Customer dines & spends</Text>
+                    </View>
+
+                    <View style={[styles.previewCard, styles.previewCardHighlight]}>
+                      <Text style={[styles.previewCardLabel, { color: '#166534' }]}>Cashback Earned</Text>
+                      <Text style={[styles.previewCardVal, { color: '#15803D' }]}>+₹{previewCalculatedReward}</Text>
+                      <Text style={styles.previewCardHint}>Added to wallet upon settlement</Text>
+                    </View>
+
+                    <View style={styles.previewCard}>
+                      <Text style={styles.previewCardLabel}>Redeem Threshold</Text>
+                      <Text style={[styles.previewCardVal, { color: '#1D4ED8' }]}>₹{minRedeemBalance || '0'}.00</Text>
+                      <Text style={styles.previewCardHint}>Min balance needed at POS</Text>
+                    </View>
+                  </View>
+
+                  <Text style={styles.previewSubtext}>
+                    * Customer is uniquely identified across visits by their normalized 10-digit mobile number.
+                  </Text>
+                </View>
+
+                {/* 5. Save Button Area */}
+                <View style={[styles.saveActionRow, isMobile && styles.saveActionRowMobile]}>
+                  <TouchableOpacity
+                    style={[styles.saveRewardsBtn, isMobile && styles.saveRewardsBtnMobile, savingRewards && styles.saveRewardsBtnDisabled]}
+                    onPress={handleSaveRewards}
+                    disabled={savingRewards}
+                    activeOpacity={0.8}
+                  >
+                    {savingRewards ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.saveRewardsBtnText}>💾 Save Loyalty Settings</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
               </View>
+
+              {/* CUSTOMER WALLET BALANCE LOOKUP TOOL */}
+              <View style={styles.walletLookupCard}>
+                <View style={styles.walletLookupHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.walletLookupTitle}>🔍 Customer Wallet Balance Lookup</Text>
+                    <Text style={styles.walletLookupSubtitle}>
+                      Search by 10-digit mobile number to view live wallet balance, redemption status, and transaction history.
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={[styles.lookupInputRow, isMobile && styles.lookupInputRowMobile]}>
+                  <View style={styles.phoneInputWrap}>
+                    <Text style={styles.phoneInputPrefix}>🇮🇳 +91</Text>
+                    <TextInput
+                      style={[
+                        styles.phoneInput,
+                        Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : {},
+                      ]}
+                      value={lookupPhone}
+                      onChangeText={(val) => setLookupPhone(val.replace(/[^\d]/g, ''))}
+                      placeholder="Enter 10-digit customer mobile"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="phone-pad"
+                      maxLength={10}
+                      onSubmitEditing={() => handleLookupCustomer()}
+                    />
+                    {Boolean(lookupPhone) && (
+                      <TouchableOpacity
+                        style={styles.clearPhoneBtn}
+                        onPress={() => {
+                          setLookupPhone('');
+                          setLookupWallet(null);
+                          setLookupTransactions([]);
+                          setHasSearched(false);
+                        }}
+                      >
+                        <Text style={{ fontSize: 13, color: '#94A3B8' }}>✕</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.lookupBtn, isMobile && styles.lookupBtnMobile, lookupLoading && styles.lookupBtnDisabled]}
+                    onPress={() => handleLookupCustomer()}
+                    disabled={lookupLoading}
+                    activeOpacity={0.8}
+                  >
+                    {lookupLoading ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.lookupBtnText}>Check Balance</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
 
               {/* Lookup Result Box */}
               {hasSearched && (
@@ -1026,9 +1077,9 @@ export default function CouponsScreen() {
                   ))}
                 </View>
               )}
+              </View>
             </View>
-          </>
-        )}
+          )}
         </ScrollView>
       )}
 
@@ -1437,26 +1488,46 @@ const styles = StyleSheet.create({
   rewardsContainer: {
     padding: 20,
     alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+  },
+  rewardsContentWrap: {
+    width: '100%',
+    maxWidth: 1200,
+    gap: 24,
   },
   rewardsCard: {
     width: '100%',
-    maxWidth: 680,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 24,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    shadowColor: '#000',
+    shadowColor: '#0F172A',
     shadowOpacity: 0.04,
-    shadowRadius: 8,
+    shadowRadius: 10,
     shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
+    elevation: 2,
   },
   rewardsCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 16,
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  rewardsCardHeaderMobile: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  rewardsHeaderLeft: {
+    flex: 1,
+  },
+  rewardsTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   rewardsTitle: {
     fontSize: 18,
@@ -1467,41 +1538,62 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#64748B',
     marginTop: 4,
+    lineHeight: 18,
   },
-  rewardsSwitchWrap: {
+  rewardsHeaderRight: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#F8FAFC',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
-  rewardsSwitchLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#94A3B8',
-    marginBottom: 4,
+  rewardsStatusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
   },
-  rewardsSwitchLabelActive: {
-    color: '#2563EB',
+  rewardsStatusBadgeActive: {
+    backgroundColor: '#DCFCE7',
   },
-  rewardsDivider: {
-    height: 1,
+  rewardsStatusBadgeInactive: {
     backgroundColor: '#F1F5F9',
-    marginVertical: 20,
+  },
+  rewardsStatusText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  rewardsStatusTextActive: {
+    color: '#15803D',
+  },
+  rewardsStatusTextInactive: {
+    color: '#64748B',
+  },
+  rewardsSection: {
+    marginTop: 24,
   },
   rewardsSectionTitle: {
     fontSize: 15,
     fontWeight: '800',
-    color: '#1E293B',
+    color: '#0F172A',
   },
   rewardsSectionSub: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#64748B',
     marginTop: 2,
     marginBottom: 14,
   },
   rewardsInputGrid: {
     flexDirection: 'row',
-    gap: 16,
+    gap: 20,
   },
   rewardsInputGridMobile: {
     flexDirection: 'column',
+    gap: 14,
   },
   rewardsInputCol: {
     flex: 1,
@@ -1515,14 +1607,15 @@ const styles = StyleSheet.create({
   currencyInputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#CBD5E1',
-    borderRadius: 8,
+    borderRadius: 10,
     backgroundColor: '#FFFFFF',
+    height: 44,
     overflow: 'hidden',
   },
   currencyPrefix: {
-    paddingLeft: 12,
+    paddingLeft: 14,
     paddingRight: 6,
     fontSize: 14,
     fontWeight: '800',
@@ -1530,61 +1623,129 @@ const styles = StyleSheet.create({
   },
   currencyInput: {
     flex: 1,
-    paddingVertical: 10,
-    paddingRight: 12,
+    height: '100%',
+    paddingVertical: 8,
+    paddingRight: 14,
     fontSize: 14,
     fontWeight: '700',
     color: '#0F172A',
   },
   rewardsInputHint: {
-    fontSize: 11,
-    color: '#94A3B8',
-    marginTop: 4,
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 6,
+    lineHeight: 16,
   },
   previewBox: {
     backgroundColor: '#F8FAFC',
     borderRadius: 12,
-    padding: 16,
+    padding: 18,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    marginTop: 20,
+    marginTop: 24,
     marginBottom: 24,
+  },
+  previewHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
   },
   previewTitle: {
     fontSize: 13,
     fontWeight: '800',
     color: '#0F172A',
-    marginBottom: 8,
   },
-  previewText: {
-    fontSize: 13,
-    color: '#334155',
-    lineHeight: 20,
-    marginBottom: 4,
+  previewBadge: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
   },
-  previewBold: {
+  previewBadgeText: {
+    fontSize: 10,
     fontWeight: '800',
-    color: '#2563EB',
+    color: '#1D4ED8',
+  },
+  previewCardsGrid: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  previewCardsGridMobile: {
+    flexDirection: 'column',
+    gap: 8,
+  },
+  previewCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  previewCardHighlight: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  previewCardLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  previewCardVal: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginTop: 3,
+    marginBottom: 2,
+  },
+  previewCardHint: {
+    fontSize: 11,
+    color: '#64748B',
   },
   previewSubtext: {
     fontSize: 11,
     color: '#64748B',
-    marginTop: 8,
     fontStyle: 'italic',
+  },
+  saveActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  saveActionRowMobile: {
+    justifyContent: 'center',
+    alignItems: 'stretch',
   },
   saveRewardsBtn: {
     backgroundColor: '#2563EB',
-    paddingVertical: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
     borderRadius: 10,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveRewardsBtnMobile: {
+    width: '100%',
   },
   saveRewardsBtnDisabled: {
     opacity: 0.6,
   },
   saveRewardsBtnText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '800',
+  },
+  lookupBtnMobile: {
+    width: '100%',
   },
   modalOverlay: {
     flex: 1,

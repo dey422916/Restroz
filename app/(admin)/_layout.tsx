@@ -39,19 +39,44 @@ export default function AdminLayout() {
     verifySubscription();
   }, [activeRestaurantId]);
 
+  const currentPath = (pathname || '').trim();
+  const isAdminRoute =
+    currentPath.startsWith('/(admin)') ||
+    currentPath === '/pos' ||
+    currentPath.startsWith('/pos/') ||
+    currentPath === '/dashboard' ||
+    currentPath.startsWith('/dashboard/') ||
+    currentPath === '/orders' ||
+    currentPath.startsWith('/orders/') ||
+    currentPath === '/tables' ||
+    currentPath.startsWith('/tables/') ||
+    currentPath === '/products' ||
+    currentPath.startsWith('/products/') ||
+    currentPath === '/categories' ||
+    currentPath.startsWith('/categories/') ||
+    currentPath === '/coupons' ||
+    currentPath.startsWith('/coupons/') ||
+    currentPath === '/bulk-import' ||
+    currentPath.startsWith('/bulk-import/') ||
+    currentPath === '/staff' ||
+    currentPath.startsWith('/staff/') ||
+    currentPath === '/my-plan' ||
+    currentPath.startsWith('/my-plan/') ||
+    currentPath === '/settings' ||
+    currentPath.startsWith('/settings/');
+
   React.useEffect(() => {
-    if (!loading) {
+    if (!loading && isAdminRoute) {
       if (!user) {
         router.replace('/(auth)/login');
       } else if (role === 'CUSTOMER') {
         router.replace('/(marketplace)');
       } else if (!isAdmin && !isSuperAdmin) {
-        const currentPath = (pathname || '').trim();
         const isDashboard = currentPath === '/dashboard' || currentPath === '/(admin)/dashboard' || currentPath.startsWith('/(admin)/dashboard/');
         const isProducts = currentPath === '/products' || currentPath === '/(admin)/products' || currentPath.startsWith('/(admin)/products/');
         const isCategories = currentPath === '/categories' || currentPath === '/(admin)/categories' || currentPath.startsWith('/(admin)/categories/');
         const isCoupons = currentPath === '/coupons' || currentPath === '/(admin)/coupons' || currentPath.startsWith('/(admin)/coupons/');
-        const isBulkImport = currentPath === '/bulk-import' || currentPath === '/(admin)/bulk-import';
+        const isBulkImport = currentPath === '/bulk-import' || currentPath === '/(admin)/bulk-import' || currentPath.startsWith('/(admin)/bulk-import/');
         const isSettings = currentPath === '/settings' || currentPath === '/(admin)/settings' || currentPath.startsWith('/(admin)/settings/');
         const isStaff = currentPath === '/staff' || currentPath === '/(admin)/staff' || currentPath.startsWith('/(admin)/staff/');
         const isMyPlan = currentPath === '/my-plan' || currentPath === '/(admin)/my-plan' || currentPath.startsWith('/(admin)/my-plan/');
@@ -75,7 +100,11 @@ export default function AdminLayout() {
         }
       }
     }
-  }, [user, role, loading, pathname, isSuperAdmin, isAdmin]);
+  }, [user, role, loading, currentPath, isSuperAdmin, isAdmin, isAdminRoute]);
+
+  if (!isAdminRoute) {
+    return <Stack screenOptions={{ headerShown: false }} />;
+  }
 
   if (loading || !user) {
     return (

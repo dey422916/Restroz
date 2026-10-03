@@ -15,26 +15,75 @@ export default function MarketplaceLayout() {
   const { itemCount } = useCustomerCart();
   const { user, role, loading, superAdminMarketplacePreview, setSuperAdminMarketplacePreview } = useAuth();
 
+  const currentPath = (pathname || '').trim();
+  const isAdminRoute =
+    currentPath.startsWith('/(admin)') ||
+    currentPath === '/pos' ||
+    currentPath.startsWith('/pos/') ||
+    currentPath === '/dashboard' ||
+    currentPath.startsWith('/dashboard/') ||
+    currentPath === '/orders' ||
+    currentPath.startsWith('/orders/') ||
+    currentPath === '/tables' ||
+    currentPath.startsWith('/tables/') ||
+    currentPath === '/products' ||
+    currentPath.startsWith('/products/') ||
+    currentPath === '/categories' ||
+    currentPath.startsWith('/categories/') ||
+    currentPath === '/coupons' ||
+    currentPath.startsWith('/coupons/') ||
+    currentPath === '/bulk-import' ||
+    currentPath.startsWith('/bulk-import/') ||
+    currentPath === '/staff' ||
+    currentPath.startsWith('/staff/') ||
+    currentPath === '/my-plan' ||
+    currentPath.startsWith('/my-plan/') ||
+    currentPath === '/settings' ||
+    currentPath.startsWith('/settings/');
+
+  const isSuperAdminRoute = currentPath.startsWith('/super-admin') || currentPath.startsWith('/(super-admin)');
+  const isDedicatedWebsiteRoute = currentPath.startsWith('/r/');
+  const isMenuTableRoute = currentPath.startsWith('/menu/');
+  const isAuthRoute =
+    currentPath.startsWith('/(auth)') ||
+    currentPath === '/login' ||
+    currentPath === '/signup' ||
+    currentPath === '/forgot-password' ||
+    currentPath === '/reset-password' ||
+    currentPath === '/verify-email';
+
+  const isMarketplaceRoute =
+    !isAdminRoute &&
+    !isSuperAdminRoute &&
+    !isDedicatedWebsiteRoute &&
+    !isMenuTableRoute &&
+    !isAuthRoute;
+
   // Authoritative Route Guard:
   // 1. Restaurant ADMIN & STAFF must NEVER access customer marketplace directly -> Redirect to POS
   // 2. SUPER_ADMIN must NEVER auto-land in customer marketplace unless explicit preview mode is active
   useEffect(() => {
-    if (!loading && user) {
+    if (!loading && user && isMarketplaceRoute) {
       if (role === 'ADMIN' || role === 'STAFF') {
         router.replace('/(admin)/pos' as any);
       } else if (role === 'SUPER_ADMIN' && !superAdminMarketplacePreview) {
         router.replace('/super-admin' as any);
       }
     }
-  }, [user, role, loading, superAdminMarketplacePreview]);
+  }, [user, role, loading, superAdminMarketplacePreview, isMarketplaceRoute]);
 
-  if (!loading && user && (role === 'ADMIN' || role === 'STAFF' || (role === 'SUPER_ADMIN' && !superAdminMarketplacePreview))) {
+  if (isMarketplaceRoute && !loading && user && (role === 'ADMIN' || role === 'STAFF' || (role === 'SUPER_ADMIN' && !superAdminMarketplacePreview))) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
         <ActivityIndicator size="large" color={customerColors.primary} />
       </View>
     );
   }
+
+  if (!isMarketplaceRoute) {
+    return <Slot />;
+  }
+
   const tabs = [
     { name: 'Explore', icon: '🏠', route: '/(marketplace)', path: '/' },
     { name: 'Cart', icon: '🛍️', route: '/(marketplace)/cart', path: '/cart' },

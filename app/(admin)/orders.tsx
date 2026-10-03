@@ -1291,37 +1291,40 @@ export default function OrdersScreen() {
         {/* Status Filters (Left 50%) & Search Field (Right 50%) */}
         <View style={[styles.toolbarRow, isMobile && styles.toolbarRowMobile]}>
           {/* Status Sub-filter Pills (Left 50%) */}
-          <View style={[styles.tabRow, !isMobile && { flex: 1 }]}>
-            {[
-              { id: 'active', label: '🔥 Active' },
-              { id: 'completed', label: '✓ Completed' },
-              { id: 'cancelled', label: '✕ Cancelled' },
-              { id: 'all', label: 'All Orders' },
-            ].map((tab) => (
-              <TouchableOpacity
-                key={tab.id}
-                style={[
-                  styles.tabBtn,
-                  !isMobile && { flex: 1, alignItems: 'center', justifyContent: 'center' },
-                  tabFilter === tab.id && styles.tabBtnActive,
-                ]}
-                onPress={() => setTabFilter(tab.id as any)}
-              >
-                <Text style={[styles.tabText, tabFilter === tab.id && styles.tabTextActive]} numberOfLines={1}>
-                  {tab.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
+          <View style={[styles.toolbarHalf, isMobile && styles.toolbarHalfMobile]}>
+            <View style={styles.tabRow}>
+              {[
+                { id: 'active', label: '🔥 Active' },
+                { id: 'completed', label: '✓ Completed' },
+                { id: 'cancelled', label: '✕ Cancelled' },
+                { id: 'all', label: 'All Orders' },
+              ].map((tab) => (
+                <TouchableOpacity
+                  key={tab.id}
+                  style={[
+                    styles.tabBtn,
+                    tabFilter === tab.id && styles.tabBtnActive,
+                  ]}
+                  onPress={() => setTabFilter(tab.id as any)}
+                >
+                  <Text style={[styles.tabText, tabFilter === tab.id && styles.tabTextActive]} numberOfLines={1}>
+                    {tab.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
 
           {/* Search Input (Right 50%) */}
-          <TextInput
-            style={[styles.search, !isMobile && { flex: 1, marginBottom: 0 }]}
-            placeholder="Search by Order #, Customer, Phone, Table..."
-            placeholderTextColor="#64748b"
-            value={search}
-            onChangeText={setSearch}
-          />
+          <View style={[styles.toolbarHalf, isMobile && styles.toolbarHalfMobile]}>
+            <TextInput
+              style={styles.search}
+              placeholder="Search by Order #, Customer, Phone, Table..."
+              placeholderTextColor="#64748b"
+              value={search}
+              onChangeText={setSearch}
+            />
+          </View>
         </View>
       </View>
 
@@ -3812,6 +3815,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#0f172a',
     fontWeight: '500',
+    width: '100%',
   },
   categoryTabRow: {
     flexDirection: 'row',
@@ -3858,6 +3862,13 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
     gap: 6,
   },
+  toolbarHalf: {
+    width: '50%',
+    flexShrink: 0,
+  },
+  toolbarHalfMobile: {
+    width: '100%',
+  },
   tabRow: {
     flexDirection: 'row',
     gap: 4,
@@ -3869,6 +3880,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#f1f5f9',
     borderWidth: 1,
     borderColor: '#e2e8f0',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   tabBtnActive: {
     backgroundColor: '#0f172a',

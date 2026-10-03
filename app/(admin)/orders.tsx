@@ -418,7 +418,7 @@ export default function OrdersScreen() {
         const qty = Number(i.quantity) || 1;
         const unitPrice = Number(i.unit_price) || (Number(i.subtotal) && qty ? Number(i.subtotal) / qty : (Number(i.total) && qty ? Number(i.total) / qty : 0));
         const subtotal = qty * unitPrice;
-        const lineId = i.id || (i as any).order_item_id || `line-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`;
+        const lineId = i.id || (i as any).order_item_id || `edit-line-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 6)}`;
         return {
           ...i,
           id: lineId,
@@ -466,8 +466,9 @@ export default function OrdersScreen() {
       };
       setEditItems(updated);
     } else {
+      const lineId = `edit-line-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
       const newItem: OrderItem = {
-        id: 'item-' + Date.now() + Math.random().toString(36).substr(2, 4),
+        id: lineId,
         order_id: editOrderModal?.id || '',
         product_id: prod.id,
         product_name: prod.name,
@@ -488,9 +489,9 @@ export default function OrdersScreen() {
   };
 
   // Adjust item quantity in Edit modal
-  const handleAdjustEditQty = (itemIdentifier: string, newQty: number) => {
+  const handleAdjustEditQty = (lineId: string, newQty: number) => {
     if (isDispatchedDeliveryOrder(editOrderModal)) {
-      const origItem = editOrderModal?.items?.find((i) => i.id === itemIdentifier || (i.product_id && i.product_id === itemIdentifier));
+      const origItem = editOrderModal?.items?.find((i) => (i.id && i.id === lineId) || (i.product_id && i.product_id === lineId));
       const origQty = origItem ? Number(origItem.quantity) || 0 : 0;
       if (newQty > origQty) {
         showAlert(
@@ -501,11 +502,11 @@ export default function OrdersScreen() {
       }
     }
     if (newQty <= 0) {
-      setEditItems(editItems.filter((i) => i.id !== itemIdentifier && (!i.id || i.product_id !== itemIdentifier)));
+      setEditItems(editItems.filter((i) => (i.id ? i.id !== lineId : i.product_id !== lineId)));
     } else {
       setEditItems(
         editItems.map((i) => {
-          if (i.id === itemIdentifier || (!i.id && i.product_id === itemIdentifier)) {
+          if ((i.id && i.id === lineId) || (!i.id && i.product_id === lineId)) {
             const unitPrice = Number(i.unit_price) || 0;
             const subtotal = newQty * unitPrice;
             return {
@@ -573,11 +574,11 @@ export default function OrdersScreen() {
     if (isDispatchedDeliveryOrder(editOrderModal)) {
       const oldItemsMap = new Map<string, number>();
       (editOrderModal.items || []).forEach((i, idx) => {
-        const k = i.id || (i.product_id ? `prod-${i.product_id}` : `line-${idx}`);
+        const k = i.id || (i as any).order_item_id || (i.product_id ? `prod-${i.product_id}` : `line-${idx}`);
         oldItemsMap.set(k, Number(i.quantity) || 0);
       });
       const hasAddedItems = editItems.some((i, idx) => {
-        const k = i.id || (i.product_id ? `prod-${i.product_id}` : `line-${idx}`);
+        const k = i.id || (i as any).order_item_id || (i.product_id ? `prod-${i.product_id}` : `line-${idx}`);
         const prev = oldItemsMap.get(k);
         return prev === undefined || (Number(i.quantity) || 0) > prev;
       });
@@ -2173,9 +2174,9 @@ export default function OrdersScreen() {
                 {/* Current Items Stepper List */}
                 <Text style={styles.fieldSectionHeader}>Ordered Items:</Text>
                 {editItems.map((itm, idx) => {
-                  const itemKey = itm.id || (itm as any).order_item_id || (itm.product_id ? `prod-${itm.product_id}` : `edit-item-${idx}`);
+                  const lineId = itm.id || (itm as any).order_item_id || `edit-item-${idx}`;
                   return (
-                    <View key={itemKey} style={styles.editItemRow}>
+                    <View key={lineId} style={styles.editItemRow}>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.editItemName}>{itm.product_name}</Text>
                         <Text style={styles.editItemRate}>{formatCurrency(itm.unit_price)} each</Text>
@@ -2184,7 +2185,7 @@ export default function OrdersScreen() {
                       <View style={styles.stepperBox}>
                         <TouchableOpacity
                           style={styles.stepperBtn}
-                          onPress={() => handleAdjustEditQty(itemKey, itm.quantity - 1)}
+                          onPress={() => handleAdjustEditQty(lineId, itm.quantity - 1)}
                         >
                           <Text style={styles.stepperBtnText}>-</Text>
                         </TouchableOpacity>
@@ -2195,7 +2196,7 @@ export default function OrdersScreen() {
                             isDispatchedDeliveryOrder(editOrderModal) && { opacity: 0.3 }
                           ]}
                           disabled={isDispatchedDeliveryOrder(editOrderModal)}
-                          onPress={() => handleAdjustEditQty(itemKey, itm.quantity + 1)}
+                          onPress={() => handleAdjustEditQty(lineId, itm.quantity + 1)}
                         >
                           <Text style={styles.stepperBtnText}>+</Text>
                         </TouchableOpacity>
@@ -3459,17 +3460,20 @@ export default function OrdersScreen() {
                     return (
                       <View style={styles.invoiceItemsCard}>
                         <Text style={styles.invoiceSectionTitle}>ORDERED ITEMS ({orderedItemsList.length})</Text>
-                        {orderedItemsList.map((itm: any, i: number) => (
-                          <View key={itm.id || i} style={styles.invoiceItemRow}>
-                            <View style={styles.invoiceQtyBadge}>
-                              <Text style={styles.invoiceQtyText}>{itm.quantity}x</Text>
+                        {orderedItemsList.map((itm: any, i: number) => {
+                          const itemKey = itm.id || (itm as any).order_item_id || (itm.product_id ? `prod-${itm.product_id}-${i}` : `inv-item-${i}`);
+                          return (
+                            <View key={itemKey} style={styles.invoiceItemRow}>
+                              <View style={styles.invoiceQtyBadge}>
+                                <Text style={styles.invoiceQtyText}>{itm.quantity}x</Text>
+                              </View>
+                              <Text style={styles.invoiceItemName} numberOfLines={2}>{itm.product_name || itm.name || 'Item'}</Text>
+                              <Text style={styles.invoiceItemPrice}>
+                                {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
+                              </Text>
                             </View>
-                            <Text style={styles.invoiceItemName} numberOfLines={2}>{itm.product_name || itm.name || 'Item'}</Text>
-                            <Text style={styles.invoiceItemPrice}>
-                              {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
-                            </Text>
-                          </View>
-                        ))}
+                          );
+                        })}
                       </View>
                     );
                   })()}

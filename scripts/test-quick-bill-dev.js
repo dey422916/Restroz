@@ -919,6 +919,146 @@ const mixedKeys = mixedCatalogAndQbOrder.map((i, idx) => i.id || (i.product_id ?
 const uniqueMixedKeys = new Set(mixedKeys);
 assert(uniqueMixedKeys.size === 3, 'Test AI: All 3 lines (catalog + 2 Quick Bill items) produce 100% unique React keys');
 
+// ----------------------------------------------------
+// TEST AJ: New Unsaved Catalog Item in Edit Order (+, -, remove before save)
+// ----------------------------------------------------
+const baseEditItems = [
+  { id: 'db-line-existing-1', product_id: 'prod-existing', product_name: 'Existing Biryani', unit_price: 220, quantity: 1 },
+];
+
+const newlyAddedCatalogProduct = {
+  id: 'prod-kebab-101',
+  name: 'Galouti Kebab Platter',
+  price: 280,
+  tax_rate: 5,
+};
+
+const newUnsavedLineId = `edit-line-test-new-kebab`;
+const newCatalogLineItem = {
+  id: newUnsavedLineId,
+  order_id: 'ord-edit-test',
+  product_id: newlyAddedCatalogProduct.id,
+  product_name: newlyAddedCatalogProduct.name,
+  unit_price: 280,
+  total_price: 280,
+  quantity: 1,
+  tax_rate: 5,
+  tax_amount: 14,
+  subtotal: 280,
+  total: 280,
+};
+
+let activeEditItemsList = [...baseEditItems, newCatalogLineItem];
+assert(activeEditItemsList.length === 2, 'Test AJ: Catalog item successfully added to edit list with stable local lineId');
+assert(activeEditItemsList[1].id === newUnsavedLineId, 'Test AJ: New line preserves its local lineId');
+
+// Increase quantity of new line
+activeEditItemsList = testAdjustQty(activeEditItemsList, newUnsavedLineId, 2);
+assert(activeEditItemsList[1].quantity === 2, 'Test AJ: New unsaved item quantity increased to 2');
+assert(activeEditItemsList[1].subtotal === 560, 'Test AJ: New unsaved item subtotal updated to 560');
+assert(activeEditItemsList[0].quantity === 1, 'Test AJ: Existing item remains strictly untouched at qty 1');
+
+// Decrease quantity of new line
+activeEditItemsList = testAdjustQty(activeEditItemsList, newUnsavedLineId, 1);
+assert(activeEditItemsList[1].quantity === 1, 'Test AJ: New unsaved item quantity decreased to 1');
+
+// Remove new line before save
+activeEditItemsList = testAdjustQty(activeEditItemsList, newUnsavedLineId, 0);
+assert(activeEditItemsList.length === 1, 'Test AJ: New unsaved item cleanly removed before save');
+assert(activeEditItemsList[0].id === 'db-line-existing-1', 'Test AJ: Surviving item is exactly the original existing line');
+
+// ----------------------------------------------------
+// TEST AK: Stable lineId after first item removal (Item A, B, C)
+// ----------------------------------------------------
+const initialThreeItems = [
+  { id: 'stable-line-A', product_id: 'prod-A', product_name: 'Item A', unit_price: 100, quantity: 1 },
+  { id: 'stable-line-B', product_id: 'prod-B', product_name: 'Item B', unit_price: 150, quantity: 2 },
+  { id: 'stable-line-C', product_id: 'prod-C', product_name: 'Item C', unit_price: 200, quantity: 1 },
+];
+
+const afterRemovingA = testAdjustQty(initialThreeItems, 'stable-line-A', 0);
+assert(afterRemovingA.length === 2, 'Test AK: Count is 2 after removing Item A');
+assert(afterRemovingA[0].id === 'stable-line-B', 'Test AK: Item B preserves its exact lineId stable-line-B');
+assert(afterRemovingA[1].id === 'stable-line-C', 'Test AK: Item C preserves its exact lineId stable-line-C');
+assert(afterRemovingA[0].product_name === 'Item B', 'Test AK: First array position is Item B');
+assert(afterRemovingA[1].product_name === 'Item C', 'Test AK: Second array position is Item C');
+
+// ----------------------------------------------------
+// TEST AL: KOT Diff calculation with multiple lines of same product & null products
+// ----------------------------------------------------
+function calculateKotDiff(oldList, updatedList) {
+  const added = [];
+  const oldItemMap = new Map();
+  oldList.forEach((i, idx) => {
+    const key = i.id || (i.order_item_id) || (i.product_id ? `prod-${i.product_id}` : `item-${i.product_name}-${idx}`);
+    oldItemMap.set(key, i);
+  });
+
+  for (const newItem of updatedList) {
+    const key = newItem.id || (newItem.order_item_id) || (newItem.product_id ? `prod-${newItem.product_id}` : `item-${newItem.product_name}`);
+    const oldItem = oldItemMap.get(key);
+    if (!oldItem) {
+      added.push(newItem);
+    } else if (Number(newItem.quantity || 0) > Number(oldItem.quantity || 0)) {
+      const diffQty = Number(newItem.quantity || 0) - Number(oldItem.quantity || 0);
+      added.push({
+        ...newItem,
+        quantity: diffQty,
+      });
+    }
+  }
+  return added;
+}
+
+const kotOldItems = [
+  { id: 'kot-line-brownie-1', product_id: 'prod-brownie', product_name: 'Brownie', quantity: 1 },
+  { id: 'kot-line-brownie-2', product_id: 'prod-brownie', product_name: 'Brownie', quantity: 2, item_notes: 'Extra fudge' },
+  { id: 'kot-line-chai-1', product_id: null, product_name: 'Masala Chai', quantity: 2 },
+];
+
+const kotUpdatedItems = [
+  // Brownie Line 1 increased from 1 -> 3 (diff = 2)
+  { id: 'kot-line-brownie-1', product_id: 'prod-brownie', product_name: 'Brownie', quantity: 3 },
+  // Brownie Line 2 unchanged (qty 2 -> diff = 0)
+  { id: 'kot-line-brownie-2', product_id: 'prod-brownie', product_name: 'Brownie', quantity: 2, item_notes: 'Extra fudge' },
+  // Masala Chai removed
+  // New line added: Garlic Naan qty 2 (diff = 2)
+  { id: 'kot-line-naan-new', product_id: 'prod-naan', product_name: 'Garlic Naan', quantity: 2 },
+];
+
+const kotDiffResult = calculateKotDiff(kotOldItems, kotUpdatedItems);
+assert(kotDiffResult.length === 2, 'Test AL: KOT Diff produces exactly 2 supplementary entries');
+assert(kotDiffResult[0].id === 'kot-line-brownie-1' && kotDiffResult[0].quantity === 2, 'Test AL: Brownie Line 1 supplementary quantity is 2 (3 - 1)');
+assert(kotDiffResult[1].id === 'kot-line-naan-new' && kotDiffResult[1].quantity === 2, 'Test AL: New Garlic Naan supplementary quantity is 2');
+assert(!kotDiffResult.some((i) => i.id === 'kot-line-brownie-2'), 'Test AL: Brownie Line 2 (unchanged) is NOT included in KOT supplementary');
+
+// ----------------------------------------------------
+// TEST AM: Mixed 4-line order (catalog + duplicate catalog + 2 QB null items)
+// ----------------------------------------------------
+const mixedFourLines = [
+  { id: 'line-c1', product_id: 'prod-paneer', product_name: 'Paneer Tikka', quantity: 1, unit_price: 200 },
+  { id: 'line-c2', product_id: 'prod-paneer', product_name: 'Paneer Tikka', quantity: 2, unit_price: 200, item_notes: 'Spicy' },
+  { id: 'line-q1', product_id: null, product_name: 'Special Mocktail', quantity: 1, unit_price: 120 },
+  { id: 'line-q2', product_id: null, product_name: 'Chef Custom Dessert', quantity: 1, unit_price: 180 },
+];
+
+const mixedFourKeys = mixedFourLines.map((i, idx) => i.id || (i.product_id ? `prod-${i.product_id}-${idx}` : `line-${idx}`));
+const uniqueFourKeys = new Set(mixedFourKeys);
+assert(uniqueFourKeys.size === 4, 'Test AM: 4 lines with duplicate product IDs and null product IDs all produce distinct keys');
+
+// Decrement duplicate line (line-c2) from 2 -> 1
+let adjustedFourLines = testAdjustQty(mixedFourLines, 'line-c2', 1);
+assert(adjustedFourLines[1].quantity === 1, 'Test AM: Duplicate catalog line (line-c2) quantity updated to 1');
+assert(adjustedFourLines[0].quantity === 1, 'Test AM: First catalog line (line-c1) remains unaffected');
+assert(adjustedFourLines[2].quantity === 1, 'Test AM: First QB item remains unaffected');
+assert(adjustedFourLines[3].quantity === 1, 'Test AM: Second QB item remains unaffected');
+
+// Remove QB item 1 (line-q1)
+adjustedFourLines = testAdjustQty(adjustedFourLines, 'line-q1', 0);
+assert(adjustedFourLines.length === 3, 'Test AM: 3 items remain after removing QB item 1');
+assert(!adjustedFourLines.some((i) => i.id === 'line-q1'), 'Test AM: QB item 1 removed');
+assert(adjustedFourLines.some((i) => i.id === 'line-q2'), 'Test AM: QB item 2 remains intact');
+
 console.log('\n====================================================');
 console.log(`RESULTS: ${passedTests} / ${totalTests} tests passed (${Math.round((passedTests/totalTests)*100)}%)`);
 console.log('====================================================\n');

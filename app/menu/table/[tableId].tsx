@@ -1971,19 +1971,22 @@ export default function CustomerDigitalMenuScreen() {
                 {/* Items Table */}
                 <View style={styles.itemsTable}>
                   <Text style={styles.itemsTableTitle}>ITEMS</Text>
-                  {(selectedOrderDetail.items || []).map((itm, idx) => (
-                    <View key={itm.id || idx} style={styles.itemRow}>
-                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#0f172a', flex: 1 }}>
-                        {itm.product_name}
-                      </Text>
-                      <Text style={{ fontSize: 11, color: '#64748b', width: 40, textAlign: 'center' }}>
-                        {itm.quantity}x
-                      </Text>
-                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#0f172a', width: 70, textAlign: 'right' }}>
-                        {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
-                      </Text>
-                    </View>
-                  ))}
+                  {(selectedOrderDetail.items || []).map((itm, idx) => {
+                    const itemKey = itm.id || (itm as any).order_item_id || (itm.product_id ? `prod-${itm.product_id}-${idx}` : `item-${idx}`);
+                    return (
+                      <View key={itemKey} style={styles.itemRow}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#0f172a', flex: 1 }}>
+                          {itm.product_name}
+                        </Text>
+                        <Text style={{ fontSize: 11, color: '#64748b', width: 40, textAlign: 'center' }}>
+                          {itm.quantity}x
+                        </Text>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#0f172a', width: 70, textAlign: 'right' }}>
+                          {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
+                        </Text>
+                      </View>
+                    );
+                  })}
                 </View>
 
                 {/* Financial Summary */}

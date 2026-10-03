@@ -1035,7 +1035,7 @@ export const orderService = {
           if (items && items.length > 0) {
             const hasOrderTax = isOrderGstApplicable(newOrder as any, false) || (newOrder.items && newOrder.items.some((i) => Number(i.tax_rate) > 0));
             const fallbackOrderRate = getOrderTaxRate(newOrder as any, 5.0);
-            const formattedItems = items.map((i) => {
+            const formattedItems = items.map((i, idx) => {
               const rawItem = i as any;
               const unitPrice = Number(i.unit_price) || 0;
               const quantity = Number(i.quantity) || 1;
@@ -1063,7 +1063,7 @@ export const orderService = {
               };
 
               return {
-                id: i.id?.startsWith('item-') ? i.id : 'item-' + Date.now() + Math.random().toString(36).substr(2, 4),
+                id: i.id || (i as any).order_item_id || `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
                 order_id: createdDbOrder.id,
                 product_id: isValidUuid(i.product_id) ? i.product_id : null,
                 product_name: i.product_name,
@@ -1294,7 +1294,7 @@ export const orderService = {
 
     for (const newItem of updatedItems) {
       const key = newItem.id || (newItem as any).order_item_id || (newItem.product_id ? `prod-${newItem.product_id}` : `item-${newItem.product_name}`);
-      const oldItem = oldItemMap.get(key) || (newItem.product_id ? oldItems.find((o) => o.product_id === newItem.product_id) : undefined);
+      const oldItem = oldItemMap.get(key);
       if (!oldItem) {
         addedItems.push(newItem);
       } else if (Number(newItem.quantity || 0) > Number(oldItem.quantity || 0)) {

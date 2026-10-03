@@ -351,14 +351,14 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCartItems((prev) => [...prev, newItem]);
   };
 
-  const updateQuantity = (productId: string, quantity: number) => {
+  const updateQuantity = (lineIdOrProductId: string, quantity: number) => {
     if (quantity <= 0) {
-      removeItem(productId);
+      removeItem(lineIdOrProductId);
       return;
     }
     setCartItems((prev) =>
       prev.map((item) => {
-        if (item.product_id === productId || item.id === productId) {
+        if ((item.id && item.id === lineIdOrProductId) || (!item.id && item.product_id === lineIdOrProductId)) {
           const subtotal = Number((quantity * item.unit_price).toFixed(2));
           const taxAmount = Number(((subtotal * item.tax_rate) / 100).toFixed(2));
           return {
@@ -375,13 +375,13 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const removeItem = (productId: string) => {
-    setCartItems((prev) => prev.filter((item) => item.product_id !== productId && item.id !== productId));
+  const removeItem = (lineIdOrProductId: string) => {
+    setCartItems((prev) => prev.filter((item) => (item.id ? item.id !== lineIdOrProductId : item.product_id !== lineIdOrProductId)));
   };
 
-  const setItemNotes = (productId: string, notes: string) => {
+  const setItemNotes = (lineIdOrProductId: string, notes: string) => {
     setCartItems((prev) =>
-      prev.map((item) => (item.product_id === productId || item.id === productId ? { ...item, item_notes: notes } : item))
+      prev.map((item) => ((item.id && item.id === lineIdOrProductId) || (!item.id && item.product_id === lineIdOrProductId) ? { ...item, item_notes: notes } : item))
     );
   };
 
@@ -646,7 +646,12 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const loadOrderIntoCart = (order: Order) => {
     if (!order) return;
     setLoadedOrder(order);
-    setCartItems(order.items || []);
+    setCartItems(
+      (order.items || []).map((i, idx) => ({
+        ...i,
+        id: i.id || (i as any).order_item_id || `line-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
+      }))
+    );
     setOrderTypeState(order.order_type);
     setIsSupplementary(Boolean(order.is_supplementary));
     setOrderNotes(order.notes?.replace('[POS]', '').replace('[SUPPLEMENTARY ORDER]', '').trim() || '');

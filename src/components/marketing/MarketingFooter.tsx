@@ -52,15 +52,13 @@ export function MarketingFooter() {
         <View style={[styles.columnsGrid, !isDesktop && styles.columnsGridMobile]}>
           {/* Brand Col */}
           <View style={styles.brandCol}>
-            <View style={styles.logoRow}>
+            <View style={styles.footerLogoBlock}>
               <Image
                 source={require('../../../assets/images/restroz-logo.png')}
-                style={styles.logoImg}
+                style={styles.footerLogoImg}
                 resizeMode="contain"
               />
-              <Text style={styles.logoText}>
-                Restro<Text style={styles.logoTextAccent}>Z</Text>
-              </Text>
+              <Text style={styles.footerLogoTagline}>RESTAURANT MANAGEMENT</Text>
             </View>
             <Text style={styles.brandDesc}>
               Complete modern cloud restaurant management platform. Powering high-speed POS billing,
@@ -258,26 +256,24 @@ const styles = StyleSheet.create({
     flex: 1.4,
     minWidth: 260,
   },
-  logoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+  footerLogoBlock: {
+    alignItems: 'flex-start',
     marginBottom: 16,
   },
-  logoImg: {
-    width: 38,
-    height: 38,
+  footerLogoImg: {
+    width: 68,
+    height: 48,
     borderRadius: 8,
     backgroundColor: '#FFFFFF',
+    padding: 2,
   },
-  logoText: {
-    fontSize: 22,
+  footerLogoTagline: {
+    fontSize: 9,
     fontWeight: '800',
-    color: '#FFFFFF',
-    letterSpacing: -0.5,
-  },
-  logoTextAccent: {
-    color: '#FC8019',
+    color: '#94A3B8',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+    marginTop: 6,
   },
   brandDesc: {
     fontSize: 14,

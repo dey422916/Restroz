@@ -87,7 +87,7 @@ export function MarketingHeader() {
       <View style={styles.headerInner}>
         {/* Logo */}
         <TouchableOpacity
-          style={styles.logoRow}
+          style={styles.logoBlock}
           onPress={() => handleNav('/info')}
           activeOpacity={0.8}
         >
@@ -96,12 +96,7 @@ export function MarketingHeader() {
             style={styles.logoImg}
             resizeMode="contain"
           />
-          <View>
-            <Text style={styles.logoText}>
-              Restro<Text style={styles.logoTextAccent}>Z</Text>
-            </Text>
-            <Text style={styles.logoTagline}>Restaurant Management</Text>
-          </View>
+          <Text style={styles.logoTagline}>RESTAURANT MANAGEMENT</Text>
         </TouchableOpacity>
 
         {/* Desktop Navigation */}
@@ -200,7 +195,7 @@ export function MarketingHeader() {
             <View style={styles.mobileDrawer}>
               <View style={styles.mobileDrawerHeader}>
                 <TouchableOpacity
-                  style={styles.logoRow}
+                  style={styles.logoBlock}
                   onPress={() => handleNav('/info')}
                   activeOpacity={0.8}
                 >
@@ -209,9 +204,7 @@ export function MarketingHeader() {
                     style={styles.logoImg}
                     resizeMode="contain"
                   />
-                  <Text style={styles.logoText}>
-                    Restro<Text style={styles.logoTextAccent}>Z</Text>
-                  </Text>
+                  <Text style={styles.logoTagline}>RESTAURANT MANAGEMENT</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -305,34 +298,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    height: 72,
+    paddingVertical: 8,
+    minHeight: 74,
   },
-  logoRow: {
-    flexDirection: 'row',
+  logoBlock: {
     alignItems: 'center',
-    gap: 10,
+    justifyContent: 'center',
   },
   logoImg: {
-    width: 38,
-    height: 38,
-    borderRadius: 8,
-  },
-  logoText: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#0F172A',
-    letterSpacing: -0.5,
-  },
-  logoTextAccent: {
-    color: '#FC8019',
+    width: 60,
+    height: 44,
   },
   logoTagline: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#64748B',
+    fontSize: 8.5,
+    fontWeight: '800',
+    color: '#475569',
+    letterSpacing: 1.1,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginTop: -2,
+    marginTop: 2,
+    textAlign: 'center',
   },
   desktopNav: {
     flexDirection: 'row',

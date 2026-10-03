@@ -87,14 +87,13 @@ export default function SuperAdminLayout() {
     <View style={[styles.sidebarInner, isDrawer && styles.drawerSidebarInner]}>
       {/* Brand Header */}
       <View style={styles.brandHeader}>
-        <Image
-          source={require('../../assets/images/restroz-logo.png')}
-          style={styles.brandLogoImg}
-          resizeMode="contain"
-        />
-        <View style={{ flex: 1 }}>
-          <Text style={styles.brandTitle}>RESTROZ</Text>
-          <Text style={styles.brandSubtitle}>SUPER ADMIN SAAS</Text>
+        <View style={styles.brandLogoBlock}>
+          <Image
+            source={require('../../assets/images/restroz-logo.png')}
+            style={styles.brandLogoImg}
+            resizeMode="contain"
+          />
+          <Text style={styles.brandTagline}>RESTAURANT MANAGEMENT</Text>
         </View>
         {isDrawer && (
           <TouchableOpacity
@@ -451,23 +450,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     marginBottom: 16,
   },
+  brandLogoBlock: {
+    flex: 1,
+  },
   brandLogoImg: {
-    width: 36,
-    height: 36,
+    width: 60,
+    height: 42,
     borderRadius: 8,
     backgroundColor: '#FFFFFF',
+    padding: 2,
   },
-  brandTitle: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  brandSubtitle: {
+  brandTagline: {
     color: '#38BDF8',
-    fontSize: 10,
-    fontWeight: '700',
+    fontSize: 9,
+    fontWeight: '800',
     letterSpacing: 1,
+    marginTop: 4,
+    textTransform: 'uppercase',
   },
   divider: {
     height: 1,

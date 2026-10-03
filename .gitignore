@@ -35,6 +35,7 @@ qz-restroz-certificate.pem
 *secrets*
 ACCOUNTS_LOCAL*.md
 
-Expo-Go-*.apk
+*.apk
+*.zip
 
 supabase/.temp/

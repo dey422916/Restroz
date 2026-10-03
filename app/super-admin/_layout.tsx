@@ -19,6 +19,8 @@ const NAV_ITEMS = [
   { label: '📊 Overview', route: '/super-admin', title: 'Platform Control Center' },
   { label: '🏢 Restaurants', route: '/super-admin/restaurants', title: 'Restaurant Directory' },
   { label: '👥 Admins', route: '/super-admin/admins', title: 'Restaurant Admins' },
+  { label: '📋 Website Leads', route: '/super-admin/website-leads', title: 'Website Sales Leads' },
+  { label: '🎨 Website Banners', route: '/super-admin/website-banners', title: 'Promotional Banners' },
   { label: '🎟️ Coupons', route: '/super-admin/coupons', title: 'Global Coupons Manager' },
   { label: '🏷️ Subscription Plans', route: '/super-admin/plans', title: 'Subscription Plans' },
   { label: '💳 Payments', route: '/super-admin/payments', title: 'Payment Ledger' },

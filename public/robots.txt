@@ -1,0 +1,14 @@
+User-agent: *
+Allow: /
+Allow: /info
+Allow: /info/*
+Disallow: /super-admin/
+Disallow: /super-admin
+Disallow: /(admin)/
+Disallow: /(auth)/
+Disallow: /admin/
+Disallow: /checkout
+Disallow: /api/
+
+Sitemap: https://restroz.shop/sitemap.xml
+Sitemap: https://restroz.shop/info/sitemap.xml

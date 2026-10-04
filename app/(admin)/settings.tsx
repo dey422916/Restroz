@@ -30,11 +30,17 @@ import {
   getIndianPhoneValidationError,
 } from '../../src/utils/validation';
 
+import {
+  getRestaurantOnlineOrderingUrl,
+  copyRestaurantUrlToClipboard,
+  openRestaurantWebsite,
+} from '../../src/utils/restaurantUrl';
+
 export default function SettingsScreen() {
   const { width: windowWidth } = useWindowDimensions();
   const isDesktop = windowWidth >= 1150;
   const { settings, updateSettings, isOnlineOrdersEnabled, toggleOnlineOrders, loading: settingsLoading } = useSettings();
-  const { user, role, isSuperAdmin, isAdmin, activeRestaurantId } = useAuth();
+  const { user, role, isSuperAdmin, isAdmin, activeRestaurantId, activeRestaurant } = useAuth();
   const { showToast } = useNotification();
   const [isTogglingOnline, setIsTogglingOnline] = useState(false);
   const canManage = isAdmin || isSuperAdmin || role === 'ADMIN' || role === 'SUPER_ADMIN';
@@ -1473,6 +1479,46 @@ export default function SettingsScreen() {
                       {isOnlineOrdersEnabled ? '● OPEN' : '○ CLOSED'}
                     </Text>
                   </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* 3.0. Dedicated Restaurant Ordering Website */}
+              <View style={styles.card}>
+                <Text style={styles.cardHeader}>🌐 Dedicated Ordering Website</Text>
+                <Text style={styles.cardSubHeader}>
+                  Your unique customer-facing ordering website. Share this link to take direct delivery & takeaway orders with zero commissions.
+                </Text>
+
+                <View style={{ backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, padding: 14, marginTop: 10 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', letterSpacing: 0.5, marginBottom: 4 }}>
+                    PUBLIC WEBSITE URL
+                  </Text>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A', marginBottom: 12 }} numberOfLines={1}>
+                    {getRestaurantOnlineOrderingUrl(activeRestaurant?.slug || settings.slug || activeRestaurantId)}
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TouchableOpacity
+                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', borderRadius: 8, paddingVertical: 9, paddingHorizontal: 12 }}
+                      onPress={async () => {
+                        const url = getRestaurantOnlineOrderingUrl(activeRestaurant?.slug || settings.slug || activeRestaurantId);
+                        const copied = await copyRestaurantUrlToClipboard(url);
+                        if (copied) {
+                          showToast('success', 'Link Copied', 'Storefront link copied to clipboard!');
+                          Alert.alert('Copied 🎉', 'Online ordering website link copied to clipboard!\n\n' + url);
+                        }
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#2563EB' }}>📋 Copy Website Link</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#BBF7D0', borderRadius: 8, paddingVertical: 9, paddingHorizontal: 12 }}
+                      onPress={() => openRestaurantWebsite(activeRestaurant?.slug || settings.slug || activeRestaurantId)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#16A34A' }}>🌐 Open Website</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
 

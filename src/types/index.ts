@@ -53,6 +53,7 @@ export type PaperSize = '58mm' | '80mm' | 'A4';
 export interface RestaurantSettings {
   id: string;
   restaurant_id?: string;
+  slug?: string;
   name: string;
   legal_name: string;
   address: string;

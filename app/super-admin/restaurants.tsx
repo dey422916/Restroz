@@ -33,6 +33,12 @@ import {
   getIndianPhoneValidationError,
 } from '../../src/utils/validation';
 
+import {
+  getRestaurantOnlineOrderingUrl,
+  copyRestaurantUrlToClipboard,
+  openRestaurantWebsite,
+} from '../../src/utils/restaurantUrl';
+
 export default function SuperAdminRestaurantsScreen() {
   const router = useRouter();
   const { user, setActiveRestaurantId } = useAuth();
@@ -538,6 +544,36 @@ export default function SuperAdminRestaurantsScreen() {
                       </View>
                     )}
 
+                    {/* Online Ordering Website URL */}
+                    <View style={{ backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, padding: 10, marginBottom: 10 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: '#64748B', letterSpacing: 0.5, marginBottom: 4 }}>
+                        ONLINE ORDERING WEBSITE
+                      </Text>
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A', marginBottom: 8 }} numberOfLines={1}>
+                        {getRestaurantOnlineOrderingUrl(r.slug || r.id)}
+                      </Text>
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TouchableOpacity
+                          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', borderRadius: 6, paddingVertical: 6, paddingHorizontal: 10 }}
+                          onPress={async () => {
+                            const url = getRestaurantOnlineOrderingUrl(r.slug || r.id);
+                            const copied = await copyRestaurantUrlToClipboard(url);
+                            if (copied) Alert.alert('Copied 🎉', 'Online ordering link copied to clipboard!\n\n' + url);
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#2563EB' }}>📋 Copy URL</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#BBF7D0', borderRadius: 6, paddingVertical: 6, paddingHorizontal: 10 }}
+                          onPress={() => openRestaurantWebsite(r.slug || r.id)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#16A34A' }}>🌐 Open Website</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
                     {/* Action Buttons */}
                     <View style={styles.mobileActionContainer}>
                       <TouchableOpacity
@@ -592,7 +628,7 @@ export default function SuperAdminRestaurantsScreen() {
             <View style={styles.tableCard}>
               <View style={styles.tableHeader}>
                 <Text style={[styles.th, { flex: 2 }]}>RESTAURANT</Text>
-                <Text style={[styles.th, { flex: 1.2 }]}>SLUG</Text>
+                <Text style={[styles.th, { flex: 2 }]}>ONLINE WEBSITE</Text>
                 <Text style={[styles.th, { flex: 1 }]}>STATUS</Text>
                 <Text style={[styles.th, { flex: 1.5 }]}>CURRENT PLAN</Text>
                 <Text style={[styles.th, { flex: 1.2 }]}>EXPIRY</Text>
@@ -602,6 +638,7 @@ export default function SuperAdminRestaurantsScreen() {
               {filteredRestaurants.map((r) => {
                 const sub = subscriptions[r.id];
                 const isIncomplete = !r.address || !r.city || !r.postal_code;
+                const onlineUrl = getRestaurantOnlineOrderingUrl(r.slug || r.id);
                 return (
                   <View key={r.id} style={styles.tableRow}>
                     <TouchableOpacity
@@ -630,7 +667,28 @@ export default function SuperAdminRestaurantsScreen() {
                       </View>
                     </TouchableOpacity>
 
-                    <Text style={[styles.tdText, { flex: 1.2, fontWeight: '600' }]}>{r.slug}</Text>
+                    <View style={{ flex: 2, paddingRight: 8 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#0F172A' }} numberOfLines={1}>
+                        {onlineUrl}
+                      </Text>
+                      <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
+                        <TouchableOpacity
+                          style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', borderRadius: 4, paddingVertical: 3, paddingHorizontal: 6 }}
+                          onPress={async () => {
+                            const copied = await copyRestaurantUrlToClipboard(onlineUrl);
+                            if (copied) Alert.alert('Copied 🎉', 'Online ordering link copied to clipboard!\n\n' + onlineUrl);
+                          }}
+                        >
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#2563EB' }}>📋 Copy</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#BBF7D0', borderRadius: 4, paddingVertical: 3, paddingHorizontal: 6 }}
+                          onPress={() => openRestaurantWebsite(r.slug || r.id)}
+                        >
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#16A34A' }}>🌐 Open</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
 
                     <View style={{ flex: 1 }}>
                       <View

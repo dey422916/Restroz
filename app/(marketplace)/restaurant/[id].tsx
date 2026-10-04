@@ -16,6 +16,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { marketplaceService } from '../../../src/services/api/marketplaceService';
 import { couponService } from '../../../src/services/api/couponService';
 import { useCustomerCart } from '../../../src/context/CustomerCartContext';
+import { useStorefront } from '../../../src/context/StorefrontContext';
 import { Restaurant, RestaurantPublicProfile, Category, Product, Coupon } from '../../../src/types';
 import { customerColors } from '../../../src/utils/colors';
 import { supabase, isSupabaseConfigured } from '../../../src/services/supabase';
@@ -73,73 +74,90 @@ export default function RestaurantMenuScreen() {
 
   const { cart, itemCount, addToCart, updateQuantity, applyCoupon, removeCoupon, conflictModal, resolveConflict } =
     useCustomerCart();
+  const { isDedicated, setDedicatedMode } = useStorefront();
 
   useEffect(() => {
     if (!id) return;
+    let isMounted = true;
+    let channel: any = null;
+
     const loadMenu = async () => {
       try {
-        const [rest, menu, cpnList] = await Promise.all([
-          marketplaceService.getRestaurantPublicDetails(id),
-          marketplaceService.getRestaurantMenu(id),
-          couponService.getValidMarketplaceCoupons(id),
-        ]);
-
+        const rest = await marketplaceService.getRestaurantPublicDetails(id);
+        if (!isMounted) return;
         setRestaurant(rest);
-        setCategories(menu.categories);
-        setProducts(menu.products);
-        setCoupons(cpnList);
+
+        if (rest) {
+          setDedicatedMode(id, rest);
+          const actualRestaurantId = rest.id;
+          const [menu, cpnList] = await Promise.all([
+            marketplaceService.getRestaurantMenu(actualRestaurantId),
+            couponService.getValidMarketplaceCoupons(actualRestaurantId),
+          ]);
+
+          if (isMounted) {
+            setCategories(menu.categories);
+            setProducts(menu.products);
+            setCoupons(cpnList);
+          }
+
+          // Supabase Realtime subscription on restaurant_public_profiles for live open/closed updates
+          if (isSupabaseConfigured && actualRestaurantId) {
+            const channelName = `rest_public_profile_${actualRestaurantId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+            channel = supabase
+              .channel(channelName)
+              .on(
+                'postgres_changes',
+                {
+                  event: '*',
+                  schema: 'public',
+                  table: 'restaurant_public_profiles',
+                  filter: `restaurant_id=eq.${actualRestaurantId}`,
+                },
+                (payload) => {
+                  if (payload.new && (payload.new as any).restaurant_id) {
+                    const newIsOpen =
+                      (payload.new as any).is_open !== false &&
+                      (payload.new as any).marketplace_enabled !== false;
+                    const newBanner = (payload.new as any).banner_url;
+                    setRestaurant((prev) => {
+                      if (!prev) return prev;
+                      return {
+                        ...prev,
+                        banner_url: newBanner || prev.banner_url,
+                        banner_urls: newBanner ? parseBannerUrls(newBanner) : prev.banner_urls,
+                        public_profile: {
+                          ...(prev.public_profile || ({} as any)),
+                          ...(payload.new as any),
+                          banner_url: newBanner || prev.public_profile?.banner_url,
+                          banner_urls: newBanner ? parseBannerUrls(newBanner) : prev.public_profile?.banner_urls,
+                          is_open: newIsOpen,
+                        },
+                      };
+                    });
+                  }
+                }
+              )
+              .subscribe();
+          }
+        }
       } catch (e) {
         console.warn('Error loading restaurant menu:', e);
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
     loadMenu();
 
-    // Supabase Realtime subscription on restaurant_public_profiles for live open/closed updates
-    if (isSupabaseConfigured && id) {
-      const channelName = `rest_public_profile_${id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      const channel = supabase
-        .channel(channelName)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'restaurant_public_profiles',
-            filter: `restaurant_id=eq.${id}`,
-          },
-          (payload) => {
-            if (payload.new && (payload.new as any).restaurant_id) {
-              const newIsOpen =
-                (payload.new as any).is_open !== false &&
-                (payload.new as any).marketplace_enabled !== false;
-              const newBanner = (payload.new as any).banner_url;
-              setRestaurant((prev) => {
-                if (!prev) return prev;
-                return {
-                  ...prev,
-                  banner_url: newBanner || prev.banner_url,
-                  banner_urls: newBanner ? parseBannerUrls(newBanner) : prev.banner_urls,
-                  public_profile: {
-                    ...(prev.public_profile || ({} as any)),
-                    ...(payload.new as any),
-                    banner_url: newBanner || prev.public_profile?.banner_url,
-                    banner_urls: newBanner ? parseBannerUrls(newBanner) : prev.public_profile?.banner_urls,
-                    is_open: newIsOpen,
-                  },
-                };
-              });
-            }
-          }
-        )
-        .subscribe();
-
-      return () => {
+    return () => {
+      isMounted = false;
+      if (channel) {
         supabase.removeChannel(channel);
-      };
-    }
+      }
+    };
   }, [id]);
 
   const profile = restaurant?.public_profile;
@@ -233,31 +251,33 @@ export default function RestaurantMenuScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Top Header Bar */}
-      <View style={styles.headerBar}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => router.replace('/(marketplace)')}
-        >
-          <Text style={{ fontSize: 14, fontWeight: '700', color: customerColors.primary }}>
-            ← Restaurants
+      {/* Top Header Bar - only in marketplace mode (dedicated mode uses dedicated top navbar) */}
+      {!isDedicated && (
+        <View style={styles.headerBar}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => router.replace('/(marketplace)')}
+          >
+            <Text style={{ fontSize: 14, fontWeight: '700', color: customerColors.primary }}>
+              ← Restaurants
+            </Text>
+          </TouchableOpacity>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {restaurant.name}
           </Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          {restaurant.name}
-        </Text>
-        <TouchableOpacity
-          style={styles.cartIconBtn}
-          onPress={() => router.push('/(marketplace)/cart')}
-        >
-          <Text style={{ fontSize: 18 }}>🛍️</Text>
-          {itemCount > 0 && (
-            <View style={styles.cartBadge}>
-              <Text style={styles.cartBadgeText}>{itemCount}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={styles.cartIconBtn}
+            onPress={() => router.push('/(marketplace)/cart')}
+          >
+            <Text style={{ fontSize: 18 }}>🛍️</Text>
+            {itemCount > 0 && (
+              <View style={styles.cartBadge}>
+                <Text style={styles.cartBadgeText}>{itemCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
 
       <ScrollView
         style={styles.scrollArea}
@@ -329,7 +349,7 @@ export default function RestaurantMenuScreen() {
                     style={styles.couponCard}
                     activeOpacity={0.8}
                     onPress={() => {
-                      if (cart.restaurantId === id && cart.items.length > 0) {
+                      if (cart.restaurantId === restaurant?.id && cart.items.length > 0) {
                         const val = cpn.discount_type === 'percentage'
                           ? (cart.subtotal * (cpn.discount_value || 0)) / 100
                           : (cpn.discount_value || 0);

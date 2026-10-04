@@ -6,6 +6,7 @@ import { AuthProvider } from '../src/context/AuthContext';
 import { SettingsProvider } from '../src/context/SettingsContext';
 import { NotificationProvider } from '../src/context/NotificationContext';
 import { PosProvider } from '../src/context/PosContext';
+import { StorefrontProvider } from '../src/context/StorefrontContext';
 import { CustomerCartProvider } from '../src/context/CustomerCartContext';
 import { NetworkProvider } from '../src/context/NetworkContext';
 import { ToastContainer } from '../src/components/common/ToastContainer';
@@ -88,23 +89,25 @@ export default function RootLayout() {
           <AuthProvider>
             <SettingsProvider>
               <PosProvider>
-                <CustomerCartProvider>
-                  <StatusBar style="auto" />
-                  <DeepLinkHandler />
-                  <Stack screenOptions={{ headerShown: false }}>
-                    <Stack.Screen name="index" />
-                    <Stack.Screen name="(auth)/login" />
-                    <Stack.Screen name="(auth)/signup" />
-                    <Stack.Screen name="(auth)/verify-email" />
-                    <Stack.Screen name="(auth)/forgot-password" />
-                    <Stack.Screen name="(auth)/reset-password" />
-                    <Stack.Screen name="(admin)" />
-                    <Stack.Screen name="super-admin" />
-                    <Stack.Screen name="(marketplace)" />
-                    <Stack.Screen name="menu/table/[tableId]" />
-                  </Stack>
-                  <ToastContainer />
-                </CustomerCartProvider>
+                <StorefrontProvider>
+                  <CustomerCartProvider>
+                    <StatusBar style="auto" />
+                    <DeepLinkHandler />
+                    <Stack screenOptions={{ headerShown: false }}>
+                      <Stack.Screen name="index" />
+                      <Stack.Screen name="(auth)/login" />
+                      <Stack.Screen name="(auth)/signup" />
+                      <Stack.Screen name="(auth)/verify-email" />
+                      <Stack.Screen name="(auth)/forgot-password" />
+                      <Stack.Screen name="(auth)/reset-password" />
+                      <Stack.Screen name="(admin)" />
+                      <Stack.Screen name="super-admin" />
+                      <Stack.Screen name="(marketplace)" />
+                      <Stack.Screen name="menu/table/[tableId]" />
+                    </Stack>
+                    <ToastContainer />
+                  </CustomerCartProvider>
+                </StorefrontProvider>
               </PosProvider>
             </SettingsProvider>
           </AuthProvider>

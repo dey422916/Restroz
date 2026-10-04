@@ -1035,7 +1035,7 @@ export const orderService = {
           if (items && items.length > 0) {
             const hasOrderTax = isOrderGstApplicable(newOrder as any, false) || (newOrder.items && newOrder.items.some((i) => Number(i.tax_rate) > 0));
             const fallbackOrderRate = getOrderTaxRate(newOrder as any, 5.0);
-            const formattedItems = items.map((i) => {
+            const formattedItems = items.map((i, idx) => {
               const rawItem = i as any;
               const unitPrice = Number(i.unit_price) || 0;
               const quantity = Number(i.quantity) || 1;
@@ -1057,10 +1057,15 @@ export const orderService = {
                 ? Number((cgst + sgst).toFixed(2))
                 : 0;
 
+              const isValidUuid = (val?: string | null) => {
+                if (!val) return false;
+                return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+              };
+
               return {
-                id: i.id?.startsWith('item-') ? i.id : 'item-' + Date.now() + Math.random().toString(36).substr(2, 4),
+                id: i.id || (i as any).order_item_id || `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
                 order_id: createdDbOrder.id,
-                product_id: i.product_id,
+                product_id: isValidUuid(i.product_id) ? i.product_id : null,
                 product_name: i.product_name,
                 unit_price: unitPrice,
                 quantity: quantity,
@@ -1103,8 +1108,12 @@ export const orderService = {
 
           // Deduct product stock quantities
           if (items && items.length > 0) {
+            const isValidUuid = (val?: string | null) => {
+              if (!val) return false;
+              return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+            };
             for (const itm of items) {
-              if (itm.product_id && itm.quantity > 0) {
+              if (itm.product_id && isValidUuid(itm.product_id) && itm.quantity > 0) {
                 try {
                   const { data: curP } = await supabase
                     .from('products')
@@ -1278,10 +1287,14 @@ export const orderService = {
     // Calculate item differences for KOT supplementary generation
     const addedItems: OrderItem[] = [];
     const oldItemMap = new Map<string, OrderItem>();
-    oldItems.forEach((i) => oldItemMap.set(i.product_id, i));
+    oldItems.forEach((i, idx) => {
+      const key = i.id || (i as any).order_item_id || (i.product_id ? `prod-${i.product_id}` : `item-${i.product_name}-${idx}`);
+      oldItemMap.set(key, i);
+    });
 
     for (const newItem of updatedItems) {
-      const oldItem = oldItemMap.get(newItem.product_id);
+      const key = newItem.id || (newItem as any).order_item_id || (newItem.product_id ? `prod-${newItem.product_id}` : `item-${newItem.product_name}`);
+      const oldItem = oldItemMap.get(key);
       if (!oldItem) {
         addedItems.push(newItem);
       } else if (Number(newItem.quantity || 0) > Number(oldItem.quantity || 0)) {
@@ -1317,7 +1330,7 @@ export const orderService = {
       const taxAmount = (itemSubtotal * taxRate) / 100;
       return {
         ...i,
-        id: i.id?.startsWith('item-') ? i.id : `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
+        id: i.id || (i as any).order_item_id || `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
         order_id: orderId,
         quantity: qty,
         unit_price: unitPrice,
@@ -1439,7 +1452,7 @@ export const orderService = {
       const itemTotal = itemSubtotal;
 
       return {
-        id: i.id?.startsWith('item-') ? i.id : `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
+        id: i.id || (i as any).order_item_id || `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
         product_id: i.product_id || null,
         product_name: i.product_name || rawItem.name || 'Unnamed Item',
         unit_price: unitPrice,
@@ -1934,13 +1947,56 @@ export const orderService = {
       clearOrdersCache(settledOrder.restaurant_id);
       const localOrders = mockStorage.getOrders(settledOrder.restaurant_id);
       const orderIndex = localOrders.findIndex((o) => o.id === orderId);
+      const existingOrder = orderIndex !== -1 ? localOrders[orderIndex] : null;
+
+      let finalItems = rpcRes?.items && rpcRes.items.length > 0
+        ? rpcRes.items
+        : (existingOrder?.items && existingOrder.items.length > 0 ? existingOrder.items : []);
+
+      if (!finalItems || finalItems.length === 0) {
+        try {
+          const { data: dbItems } = await supabase
+            .from('order_items')
+            .select('*')
+            .eq('order_id', orderId);
+          if (dbItems && dbItems.length > 0) {
+            finalItems = dbItems;
+          }
+        } catch (itemErr) {
+          console.warn('Failed to fetch order items after settlement:', itemErr);
+        }
+      }
+
+      let finalPayments = rpcRes?.payments && rpcRes.payments.length > 0
+        ? rpcRes.payments
+        : (existingOrder?.payments && existingOrder.payments.length > 0 ? existingOrder.payments : []);
+
+      if (!finalPayments || finalPayments.length === 0) {
+        try {
+          const { data: dbPayments } = await supabase
+            .from('payments')
+            .select('*')
+            .eq('order_id', orderId);
+          if (dbPayments && dbPayments.length > 0) {
+            finalPayments = dbPayments;
+          }
+        } catch (payErr) {
+          console.warn('Failed to fetch payments after settlement:', payErr);
+        }
+      }
+
+      let finalKots = rpcRes?.kots && rpcRes.kots.length > 0
+        ? rpcRes.kots
+        : (existingOrder?.kots && existingOrder.kots.length > 0 ? existingOrder.kots : []);
+
       const fullSettledOrder: Order & { reward_earned?: number; new_wallet_balance?: number; wallet_redeemed?: number } = {
         ...settledOrder,
-        items: rpcRes?.items || [],
-        payments: rpcRes?.payments || [],
+        items: finalItems,
+        payments: finalPayments,
+        kots: finalKots,
         payment_method: normalizedPaymentMethod,
         order_source: resolveOrderSource(settledOrder),
-        subtotal: getOrderSubtotal(settledOrder),
+        subtotal: getOrderSubtotal({ ...settledOrder, items: finalItems }),
         discount_type: discountType,
         discount_value: discountValue,
         discount_amount: discountAmount,

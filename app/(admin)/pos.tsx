@@ -28,7 +28,7 @@ import { useNotification } from '../../src/context/NotificationContext';
 import { useAuth } from '../../src/context/AuthContext';
 import { RegisterClosedError } from '../../src/context/PosContext';
 import { formatCurrency, numberToWords } from '../../src/utils/currency';
-import { getOrderSubtotal, getOrderTaxRate } from '../../src/utils/gst';
+import { getOrderSubtotal, getOrderTaxRate, getOrderInvoiceTotals } from '../../src/utils/gst';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { printService, handleThermalPrintFallback } from '../../src/services/printService';
 import { dayRegisterService } from '../../src/services/api/dayRegisterService';
@@ -38,6 +38,7 @@ import { TableSelectorModal } from '../../src/components/pos/TableSelectorModal'
 import { SplitBillModal } from '../../src/components/pos/SplitBillModal';
 import { HoldOrdersModal } from '../../src/components/pos/HoldOrdersModal';
 import { PaymentModal } from '../../src/components/pos/PaymentModal';
+import { QuickBillModal } from '../../src/components/pos/QuickBillModal';
 import { isValidPhoneNumber, normalizePhoneNumber } from '../../src/utils/phone';
 import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError } from '../../src/utils/validation';
 import { naturalTableCompare } from '../../src/utils/sortUtils';
@@ -58,6 +59,7 @@ export default function PosScreen() {
     customerInfo,
     setCustomerInfo,
     addToCart,
+    addQuickBillItem,
     removeItem,
     updateQuantity,
     clearCart,
@@ -109,6 +111,7 @@ export default function PosScreen() {
   const [showHoldModal, setShowHoldModal] = useState<boolean>(false);
   const [showSplitModal, setShowSplitModal] = useState<boolean>(false);
   const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false);
+  const [showQuickBillModal, setShowQuickBillModal] = useState<boolean>(false);
   const [showRegisterClosedModal, setShowRegisterClosedModal] = useState<boolean>(false);
   const [openingFloatInput, setOpeningFloatInput] = useState<string>('0');
   const [isOpeningRegisterFromPos, setIsOpeningRegisterFromPos] = useState<boolean>(false);
@@ -1188,33 +1191,36 @@ export default function PosScreen() {
             <Text style={styles.emptyCartSub}>Select items from the dishes menu to add</Text>
           </View>
         ) : (
-          cartItems.map((item) => (
-            <View key={item.product_id} style={styles.cartRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cartItemName} numberOfLines={1}>
-                  {item.product_name}
-                </Text>
-                <Text style={styles.cartItemSub}>
-                  {formatCurrency(item.unit_price)} × {item.quantity}
-                </Text>
+          cartItems.map((item, idx) => {
+            const itemKey = item.id || (item.product_id ? `prod-${item.product_id}` : `cart-item-${idx}`);
+            return (
+              <View key={itemKey} style={styles.cartRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cartItemName} numberOfLines={1}>
+                    {item.product_name}
+                  </Text>
+                  <Text style={styles.cartItemSub}>
+                    {formatCurrency(item.unit_price)} × {item.quantity}
+                  </Text>
+                </View>
+                <View style={styles.stepper}>
+                  <TouchableOpacity
+                    style={styles.stepBtn}
+                    onPress={() => handleQuantityChange(item.id || item.product_id, item.quantity - 1)}
+                  >
+                    <Text style={styles.stepBtnText}>-</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.stepQty}>{item.quantity}</Text>
+                  <TouchableOpacity
+                    style={[styles.stepBtn, styles.stepBtnAdd]}
+                    onPress={() => handleQuantityChange(item.id || item.product_id, item.quantity + 1)}
+                  >
+                    <Text style={[styles.stepBtnText, { color: '#ffffff' }]}>+</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-              <View style={styles.stepper}>
-                <TouchableOpacity
-                  style={styles.stepBtn}
-                  onPress={() => handleQuantityChange(item.product_id, item.quantity - 1)}
-                >
-                  <Text style={styles.stepBtnText}>-</Text>
-                </TouchableOpacity>
-                <Text style={styles.stepQty}>{item.quantity}</Text>
-                <TouchableOpacity
-                  style={[styles.stepBtn, styles.stepBtnAdd]}
-                  onPress={() => handleQuantityChange(item.product_id, item.quantity + 1)}
-                >
-                  <Text style={[styles.stepBtnText, { color: '#ffffff' }]}>+</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ))
+            );
+          })
         )}
 
         {/* Discount Section: Amount (₹) & Percentage (%) */}
@@ -1407,23 +1413,35 @@ export default function PosScreen() {
             )}
 
             {Boolean(totals.cgstAmount > 0 || totals.sgstAmount > 0) && (() => {
-              const halfTaxRate = totals.taxableSubtotal > 0
-                ? (totals.cgstAmount / totals.taxableSubtotal) * 100
-                : ((settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 0) / 2);
-              const halfTaxRateStr = halfTaxRate % 1 === 0 ? `${halfTaxRate}` : `${halfTaxRate.toFixed(1)}`;
+              if (totals.gstBreakdown && totals.gstBreakdown.length > 1) {
+                return (
+                  <>
+                    {totals.gstBreakdown.map((slab) => (
+                      <View key={slab.rate} style={styles.summaryRow}>
+                        <Text style={styles.summaryLabel}>GST @ {slab.rate}%</Text>
+                        <Text style={styles.summaryVal}>{formatCurrency(slab.totalTax)}</Text>
+                      </View>
+                    ))}
+                    <View style={styles.summaryRow}>
+                      <Text style={[styles.summaryLabel, { fontWeight: '700' }]}>Total GST</Text>
+                      <Text style={[styles.summaryVal, { fontWeight: '700' }]}>{formatCurrency(totals.totalTax)}</Text>
+                    </View>
+                  </>
+                );
+              }
+
+              const singleSlab = totals.gstBreakdown?.[0];
+              const rateStr = singleSlab ? `${singleSlab.rate}` : (
+                settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
+                  ? `${Number(settings.default_tax_rate)}`
+                  : '5'
+              );
 
               return (
-                <>
-                  <View style={styles.summaryRow}>
-                    <Text style={styles.summaryLabel}>CGST ({halfTaxRateStr}%)</Text>
-                    <Text style={styles.summaryVal}>{formatCurrency(totals.cgstAmount)}</Text>
-                  </View>
-
-                  <View style={styles.summaryRow}>
-                    <Text style={styles.summaryLabel}>SGST ({halfTaxRateStr}%)</Text>
-                    <Text style={styles.summaryVal}>{formatCurrency(totals.sgstAmount)}</Text>
-                  </View>
-                </>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>GST @ {rateStr}%</Text>
+                  <Text style={styles.summaryVal}>{formatCurrency(totals.totalTax)}</Text>
+                </View>
               );
             })()}
 
@@ -1547,6 +1565,23 @@ export default function PosScreen() {
               : 'Home delivery order'}
           </Text>
         </View>
+
+        <View style={styles.activeOrderBannerActions}>
+          {orderType === 'dine_in' && (
+            <TouchableOpacity
+              style={styles.bannerTableChangeBtn}
+              onPress={handleChangeTablePrompt}
+            >
+              <Text style={styles.bannerTableChangeBtnText}>🪑 Change Table</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={styles.bannerTypeChangeBtn}
+            onPress={handleChangeOrderTypePrompt}
+          >
+            <Text style={styles.bannerTypeChangeBtnText}>🔄 Change Type</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Mobile Mode Segmented Switcher (Visible only on mobile) */}
@@ -1585,9 +1620,9 @@ export default function PosScreen() {
         {/* LEFT / MAIN CATALOG SCREEN (Always visible on Tablet, or when mobileTab === 'menu' on Mobile) */}
         {(isTablet || mobileTab === 'menu') && (
           <View style={styles.catalogArea}>
-            {/* Search Input and Action Buttons Row */}
+            {/* Search Input & Quick Bill Button */}
             <View style={styles.searchBarRow}>
-              <View style={styles.searchBarFlex}>
+              <View style={styles.searchBar}>
                 <TextInput
                   style={styles.searchInput}
                   placeholder="Search food item or SKU..."
@@ -1596,23 +1631,13 @@ export default function PosScreen() {
                   onChangeText={setSearchQuery}
                 />
               </View>
-
-              <View style={styles.searchActionsGroup}>
-                {orderType === 'dine_in' && (
-                  <TouchableOpacity
-                    style={styles.bannerTableChangeBtn}
-                    onPress={handleChangeTablePrompt}
-                  >
-                    <Text style={styles.bannerTableChangeBtnText}>🪑 Change Table</Text>
-                  </TouchableOpacity>
-                )}
-                <TouchableOpacity
-                  style={styles.bannerTypeChangeBtn}
-                  onPress={handleChangeOrderTypePrompt}
-                >
-                  <Text style={styles.bannerTypeChangeBtnText}>🔄 Change Type</Text>
-                </TouchableOpacity>
-              </View>
+              <TouchableOpacity
+                testID="pos-quick-bill-btn"
+                style={styles.quickBillBtn}
+                onPress={() => setShowQuickBillModal(true)}
+              >
+                <Text style={styles.quickBillBtnText}>⚡ Quick Bill</Text>
+              </TouchableOpacity>
             </View>
 
             {/* Grouped Categories Horizontal Scroll (FOOD / LIQUOR) */}
@@ -1901,6 +1926,23 @@ export default function PosScreen() {
         }}
       />
 
+      {/* Quick Bill Modal */}
+      <QuickBillModal
+        isOpen={showQuickBillModal}
+        onClose={() => setShowQuickBillModal(false)}
+        categories={categories}
+        activeRestaurantId={activeRestaurantId}
+        settings={settings}
+        canManageProducts={isSuperAdmin || role === 'ADMIN' || hasPermission('can_manage_products')}
+        onAddToCart={(item) => {
+          addQuickBillItem(item);
+          showToast('success', 'Item Added', `"${item.name}" added to cart`);
+        }}
+        onProductCreated={(newProd) => {
+          setProducts((prev) => [...prev, newProd]);
+        }}
+      />
+
       {/* Occupied Table Action Modal */}
       {occupiedActionModalData && (
         <Modal visible={Boolean(occupiedActionModalData)} transparent animationType="fade">
@@ -2087,18 +2129,33 @@ export default function PosScreen() {
                         </View>
                       )}
                       {Boolean(((viewTableModalData.order.cgst_amount || 0) + (viewTableModalData.order.sgst_amount || 0)) > 0) && (() => {
-                        const tableOrderTaxRate = Number((viewTableModalData.order as any).tax_rate) > 0
-                          ? Number((viewTableModalData.order as any).tax_rate)
-                          : (viewTableModalData.order.taxable_amount && Number(viewTableModalData.order.taxable_amount) > 0 && viewTableModalData.order.cgst_amount
-                              ? ((Number(viewTableModalData.order.cgst_amount) * 2) / Number(viewTableModalData.order.taxable_amount)) * 100
-                              : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
-                                  ? Number(settings.default_tax_rate)
-                                  : 0));
-                        const halfTaxRate = tableOrderTaxRate / 2;
-                        const halfTaxRateStr = halfTaxRate % 1 === 0 ? `${halfTaxRate}` : `${halfTaxRate.toFixed(1)}`;
+                        const tableTotals = getOrderInvoiceTotals(viewTableModalData.order, settings);
+                        if (tableTotals.gstBreakdown && tableTotals.gstBreakdown.length > 1) {
+                          return (
+                            <>
+                              {tableTotals.gstBreakdown.map((slab) => (
+                                <View key={slab.rate} style={styles.modalTotalRow}>
+                                  <Text style={styles.modalTotalLabel}>GST @ {slab.rate}%:</Text>
+                                  <Text style={styles.modalTotalVal}>{formatCurrency(slab.totalTax)}</Text>
+                                </View>
+                              ))}
+                              <View style={styles.modalTotalRow}>
+                                <Text style={[styles.modalTotalLabel, { fontWeight: '700' }]}>Total GST:</Text>
+                                <Text style={[styles.modalTotalVal, { fontWeight: '700' }]}>{formatCurrency(tableTotals.totalTax)}</Text>
+                              </View>
+                            </>
+                          );
+                        }
+
+                        const singleSlab = tableTotals.gstBreakdown?.[0];
+                        const rateStr = singleSlab ? `${singleSlab.rate}` : (
+                          settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
+                            ? `${Number(settings.default_tax_rate)}`
+                            : '5'
+                        );
                         return (
                           <View style={styles.modalTotalRow}>
-                            <Text style={styles.modalTotalLabel}>CGST ({halfTaxRateStr}%) + SGST ({halfTaxRateStr}%):</Text>
+                            <Text style={styles.modalTotalLabel}>GST @ {rateStr}%:</Text>
                             <Text style={styles.modalTotalVal}>
                               {formatCurrency(
                                 (viewTableModalData.order.cgst_amount || 0) +
@@ -3074,31 +3131,27 @@ const styles = StyleSheet.create({
   },
   bannerTableChangeBtn: {
     backgroundColor: '#eff6ff',
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 10,
-    borderWidth: 1.5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
     borderColor: '#bfdbfe',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   bannerTableChangeBtnText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
     color: '#1d4ed8',
   },
   bannerTypeChangeBtn: {
     backgroundColor: '#f1f5f9',
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 10,
-    borderWidth: 1.5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
     borderColor: '#cbd5e1',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   bannerTypeChangeBtnText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
     color: '#334155',
   },
@@ -3140,23 +3193,11 @@ const styles = StyleSheet.create({
   searchBarRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     gap: 8,
     marginBottom: 8,
-    flexWrap: 'wrap',
-  },
-  searchBarFlex: {
-    flex: 1,
-    minWidth: 200,
-  },
-  searchActionsGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexShrink: 0,
   },
   searchBar: {
-    marginBottom: 8,
+    flex: 1,
   },
   searchInput: {
     backgroundColor: '#ffffff',
@@ -3164,10 +3205,28 @@ const styles = StyleSheet.create({
     borderColor: '#94a3b8',
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingVertical: 8,
+    height: 38,
     fontSize: 13,
     color: '#0f172a',
     fontWeight: '500',
+  },
+  quickBillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 38,
+    paddingHorizontal: 14,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1.5,
+    borderColor: '#2563eb',
+    borderRadius: 10,
+    elevation: 1,
+  },
+  quickBillBtnText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#2563eb',
   },
   catScrollWrapper: {
     marginBottom: 8,

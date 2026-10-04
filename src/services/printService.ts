@@ -945,14 +945,30 @@ export const printService = {
 
             ${
               taxTotal > 0
-                ? `
+                ? calculatedTotals.gstBreakdown && calculatedTotals.gstBreakdown.length > 1
+                  ? calculatedTotals.gstBreakdown.map((slab) => `
             <div class="flex-between">
-              <span>CGST (${halfTaxRateStr}%):</span>
+              <span>CGST (${slab.halfRateStr}%):</span>
+              <span>${slab.cgstAmount.toFixed(2)}</span>
+            </div>
+            <div class="flex-between">
+              <span>SGST (${slab.halfRateStr}%):</span>
+              <span>${slab.sgstAmount.toFixed(2)}</span>
+            </div>
+                  `).join('') + `
+            <div class="flex-between">
+              <span><b>Total GST:</b></span>
+              <span><b>${taxTotal.toFixed(2)}</b></span>
+            </div>
+                  `
+                  : `
+            <div class="flex-between">
+              <span>CGST (${calculatedTotals.gstBreakdown?.[0]?.halfRateStr || halfTaxRateStr}%):</span>
               <span>${cgstAmount.toFixed(2)}</span>
             </div>
 
             <div class="flex-between">
-              <span>SGST (${halfTaxRateStr}%):</span>
+              <span>SGST (${calculatedTotals.gstBreakdown?.[0]?.halfRateStr || halfTaxRateStr}%):</span>
               <span>${sgstAmount.toFixed(2)}</span>
             </div>
 
@@ -1677,9 +1693,16 @@ export const printService = {
                     ${nilExemptAmount > 0 ? `<div class="total-row"><span>Nil/Exempt Value:</span><b>${formatCurrency(nilExemptAmount)}</b></div>` : ''}
                     ${
                       taxTotal > 0
-                        ? `
-                    <div class="total-row"><span>CGST (${halfTaxRateStr}%):</span><b>${formatCurrency(cgstAmount)}</b></div>
-                    <div class="total-row"><span>SGST (${halfTaxRateStr}%):</span><b>${formatCurrency(sgstAmount)}</b></div>
+                        ? calculatedTotals.gstBreakdown && calculatedTotals.gstBreakdown.length > 1
+                          ? calculatedTotals.gstBreakdown.map((slab) => `
+                    <div class="total-row"><span>CGST (${slab.halfRateStr}%):</span><b>${formatCurrency(slab.cgstAmount)}</b></div>
+                    <div class="total-row"><span>SGST (${slab.halfRateStr}%):</span><b>${formatCurrency(slab.sgstAmount)}</b></div>
+                          `).join('') + `
+                    <div class="total-row"><span><b>Total GST:</b></span><b>${formatCurrency(taxTotal)}</b></div>
+                          `
+                          : `
+                    <div class="total-row"><span>CGST (${calculatedTotals.gstBreakdown?.[0]?.halfRateStr || halfTaxRateStr}%):</span><b>${formatCurrency(cgstAmount)}</b></div>
+                    <div class="total-row"><span>SGST (${calculatedTotals.gstBreakdown?.[0]?.halfRateStr || halfTaxRateStr}%):</span><b>${formatCurrency(sgstAmount)}</b></div>
                     ${igstAmount > 0 ? `<div class="total-row"><span>IGST:</span><b>${formatCurrency(igstAmount)}</b></div>` : ''}
                     `
                         : ''

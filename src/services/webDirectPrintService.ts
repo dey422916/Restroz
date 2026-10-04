@@ -2271,12 +2271,31 @@ export const webDirectPrintService = {
       throw new Error('No RestroZ Print Agent is paired for this restaurant. Please pair Print Agent in Settings.');
     }
 
-    // Convert binary to base64
-    let binaryStr = '';
-    for (let i = 0; i < data.length; i++) {
-      binaryStr += String.fromCharCode(data[i]);
+    // Convert binary to base64 safely across Web, Node, and React Native (Hermes)
+    let payloadBase64 = '';
+    if (typeof (globalThis as any).Buffer !== 'undefined') {
+      payloadBase64 = (globalThis as any).Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('base64');
+    } else if (typeof (globalThis as any).btoa === 'function') {
+      let binaryStr = '';
+      for (let i = 0; i < data.length; i++) {
+        binaryStr += String.fromCharCode(data[i]);
+      }
+      payloadBase64 = (globalThis as any).btoa(binaryStr);
+    } else {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+      let i = 0;
+      const len = data.length;
+      while (i < len) {
+        const b1 = data[i++];
+        const b2 = i < len ? data[i++] : NaN;
+        const b3 = i < len ? data[i++] : NaN;
+        const e1 = b1 >> 2;
+        const e2 = ((b1 & 3) << 4) | (isNaN(b2) ? 0 : b2 >> 4);
+        const e3 = isNaN(b2) ? 64 : ((b2 & 15) << 2) | (isNaN(b3) ? 0 : b3 >> 6);
+        const e4 = isNaN(b3) ? 64 : b3 & 63;
+        payloadBase64 += chars.charAt(e1) + chars.charAt(e2) + (e3 === 64 ? '=' : chars.charAt(e3)) + (e4 === 64 ? '=' : chars.charAt(e4));
+      }
     }
-    const payloadBase64 = btoa(binaryStr);
 
     console.log(
       `[PRINT_AGENT_JOB_DISPATCH]\n` +

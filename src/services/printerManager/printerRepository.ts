@@ -16,6 +16,10 @@ export const printerRepository = {
       .order('created_at', { ascending: true });
 
     if (error) {
+      if (error.code === 'PGRST205' || error.message?.includes('restaurant_printers') || error.message?.includes('does not exist')) {
+        // Table intentionally absent in Central Print Agent environment
+        return [];
+      }
       console.warn('[printerRepository] Error fetching printers:', error);
       throw new Error(`Failed to load printers: ${error.message}`);
     }

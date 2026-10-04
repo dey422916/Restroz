@@ -66,7 +66,7 @@ export function MarketingFooter() {
             </Text>
             <View style={styles.contactInfoBlock}>
               <Text style={styles.contactItem}>📞 Sales: +91 7098513441</Text>
-              <Text style={styles.contactItem}>✉️ Email: sales@restroz.shop</Text>
+              <Text style={styles.contactItem}>✉️ Email: restroz.pos@gmail.com</Text>
               <Text style={styles.contactItem}>🌐 Website: restroz.shop</Text>
             </View>
           </View>

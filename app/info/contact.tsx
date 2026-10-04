@@ -47,7 +47,7 @@ export function ContactPage() {
               <Text style={styles.infoCardIcon}>✉️</Text>
               <View>
                 <Text style={styles.infoCardTitle}>Email Enquiries</Text>
-                <Text style={styles.infoCardVal}>sales@restroz.shop</Text>
+                <Text style={styles.infoCardVal}>restroz.pos@gmail.com</Text>
                 <Text style={styles.infoCardSub}>Response guaranteed within 2 business hours</Text>
               </View>
             </View>

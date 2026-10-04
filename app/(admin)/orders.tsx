@@ -1295,35 +1295,33 @@ export default function OrdersScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Status Filters (Left 50%) & Search Field (Right 50%) */}
+        {/* Status Filters & Search Field - Equally Aligned */}
         <View style={[styles.toolbarRow, isMobile && styles.toolbarRowMobile]}>
-          {/* Status Sub-filter Pills (Left 50%) */}
-          <View style={[styles.toolbarHalf, isMobile && styles.toolbarHalfMobile]}>
-            <View style={styles.tabRow}>
-              {[
-                { id: 'active', label: '🔥 Active' },
-                { id: 'completed', label: '✓ Completed' },
-                { id: 'cancelled', label: '✕ Cancelled' },
-                { id: 'all', label: 'All Orders' },
-              ].map((tab) => (
-                <TouchableOpacity
-                  key={tab.id}
-                  style={[
-                    styles.tabBtn,
-                    tabFilter === tab.id && styles.tabBtnActive,
-                  ]}
-                  onPress={() => setTabFilter(tab.id as any)}
-                >
-                  <Text style={[styles.tabText, tabFilter === tab.id && styles.tabTextActive]} numberOfLines={1}>
-                    {tab.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+          {/* Status Sub-filter Pills */}
+          <View style={[styles.tabRow, !isMobile && styles.tabRowDesktop]}>
+            {[
+              { id: 'active', label: '🔥 Active' },
+              { id: 'completed', label: '✓ Completed' },
+              { id: 'cancelled', label: '✕ Cancelled' },
+              { id: 'all', label: 'All Orders' },
+            ].map((tab) => (
+              <TouchableOpacity
+                key={tab.id}
+                style={[
+                  styles.tabBtn,
+                  tabFilter === tab.id && styles.tabBtnActive,
+                ]}
+                onPress={() => setTabFilter(tab.id as any)}
+              >
+                <Text style={[styles.tabText, tabFilter === tab.id && styles.tabTextActive]} numberOfLines={1}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
 
-          {/* Search Input (Right 50%) */}
-          <View style={[styles.toolbarHalf, isMobile && styles.toolbarHalfMobile]}>
+          {/* Search Input */}
+          <View style={[styles.searchContainer, !isMobile && styles.searchContainerDesktop]}>
             <TextInput
               style={styles.search}
               placeholder="Search by Order #, Customer, Phone, Table..."
@@ -3872,17 +3870,24 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   search: {
+    width: '100%',
     backgroundColor: '#ffffff',
     borderRadius: 8,
     borderWidth: 1.5,
     borderColor: '#94a3b8',
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    height: 32,
+    paddingVertical: 0,
+    height: 34,
     fontSize: 12,
     color: '#0f172a',
     fontWeight: '500',
+  },
+  searchContainer: {
     width: '100%',
+    justifyContent: 'center',
+  },
+  searchContainerDesktop: {
+    flex: 1,
   },
   categoryTabRow: {
     flexDirection: 'row',
@@ -3929,21 +3934,20 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
     gap: 6,
   },
-  toolbarHalf: {
-    width: '50%',
-    flexShrink: 0,
-  },
-  toolbarHalfMobile: {
-    width: '100%',
-  },
   tabRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 4,
+    width: '100%',
+  },
+  tabRowDesktop: {
+    flex: 1,
   },
   tabBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    flex: 1,
+    height: 34,
+    paddingHorizontal: 4,
+    borderRadius: 8,
     backgroundColor: '#f1f5f9',
     borderWidth: 1,
     borderColor: '#e2e8f0',
@@ -3958,6 +3962,7 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     fontWeight: '700',
     color: '#475569',
+    textAlign: 'center',
   },
   tabTextActive: {
     color: '#ffffff',

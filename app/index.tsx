@@ -1,14 +1,21 @@
 import React, { useEffect } from 'react';
 import { View, ActivityIndicator } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, usePathname } from 'expo-router';
 import { useAuth } from '../src/context/AuthContext';
 
 export default function Index() {
   const { user, loading, role, consumePendingTableId } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     if (!loading) {
+      const current = (pathname || '').trim();
+      const isRoot = current === '/' || current === '' || current === '/index';
+      if (!isRoot) {
+        return;
+      }
+
       // Clear any stale pending QR table state on fresh root URL visits
       consumePendingTableId().catch(() => {});
 
@@ -21,7 +28,7 @@ export default function Index() {
         router.replace('/(marketplace)' as any);
       }
     }
-  }, [loading, user, role]);
+  }, [loading, user, role, pathname]);
 
   return (
     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' }}>

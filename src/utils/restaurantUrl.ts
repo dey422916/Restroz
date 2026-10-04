@@ -7,14 +7,14 @@ export function getRestaurantOnlineOrderingUrl(slugOrId?: string | null): string
   if (!slugOrId) return '';
   const clean = slugOrId.trim();
 
-  let origin = 'https://dev.restroz.shop';
+  let origin = 'https://restroz.shop';
   if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin) {
     origin = window.location.origin;
   } else if (process.env.EXPO_PUBLIC_APP_URL) {
     origin = process.env.EXPO_PUBLIC_APP_URL.replace(/\/+$/, '');
   }
 
-  return `${origin}/restaurant/${clean}`;
+  return `${origin}/r/${clean}`;
 }
 
 /**

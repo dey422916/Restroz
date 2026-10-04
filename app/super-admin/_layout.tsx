@@ -44,8 +44,11 @@ export default function SuperAdminLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Strict Super Admin Route Protection Guard
+  const current = (pathname || '').trim();
+  const isSuperAdminRoute = current.startsWith('/super-admin') || current.startsWith('/(super-admin)');
+
   useEffect(() => {
-    if (!loading) {
+    if (!loading && isSuperAdminRoute) {
       if (!user) {
         router.replace('/(auth)/login');
       } else if (!isSuperAdmin) {
@@ -53,12 +56,16 @@ export default function SuperAdminLayout() {
         router.replace('/(admin)/dashboard');
       }
     }
-  }, [user, isSuperAdmin, loading, router]);
+  }, [user, isSuperAdmin, loading, router, isSuperAdminRoute]);
 
   // Close drawer on path change
   useEffect(() => {
     setDrawerOpen(false);
   }, [pathname]);
+
+  if (!isSuperAdminRoute) {
+    return <Slot />;
+  }
 
   if (loading || !user || !isSuperAdmin) {
     return (

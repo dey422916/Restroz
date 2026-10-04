@@ -6,6 +6,7 @@ scripts/
 
 !scripts/post-export-web.js
 !scripts/build-production-web.js
+!scripts/test-personal-website-dev.js
 
 .expo/
 dist/

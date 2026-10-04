@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useCustomerCart } from '../../src/context/CustomerCartContext';
+import { useStorefront } from '../../src/context/StorefrontContext';
 import { couponService } from '../../src/services/api/couponService';
 import { Coupon } from '../../src/types';
 import { customerColors } from '../../src/utils/colors';
@@ -22,6 +23,7 @@ export default function CustomerCartScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 860;
   const { cart, updateQuantity, clearCart, applyCoupon, removeCoupon } = useCustomerCart();
+  const { isDedicated, dedicatedRestaurant, getMenuRoute } = useStorefront();
   const [couponInput, setCouponInput] = useState('');
   const [availableCoupons, setAvailableCoupons] = useState<Coupon[]>([]);
   const [validatingCoupon, setValidatingCoupon] = useState(false);
@@ -88,14 +90,18 @@ export default function CustomerCartScreen() {
         </View>
         <Text style={styles.emptyTitle}>Your Cart is Empty</Text>
         <Text style={styles.emptySub}>
-          Explore delicious meals from our curated local restaurants and add your favorites to get started.
+          {isDedicated
+            ? `Browse delicious meals from ${dedicatedRestaurant?.name || 'our menu'} and add your favorites to get started.`
+            : 'Explore delicious meals from our curated local restaurants and add your favorites to get started.'}
         </Text>
         <TouchableOpacity
           style={styles.browseBtn}
-          onPress={() => router.push('/(marketplace)')}
+          onPress={() => (isDedicated ? router.push(getMenuRoute() as any) : router.push('/(marketplace)'))}
           activeOpacity={0.8}
         >
-          <Text style={styles.browseBtnText}>Explore Restaurants →</Text>
+          <Text style={styles.browseBtnText}>
+            {isDedicated ? 'Browse Menu →' : 'Explore Restaurants →'}
+          </Text>
         </TouchableOpacity>
       </View>
     );

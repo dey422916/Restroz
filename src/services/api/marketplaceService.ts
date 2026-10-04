@@ -205,23 +205,42 @@ export const marketplaceService = {
     return this.getMarketplaceRestaurants(options);
   },
 
-  // 2. Get Single Restaurant Public Details
+  // 2. Get Single Restaurant Public Details (Supports UUID or Unique Slug)
   async getRestaurantPublicDetails(
-    restaurantId: string
+    restaurantIdOrSlug: string
   ): Promise<(Restaurant & { public_profile?: RestaurantPublicProfile }) | null> {
-    const { data, error } = await supabase
-      .from('restaurants')
-      .select(`
-        id, name, slug, logo_url, banner_url, address, city, phone, status, latitude, longitude, created_at,
-        public_profile:restaurant_public_profiles(
-          id, restaurant_id, is_open, marketplace_enabled, accepts_delivery, accepts_takeaway,
-          delivery_radius_km, minimum_order_value, estimated_delivery_minutes, cuisine_tags,
-          banner_url, public_description, opening_time, closing_time, latitude, longitude, created_at,
-          delivery_charge_base, free_delivery_above, delivery_payment_qr_url, delivery_upi_id, delivery_sample_screenshot_url, enable_cod
-        )
-      `)
-      .eq('id', restaurantId)
-      .single();
+    if (!restaurantIdOrSlug || typeof restaurantIdOrSlug !== 'string') return null;
+    const cleanId = restaurantIdOrSlug.trim();
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
+
+    const selectQuery = `
+      id, name, slug, logo_url, banner_url, address, city, phone, status, latitude, longitude, created_at,
+      public_profile:restaurant_public_profiles(
+        id, restaurant_id, is_open, marketplace_enabled, accepts_delivery, accepts_takeaway,
+        delivery_radius_km, minimum_order_value, estimated_delivery_minutes, cuisine_tags,
+        banner_url, public_description, opening_time, closing_time, latitude, longitude, created_at,
+        delivery_charge_base, free_delivery_above, delivery_payment_qr_url, delivery_upi_id, delivery_sample_screenshot_url, enable_cod
+      )
+    `;
+
+    let query = supabase.from('restaurants').select(selectQuery);
+
+    if (isUUID) {
+      query = query.eq('id', cleanId);
+    } else {
+      query = query.eq('slug', cleanId.toLowerCase());
+    }
+
+    let { data, error } = await query.maybeSingle();
+
+    // Fallback: If not found by slug, attempt by ID just in case
+    if (!data && !isUUID) {
+      const fallbackRes = await supabase.from('restaurants').select(selectQuery).eq('id', cleanId).maybeSingle();
+      if (fallbackRes.data) {
+        data = fallbackRes.data;
+        error = null;
+      }
+    }
 
     if (error || !data) return null;
 
@@ -260,29 +279,44 @@ export const marketplaceService = {
     };
   },
 
-  // 3. Get Restaurant Public Menu (Categories + Active/Available Products with 30s in-memory caching)
+  // 3. Get Restaurant Public Menu (Categories + Active Products with availability & 30s in-memory caching)
   async getRestaurantMenu(
-    restaurantId: string,
+    restaurantIdOrSlug: string,
     forceRefresh: boolean = false
   ): Promise<{ categories: Category[]; products: Product[] }> {
+    if (!restaurantIdOrSlug) return { categories: [], products: [] };
+    const cleanIdentifier = restaurantIdOrSlug.trim();
+    let targetRestaurantId = cleanIdentifier;
+
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanIdentifier);
+    if (!isUUID) {
+      const { data: rest } = await supabase
+        .from('restaurants')
+        .select('id')
+        .eq('slug', cleanIdentifier.toLowerCase())
+        .maybeSingle();
+      if (rest?.id) {
+        targetRestaurantId = rest.id;
+      }
+    }
+
     const now = Date.now();
-    if (!forceRefresh && cachedRestaurantMenus[restaurantId] && now - cachedRestaurantMenus[restaurantId].timestamp < MENU_CACHE_TTL) {
-      return cachedRestaurantMenus[restaurantId].data;
+    if (!forceRefresh && cachedRestaurantMenus[targetRestaurantId] && now - cachedRestaurantMenus[targetRestaurantId].timestamp < MENU_CACHE_TTL) {
+      return cachedRestaurantMenus[targetRestaurantId].data;
     }
 
     const [catRes, prodRes] = await Promise.all([
       supabase
         .from('categories')
         .select('id, restaurant_id, name, slug, description, image_url, display_order, is_active')
-        .eq('restaurant_id', restaurantId)
+        .eq('restaurant_id', targetRestaurantId)
         .eq('is_active', true)
         .order('display_order', { ascending: true }),
       supabase
         .from('products')
         .select('id, restaurant_id, category_id, category_name, name, description, price, discounted_price, tax_rate, is_active, is_available, food_type, image_url, sku, stock_quantity, unit, preparation_time_mins, hsn_code')
-        .eq('restaurant_id', restaurantId)
+        .eq('restaurant_id', targetRestaurantId)
         .eq('is_active', true)
-        .eq('is_available', true)
         .order('name', { ascending: true }),
     ]);
 
@@ -290,7 +324,7 @@ export const marketplaceService = {
     const products = (prodRes.data || []) as Product[];
 
     const result = { categories, products };
-    cachedRestaurantMenus[restaurantId] = {
+    cachedRestaurantMenus[targetRestaurantId] = {
       timestamp: now,
       data: result,
     };

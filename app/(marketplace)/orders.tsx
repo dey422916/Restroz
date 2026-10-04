@@ -14,6 +14,7 @@ import {
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
 import { useCustomerCart } from '../../src/context/CustomerCartContext';
+import { useStorefront } from '../../src/context/StorefrontContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { supabase } from '../../src/services/supabase';
 import { Order } from '../../src/types';
@@ -27,6 +28,7 @@ export default function CustomerOrdersScreen() {
   const isDesktop = width >= 768;
   const { user, loading: authLoading } = useAuth();
   const { populateCart } = useCustomerCart();
+  const { isDedicated, dedicatedRestaurant, getMenuRoute } = useStorefront();
 
   const [activeTab, setActiveTab] = useState<'live' | 'history'>('live');
   const [liveOrders, setLiveOrders] = useState<Order[]>([]);
@@ -315,15 +317,15 @@ export default function CustomerOrdersScreen() {
                   ? 'When you place an order, live 3-stage delivery tracking will appear here in real time.'
                   : 'Your delivered and completed meal orders will be safely archived here.'}
               </Text>
-              {activeTab === 'live' && (
-                <TouchableOpacity
-                  style={styles.exploreBtn}
-                  onPress={() => router.push('/(marketplace)')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.exploreBtnText}>Browse Restaurants</Text>
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity
+                style={styles.exploreBtn}
+                onPress={() => (isDedicated ? router.push(getMenuRoute() as any) : router.push('/(marketplace)'))}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.exploreBtnText}>
+                  {isDedicated ? 'Browse Menu' : 'Browse Restaurants'}
+                </Text>
+              </TouchableOpacity>
             </View>
           ) : (
             displayOrders.map((order) => {

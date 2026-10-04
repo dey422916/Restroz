@@ -16,17 +16,22 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../src/context/AuthContext';
 import { colors } from '../../src/utils/colors';
 
-const NAV_ITEMS = [
+const PLATFORM_NAV_ITEMS = [
   { label: '📊 Overview', route: '/super-admin', title: 'Platform Control Center' },
   { label: '🏢 Restaurants', route: '/super-admin/restaurants', title: 'Restaurant Directory' },
   { label: '👥 Admins', route: '/super-admin/admins', title: 'Restaurant Admins' },
-  { label: '📋 Website Leads', route: '/super-admin/website-leads', title: 'Website Sales Leads' },
-  { label: '🎨 Website Banners', route: '/super-admin/website-banners', title: 'Promotional Banners' },
   { label: '🎟️ Coupons', route: '/super-admin/coupons', title: 'Global Coupons Manager' },
   { label: '🏷️ Subscription Plans', route: '/super-admin/plans', title: 'Subscription Plans' },
   { label: '💳 Payments', route: '/super-admin/payments', title: 'Payment Ledger' },
   { label: '🛡️ Audit Logs', route: '/super-admin/audit-logs', title: 'Platform Audit Trail' },
 ];
+
+const WEBSITE_NAV_ITEMS = [
+  { label: '📋 Website Leads', route: '/super-admin/website-leads', title: 'Website Sales Leads' },
+  { label: '🎨 Website Banners', route: '/super-admin/website-banners', title: 'Promotional Banners' },
+];
+
+const ALL_NAV_ITEMS = [...PLATFORM_NAV_ITEMS, ...WEBSITE_NAV_ITEMS];
 
 export default function SuperAdminLayout() {
   const { user, isSuperAdmin, loading, logout, setSuperAdminMarketplacePreview } = useAuth();
@@ -73,7 +78,7 @@ export default function SuperAdminLayout() {
 
   const getCurrentTitle = () => {
     if (pathname.includes('/super-admin/restaurant/')) return 'Restaurant Details';
-    const found = NAV_ITEMS.find((n) => isCurrentRoute(n.route));
+    const found = ALL_NAV_ITEMS.find((n) => isCurrentRoute(n.route));
     return found ? found.title : 'Super Admin';
   };
 
@@ -111,7 +116,24 @@ export default function SuperAdminLayout() {
       {/* Nav List */}
       <ScrollView style={styles.navScroll} showsVerticalScrollIndicator={false}>
         <Text style={styles.sectionHeader}>PLATFORM MANAGEMENT</Text>
-        {NAV_ITEMS.map((item) => {
+        {PLATFORM_NAV_ITEMS.map((item) => {
+          const active = isCurrentRoute(item.route);
+          return (
+            <TouchableOpacity
+              key={item.route}
+              style={[styles.navItem, active && styles.navItemActive]}
+              onPress={() => handleNavigate(item.route)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.navItemText, active && styles.navItemTextActive]}>
+                {item.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+
+        <Text style={[styles.sectionHeader, { marginTop: 24 }]}>WEBSITE MANAGEMENT</Text>
+        {WEBSITE_NAV_ITEMS.map((item) => {
           const active = isCurrentRoute(item.route);
           return (
             <TouchableOpacity

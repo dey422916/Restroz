@@ -177,63 +177,72 @@ SECURITY DEFINER
 SET search_path TO 'public', 'pg_catalog', 'pg_temp'
 AS $$
 DECLARE
-  v_settings RECORD;
-  v_wallet RECORD;
+  v_is_enabled BOOLEAN := false;
+  v_spend_amount NUMERIC := 100.00;
+  v_reward_amount NUMERIC := 1.00;
+  v_min_redeem_balance NUMERIC := 50.00;
+  v_balance NUMERIC := 0.00;
+  v_total_earned NUMERIC := 0.00;
+  v_total_redeemed NUMERIC := 0.00;
   v_norm_mobile TEXT;
   v_can_redeem BOOLEAN := false;
 BEGIN
   -- 1. Fetch loyalty settings
-  SELECT is_enabled, spend_amount, reward_amount, min_redeem_balance
-  INTO v_settings
+  SELECT 
+    COALESCE(is_enabled, false),
+    COALESCE(spend_amount, 100.00),
+    COALESCE(reward_amount, 1.00),
+    COALESCE(min_redeem_balance, 50.00)
+  INTO
+    v_is_enabled,
+    v_spend_amount,
+    v_reward_amount,
+    v_min_redeem_balance
   FROM public.loyalty_reward_settings
   WHERE restaurant_id = p_restaurant_id;
 
   IF NOT FOUND THEN
-    v_settings := ROW(false, 100.00, 1.00, 50.00);
+    v_is_enabled := false;
+    v_spend_amount := 100.00;
+    v_reward_amount := 1.00;
+    v_min_redeem_balance := 50.00;
   END IF;
 
   -- 2. Normalize customer phone if provided
   v_norm_mobile := public.normalize_phone(p_customer_mobile);
 
   IF v_norm_mobile IS NOT NULL THEN
-    SELECT balance, total_earned, total_redeemed
-    INTO v_wallet
+    SELECT 
+      COALESCE(balance, 0.00),
+      COALESCE(total_earned, 0.00),
+      COALESCE(total_redeemed, 0.00)
+    INTO 
+      v_balance,
+      v_total_earned,
+      v_total_redeemed
     FROM public.customer_wallets
     WHERE restaurant_id = p_restaurant_id
       AND customer_mobile = v_norm_mobile;
 
     IF FOUND THEN
       v_can_redeem := (
-        COALESCE(v_settings.is_enabled, false)
-        AND v_wallet.balance >= COALESCE(v_settings.min_redeem_balance, 50.00)
-        AND v_wallet.balance > 0
-      );
-      
-      RETURN jsonb_build_object(
-        'is_enabled', COALESCE(v_settings.is_enabled, false),
-        'spend_amount', COALESCE(v_settings.spend_amount, 100.00),
-        'reward_amount', COALESCE(v_settings.reward_amount, 1.00),
-        'min_redeem_balance', COALESCE(v_settings.min_redeem_balance, 50.00),
-        'customer_mobile', v_norm_mobile,
-        'balance', COALESCE(v_wallet.balance, 0.00),
-        'total_earned', COALESCE(v_wallet.total_earned, 0.00),
-        'total_redeemed', COALESCE(v_wallet.total_redeemed, 0.00),
-        'can_redeem', v_can_redeem
+        v_is_enabled
+        AND v_balance >= v_min_redeem_balance
+        AND v_balance > 0
       );
     END IF;
   END IF;
 
-  -- Default response when no customer wallet exists yet
   RETURN jsonb_build_object(
-    'is_enabled', COALESCE(v_settings.is_enabled, false),
-    'spend_amount', COALESCE(v_settings.spend_amount, 100.00),
-    'reward_amount', COALESCE(v_settings.reward_amount, 1.00),
-    'min_redeem_balance', COALESCE(v_settings.min_redeem_balance, 50.00),
+    'is_enabled', v_is_enabled,
+    'spend_amount', v_spend_amount,
+    'reward_amount', v_reward_amount,
+    'min_redeem_balance', v_min_redeem_balance,
     'customer_mobile', v_norm_mobile,
-    'balance', 0.00,
-    'total_earned', 0.00,
-    'total_redeemed', 0.00,
-    'can_redeem', false
+    'balance', v_balance,
+    'total_earned', v_total_earned,
+    'total_redeemed', v_total_redeemed,
+    'can_redeem', v_can_redeem
   );
 END;
 $$;

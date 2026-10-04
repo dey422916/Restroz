@@ -1456,7 +1456,6 @@ export const webDirectPrintService = {
     }
 
     const rawList = this.getSavedPrinters(restaurantId);
-    if (rawList.length === 0) return null;
 
     // 1. Find configured candidate printers matching role (kot/both or bill/both)
     const candidates = rawList.filter((p) => p.role === role || p.role === 'both');
@@ -1552,6 +1551,76 @@ export const webDirectPrintService = {
 
       target = readyPrinters[0] || null;
       isFallback = Boolean(target && primary && target.id !== primary.id);
+    }
+
+    // Remote Print Agent resolution for mobile/waiter clients:
+    // If no local ready printer is found and a restaurantId is available, query Supabase for the restaurant's active Print Agent and registered printer devices.
+    if (!target && restaurantId) {
+      try {
+        const { data: agentData } = await supabase
+          .from('print_agents')
+          .select('id, device_id, device_name, status, is_paired, last_seen')
+          .eq('restaurant_id', restaurantId)
+          .eq('is_paired', true)
+          .order('last_seen', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (agentData) {
+          const { data: deviceRows } = await supabase
+            .from('printer_devices')
+            .select('*')
+            .eq('agent_id', agentData.id)
+            .eq('is_active', true);
+
+          if (deviceRows && deviceRows.length > 0) {
+            const matchingDevices = deviceRows.filter(
+              (d: any) => d.role === role || d.role === 'both' || !d.role
+            );
+            matchingDevices.sort((a: any, b: any) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0));
+            const chosenDevice = matchingDevices[0] || deviceRows[0];
+
+            if (chosenDevice) {
+              const agentPrinter: ConfiguredDirectPrinter = {
+                id: `agent_${agentData.id}_${chosenDevice.printer_name.replace(/\s+/g, '_')}`,
+                name: chosenDevice.printer_name,
+                transport: 'agent',
+                agentId: agentData.id,
+                agentDeviceName: agentData.device_name,
+                windowsQueueName: chosenDevice.printer_name,
+                paperWidth: (chosenDevice.paper_width as DirectPaperWidth) || '80mm',
+                role: (chosenDevice.role as DirectPrinterRole) || 'both',
+                isPrimary: Boolean(chosenDevice.is_primary),
+                status: 'connected',
+                statusMessage: `RestroZ Print Agent Online (${agentData.device_name})`,
+                lastConnectedAt: Date.now(),
+              };
+
+              // Cache in memory / local store for this restaurant
+              const currentSaved = this.getSavedPrinters(restaurantId);
+              const exists = currentSaved.find((p) => p.id === agentPrinter.id);
+              if (!exists) {
+                this.savePrinters([...currentSaved, agentPrinter], restaurantId);
+              }
+
+              if (typeof __DEV__ !== 'undefined' && __DEV__) {
+                console.log(
+                  `[REMOTE_AGENT_ROUTED]\n` +
+                  `Role: ${role.toUpperCase()}\n` +
+                  `Restaurant ID: ${restaurantId}\n` +
+                  `Agent: ${agentData.device_name} (${agentData.id})\n` +
+                  `Windows Queue: ${chosenDevice.printer_name}\n` +
+                  `Paper Width: ${agentPrinter.paperWidth}`
+                );
+              }
+
+              target = agentPrinter;
+            }
+          }
+        }
+      } catch (agentErr) {
+        console.warn('[webDirectPrintService] Remote agent resolution error:', agentErr);
+      }
     }
 
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
@@ -2209,6 +2278,16 @@ export const webDirectPrintService = {
     }
     const payloadBase64 = btoa(binaryStr);
 
+    console.log(
+      `[PRINT_AGENT_JOB_DISPATCH]\n` +
+      `Restaurant ID: ${restaurantId || 'N/A'}\n` +
+      `Agent ID: ${agentId}\n` +
+      `Printer Queue: ${queueName}\n` +
+      `Job Type: ${jobType.toUpperCase()}\n` +
+      `Job Title: ${jobTitle}\n` +
+      `Payload Bytes: ${data.length}`
+    );
+
     // Insert into public.print_jobs
     const { data: job, error } = await supabase
       .from('print_jobs')
@@ -2226,8 +2305,17 @@ export const webDirectPrintService = {
       .single();
 
     if (error) {
+      console.warn('[webDirectPrintService] Failed to insert print job into Supabase:', error);
       throw new Error(`Failed to queue print job for RestroZ Print Agent: ${error.message}`);
     }
+
+    console.log(
+      `[PRINT_AGENT_JOB_ENQUEUED]\n` +
+      `Job ID: ${job.id}\n` +
+      `Status: ${job.status}\n` +
+      `Queue: ${queueName}\n` +
+      `Created At: ${job.created_at}`
+    );
 
     return {
       success: true,

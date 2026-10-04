@@ -544,60 +544,65 @@ export const printService = {
 
     const autoPrintEnabled = isAutoPrintEnabled(settings);
 
-    // Auto Print ON: use direct thermal printer path (Web Bluetooth, WebUSB, Serial, RestroZ Print Agent, Android Direct)
-    if (autoPrintEnabled && !options?.forceBrowser) {
-      if (Platform.OS === 'web') {
-        try {
-          const webResult = await webDirectPrintService.printKot(order, settings, kot, { isReprint });
-          if (webResult && webResult.success) {
-            if (__DEV__) {
-              console.log(`[THERMAL PRINT]\nDocument: KOT\nRoute: ${webResult.transport.toUpperCase()}_DIRECT\nResult: SUCCESS\nPrinter: ${webResult.printerName}`);
-            }
-            return { direct: true, printerName: webResult.printerName };
-          }
-          if (webResult && !webResult.success) {
-            const err: any = new Error(webResult.message || 'Bluetooth printer could not print the KOT.');
-            err.code = webResult.code || 'BLE_PRINT_FAILED';
-            throw err;
-          }
-          // If autoPrintEnabled is true but no direct printer configured, fallback gracefully
-          return { direct: false };
-        } catch (err: any) {
+    // Web: use direct thermal printer path (Web Bluetooth, WebUSB, Serial, RestroZ Print Agent)
+    if (Platform.OS === 'web' && !options?.forceBrowser) {
+      try {
+        const webResult = await webDirectPrintService.printKot(order, settings, kot, { isReprint });
+        if (webResult && webResult.success) {
           if (__DEV__) {
-            console.warn('[THERMAL PRINT]\nDocument: KOT\nResult: FAILED\nReason: ' + (err?.message || err));
+            console.log(`[THERMAL PRINT]\nDocument: KOT\nRoute: ${webResult.transport.toUpperCase()}_DIRECT\nResult: SUCCESS\nPrinter: ${webResult.printerName}`);
           }
+          return { direct: true, printerName: webResult.printerName };
+        }
+        if (webResult && !webResult.success) {
+          const err: any = new Error(webResult.message || 'Printer could not print the KOT.');
+          err.code = webResult.code || 'BLE_PRINT_FAILED';
           throw err;
         }
-      } else {
-        // Android / Native platform -> Unified Android Print Router
+        // If no direct printer configured:
+        if (autoPrintEnabled) {
+          return { direct: false };
+        }
+      } catch (err: any) {
         if (__DEV__) {
-          console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: true\nPlatform: ANDROID\nRoute: ANDROID_DIRECT_ROUTER');
+          console.warn('[THERMAL PRINT]\nDocument: KOT\nResult: FAILED\nReason: ' + (err?.message || err));
         }
-        const routerResult = await androidPrintRouter.printKot(order, settings, kot, {
-          isReprint,
-        });
-
-        if (routerResult.success || routerResult.allSucceeded) {
-          const printerNames = routerResult.destinations.map((d) => d.printerName).join(', ');
-          if (__DEV__) {
-            console.log('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinters: ' + printerNames);
-          }
-          return { direct: true, printerName: printerNames };
-        } else {
-          if (__DEV__) {
-            console.warn('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
-          }
-          const firstErr = routerResult.destinations.find((d) => d.status !== 'success' && d.status !== 'skipped_dedup');
-          const errObj: any = new Error(routerResult.summary || 'Android direct KOT print failed');
-          errObj.status = firstErr?.status || 'failed_before_write';
-          errObj.destinationResults = routerResult.destinations;
-          throw errObj;
+        if (autoPrintEnabled) {
+          return { direct: false };
         }
+        throw err;
       }
     }
 
-    // Auto Print OFF (or forceBrowser fallback):
-    // Manual user action with Auto Print OFF -> Completely bypass direct transport and open Chrome / browser print dialog
+    // Auto Print ON: Android / Native platform -> Unified Android Print Router
+    if (Platform.OS !== 'web' && autoPrintEnabled && !options?.forceBrowser) {
+      if (__DEV__) {
+        console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: true\nPlatform: ANDROID\nRoute: ANDROID_DIRECT_ROUTER');
+      }
+      const routerResult = await androidPrintRouter.printKot(order, settings, kot, {
+        isReprint,
+      });
+
+      if (routerResult.success || routerResult.allSucceeded) {
+        const printerNames = routerResult.destinations.map((d) => d.printerName).join(', ');
+        if (__DEV__) {
+          console.log('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinters: ' + printerNames);
+        }
+        return { direct: true, printerName: printerNames };
+      } else {
+        if (__DEV__) {
+          console.warn('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
+        }
+        const firstErr = routerResult.destinations.find((d) => d.status !== 'success' && d.status !== 'skipped_dedup');
+        const errObj: any = new Error(routerResult.summary || 'Android direct KOT print failed');
+        errObj.status = firstErr?.status || 'failed_before_write';
+        errObj.destinationResults = routerResult.destinations;
+        throw errObj;
+      }
+    }
+
+    // Auto Print OFF, forceBrowser fallback, or Native manual fallback:
+    // Invoke original browser / native printing
     if (__DEV__) {
       console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: false\nRoute: BROWSER_MANUAL');
     }
@@ -1177,6 +1182,7 @@ export const printService = {
         order_type: kotData.order_type,
         table_number: kotData.table_number,
         customer_name: kotData.customer_name,
+        restaurant_id: kotData.restaurant_id || settings.restaurant_id || (settings as any).id,
         status: 'confirmed',
         subtotal: 0,
         discount_amount: 0,

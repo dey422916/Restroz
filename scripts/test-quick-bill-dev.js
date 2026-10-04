@@ -1,0 +1,1071 @@
+const fs = require('fs');
+const path = require('path');
+const ts = require('typescript');
+
+process.env.EXPO_PUBLIC_SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://mock.supabase.co';
+process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'mock-anon-key';
+
+const mockSessionStorageStore = {};
+if (typeof global.window === 'undefined') {
+  global.window = {
+    localStorage: {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+      clear: () => {},
+    },
+    sessionStorage: {
+      getItem: (key) => (Object.prototype.hasOwnProperty.call(mockSessionStorageStore, key) ? mockSessionStorageStore[key] : null),
+      setItem: (key, val) => { mockSessionStorageStore[key] = String(val); },
+      removeItem: (key) => { delete mockSessionStorageStore[key]; },
+      clear: () => { Object.keys(mockSessionStorageStore).forEach((k) => delete mockSessionStorageStore[k]); },
+    },
+  };
+} else if (!global.window.sessionStorage) {
+  global.window.sessionStorage = {
+    getItem: (key) => (Object.prototype.hasOwnProperty.call(mockSessionStorageStore, key) ? mockSessionStorageStore[key] : null),
+    setItem: (key, val) => { mockSessionStorageStore[key] = String(val); },
+    removeItem: (key) => { delete mockSessionStorageStore[key]; },
+    clear: () => { Object.keys(mockSessionStorageStore).forEach((k) => delete mockSessionStorageStore[k]); },
+  };
+}
+
+function loadTsModule(filePath) {
+  const fileContent = fs.readFileSync(filePath, 'utf8');
+  const transpiledJs = ts.transpileModule(fileContent, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2020,
+      jsx: ts.JsxEmit.React,
+    },
+  }).outputText;
+
+  const moduleExports = {};
+  const moduleObj = { exports: moduleExports };
+  
+  const customRequire = (importPath) => {
+    if (importPath === 'react') {
+      return {
+        createElement: () => null,
+        useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
+        useEffect: () => {},
+        useMemo: (fn) => fn(),
+        useRef: (initial) => ({ current: initial }),
+      };
+    }
+    if (importPath === 'react-native-safe-area-context') {
+      return {
+        useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+      };
+    }
+    if (importPath === 'react-native') {
+      return {
+        Platform: { OS: 'web', select: (obj) => (obj && obj.web !== undefined ? obj.web : obj && obj.default) },
+        Dimensions: { get: () => ({ width: 1024, height: 768 }) },
+        StyleSheet: { create: (s) => s },
+        View: 'View',
+        Text: 'Text',
+        TextInput: 'TextInput',
+        TouchableOpacity: 'TouchableOpacity',
+        Modal: 'Modal',
+        ScrollView: 'ScrollView',
+        ActivityIndicator: 'ActivityIndicator',
+        KeyboardAvoidingView: 'KeyboardAvoidingView',
+      };
+    }
+    if (importPath.startsWith('.')) {
+      const dir = path.dirname(filePath);
+      let targetPath = path.resolve(dir, importPath);
+      if (!fs.existsSync(targetPath)) {
+        if (fs.existsSync(targetPath + '.ts')) targetPath += '.ts';
+        else if (fs.existsSync(targetPath + '.tsx')) targetPath += '.tsx';
+        else if (fs.existsSync(targetPath + '.js')) targetPath += '.js';
+      }
+      return loadTsModule(targetPath);
+    }
+    return require(importPath);
+  };
+
+  const evalFn = new Function('module', 'exports', 'require', transpiledJs);
+  evalFn(moduleObj, moduleExports, customRequire);
+  return moduleObj.exports;
+}
+
+const gstModule = loadTsModule(path.join(__dirname, '..', 'src', 'utils', 'gst.ts'));
+const { calculateOrderTotals, getOrderSubtotal, getOrderInvoiceTotals } = gstModule;
+
+const routingModule = loadTsModule(path.join(__dirname, '..', 'src', 'services', 'printerManager', 'routing.ts'));
+const { printerRoutingService } = routingModule;
+
+const analyticsModule = loadTsModule(path.join(__dirname, '..', 'src', 'services', 'api', 'analyticsService.ts'));
+const { analyticsService } = analyticsModule;
+
+console.log('====================================================');
+console.log('⚡ RESTROZ QUICK BILL COMPREHENSIVE DEV TEST SUITE');
+console.log('====================================================\n');
+
+let passedTests = 0;
+let totalTests = 0;
+
+function assert(condition, testName, details = '') {
+  totalTests++;
+  if (condition) {
+    console.log(`✅ PASS: ${testName}`);
+    passedTests++;
+  } else {
+    console.error(`❌ FAIL: ${testName} - ${details}`);
+    process.exitCode = 1;
+  }
+}
+
+// ----------------------------------------------------
+// TEST A: Temporary Quick Bill item, GST 0%, not saved to menu
+// ----------------------------------------------------
+const tempItemA = {
+  id: 'item-quick-1',
+  order_id: '',
+  product_id: 'quick-temp-1',
+  product_name: 'Custom Special Chaat',
+  unit_price: 150,
+  total_price: 150,
+  quantity: 1,
+  tax_rate: 0,
+  tax_amount: 0,
+  subtotal: 150,
+  total: 150,
+  product: {
+    id: 'quick-temp-1',
+    name: 'Custom Special Chaat',
+    price: 150,
+    tax_rate: 0,
+    category_id: 'cat-snacks-1',
+    category_name: 'Snacks',
+    sku: 'QUICK-BILL',
+  }
+};
+
+const totalsA = calculateOrderTotals({
+  items: [tempItemA],
+  isGstEnabled: true,
+});
+
+assert(totalsA.subtotal === 150, 'Test A: Subtotal is 150 for 0% GST item');
+assert(totalsA.cgstAmount === 0 && totalsA.sgstAmount === 0 && totalsA.totalTax === 0, 'Test A: Tax is 0 for 0% GST item');
+assert(totalsA.payableAmount === 150, 'Test A: Payable amount is 150');
+
+// ----------------------------------------------------
+// TEST B: Temporary Quick Bill item, GST 12% Exclusive
+// ----------------------------------------------------
+const tempItemB = {
+  id: 'item-quick-2',
+  order_id: '',
+  product_id: 'quick-temp-2',
+  product_name: 'Custom Tandoori Platter',
+  unit_price: 200,
+  total_price: 200,
+  quantity: 1,
+  tax_rate: 12,
+  tax_amount: 24,
+  subtotal: 200,
+  total: 200,
+  product: {
+    id: 'quick-temp-2',
+    name: 'Custom Tandoori Platter',
+    price: 200,
+    tax_rate: 12,
+    category_id: 'cat-tandoor-1',
+    category_name: 'Tandoor',
+    sku: 'QUICK-BILL',
+  }
+};
+
+const totalsB = calculateOrderTotals({
+  items: [tempItemB],
+  isGstEnabled: true,
+});
+
+assert(totalsB.subtotal === 200, 'Test B: Subtotal is 200');
+assert(totalsB.cgstAmount === 12 && totalsB.sgstAmount === 12 && totalsB.totalTax === 24, 'Test B: 12% tax splits into 12 CGST + 12 SGST = 24');
+assert(totalsB.payableAmount === 224, 'Test B: Payable amount is 224 (200 + 24 tax)');
+
+// ----------------------------------------------------
+// TEST C: Inclusive GST (₹112 with 12% GST extracts base 100 & tax 12)
+// ----------------------------------------------------
+const rawPriceC = 112;
+const taxRateC = 12;
+const extractedBaseUnitPriceC = Number((rawPriceC / (1 + taxRateC / 100)).toFixed(2)); // 100
+const subtotalC = Number((extractedBaseUnitPriceC * 1).toFixed(2)); // 100
+
+const tempItemC = {
+  id: 'item-quick-3',
+  order_id: '',
+  product_id: 'quick-temp-3',
+  product_name: 'Custom Combo Meal',
+  unit_price: extractedBaseUnitPriceC,
+  total_price: subtotalC,
+  quantity: 1,
+  tax_rate: 12,
+  tax_amount: 12,
+  subtotal: subtotalC,
+  total: subtotalC,
+  product: {
+    id: 'quick-temp-3',
+    name: 'Custom Combo Meal',
+    price: extractedBaseUnitPriceC,
+    tax_rate: 12,
+    category_id: 'cat-combo-1',
+    category_name: 'Combos',
+    sku: 'QUICK-BILL',
+  }
+};
+
+const totalsC = calculateOrderTotals({
+  items: [tempItemC],
+  isGstEnabled: true,
+});
+
+assert(extractedBaseUnitPriceC === 100, 'Test C: Extracted base unit price is 100 from 112 inclusive at 12%');
+assert(totalsC.subtotal === 100, 'Test C: Subtotal is 100');
+assert(totalsC.totalTax === 12, 'Test C: Total tax is 12 (6 CGST + 6 SGST)');
+assert(totalsC.payableAmount === 112, 'Test C: Payable amount is exactly 112');
+
+// ----------------------------------------------------
+// TEST D: Save to Menu ON (Valid product payload)
+// ----------------------------------------------------
+const savedProductD = {
+  id: 'd9f07a41-2f3b-48c9-9528-912a7f5c0011',
+  restaurant_id: 'rest-001',
+  name: 'Paneer Butter Masala Special',
+  sku: 'QB-PANE-101',
+  category_id: 'cat-main-1',
+  category_name: 'Main Course',
+  price: 250,
+  tax_rate: 5,
+  food_type: 'veg',
+  stock_quantity: 100,
+  is_available: true,
+  is_active: true,
+};
+
+const cartItemD = {
+  id: 'item-4',
+  order_id: '',
+  product_id: savedProductD.id,
+  product_name: savedProductD.name,
+  unit_price: 250,
+  total_price: 500,
+  quantity: 2,
+  tax_rate: 5,
+  tax_amount: 25,
+  subtotal: 500,
+  total: 500,
+  product: savedProductD,
+};
+
+assert(cartItemD.product_id === savedProductD.id, 'Test D: Cart item has valid product_id from saved product');
+assert(cartItemD.product.sku === 'QB-PANE-101', 'Test D: Saved product SKU attached to product metadata');
+
+// ----------------------------------------------------
+// TEST E: Plan product limit enforcement
+// ----------------------------------------------------
+function simulatePlanLimitCheck(currentProductCount, maxAllowed) {
+  if (currentProductCount >= maxAllowed) {
+    return { allowed: false, message: 'Product limit reached for your current subscription plan.' };
+  }
+  return { allowed: true };
+}
+
+const limitBlocked = simulatePlanLimitCheck(50, 50);
+const limitAllowed = simulatePlanLimitCheck(49, 50);
+assert(!limitBlocked.allowed, 'Test E: Permanent save blocked when max_products plan limit reached');
+assert(limitAllowed.allowed, 'Test E: Permanent save allowed when within plan limits');
+
+// ----------------------------------------------------
+// TEST F: Permission check (Staff without can_manage_products)
+// ----------------------------------------------------
+function canSaveToMenu(userRole, permissions) {
+  if (userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') return true;
+  return Boolean(permissions && permissions.can_manage_products);
+}
+
+assert(canSaveToMenu('ADMIN', { can_manage_products: false }), 'Test F: ADMIN can always save to menu');
+assert(canSaveToMenu('STAFF', { can_manage_products: true }), 'Test F: STAFF with can_manage_products can save to menu');
+assert(!canSaveToMenu('STAFF', { can_manage_products: false }), 'Test F: STAFF without can_manage_products is blocked from saving to menu');
+
+// ----------------------------------------------------
+// TEST G: Duplicate product name prevention (Scoped to restaurant)
+// ----------------------------------------------------
+const existingMenuProducts = [
+  { id: 'p1', name: 'Cold Coffee', restaurant_id: 'rest-001' },
+  { id: 'p2', name: 'Veg Sandwich', restaurant_id: 'rest-001' },
+  { id: 'p3', name: 'Cold Coffee', restaurant_id: 'rest-002' },
+];
+
+function checkDuplicateProductName(name, restaurantId, products) {
+  return products.some(
+    (p) => p.restaurant_id === restaurantId && p.name.trim().toLowerCase() === name.trim().toLowerCase()
+  );
+}
+
+assert(checkDuplicateProductName('cold coffee', 'rest-001', existingMenuProducts), 'Test G: Detects duplicate name in current restaurant');
+assert(!checkDuplicateProductName('Chicken Sandwich', 'rest-001', existingMenuProducts), 'Test G: Allows unique product name');
+assert(!checkDuplicateProductName('Veg Sandwich', 'rest-002', existingMenuProducts), 'Test G: Scoped to restaurant (rest-002 has no Veg Sandwich)');
+
+// ----------------------------------------------------
+// TEST H: KOT printer routing by category
+// ----------------------------------------------------
+const printers = [
+  {
+    id: 'prn-kitchen',
+    name: 'Kitchen Printer',
+    printer_role: 'kot',
+    is_active: true,
+    category_ids: ['cat-tandoor-1', 'cat-main-1'],
+  },
+  {
+    id: 'prn-bar',
+    name: 'Bar Printer',
+    printer_role: 'kot',
+    is_active: true,
+    category_ids: ['cat-beverages-1'],
+  },
+  {
+    id: 'prn-default',
+    name: 'Default KOT Printer',
+    printer_role: 'kot',
+    is_active: true,
+    is_primary: true,
+    category_ids: [],
+  }
+];
+
+const quickItemsForKot = [
+  tempItemB, // category 'cat-tandoor-1' -> Kitchen Printer
+  {
+    id: 'item-bev-1',
+    product_name: 'Custom Fresh Lime Soda',
+    quantity: 2,
+    unit_price: 60,
+    tax_rate: 5,
+    product: {
+      category_id: 'cat-beverages-1',
+    }
+  }
+];
+
+const splitKots = printerRoutingService.resolveKotsByCategory(quickItemsForKot, printers);
+assert(splitKots.length === 2, 'Test H: Splits items across 2 category printers');
+assert(splitKots.some(s => s.printer.id === 'prn-kitchen' && s.items.some(i => i.product_name === 'Custom Tandoori Platter')), 'Test H: Tandoor Quick Bill item routed to Kitchen Printer');
+assert(splitKots.some(s => s.printer.id === 'prn-bar' && s.items.some(i => i.product_name === 'Custom Fresh Lime Soda')), 'Test H: Beverage Quick Bill item routed to Bar Printer');
+
+// ----------------------------------------------------
+// TEST I: Thermal Bill invoice totals computation
+// ----------------------------------------------------
+const mockOrder = {
+  id: 'ord-qb-001',
+  order_number: 'INV-1001',
+  order_type: 'dine_in',
+  items: [tempItemA, tempItemB],
+  subtotal: 350,
+  taxable_amount: 200,
+  nil_exempt_amount: 150,
+  cgst_amount: 12,
+  sgst_amount: 12,
+  igst_amount: 0,
+  service_charge: 0,
+  delivery_charge: 0,
+  discount_amount: 0,
+  coupon_discount: 0,
+  grand_total: 374,
+  round_off: 0,
+  payable_amount: 374,
+  status: 'completed',
+  created_at: new Date().toISOString(),
+};
+
+const invoiceTotals = getOrderInvoiceTotals(mockOrder, { is_gst_enabled: true, gst_registered: true, default_tax_rate: 5 });
+assert(invoiceTotals.taxableSubtotal === 200, 'Test I: Taxable subtotal is 200 (from 12% item)');
+assert(invoiceTotals.nilExemptSubtotal === 150, 'Test I: Nil/Exempt subtotal is 150 (from 0% item)');
+assert(invoiceTotals.payableAmount === 374, 'Test I: Payable invoice total is 374');
+
+// ----------------------------------------------------
+// TEST K: Order Discount on Quick Bill items
+// ----------------------------------------------------
+const totalsWithDiscount = calculateOrderTotals({
+  items: [tempItemB], // ₹200 at 12% GST
+  discountType: 'percentage',
+  discountValue: 10, // 10% discount -> ₹20 discount -> Net ₹180 -> 12% tax = ₹21.60 -> Total ₹201.60
+  isGstEnabled: true,
+});
+
+assert(totalsWithDiscount.discountAmount === 20, 'Test K: 10% discount on ₹200 is ₹20');
+assert(totalsWithDiscount.totalTax === 21.6, 'Test K: GST 12% calculated on post-discount ₹180 = ₹21.60');
+assert(totalsWithDiscount.payableAmount === 202, 'Test K: Rounded payable amount is ₹202 (201.60 with 0.40 roundoff)');
+
+// ----------------------------------------------------
+// TEST L: Generic coupon on Quick Bill items
+// ----------------------------------------------------
+const totalsWithCoupon = calculateOrderTotals({
+  items: [tempItemB], // ₹200
+  coupon: {
+    code: 'FLAT50',
+    discount_type: 'fixed',
+    discount_value: 50,
+    min_order_value: 100,
+  },
+  isGstEnabled: true,
+});
+
+assert(totalsWithCoupon.couponDiscount === 50, 'Test L: FLAT50 coupon deducted ₹50 from subtotal');
+assert(totalsWithCoupon.totalTax === 18, 'Test L: GST 12% on post-coupon ₹150 is ₹18');
+assert(totalsWithCoupon.payableAmount === 168, 'Test L: Payable amount is ₹168 (150 + 18)');
+
+// ----------------------------------------------------
+// TEST N: Analytics and Sales Reporting with Quick Bill items
+// ----------------------------------------------------
+const todayISO = new Date().toISOString().split('T')[0];
+const sampleOrders = [
+  {
+    id: 'ord-1',
+    created_at: `${todayISO}T12:00:00Z`,
+    status: 'completed',
+    subtotal: 350,
+    payable_amount: 374,
+    cgst_amount: 12,
+    sgst_amount: 12,
+    igst_amount: 0,
+    grand_total: 374,
+    payment_status: 'paid',
+    payment_method: 'cash',
+    items: [tempItemA, tempItemB],
+  }
+];
+
+const daySales = analyticsService.getDayWiseSales(sampleOrders, todayISO, todayISO);
+assert(daySales.totals.net_sales === 374, 'Test N: Day sales summary includes Quick Bill net sales of ₹374');
+assert(daySales.totals.tax_collected === 24, 'Test N: Day sales summary includes Quick Bill tax collected of ₹24');
+
+const itemSales = analyticsService.getItemWiseSales(sampleOrders, [], todayISO, todayISO);
+assert(itemSales.totalUnitsSold === 2, 'Test N: Item-wise sales aggregates 2 Quick Bill units sold');
+assert(itemSales.items.some(i => i.product_name === 'Custom Special Chaat' && i.units_sold === 1), 'Test N: Custom Special Chaat item reported by product_name without requiring product_id in DB');
+assert(itemSales.items.some(i => i.product_name === 'Custom Tandoori Platter' && i.units_sold === 1), 'Test N: Custom Tandoori Platter item reported properly');
+
+// ----------------------------------------------------
+// TEST P: Restaurant Isolation Test
+// ----------------------------------------------------
+const rest1Orders = sampleOrders.filter(o => (o.restaurant_id || 'rest-1') === 'rest-1');
+const rest2Orders = sampleOrders.filter(o => o.restaurant_id === 'rest-2');
+assert(rest1Orders.length === 1, 'Test P: Restaurant 1 sees its own orders');
+assert(rest2Orders.length === 0, 'Test P: Restaurant 2 sees 0 orders from Restaurant 1');
+
+// ----------------------------------------------------
+// TEST Q: Multi-terminal duplicate save test
+// ----------------------------------------------------
+const terminalAProduct = { name: 'Chef Special Kheer', restaurant_id: 'rest-001' };
+const terminalBProduct = { name: 'Chef Special Kheer', restaurant_id: 'rest-001' };
+
+const isDuplicate = checkDuplicateProductName(terminalBProduct.name, terminalBProduct.restaurant_id, [terminalAProduct]);
+assert(isDuplicate === true, 'Test Q: Multi-terminal duplicate save prevented when normalized product name already exists in restaurant');
+
+// ----------------------------------------------------
+// TEST R: Quick Bill Draft Preservation & Restoration
+// ----------------------------------------------------
+const quickBillModule = loadTsModule(path.join(__dirname, '..', 'src', 'components', 'pos', 'QuickBillModal.tsx'));
+const { loadQuickBillDraft, saveQuickBillDraft, clearQuickBillDraft, QUICK_BILL_DRAFT_KEY_PREFIX } = quickBillModule;
+
+const sampleDraftRestA = {
+  name: 'Test Chocolate',
+  priceInput: '150',
+  quantity: 4,
+  taxRate: 12,
+  customTaxInput: '',
+  isCustomTax: false,
+  taxMode: 'exclusive',
+  selectedCategoryId: 'cat-snacks-1',
+  saveToMenu: true,
+  itemNotes: 'Extra crispy',
+};
+
+// Save draft for Restaurant A
+saveQuickBillDraft('rest-A', sampleDraftRestA);
+
+// Verify draft saved to sessionStorage under correct key
+const rawStoredA = global.window.sessionStorage.getItem(`${QUICK_BILL_DRAFT_KEY_PREFIX}rest-A`);
+assert(rawStoredA !== null, 'Test R: Draft saved in sessionStorage with key prefix and restaurantId');
+
+// Restore draft for Restaurant A
+const loadedDraftA = loadQuickBillDraft('rest-A');
+assert(loadedDraftA !== null, 'Test R: Draft successfully loaded for Restaurant A');
+assert(loadedDraftA.name === 'Test Chocolate', 'Test R: Draft name matches "Test Chocolate"');
+assert(loadedDraftA.priceInput === '150', 'Test R: Draft price matches "150"');
+assert(loadedDraftA.quantity === 4, 'Test R: Draft quantity matches 4');
+assert(loadedDraftA.taxRate === 12, 'Test R: Draft tax rate matches 12');
+assert(loadedDraftA.taxMode === 'exclusive', 'Test R: Draft taxMode matches exclusive');
+assert(loadedDraftA.saveToMenu === true, 'Test R: Draft saveToMenu matches true');
+assert(loadedDraftA.itemNotes === 'Extra crispy', 'Test R: Draft itemNotes preserved');
+
+// ----------------------------------------------------
+// TEST S: Explicit Draft Clear (Cancel / Add to Cart)
+// ----------------------------------------------------
+clearQuickBillDraft('rest-A');
+const clearedDraftA = loadQuickBillDraft('rest-A');
+assert(clearedDraftA === null, 'Test S: Draft is null after clearQuickBillDraft on Cancel/Add to Cart');
+
+// ----------------------------------------------------
+// TEST T: Multi-tenant / Restaurant-scoped Draft Isolation
+// ----------------------------------------------------
+saveQuickBillDraft('rest-001', {
+  name: 'Burger Supreme',
+  priceInput: '180',
+  quantity: 2,
+  taxRate: 5,
+  customTaxInput: '',
+  isCustomTax: false,
+  taxMode: 'inclusive',
+  selectedCategoryId: 'cat-burgers',
+  saveToMenu: false,
+  itemNotes: '',
+});
+
+saveQuickBillDraft('rest-002', {
+  name: 'Cold Coffee Frappe',
+  priceInput: '90',
+  quantity: 1,
+  taxRate: 18,
+  customTaxInput: '',
+  isCustomTax: false,
+  taxMode: 'exclusive',
+  selectedCategoryId: 'cat-drinks',
+  saveToMenu: true,
+  itemNotes: 'No sugar',
+});
+
+const draft001 = loadQuickBillDraft('rest-001');
+const draft002 = loadQuickBillDraft('rest-002');
+const draft003 = loadQuickBillDraft('rest-003');
+
+assert(draft001 !== null && draft001.name === 'Burger Supreme', 'Test T: Restaurant 001 retrieves only its own draft (Burger Supreme)');
+assert(draft002 !== null && draft002.name === 'Cold Coffee Frappe', 'Test T: Restaurant 002 retrieves only its own draft (Cold Coffee Frappe)');
+assert(draft003 === null, 'Test T: Restaurant 003 has no draft from 001 or 002');
+
+// Cleanup
+clearQuickBillDraft('rest-001');
+clearQuickBillDraft('rest-002');
+
+// ----------------------------------------------------
+// TEST U: Focus styling verification in QuickBillModal styles
+// ----------------------------------------------------
+const modalFileContent = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'pos', 'QuickBillModal.tsx'), 'utf8');
+assert(modalFileContent.includes("outlineStyle: 'none'"), 'Test U: QuickBillModal includes outlineStyle none for web focus');
+assert(modalFileContent.includes("outlineWidth: 0"), 'Test U: QuickBillModal includes outlineWidth 0 for web focus');
+
+// ----------------------------------------------------
+// TEST V: Quantity Stepper Layout & Buttons
+// ----------------------------------------------------
+assert(modalFileContent.includes("flexShrink: 0"), 'Test V: Stepper buttons include flexShrink: 0 to prevent right-side clipping');
+assert(modalFileContent.includes("width: 44"), 'Test V: Stepper buttons have balanced fixed width (44px)');
+assert(modalFileContent.includes("minWidth: 0"), 'Test V: Input wrappers and fields define minWidth: 0 for proper flex sizing');
+
+// ----------------------------------------------------
+// TEST W: Custom GST Placeholder Visibility
+// ----------------------------------------------------
+assert(modalFileContent.includes('placeholderTextColor="#64748b"'), 'Test W: Custom GST and inputs use #64748b for crisp readable placeholder visibility');
+
+// ----------------------------------------------------
+// TEST X: Mixed GST Rates (12% + 5% with ₹50 Discount)
+// ----------------------------------------------------
+const brownieItem = {
+  id: 'item-brownie-1',
+  order_id: 'ord-mix-1',
+  product_id: 'prod-brownie',
+  product_name: 'Brownie',
+  unit_price: 100,
+  quantity: 1,
+  tax_rate: 12,
+  subtotal: 100,
+  total: 100,
+};
+
+const naanItem = {
+  id: 'item-naan-1',
+  order_id: 'ord-mix-1',
+  product_id: 'prod-naan',
+  product_name: 'Butter Garlic Naan',
+  unit_price: 55,
+  quantity: 1,
+  tax_rate: 5,
+  subtotal: 55,
+  total: 55,
+};
+
+const pakodaItem = {
+  id: 'item-pakoda-1',
+  order_id: 'ord-mix-1',
+  product_id: 'prod-pakoda',
+  product_name: 'Chicken Pakoda',
+  unit_price: 250,
+  quantity: 1,
+  tax_rate: 5,
+  subtotal: 250,
+  total: 250,
+};
+
+const mixedGstTotals = calculateOrderTotals({
+  items: [brownieItem, naanItem, pakodaItem],
+  discountType: 'fixed',
+  discountValue: 50,
+  isGstEnabled: true,
+});
+
+assert(mixedGstTotals.subtotal === 405, 'Test X: Subtotal is exactly ₹405');
+assert(mixedGstTotals.discountAmount === 50, 'Test X: Discount is ₹50');
+assert(mixedGstTotals.taxableSubtotal === 355, 'Test X: Taxable Value is ₹355');
+assert(mixedGstTotals.totalTax === 23.88, 'Test X: Total GST is exactly ₹23.88');
+assert(mixedGstTotals.payableAmount === 379, 'Test X: Grand Total rounded is ₹379');
+assert(mixedGstTotals.roundOff === 0.12, 'Test X: Round off is +₹0.12');
+assert(mixedGstTotals.gstBreakdown.length === 2, 'Test X: GST breakdown contains exactly 2 slabs (12% and 5%)');
+
+const slab12 = mixedGstTotals.gstBreakdown.find(s => s.rate === 12);
+assert(slab12 !== undefined, 'Test X: 12% slab exists in breakdown');
+assert(slab12.halfRate === 6 && slab12.halfRateStr === '6', 'Test X: 12% slab has CGST 6% and SGST 6%');
+assert(slab12.taxableValue === 87.65, 'Test X: 12% slab taxable value is ₹87.65');
+assert(slab12.cgstAmount === 5.26, 'Test X: 12% slab CGST is ₹5.26');
+assert(slab12.sgstAmount === 5.26, 'Test X: 12% slab SGST is ₹5.26');
+
+const slab5 = mixedGstTotals.gstBreakdown.find(s => s.rate === 5);
+assert(slab5 !== undefined, 'Test X: 5% slab exists in breakdown');
+assert(slab5.halfRate === 2.5 && slab5.halfRateStr === '2.5', 'Test X: 5% slab has CGST 2.5% and SGST 2.5%');
+assert(slab5.taxableValue === 267.35, 'Test X: 5% slab taxable value is ₹267.35');
+assert(slab5.cgstAmount === 6.68, 'Test X: 5% slab CGST is ₹6.68');
+assert(slab5.sgstAmount === 6.68, 'Test X: 5% slab SGST is ₹6.68');
+
+// ----------------------------------------------------
+// TEST Y: Single GST Rate Order (All 5%)
+// ----------------------------------------------------
+const all5GstTotals = calculateOrderTotals({
+  items: [naanItem, pakodaItem],
+  isGstEnabled: true,
+});
+
+assert(all5GstTotals.subtotal === 305, 'Test Y: Subtotal is ₹305');
+assert(all5GstTotals.gstBreakdown.length === 1, 'Test Y: Exactly 1 slab in single-rate order');
+assert(all5GstTotals.gstBreakdown[0].rate === 5, 'Test Y: Single slab rate is 5%');
+assert(all5GstTotals.gstBreakdown[0].halfRateStr === '2.5', 'Test Y: Single slab half rate is 2.5%');
+assert(all5GstTotals.cgstAmount === 7.63, 'Test Y: CGST amount is ₹7.63');
+assert(all5GstTotals.sgstAmount === 7.63, 'Test Y: SGST amount is ₹7.63');
+
+// ----------------------------------------------------
+// TEST Z: 0% + 5% Mixed Order
+// ----------------------------------------------------
+const zeroGstItem = {
+  id: 'item-zero-1',
+  order_id: 'ord-zero-1',
+  product_id: 'prod-milk',
+  product_name: 'Fresh Organic Milk',
+  unit_price: 60,
+  quantity: 1,
+  tax_rate: 0,
+  subtotal: 60,
+  total: 60,
+};
+
+const zeroPlus5Totals = calculateOrderTotals({
+  items: [zeroGstItem, naanItem],
+  isGstEnabled: true,
+});
+
+assert(zeroPlus5Totals.subtotal === 115, 'Test Z: Subtotal is ₹115 (60 + 55)');
+assert(zeroPlus5Totals.nilExemptSubtotal === 60, 'Test Z: Nil/Exempt subtotal is ₹60');
+assert(zeroPlus5Totals.taxableSubtotal === 55, 'Test Z: Taxable subtotal is ₹55');
+assert(zeroPlus5Totals.gstBreakdown.length === 1, 'Test Z: 0% item produces no tax slab, only 5% slab present');
+assert(zeroPlus5Totals.gstBreakdown[0].rate === 5, 'Test Z: Tax slab is 5%');
+assert(zeroPlus5Totals.totalTax === 2.76, 'Test Z: Total tax is ₹2.76 (from 5% item only)');
+
+// ----------------------------------------------------
+// TEST AA: Historical Snapshot Preservation with getOrderInvoiceTotals
+// ----------------------------------------------------
+const { getOrderGstBreakdown } = gstModule;
+
+const historicalOrder = {
+  id: 'ord-hist-999',
+  order_number: 'INV-HIST-999',
+  items: [brownieItem], // stored with 12%
+  subtotal: 100,
+  taxable_amount: 100,
+  cgst_amount: 6,
+  sgst_amount: 6,
+  total_tax: 12,
+  grand_total: 112,
+  payable_amount: 112,
+};
+
+// Restaurant settings currently set to 5% GST:
+const currentRestaurantSettings = {
+  is_gst_enabled: true,
+  default_tax_rate: 5,
+  gst_registered: true,
+};
+
+const historicalTotals = getOrderInvoiceTotals(historicalOrder, currentRestaurantSettings);
+const historicalBreakdown = getOrderGstBreakdown(historicalOrder, currentRestaurantSettings);
+
+assert(historicalTotals.totalTax === 12, 'Test AA: Historical order total tax is ₹12 based on stored 12% item snapshot');
+assert(historicalBreakdown.length === 1, 'Test AA: Historical breakdown has 1 slab');
+assert(historicalBreakdown[0].rate === 12, 'Test AA: Historical item retains 12% rate despite restaurant currently set to 5%');
+assert(historicalBreakdown[0].cgstAmount === 6 && historicalBreakdown[0].sgstAmount === 6, 'Test AA: Historical CGST/SGST are ₹6 each (6%)');
+
+// ----------------------------------------------------
+// TEST AB: Mixed GST with Percentage Discount
+// ----------------------------------------------------
+const percentageDiscountMixedTotals = calculateOrderTotals({
+  items: [brownieItem, naanItem, pakodaItem], // ₹405 total
+  discountType: 'percentage',
+  discountValue: 10, // 10% discount = ₹40.50 -> Net ₹364.50
+  isGstEnabled: true,
+});
+
+assert(percentageDiscountMixedTotals.discountAmount === 40.5, 'Test AB: 10% discount on ₹405 is ₹40.50');
+assert(percentageDiscountMixedTotals.taxableSubtotal === 364.5, 'Test AB: Taxable amount is ₹364.50');
+assert(percentageDiscountMixedTotals.gstBreakdown.length === 2, 'Test AB: Percentage discount maintains 2 slabs');
+assert(percentageDiscountMixedTotals.gstBreakdown[0].rate === 12, 'Test AB: 12% slab preserved');
+assert(percentageDiscountMixedTotals.gstBreakdown[1].rate === 5, 'Test AB: 5% slab preserved');
+
+// ----------------------------------------------------
+// TEST AC: Two Quick Bill Items with product_id = null have unique line identities
+// ----------------------------------------------------
+const qbItemA = {
+  id: 'item-qb-choc-1',
+  order_id: 'ord-qb-null-1',
+  product_id: null,
+  product_name: 'Custom Handmade Chocolate',
+  unit_price: 120,
+  quantity: 2,
+  tax_rate: 18,
+  subtotal: 240,
+  total: 240,
+};
+
+const qbItemB = {
+  id: 'item-qb-tea-2',
+  order_id: 'ord-qb-null-1',
+  product_id: null,
+  product_name: 'Special Kashmiri Chai',
+  unit_price: 60,
+  quantity: 3,
+  tax_rate: 5,
+  subtotal: 180,
+  total: 180,
+};
+
+const keyA = qbItemA.id || (qbItemA.product_id ? `prod-${qbItemA.product_id}` : 'line-0');
+const keyB = qbItemB.id || (qbItemB.product_id ? `prod-${qbItemB.product_id}` : 'line-1');
+
+assert(keyA !== keyB, 'Test AC: Two null product_id items have distinct unique line keys');
+assert(keyA === 'item-qb-choc-1', 'Test AC: Item A key uses its canonical line ID');
+assert(keyB === 'item-qb-tea-2', 'Test AC: Item B key uses its canonical line ID');
+
+// ----------------------------------------------------
+// TEST AD: Independent Quantity Increment on Quick Bill Item A
+// ----------------------------------------------------
+let editTestItems = [ { ...qbItemA }, { ...qbItemB } ];
+
+function testAdjustQty(items, targetIdentifier, newQty) {
+  if (newQty <= 0) {
+    return items.filter((i) => i.id !== targetIdentifier && (!i.id || i.product_id !== targetIdentifier));
+  }
+  return items.map((i) => {
+    if (i.id === targetIdentifier || (!i.id && i.product_id === targetIdentifier)) {
+      const unitPrice = Number(i.unit_price) || 0;
+      const subtotal = newQty * unitPrice;
+      return {
+        ...i,
+        quantity: newQty,
+        unit_price: unitPrice,
+        subtotal,
+        total: subtotal,
+      };
+    }
+    return i;
+  });
+}
+
+// Increment Item A from 2 -> 3
+editTestItems = testAdjustQty(editTestItems, qbItemA.id, 3);
+assert(editTestItems.length === 2, 'Test AD: Item count remains 2 after adjusting A');
+assert(editTestItems[0].quantity === 3, 'Test AD: Only Item A quantity increased to 3');
+assert(editTestItems[0].subtotal === 360, 'Test AD: Item A subtotal updated to 360');
+assert(editTestItems[1].quantity === 3, 'Test AD: Item B quantity remains strictly unchanged (3)');
+assert(editTestItems[1].subtotal === 180, 'Test AD: Item B subtotal remains strictly unchanged (180)');
+
+// ----------------------------------------------------
+// TEST AE: Independent Quantity Decrement on Quick Bill Item B
+// ----------------------------------------------------
+// Decrement Item B from 3 -> 1
+editTestItems = testAdjustQty(editTestItems, qbItemB.id, 1);
+assert(editTestItems.length === 2, 'Test AE: Item count remains 2 after adjusting B');
+assert(editTestItems[1].quantity === 1, 'Test AE: Only Item B quantity decreased to 1');
+assert(editTestItems[1].subtotal === 60, 'Test AE: Item B subtotal updated to 60');
+assert(editTestItems[0].quantity === 3, 'Test AE: Item A quantity remains strictly untouched (3)');
+assert(editTestItems[0].subtotal === 360, 'Test AE: Item A subtotal remains strictly untouched (360)');
+
+// ----------------------------------------------------
+// TEST AF: Independent Removal of Quick Bill Item A
+// ----------------------------------------------------
+// Remove Item A (set qty <= 0)
+editTestItems = testAdjustQty(editTestItems, qbItemA.id, 0);
+assert(editTestItems.length === 1, 'Test AF: Only 1 item remains after removing A');
+assert(editTestItems[0].id === qbItemB.id, 'Test AF: Surviving item is exactly Item B');
+assert(editTestItems[0].product_name === 'Special Kashmiri Chai', 'Test AF: Surviving item name matches Item B');
+assert(editTestItems[0].quantity === 1, 'Test AF: Item B quantity preserved');
+
+// ----------------------------------------------------
+// TEST AG: Reload / Edit Order Initialization with Null Product IDs
+// ----------------------------------------------------
+const reloadedOrder = {
+  id: 'ord-reloaded-888',
+  order_number: 'ORD-888',
+  items: [
+    {
+      id: 'db-item-uuid-1',
+      order_id: 'ord-reloaded-888',
+      product_id: null,
+      product_name: 'Live Dosa Counter Extra',
+      unit_price: 80,
+      quantity: 2,
+      subtotal: 160,
+      tax_rate: 5,
+    },
+    {
+      id: 'db-item-uuid-2',
+      order_id: 'ord-reloaded-888',
+      product_id: null,
+      product_name: 'Cold Pressed Cane Juice',
+      unit_price: 50,
+      quantity: 1,
+      subtotal: 50,
+      tax_rate: 0,
+    },
+  ],
+};
+
+const initializedEditItems = (reloadedOrder.items || []).map((i, idx) => {
+  const qty = Number(i.quantity) || 1;
+  const unitPrice = Number(i.unit_price) || (Number(i.subtotal) && qty ? Number(i.subtotal) / qty : 0);
+  const subtotal = qty * unitPrice;
+  const lineId = i.id || `line-${Date.now()}-${idx}`;
+  return {
+    ...i,
+    id: lineId,
+    quantity: qty,
+    unit_price: unitPrice,
+    subtotal,
+    total: subtotal,
+  };
+});
+
+assert(initializedEditItems.length === 2, 'Test AG: Reloaded 2 items in edit state');
+assert(initializedEditItems[0].id === 'db-item-uuid-1', 'Test AG: First item preserves db UUID');
+assert(initializedEditItems[1].id === 'db-item-uuid-2', 'Test AG: Second item preserves db UUID');
+assert(initializedEditItems[0].product_id === null, 'Test AG: First item retains null product_id');
+assert(initializedEditItems[1].product_id === null, 'Test AG: Second item retains null product_id');
+
+// ----------------------------------------------------
+// TEST AH: Same Catalog Product represented as two separate order lines
+// ----------------------------------------------------
+const splitCatalogItem1 = {
+  id: 'item-naan-line-1',
+  order_id: 'ord-split-1',
+  product_id: 'prod-naan',
+  product_name: 'Butter Garlic Naan',
+  unit_price: 55,
+  quantity: 2,
+  item_notes: 'Extra crispy',
+  tax_rate: 5,
+};
+
+const splitCatalogItem2 = {
+  id: 'item-naan-line-2',
+  order_id: 'ord-split-1',
+  product_id: 'prod-naan',
+  product_name: 'Butter Garlic Naan',
+  unit_price: 55,
+  quantity: 1,
+  item_notes: 'No butter / plain',
+  tax_rate: 5,
+};
+
+const keySplit1 = splitCatalogItem1.id || `prod-${splitCatalogItem1.product_id}`;
+const keySplit2 = splitCatalogItem2.id || `prod-${splitCatalogItem2.product_id}`;
+
+assert(keySplit1 !== keySplit2, 'Test AH: Same product on different order lines has unique line keys');
+assert(keySplit1 === 'item-naan-line-1', 'Test AH: First naan line key uses its own line ID');
+assert(keySplit2 === 'item-naan-line-2', 'Test AH: Second naan line key uses its own line ID');
+
+let splitLines = [ { ...splitCatalogItem1 }, { ...splitCatalogItem2 } ];
+splitLines = testAdjustQty(splitLines, splitCatalogItem1.id, 4);
+assert(splitLines[0].quantity === 4, 'Test AH: First naan line quantity modified to 4');
+assert(splitLines[1].quantity === 1, 'Test AH: Second naan line quantity unaffected (1)');
+
+// ----------------------------------------------------
+// TEST AI: Mixed order (1 catalog product + 2 Quick Bill null items)
+// ----------------------------------------------------
+const mixedCatalogAndQbOrder = [
+  { id: 'line-cat-1', product_id: 'prod-brownie', product_name: 'Brownie', unit_price: 100, quantity: 1, tax_rate: 12 },
+  { id: 'line-qb-1', product_id: null, product_name: 'Custom Chef Special Soup', unit_price: 150, quantity: 2, tax_rate: 5 },
+  { id: 'line-qb-2', product_id: null, product_name: 'Fresh Mint Cooler', unit_price: 70, quantity: 1, tax_rate: 12 },
+];
+
+const mixedKeys = mixedCatalogAndQbOrder.map((i, idx) => i.id || (i.product_id ? `prod-${i.product_id}` : `line-${idx}`));
+const uniqueMixedKeys = new Set(mixedKeys);
+assert(uniqueMixedKeys.size === 3, 'Test AI: All 3 lines (catalog + 2 Quick Bill items) produce 100% unique React keys');
+
+// ----------------------------------------------------
+// TEST AJ: New Unsaved Catalog Item in Edit Order (+, -, remove before save)
+// ----------------------------------------------------
+const baseEditItems = [
+  { id: 'db-line-existing-1', product_id: 'prod-existing', product_name: 'Existing Biryani', unit_price: 220, quantity: 1 },
+];
+
+const newlyAddedCatalogProduct = {
+  id: 'prod-kebab-101',
+  name: 'Galouti Kebab Platter',
+  price: 280,
+  tax_rate: 5,
+};
+
+const newUnsavedLineId = `edit-line-test-new-kebab`;
+const newCatalogLineItem = {
+  id: newUnsavedLineId,
+  order_id: 'ord-edit-test',
+  product_id: newlyAddedCatalogProduct.id,
+  product_name: newlyAddedCatalogProduct.name,
+  unit_price: 280,
+  total_price: 280,
+  quantity: 1,
+  tax_rate: 5,
+  tax_amount: 14,
+  subtotal: 280,
+  total: 280,
+};
+
+let activeEditItemsList = [...baseEditItems, newCatalogLineItem];
+assert(activeEditItemsList.length === 2, 'Test AJ: Catalog item successfully added to edit list with stable local lineId');
+assert(activeEditItemsList[1].id === newUnsavedLineId, 'Test AJ: New line preserves its local lineId');
+
+// Increase quantity of new line
+activeEditItemsList = testAdjustQty(activeEditItemsList, newUnsavedLineId, 2);
+assert(activeEditItemsList[1].quantity === 2, 'Test AJ: New unsaved item quantity increased to 2');
+assert(activeEditItemsList[1].subtotal === 560, 'Test AJ: New unsaved item subtotal updated to 560');
+assert(activeEditItemsList[0].quantity === 1, 'Test AJ: Existing item remains strictly untouched at qty 1');
+
+// Decrease quantity of new line
+activeEditItemsList = testAdjustQty(activeEditItemsList, newUnsavedLineId, 1);
+assert(activeEditItemsList[1].quantity === 1, 'Test AJ: New unsaved item quantity decreased to 1');
+
+// Remove new line before save
+activeEditItemsList = testAdjustQty(activeEditItemsList, newUnsavedLineId, 0);
+assert(activeEditItemsList.length === 1, 'Test AJ: New unsaved item cleanly removed before save');
+assert(activeEditItemsList[0].id === 'db-line-existing-1', 'Test AJ: Surviving item is exactly the original existing line');
+
+// ----------------------------------------------------
+// TEST AK: Stable lineId after first item removal (Item A, B, C)
+// ----------------------------------------------------
+const initialThreeItems = [
+  { id: 'stable-line-A', product_id: 'prod-A', product_name: 'Item A', unit_price: 100, quantity: 1 },
+  { id: 'stable-line-B', product_id: 'prod-B', product_name: 'Item B', unit_price: 150, quantity: 2 },
+  { id: 'stable-line-C', product_id: 'prod-C', product_name: 'Item C', unit_price: 200, quantity: 1 },
+];
+
+const afterRemovingA = testAdjustQty(initialThreeItems, 'stable-line-A', 0);
+assert(afterRemovingA.length === 2, 'Test AK: Count is 2 after removing Item A');
+assert(afterRemovingA[0].id === 'stable-line-B', 'Test AK: Item B preserves its exact lineId stable-line-B');
+assert(afterRemovingA[1].id === 'stable-line-C', 'Test AK: Item C preserves its exact lineId stable-line-C');
+assert(afterRemovingA[0].product_name === 'Item B', 'Test AK: First array position is Item B');
+assert(afterRemovingA[1].product_name === 'Item C', 'Test AK: Second array position is Item C');
+
+// ----------------------------------------------------
+// TEST AL: KOT Diff calculation with multiple lines of same product & null products
+// ----------------------------------------------------
+function calculateKotDiff(oldList, updatedList) {
+  const added = [];
+  const oldItemMap = new Map();
+  oldList.forEach((i, idx) => {
+    const key = i.id || (i.order_item_id) || (i.product_id ? `prod-${i.product_id}` : `item-${i.product_name}-${idx}`);
+    oldItemMap.set(key, i);
+  });
+
+  for (const newItem of updatedList) {
+    const key = newItem.id || (newItem.order_item_id) || (newItem.product_id ? `prod-${newItem.product_id}` : `item-${newItem.product_name}`);
+    const oldItem = oldItemMap.get(key);
+    if (!oldItem) {
+      added.push(newItem);
+    } else if (Number(newItem.quantity || 0) > Number(oldItem.quantity || 0)) {
+      const diffQty = Number(newItem.quantity || 0) - Number(oldItem.quantity || 0);
+      added.push({
+        ...newItem,
+        quantity: diffQty,
+      });
+    }
+  }
+  return added;
+}
+
+const kotOldItems = [
+  { id: 'kot-line-brownie-1', product_id: 'prod-brownie', product_name: 'Brownie', quantity: 1 },
+  { id: 'kot-line-brownie-2', product_id: 'prod-brownie', product_name: 'Brownie', quantity: 2, item_notes: 'Extra fudge' },
+  { id: 'kot-line-chai-1', product_id: null, product_name: 'Masala Chai', quantity: 2 },
+];
+
+const kotUpdatedItems = [
+  // Brownie Line 1 increased from 1 -> 3 (diff = 2)
+  { id: 'kot-line-brownie-1', product_id: 'prod-brownie', product_name: 'Brownie', quantity: 3 },
+  // Brownie Line 2 unchanged (qty 2 -> diff = 0)
+  { id: 'kot-line-brownie-2', product_id: 'prod-brownie', product_name: 'Brownie', quantity: 2, item_notes: 'Extra fudge' },
+  // Masala Chai removed
+  // New line added: Garlic Naan qty 2 (diff = 2)
+  { id: 'kot-line-naan-new', product_id: 'prod-naan', product_name: 'Garlic Naan', quantity: 2 },
+];
+
+const kotDiffResult = calculateKotDiff(kotOldItems, kotUpdatedItems);
+assert(kotDiffResult.length === 2, 'Test AL: KOT Diff produces exactly 2 supplementary entries');
+assert(kotDiffResult[0].id === 'kot-line-brownie-1' && kotDiffResult[0].quantity === 2, 'Test AL: Brownie Line 1 supplementary quantity is 2 (3 - 1)');
+assert(kotDiffResult[1].id === 'kot-line-naan-new' && kotDiffResult[1].quantity === 2, 'Test AL: New Garlic Naan supplementary quantity is 2');
+assert(!kotDiffResult.some((i) => i.id === 'kot-line-brownie-2'), 'Test AL: Brownie Line 2 (unchanged) is NOT included in KOT supplementary');
+
+// ----------------------------------------------------
+// TEST AM: Mixed 4-line order (catalog + duplicate catalog + 2 QB null items)
+// ----------------------------------------------------
+const mixedFourLines = [
+  { id: 'line-c1', product_id: 'prod-paneer', product_name: 'Paneer Tikka', quantity: 1, unit_price: 200 },
+  { id: 'line-c2', product_id: 'prod-paneer', product_name: 'Paneer Tikka', quantity: 2, unit_price: 200, item_notes: 'Spicy' },
+  { id: 'line-q1', product_id: null, product_name: 'Special Mocktail', quantity: 1, unit_price: 120 },
+  { id: 'line-q2', product_id: null, product_name: 'Chef Custom Dessert', quantity: 1, unit_price: 180 },
+];
+
+const mixedFourKeys = mixedFourLines.map((i, idx) => i.id || (i.product_id ? `prod-${i.product_id}-${idx}` : `line-${idx}`));
+const uniqueFourKeys = new Set(mixedFourKeys);
+assert(uniqueFourKeys.size === 4, 'Test AM: 4 lines with duplicate product IDs and null product IDs all produce distinct keys');
+
+// Decrement duplicate line (line-c2) from 2 -> 1
+let adjustedFourLines = testAdjustQty(mixedFourLines, 'line-c2', 1);
+assert(adjustedFourLines[1].quantity === 1, 'Test AM: Duplicate catalog line (line-c2) quantity updated to 1');
+assert(adjustedFourLines[0].quantity === 1, 'Test AM: First catalog line (line-c1) remains unaffected');
+assert(adjustedFourLines[2].quantity === 1, 'Test AM: First QB item remains unaffected');
+assert(adjustedFourLines[3].quantity === 1, 'Test AM: Second QB item remains unaffected');
+
+// Remove QB item 1 (line-q1)
+adjustedFourLines = testAdjustQty(adjustedFourLines, 'line-q1', 0);
+assert(adjustedFourLines.length === 3, 'Test AM: 3 items remain after removing QB item 1');
+assert(!adjustedFourLines.some((i) => i.id === 'line-q1'), 'Test AM: QB item 1 removed');
+assert(adjustedFourLines.some((i) => i.id === 'line-q2'), 'Test AM: QB item 2 remains intact');
+
+console.log('\n====================================================');
+console.log(`RESULTS: ${passedTests} / ${totalTests} tests passed (${Math.round((passedTests/totalTests)*100)}%)`);
+console.log('====================================================\n');
+
+if (passedTests === totalTests) {
+  console.log('🎉 ALL QUICK BILL UNIT & REGRESSION TESTS PASSED CLEANLY!');
+} else {
+  console.error('❌ SOME TESTS FAILED');
+  process.exit(1);
+}

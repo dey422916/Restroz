@@ -15,6 +15,17 @@ export interface CalculationInput {
   taxRate?: number;
 }
 
+export interface GstSlabBreakdown {
+  rate: number;
+  halfRate: number;
+  halfRateStr: string;
+  taxableValue: number;
+  cgstAmount: number;
+  sgstAmount: number;
+  igstAmount: number;
+  totalTax: number;
+}
+
 export interface CalculationResult {
   subtotal: number;
   discountAmount: number;
@@ -30,6 +41,7 @@ export interface CalculationResult {
   rawTotal: number;
   roundOff: number;
   payableAmount: number;
+  gstBreakdown: GstSlabBreakdown[];
 }
 
 export function calculateOrderTotals(input: CalculationInput): CalculationResult {
@@ -106,18 +118,41 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
   let totalIgst = 0;
   let taxableValue = 0;
   let nilExemptValue = 0;
+  const gstBreakdown: GstSlabBreakdown[] = [];
 
-  rateBuckets.forEach((bucketNet, rate) => {
+  // Sort rates descending (e.g. 28, 18, 12, 5)
+  const sortedRates = Array.from(rateBuckets.keys()).sort((a, b) => b - a);
+
+  sortedRates.forEach((rate) => {
+    const bucketNet = rateBuckets.get(rate) || 0;
     const roundedBucketNet = roundToTwoDecimals(bucketNet);
     if (rate > 0) {
       taxableValue += roundedBucketNet;
+      const halfRate = rate / 2;
+      const halfRateStr = halfRate % 1 === 0 ? `${halfRate}` : `${halfRate.toFixed(1)}`;
+      let slabCgst = 0;
+      let slabSgst = 0;
+      let slabIgst = 0;
       if (isInterState) {
-        totalIgst += roundToTwoDecimals((roundedBucketNet * rate) / 100);
+        slabIgst = roundToTwoDecimals((roundedBucketNet * rate) / 100);
+        totalIgst += slabIgst;
       } else {
-        const halfRate = rate / 2;
-        totalCgst += roundToTwoDecimals((roundedBucketNet * halfRate) / 100);
-        totalSgst += roundToTwoDecimals((roundedBucketNet * halfRate) / 100);
+        slabCgst = roundToTwoDecimals((roundedBucketNet * halfRate) / 100);
+        slabSgst = roundToTwoDecimals((roundedBucketNet * halfRate) / 100);
+        totalCgst += slabCgst;
+        totalSgst += slabSgst;
       }
+      const slabTotalTax = roundToTwoDecimals(slabCgst + slabSgst + slabIgst);
+      gstBreakdown.push({
+        rate,
+        halfRate,
+        halfRateStr,
+        taxableValue: roundedBucketNet,
+        cgstAmount: slabCgst,
+        sgstAmount: slabSgst,
+        igstAmount: slabIgst,
+        totalTax: slabTotalTax,
+      });
     } else {
       nilExemptValue += roundedBucketNet;
     }
@@ -156,6 +191,7 @@ export function calculateOrderTotals(input: CalculationInput): CalculationResult
     rawTotal,
     roundOff,
     payableAmount,
+    gstBreakdown,
   };
 }
 
@@ -375,5 +411,13 @@ export function getOrderInvoiceTotals(
   });
 }
 
-
-
+/**
+ * Single source of truth for retrieving slab-wise GST breakdown for any order (live or historical).
+ */
+export function getOrderGstBreakdown(
+  order: Partial<Order>,
+  settings?: { is_gst_enabled?: boolean; default_tax_rate?: number; service_charge_rate?: number; gst_registered?: boolean; gstin?: string }
+): GstSlabBreakdown[] {
+  const totals = getOrderInvoiceTotals(order, settings);
+  return totals.gstBreakdown || [];
+}

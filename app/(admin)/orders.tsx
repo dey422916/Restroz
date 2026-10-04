@@ -292,6 +292,25 @@ export default function OrdersScreen() {
     }
   }, [openOrderId, orders]);
 
+  // Ensure full items list is populated when View Order / Retail Bill modal opens
+  useEffect(() => {
+    if (viewOrderModal && (!viewOrderModal.items || viewOrderModal.items.length === 0)) {
+      (async () => {
+        try {
+          const { data: itms } = await supabase
+            .from('order_items')
+            .select('*')
+            .eq('order_id', viewOrderModal.id);
+          if (itms && itms.length > 0) {
+            setViewOrderModal((prev) => (prev && prev.id === viewOrderModal.id ? { ...prev, items: itms } : prev));
+          }
+        } catch (err: any) {
+          console.warn('Could not fetch items for viewOrderModal:', err);
+        }
+      })();
+    }
+  }, [viewOrderModal?.id]);
+
   // Categorized order partitions helper for display badges
   const isOnlineDeliveryOrder = (o: Order): boolean => {
     return resolveOrderSource(o) === 'CUSTOMER_APP';
@@ -395,12 +414,14 @@ export default function OrdersScreen() {
     }
     setEditOrderModal(ord);
     setEditItems(
-      (ord.items || []).map((i) => {
+      (ord.items || []).map((i, idx) => {
         const qty = Number(i.quantity) || 1;
         const unitPrice = Number(i.unit_price) || (Number(i.subtotal) && qty ? Number(i.subtotal) / qty : (Number(i.total) && qty ? Number(i.total) / qty : 0));
         const subtotal = qty * unitPrice;
+        const lineId = i.id || (i as any).order_item_id || `edit-line-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 6)}`;
         return {
           ...i,
+          id: lineId,
           quantity: qty,
           unit_price: unitPrice,
           subtotal,
@@ -429,7 +450,7 @@ export default function OrdersScreen() {
       );
       return;
     }
-    const existingIdx = editItems.findIndex((i) => i.product_id === prod.id);
+    const existingIdx = editItems.findIndex((i) => Boolean(i.product_id && i.product_id === prod.id));
     const prodPrice = Number(prod.price) || 0;
     if (existingIdx !== -1) {
       const updated = [...editItems];
@@ -445,8 +466,9 @@ export default function OrdersScreen() {
       };
       setEditItems(updated);
     } else {
+      const lineId = `edit-line-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
       const newItem: OrderItem = {
-        id: 'item-' + Date.now() + Math.random().toString(36).substr(2, 4),
+        id: lineId,
         order_id: editOrderModal?.id || '',
         product_id: prod.id,
         product_name: prod.name,
@@ -467,9 +489,9 @@ export default function OrdersScreen() {
   };
 
   // Adjust item quantity in Edit modal
-  const handleAdjustEditQty = (productId: string, newQty: number) => {
+  const handleAdjustEditQty = (lineId: string, newQty: number) => {
     if (isDispatchedDeliveryOrder(editOrderModal)) {
-      const origItem = editOrderModal?.items?.find((i) => i.product_id === productId);
+      const origItem = editOrderModal?.items?.find((i) => (i.id && i.id === lineId) || (i.product_id && i.product_id === lineId));
       const origQty = origItem ? Number(origItem.quantity) || 0 : 0;
       if (newQty > origQty) {
         showAlert(
@@ -480,11 +502,11 @@ export default function OrdersScreen() {
       }
     }
     if (newQty <= 0) {
-      setEditItems(editItems.filter((i) => i.product_id !== productId));
+      setEditItems(editItems.filter((i) => (i.id ? i.id !== lineId : i.product_id !== lineId)));
     } else {
       setEditItems(
         editItems.map((i) => {
-          if (i.product_id === productId) {
+          if ((i.id && i.id === lineId) || (!i.id && i.product_id === lineId)) {
             const unitPrice = Number(i.unit_price) || 0;
             const subtotal = newQty * unitPrice;
             return {
@@ -551,9 +573,13 @@ export default function OrdersScreen() {
 
     if (isDispatchedDeliveryOrder(editOrderModal)) {
       const oldItemsMap = new Map<string, number>();
-      (editOrderModal.items || []).forEach((i) => oldItemsMap.set(i.product_id, Number(i.quantity) || 0));
-      const hasAddedItems = editItems.some((i) => {
-        const prev = oldItemsMap.get(i.product_id);
+      (editOrderModal.items || []).forEach((i, idx) => {
+        const k = i.id || (i as any).order_item_id || (i.product_id ? `prod-${i.product_id}` : `line-${idx}`);
+        oldItemsMap.set(k, Number(i.quantity) || 0);
+      });
+      const hasAddedItems = editItems.some((i, idx) => {
+        const k = i.id || (i as any).order_item_id || (i.product_id ? `prod-${i.product_id}` : `line-${idx}`);
+        const prev = oldItemsMap.get(k);
         return prev === undefined || (Number(i.quantity) || 0) > prev;
       });
       if (hasAddedItems) {
@@ -844,8 +870,6 @@ export default function OrdersScreen() {
           : (hasExistingKot ? 'Supplementary Kitchen Slip' : 'Kitchen Slip');
 
         const newKot = await kotService.generateKot(order, kotReason, itemsToGenerate);
-        await printService.printKotThermal(order, settings, newKot, false);
-        await printedKotTracker.markKotAsAutoPrinted(newKot.id, newKot.kitchen_notes);
         await orderService.updateOrderStatus(order.id, 'kot_generated');
 
         // Optimistically update order state immediately so KOT button disables instantly
@@ -1173,9 +1197,12 @@ export default function OrdersScreen() {
         return prev;
       });
 
+      const rewardMsg = completed.reward_earned && completed.reward_earned > 0
+        ? `\n🎁 ₹${completed.reward_earned.toFixed(2)} reward credited to Customer Wallet (Balance: ₹${Number(completed.new_wallet_balance).toFixed(2)}).`
+        : '';
       Alert.alert(
         'Order Settled & Closed',
-        `Order #${completed.order_number} marked as ${payReceived ? 'PAID & COMPLETED' : 'UNPAID (DELIVERY COD)'}.\nTable released.`
+        `Order #${completed.order_number} marked as ${payReceived ? 'PAID & COMPLETED' : 'UNPAID (DELIVERY COD)'}.\nTable released.${rewardMsg}`
       );
       setPayOrderModal(null);
       setViewOrderModal(completed);
@@ -1268,9 +1295,9 @@ export default function OrdersScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Search & Status Filters toolbar - Left 50% Status Filters, Right 50% Search */}
+        {/* Status Filters & Search Field - Equally Aligned */}
         <View style={[styles.toolbarRow, isMobile && styles.toolbarRowMobile]}>
-          {/* Status Sub-filter Pills - LEFT 50% */}
+          {/* Status Sub-filter Pills */}
           <View style={[styles.tabRow, !isMobile && styles.tabRowDesktop]}>
             {[
               { id: 'active', label: '🔥 Active' },
@@ -1280,20 +1307,20 @@ export default function OrdersScreen() {
             ].map((tab) => (
               <TouchableOpacity
                 key={tab.id}
-                style={[styles.tabBtn, tabFilter === tab.id && styles.tabBtnActive]}
+                style={[
+                  styles.tabBtn,
+                  tabFilter === tab.id && styles.tabBtnActive,
+                ]}
                 onPress={() => setTabFilter(tab.id as any)}
               >
-                <Text
-                  numberOfLines={1}
-                  style={[styles.tabText, tabFilter === tab.id && styles.tabTextActive]}
-                >
+                <Text style={[styles.tabText, tabFilter === tab.id && styles.tabTextActive]} numberOfLines={1}>
                   {tab.label}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
 
-          {/* Search Bar - RIGHT 50% */}
+          {/* Search Input */}
           <View style={[styles.searchContainer, !isMobile && styles.searchContainerDesktop]}>
             <TextInput
               style={styles.search}
@@ -1533,15 +1560,18 @@ export default function OrdersScreen() {
                 {/* Items List - Compact Container */}
                 <View style={styles.itemsBox}>
                   <Text style={styles.itemsTitle}>Items ({order.items?.length || 0}):</Text>
-                  {(order.items || []).map((i) => (
-                    <View key={i.id} style={styles.itemRow}>
-                      <Text style={styles.itemQty}>{i.quantity}x</Text>
-                      <Text style={styles.itemName} numberOfLines={1}>{i.product_name}</Text>
-                      <Text style={styles.itemPrice}>
-                        {formatCurrency((Number(i.unit_price) && Number(i.quantity)) ? (Number(i.unit_price) * Number(i.quantity)) : (Number(i.subtotal) || Number(i.total) || 0))}
-                      </Text>
-                    </View>
-                  ))}
+                  {(order.items || []).map((i, idx) => {
+                    const itemKey = i.id || (i as any).order_item_id || (i.product_id ? `prod-${i.product_id}` : `order-item-${idx}`);
+                    return (
+                      <View key={itemKey} style={styles.itemRow}>
+                        <Text style={styles.itemQty}>{i.quantity}x</Text>
+                        <Text style={styles.itemName} numberOfLines={1}>{i.product_name}</Text>
+                        <Text style={styles.itemPrice}>
+                          {formatCurrency((Number(i.unit_price) && Number(i.quantity)) ? (Number(i.unit_price) * Number(i.quantity)) : (Number(i.subtotal) || Number(i.total) || 0))}
+                        </Text>
+                      </View>
+                    );
+                  })}
                 </View>
 
                 {/* Order Notes / Instructions / Source info */}
@@ -2141,38 +2171,41 @@ export default function OrdersScreen() {
               >
                 {/* Current Items Stepper List */}
                 <Text style={styles.fieldSectionHeader}>Ordered Items:</Text>
-                {editItems.map((itm) => (
-                  <View key={itm.product_id} style={styles.editItemRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.editItemName}>{itm.product_name}</Text>
-                      <Text style={styles.editItemRate}>{formatCurrency(itm.unit_price)} each</Text>
-                    </View>
+                {editItems.map((itm, idx) => {
+                  const lineId = itm.id || (itm as any).order_item_id || `edit-item-${idx}`;
+                  return (
+                    <View key={lineId} style={styles.editItemRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.editItemName}>{itm.product_name}</Text>
+                        <Text style={styles.editItemRate}>{formatCurrency(itm.unit_price)} each</Text>
+                      </View>
 
-                    <View style={styles.stepperBox}>
-                      <TouchableOpacity
-                        style={styles.stepperBtn}
-                        onPress={() => handleAdjustEditQty(itm.product_id, itm.quantity - 1)}
-                      >
-                        <Text style={styles.stepperBtnText}>-</Text>
-                      </TouchableOpacity>
-                      <Text style={styles.stepperQty}>{itm.quantity}</Text>
-                      <TouchableOpacity
-                        style={[
-                          styles.stepperBtn,
-                          isDispatchedDeliveryOrder(editOrderModal) && { opacity: 0.3 }
-                        ]}
-                        disabled={isDispatchedDeliveryOrder(editOrderModal)}
-                        onPress={() => handleAdjustEditQty(itm.product_id, itm.quantity + 1)}
-                      >
-                        <Text style={styles.stepperBtnText}>+</Text>
-                      </TouchableOpacity>
-                    </View>
+                      <View style={styles.stepperBox}>
+                        <TouchableOpacity
+                          style={styles.stepperBtn}
+                          onPress={() => handleAdjustEditQty(lineId, itm.quantity - 1)}
+                        >
+                          <Text style={styles.stepperBtnText}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.stepperQty}>{itm.quantity}</Text>
+                        <TouchableOpacity
+                          style={[
+                            styles.stepperBtn,
+                            isDispatchedDeliveryOrder(editOrderModal) && { opacity: 0.3 }
+                          ]}
+                          disabled={isDispatchedDeliveryOrder(editOrderModal)}
+                          onPress={() => handleAdjustEditQty(lineId, itm.quantity + 1)}
+                        >
+                          <Text style={styles.stepperBtnText}>+</Text>
+                        </TouchableOpacity>
+                      </View>
 
-                    <Text style={styles.editItemTotal}>
-                      {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
-                    </Text>
-                  </View>
-                ))}
+                      <Text style={styles.editItemTotal}>
+                        {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
+                      </Text>
+                    </View>
+                  );
+                })}
 
                 {/* Search & Add New Products */}
                 {isDispatchedDeliveryOrder(editOrderModal) ? (
@@ -2381,14 +2414,33 @@ export default function OrdersScreen() {
                       </View>
                     )}
                     {Boolean(editTotals.cgstAmount + editTotals.sgstAmount > 0) && (() => {
-                      const editHalfRate = editTotals.taxableSubtotal > 0
-                        ? (editTotals.cgstAmount / editTotals.taxableSubtotal) * 100
-                        : ((settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 0) / 2);
-                      const editHalfRateStr = editHalfRate % 1 === 0 ? `${editHalfRate}` : `${editHalfRate.toFixed(1)}`;
+                      if (editTotals.gstBreakdown && editTotals.gstBreakdown.length > 1) {
+                        return (
+                          <>
+                            {editTotals.gstBreakdown.map((slab) => (
+                              <View key={slab.rate} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                                <Text style={{ fontSize: 12, color: '#64748b' }}>GST @ {slab.rate}%:</Text>
+                                <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(slab.totalTax)}</Text>
+                              </View>
+                            ))}
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748b' }}>Total GST:</Text>
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.totalTax)}</Text>
+                            </View>
+                          </>
+                        );
+                      }
+
+                      const singleSlab = editTotals.gstBreakdown?.[0];
+                      const rateStr = singleSlab ? `${singleSlab.rate}` : (
+                        settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
+                          ? `${Number(settings.default_tax_rate)}`
+                          : '5'
+                      );
                       return (
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-                          <Text style={{ fontSize: 12, color: '#64748b' }}>CGST ({editHalfRateStr}%) + SGST ({editHalfRateStr}%):</Text>
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.cgstAmount + editTotals.sgstAmount)}</Text>
+                          <Text style={{ fontSize: 12, color: '#64748b' }}>GST @ {rateStr}%:</Text>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>{formatCurrency(editTotals.totalTax)}</Text>
                         </View>
                       );
                     })()}
@@ -2980,25 +3032,34 @@ export default function OrdersScreen() {
                   )}
 
                   {Boolean(((payTotals?.cgstAmount || 0) > 0 || (payTotals?.sgstAmount || 0) > 0)) && (() => {
-                    const payTaxRate = (payOrderModal as any)?.tax_rate !== undefined && (payOrderModal as any)?.tax_rate !== null && !isNaN(Number((payOrderModal as any).tax_rate))
-                      ? Number((payOrderModal as any).tax_rate)
-                      : ((payTotals?.taxableSubtotal || 0) > 0 && (payTotals?.cgstAmount || 0) > 0
-                          ? ((payTotals?.cgstAmount || 0) * 2 / (payTotals?.taxableSubtotal || 1)) * 100
-                          : (settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null ? Number(settings.default_tax_rate) : 0));
-                    const payHalfRate = payTaxRate / 2;
-                    const payHalfRateStr = payHalfRate % 1 === 0 ? `${payHalfRate}` : `${payHalfRate.toFixed(1)}`;
-                    return (
-                      <>
-                        <View style={styles.billRow}>
-                          <Text style={styles.billLabel}>CGST ({payHalfRateStr}%):</Text>
-                          <Text style={styles.billVal}>{formatCurrency(payTotals?.cgstAmount || 0)}</Text>
-                        </View>
+                    if (payTotals?.gstBreakdown && payTotals.gstBreakdown.length > 1) {
+                      return (
+                        <>
+                          {payTotals.gstBreakdown.map((slab) => (
+                            <View key={slab.rate} style={styles.billRow}>
+                              <Text style={styles.billLabel}>GST @ {slab.rate}%:</Text>
+                              <Text style={styles.billVal}>{formatCurrency(slab.totalTax)}</Text>
+                            </View>
+                          ))}
+                          <View style={styles.billRow}>
+                            <Text style={[styles.billLabel, { fontWeight: '700' }]}>Total GST:</Text>
+                            <Text style={[styles.billVal, { fontWeight: '700' }]}>{formatCurrency(payTotals.totalTax)}</Text>
+                          </View>
+                        </>
+                      );
+                    }
 
-                        <View style={styles.billRow}>
-                          <Text style={styles.billLabel}>SGST ({payHalfRateStr}%):</Text>
-                          <Text style={styles.billVal}>{formatCurrency(payTotals?.sgstAmount || 0)}</Text>
-                        </View>
-                      </>
+                    const singleSlab = payTotals?.gstBreakdown?.[0];
+                    const rateStr = singleSlab ? `${singleSlab.rate}` : (
+                      settings?.default_tax_rate !== undefined && settings?.default_tax_rate !== null
+                        ? `${Number(settings.default_tax_rate)}`
+                        : '5'
+                    );
+                    return (
+                      <View style={styles.billRow}>
+                        <Text style={styles.billLabel}>GST @ {rateStr}%:</Text>
+                        <Text style={styles.billVal}>{formatCurrency((payTotals?.cgstAmount || 0) + (payTotals?.sgstAmount || 0))}</Text>
+                      </View>
                     );
                   })()}
 
@@ -3385,20 +3446,35 @@ export default function OrdersScreen() {
                   ) : null}
 
                   {/* Items Card */}
-                  <View style={styles.invoiceItemsCard}>
-                    <Text style={styles.invoiceSectionTitle}>ORDERED ITEMS ({viewOrderModal.items?.length || 0})</Text>
-                    {(viewOrderModal.items || []).map((itm, i) => (
-                      <View key={itm.id || i} style={styles.invoiceItemRow}>
-                        <View style={styles.invoiceQtyBadge}>
-                          <Text style={styles.invoiceQtyText}>{itm.quantity}x</Text>
-                        </View>
-                        <Text style={styles.invoiceItemName} numberOfLines={2}>{itm.product_name}</Text>
-                        <Text style={styles.invoiceItemPrice}>
-                          {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
-                        </Text>
+                  {(() => {
+                    const orderedItemsList = (viewOrderModal.items && viewOrderModal.items.length > 0)
+                      ? viewOrderModal.items
+                      : ((viewOrderModal as any).order_items && (viewOrderModal as any).order_items.length > 0)
+                      ? (viewOrderModal as any).order_items
+                      : (viewOrderModal.kots && viewOrderModal.kots.length > 0)
+                      ? viewOrderModal.kots.flatMap((k) => k.items || [])
+                      : [];
+
+                    return (
+                      <View style={styles.invoiceItemsCard}>
+                        <Text style={styles.invoiceSectionTitle}>ORDERED ITEMS ({orderedItemsList.length})</Text>
+                        {orderedItemsList.map((itm: any, i: number) => {
+                          const itemKey = itm.id || (itm as any).order_item_id || (itm.product_id ? `prod-${itm.product_id}-${i}` : `inv-item-${i}`);
+                          return (
+                            <View key={itemKey} style={styles.invoiceItemRow}>
+                              <View style={styles.invoiceQtyBadge}>
+                                <Text style={styles.invoiceQtyText}>{itm.quantity}x</Text>
+                              </View>
+                              <Text style={styles.invoiceItemName} numberOfLines={2}>{itm.product_name || itm.name || 'Item'}</Text>
+                              <Text style={styles.invoiceItemPrice}>
+                                {formatCurrency((Number(itm.unit_price) && Number(itm.quantity)) ? (Number(itm.unit_price) * Number(itm.quantity)) : (Number(itm.subtotal) || Number(itm.total) || 0))}
+                              </Text>
+                            </View>
+                          );
+                        })}
                       </View>
-                    ))}
-                  </View>
+                    );
+                  })()}
 
                   {/* Financial Breakdown Card */}
                   <View style={styles.invoiceTotalsCard}>
@@ -3448,14 +3524,37 @@ export default function OrdersScreen() {
                           )}
                           {isTaxInvoiceDisplay ? (
                             <>
-                              <View style={styles.invoiceRow}>
-                                <Text style={styles.invoiceLabel}>CGST ({halfRate}%)</Text>
-                                <Text style={styles.invoiceVal}>{formatCurrency(invoiceTotals.cgstAmount)}</Text>
-                              </View>
-                              <View style={styles.invoiceRow}>
-                                <Text style={styles.invoiceLabel}>SGST ({halfRate}%)</Text>
-                                <Text style={styles.invoiceVal}>{formatCurrency(invoiceTotals.sgstAmount)}</Text>
-                              </View>
+                              {invoiceTotals.gstBreakdown && invoiceTotals.gstBreakdown.length > 1 ? (
+                                <>
+                                  {invoiceTotals.gstBreakdown.map((slab) => (
+                                    <React.Fragment key={slab.rate}>
+                                      <View style={styles.invoiceRow}>
+                                        <Text style={styles.invoiceLabel}>CGST ({slab.halfRateStr}%)</Text>
+                                        <Text style={styles.invoiceVal}>{formatCurrency(slab.cgstAmount)}</Text>
+                                      </View>
+                                      <View style={styles.invoiceRow}>
+                                        <Text style={styles.invoiceLabel}>SGST ({slab.halfRateStr}%)</Text>
+                                        <Text style={styles.invoiceVal}>{formatCurrency(slab.sgstAmount)}</Text>
+                                      </View>
+                                    </React.Fragment>
+                                  ))}
+                                  <View style={styles.invoiceRow}>
+                                    <Text style={[styles.invoiceLabel, { fontWeight: '700' }]}>Total GST</Text>
+                                    <Text style={[styles.invoiceVal, { fontWeight: '700' }]}>{formatCurrency(invoiceTotals.totalTax)}</Text>
+                                  </View>
+                                </>
+                              ) : (
+                                <>
+                                  <View style={styles.invoiceRow}>
+                                    <Text style={styles.invoiceLabel}>CGST ({invoiceTotals.gstBreakdown?.[0]?.halfRateStr || halfRate}%)</Text>
+                                    <Text style={styles.invoiceVal}>{formatCurrency(invoiceTotals.cgstAmount)}</Text>
+                                  </View>
+                                  <View style={styles.invoiceRow}>
+                                    <Text style={styles.invoiceLabel}>SGST ({invoiceTotals.gstBreakdown?.[0]?.halfRateStr || halfRate}%)</Text>
+                                    <Text style={styles.invoiceVal}>{formatCurrency(invoiceTotals.sgstAmount)}</Text>
+                                  </View>
+                                </>
+                              )}
                             </>
                           ) : null}
 

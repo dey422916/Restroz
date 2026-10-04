@@ -145,27 +145,37 @@ export function renderBillToEscPos(
   if (calculatedTotals.totalTax > 0) {
     builder.addKeyValue('Taxable Amount:', calculatedTotals.taxableSubtotal.toFixed(2));
 
-    const dynamicTaxRate =
-      (order as any).tax_rate !== undefined && (order as any).tax_rate !== null && !isNaN(Number((order as any).tax_rate))
-        ? Number((order as any).tax_rate)
-        : (calculatedTotals.taxableSubtotal > 0 && calculatedTotals.totalTax > 0
-            ? (calculatedTotals.totalTax / calculatedTotals.taxableSubtotal) * 100
-            : (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
-                ? Number(settings.default_tax_rate)
-                : 0));
-    const halfTaxRate = calculatedTotals.taxableSubtotal > 0 && calculatedTotals.cgstAmount > 0
-      ? (calculatedTotals.cgstAmount / calculatedTotals.taxableSubtotal) * 100
-      : (dynamicTaxRate / 2);
-    const halfTaxRateStr = halfTaxRate % 1 === 0 ? String(halfTaxRate) : halfTaxRate.toFixed(1);
+    if (calculatedTotals.gstBreakdown && calculatedTotals.gstBreakdown.length > 1) {
+      calculatedTotals.gstBreakdown.forEach((slab) => {
+        builder.addKeyValue(`CGST (${slab.halfRateStr}%):`, slab.cgstAmount.toFixed(2));
+        builder.addKeyValue(`SGST (${slab.halfRateStr}%):`, slab.sgstAmount.toFixed(2));
+      });
+      builder.addKeyValue('Total GST:', calculatedTotals.totalTax.toFixed(2));
+    } else {
+      const dynamicTaxRate =
+        (order as any).tax_rate !== undefined && (order as any).tax_rate !== null && !isNaN(Number((order as any).tax_rate))
+          ? Number((order as any).tax_rate)
+          : (calculatedTotals.taxableSubtotal > 0 && calculatedTotals.totalTax > 0
+              ? (calculatedTotals.totalTax / calculatedTotals.taxableSubtotal) * 100
+              : (settings.default_tax_rate !== undefined && settings.default_tax_rate !== null
+                  ? Number(settings.default_tax_rate)
+                  : 0));
+      const singleSlab = calculatedTotals.gstBreakdown?.[0];
+      const halfTaxRateStr = singleSlab ? singleSlab.halfRateStr : (
+        (calculatedTotals.taxableSubtotal > 0 && calculatedTotals.cgstAmount > 0
+          ? (calculatedTotals.cgstAmount / calculatedTotals.taxableSubtotal) * 100
+          : (dynamicTaxRate / 2)).toString()
+      );
 
-    if (calculatedTotals.cgstAmount > 0) {
-      builder.addKeyValue(`CGST (${halfTaxRateStr}%):`, calculatedTotals.cgstAmount.toFixed(2));
-    }
-    if (calculatedTotals.sgstAmount > 0) {
-      builder.addKeyValue(`SGST (${halfTaxRateStr}%):`, calculatedTotals.sgstAmount.toFixed(2));
-    }
-    if (calculatedTotals.igstAmount > 0) {
-      builder.addKeyValue(`IGST (${dynamicTaxRate}%):`, calculatedTotals.igstAmount.toFixed(2));
+      if (calculatedTotals.cgstAmount > 0) {
+        builder.addKeyValue(`CGST (${halfTaxRateStr}%):`, calculatedTotals.cgstAmount.toFixed(2));
+      }
+      if (calculatedTotals.sgstAmount > 0) {
+        builder.addKeyValue(`SGST (${halfTaxRateStr}%):`, calculatedTotals.sgstAmount.toFixed(2));
+      }
+      if (calculatedTotals.igstAmount > 0) {
+        builder.addKeyValue(`IGST (${dynamicTaxRate}%):`, calculatedTotals.igstAmount.toFixed(2));
+      }
     }
   }
 

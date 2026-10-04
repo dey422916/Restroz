@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -15,9 +15,11 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { storageService } from '../../src/services/api/storageService';
+import { loyaltyService } from '../../src/services/api/loyaltyService';
 import { customerColors } from '../../src/utils/colors';
-import { isValidPhoneNumber, normalizePhoneNumber } from '../../src/utils/phone';
+import { formatCurrency } from '../../src/utils/currency';
 import { isValidIndianPhone, normalizeIndianPhone } from '../../src/utils/validation';
+import { CustomerMarketplaceWalletsResponse } from '../../src/types';
 
 export default function CustomerProfileScreen() {
   const router = useRouter();
@@ -29,6 +31,28 @@ export default function CustomerProfileScreen() {
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+
+  // Customer Loyalty Wallet State
+  const [walletData, setWalletData] = useState<CustomerMarketplaceWalletsResponse>({
+    wallets: [],
+    transactions: [],
+  });
+  const [loadingWallet, setLoadingWallet] = useState(false);
+
+  const loadWallets = () => {
+    if (user?.phone) {
+      setLoadingWallet(true);
+      loyaltyService
+        .getCustomerMarketplaceWallets(user.phone)
+        .then((data) => setWalletData(data))
+        .catch((e) => console.warn('[CustomerProfile] Error loading marketplace wallets:', e))
+        .finally(() => setLoadingWallet(false));
+    }
+  };
+
+  useEffect(() => {
+    loadWallets();
+  }, [user?.phone]);
 
   const handlePickAndUploadAvatar = async () => {
     if (!user) return;
@@ -95,6 +119,9 @@ export default function CustomerProfileScreen() {
       });
       setIsEditing(false);
       Alert.alert('Success', 'Profile updated successfully.');
+      if (cleanPhone) {
+        loyaltyService.getCustomerMarketplaceWallets(cleanPhone).then(setWalletData);
+      }
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Failed to update profile.');
     } finally {
@@ -141,7 +168,7 @@ export default function CustomerProfileScreen() {
       <View style={styles.center}>
         <Text style={{ fontSize: 44 }}>👤</Text>
         <Text style={styles.authTitle}>Customer Account</Text>
-        <Text style={styles.authSub}>Sign in to view your profile, manage addresses, and track meals.</Text>
+        <Text style={styles.authSub}>Sign in to view your profile, manage addresses, and track rewards.</Text>
         <TouchableOpacity
           style={styles.loginBtn}
           onPress={() => router.push('/(auth)/login')}
@@ -151,6 +178,11 @@ export default function CustomerProfileScreen() {
       </View>
     );
   }
+
+  // Compute aggregated metrics across all restaurant wallets
+  const totalWalletBalance = walletData.wallets.reduce((sum, w) => sum + Number(w.balance || 0), 0);
+  const totalEarnedAll = walletData.wallets.reduce((sum, w) => sum + Number(w.total_earned || 0), 0);
+  const totalRedeemedAll = walletData.wallets.reduce((sum, w) => sum + Number(w.total_redeemed || 0), 0);
 
   return (
     <View style={styles.container}>
@@ -167,7 +199,7 @@ export default function CustomerProfileScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.headerTitle}>My Profile</Text>
                 <Text style={styles.headerSubtitle} numberOfLines={1}>
-                  Account details & preferences
+                  Account details, preferences & loyalty wallet
                 </Text>
               </View>
             </View>
@@ -309,6 +341,114 @@ export default function CustomerProfileScreen() {
             </View>
           </View>
 
+          {/* CUSTOMER LOYALTY WALLET SECTION */}
+          <Text style={styles.sectionTitle}>🎁 Loyalty Rewards & Cashback Wallet</Text>
+
+          <View style={styles.walletCard}>
+            <View style={styles.walletCardHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.walletCardTitle}>Customer Rewards Balance</Text>
+                <Text style={styles.walletCardSubtitle}>
+                  {user.phone
+                    ? `Linked to verified mobile: +91 ${normalizeIndianPhone(user.phone)}`
+                    : 'Add your 10-digit mobile phone above to link your loyalty rewards.'}
+                </Text>
+              </View>
+              <View style={styles.walletTotalBadge}>
+                <Text style={styles.walletTotalBadgeText}>{formatCurrency(totalWalletBalance)}</Text>
+              </View>
+            </View>
+
+            {/* Metrics Breakdown */}
+            <View style={styles.walletMetricsRow}>
+              <View style={styles.walletMetricBox}>
+                <Text style={styles.walletMetricLabel}>Available Balance</Text>
+                <Text style={[styles.walletMetricVal, { color: '#059669' }]}>
+                  {formatCurrency(totalWalletBalance)}
+                </Text>
+              </View>
+              <View style={styles.walletMetricBox}>
+                <Text style={styles.walletMetricLabel}>Lifetime Earned</Text>
+                <Text style={[styles.walletMetricVal, { color: '#2563EB' }]}>
+                  {formatCurrency(totalEarnedAll)}
+                </Text>
+              </View>
+              <View style={styles.walletMetricBox}>
+                <Text style={styles.walletMetricLabel}>Total Redeemed</Text>
+                <Text style={[styles.walletMetricVal, { color: '#D97706' }]}>
+                  {formatCurrency(totalRedeemedAll)}
+                </Text>
+              </View>
+            </View>
+
+            {loadingWallet ? (
+              <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color={customerColors.primary} />
+                <Text style={{ fontSize: 12, color: '#64748B', marginTop: 6 }}>Loading wallet details...</Text>
+              </View>
+            ) : walletData.wallets.length === 0 ? (
+              <View style={styles.walletEmptyBox}>
+                <Text style={{ fontSize: 24 }}>🪙</Text>
+                <Text style={styles.walletEmptyTitle}>No Cashback Balance Yet</Text>
+                <Text style={styles.walletEmptySub}>
+                  Dine in or order from partner restaurants to automatically accumulate reward cash on your settled orders!
+                </Text>
+              </View>
+            ) : (
+              <>
+                {/* Per-Restaurant Wallets */}
+                <View style={styles.restaurantWalletsWrap}>
+                  <Text style={styles.walletSubHeader}>Restaurant Wallet Breakdown</Text>
+                  {walletData.wallets.map((w) => (
+                    <View key={w.id} style={styles.restWalletItem}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.restWalletName}>{w.restaurant_name}</Text>
+                        <Text style={styles.restWalletMeta}>
+                          Min. Redeem: {formatCurrency(w.min_redeem_balance)} • Lifetime Earned: {formatCurrency(w.total_earned)}
+                        </Text>
+                      </View>
+                      <View style={styles.restWalletBalWrap}>
+                        <Text style={styles.restWalletBalVal}>{formatCurrency(w.balance)}</Text>
+                        <Text style={styles.restWalletBalLabel}>Balance</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+
+                {/* Recent Transactions Ledger */}
+                {walletData.transactions.length > 0 && (
+                  <View style={styles.txnsWrap}>
+                    <Text style={styles.walletSubHeader}>Recent Reward Activity</Text>
+                    {walletData.transactions.slice(0, 8).map((t) => {
+                      const isEarn = t.transaction_type === 'earn';
+                      return (
+                        <View key={t.id} style={styles.txnItem}>
+                          <View style={[styles.txnIconWrap, isEarn ? styles.txnIconEarn : styles.txnIconRedeem]}>
+                            <Text style={{ fontSize: 12 }}>{isEarn ? '➕' : '➖'}</Text>
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.txnTitle}>
+                              {isEarn ? 'Cashback Earned' : 'Wallet Redeemed'} • {t.restaurant_name}
+                            </Text>
+                            <Text style={styles.txnSub}>
+                              {t.notes || `Order ${t.order_id || ''}`} • {new Date(t.created_at).toLocaleDateString()}
+                            </Text>
+                          </View>
+                          <View style={{ alignItems: 'flex-end' }}>
+                            <Text style={[styles.txnAmt, isEarn ? styles.txnAmtEarn : styles.txnAmtRedeem]}>
+                              {isEarn ? '+' : '-'}{formatCurrency(t.amount)}
+                            </Text>
+                            <Text style={styles.txnBalAfter}>Bal: {formatCurrency(t.balance_after)}</Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </>
+            )}
+          </View>
+
           {/* Quick Menu Shortcuts */}
           <Text style={styles.sectionTitle}>Account Shortcuts</Text>
 
@@ -360,6 +500,13 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FAF9F6',
+  },
+  scrollArea: {
+    flex: 1,
+  },
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 40,
   },
   center: {
     flex: 1,
@@ -449,71 +596,58 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   editHeaderBtnText: {
-    fontSize: 12,
-    fontWeight: '800',
     color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 12,
   },
   saveHeaderBtn: {
-    backgroundColor: '#10B981',
+    backgroundColor: '#16A34A',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
     flexShrink: 0,
-    shadowColor: '#10B981',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    elevation: 2,
   },
   saveHeaderBtnText: {
-    fontSize: 12,
-    fontWeight: '800',
     color: '#FFFFFF',
-  },
-  scrollArea: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 70,
+    fontWeight: '700',
+    fontSize: 12,
   },
   profileCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    padding: 24,
-    marginBottom: 16,
-    alignItems: 'center',
+    padding: 20,
+    marginBottom: 20,
     borderWidth: 1,
     borderColor: '#EDEBE6',
     shadowColor: '#1E293B',
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 1,
+    shadowRadius: 8,
+    elevation: 2,
   },
   avatarSection: {
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 20,
   },
   avatarWrap: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    backgroundColor: customerColors.primary,
+    position: 'relative',
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#F1F5F9',
     justifyContent: 'center',
     alignItems: 'center',
-    position: 'relative',
-    overflow: 'visible',
-    shadowColor: customerColors.primary,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 3,
+    marginBottom: 12,
   },
   avatarImage: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+  },
+  avatarText: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: customerColors.primary,
   },
   avatarLoadingOverlay: {
     position: 'absolute',
@@ -522,114 +656,285 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 44,
+    borderRadius: 40,
     justifyContent: 'center',
     alignItems: 'center',
   },
   avatarCameraBadge: {
     position: 'absolute',
-    bottom: -2,
-    right: -2,
+    bottom: 0,
+    right: 0,
     backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    width: 26,
+    height: 26,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  avatarButtonsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  changePhotoBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: '#F1F5F9',
+  },
+  changePhotoText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: customerColors.primary,
+  },
+  removePhotoBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: '#FFF1F2',
+  },
+  removePhotoText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#E11D48',
+  },
+  formWrap: {
+    gap: 12,
+  },
+  fieldLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  fieldValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
+  input: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 13,
+    color: '#0F172A',
+  },
+  cancelEditBtn: {
+    paddingVertical: 8,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  cancelEditText: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 10,
+    marginTop: 8,
+    letterSpacing: -0.2,
+  },
+  walletCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#1E293B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  walletCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  walletCardTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  walletCardSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  walletTotalBadge: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+  },
+  walletTotalBadgeText: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#15803D',
+  },
+  walletMetricsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 14,
+  },
+  walletMetricBox: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  walletMetricLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+  },
+  walletMetricVal: {
+    fontSize: 13,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+  walletEmptyBox: {
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+  },
+  walletEmptyTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#334155',
+    marginTop: 6,
+  },
+  walletEmptySub: {
+    fontSize: 11,
+    color: '#64748B',
+    textAlign: 'center',
+    marginTop: 4,
+    lineHeight: 16,
+  },
+  restaurantWalletsWrap: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  walletSubHeader: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#475569',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  restWalletItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F8FAFC',
+  },
+  restWalletName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  restWalletMeta: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  restWalletBalWrap: {
+    alignItems: 'flex-end',
+  },
+  restWalletBalVal: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#059669',
+  },
+  restWalletBalLabel: {
+    fontSize: 9,
+    color: '#94A3B8',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  txnsWrap: {
+    marginTop: 14,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  txnItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F8FAFC',
+  },
+  txnIconWrap: {
     width: 28,
     height: 28,
     borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#EDEBE6',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
   },
-  avatarButtonsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 10,
+  txnIconEarn: {
+    backgroundColor: '#DCFCE7',
   },
-  changePhotoBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 6,
-    backgroundColor: customerColors.primaryBg,
+  txnIconRedeem: {
+    backgroundColor: '#FEF3C7',
   },
-  changePhotoText: {
+  txnTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: customerColors.primary,
+    color: '#1E293B',
   },
-  removePhotoBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    backgroundColor: '#FEF2F2',
-  },
-  removePhotoText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#DC2626',
-  },
-  avatarText: {
-    fontSize: 34,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  formWrap: {
-    width: '100%',
-  },
-  fieldLabel: {
-    fontSize: 11,
-    fontWeight: '800',
+  txnSub: {
+    fontSize: 10,
     color: '#64748B',
-    textTransform: 'uppercase',
-    marginTop: 12,
-    marginBottom: 6,
-    letterSpacing: 0.4,
+    marginTop: 1,
   },
-  fieldValue: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#0F172A',
-    paddingVertical: 6,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: '#0F172A',
-    backgroundColor: '#F8FAFC',
-  },
-  cancelEditBtn: {
-    marginTop: 14,
-    alignItems: 'center',
-    paddingVertical: 6,
-  },
-  cancelEditText: {
-    fontSize: 13,
-    color: '#EF4444',
-    fontWeight: '700',
-  },
-  sectionTitle: {
+  txnAmt: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#64748B',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 10,
-    marginTop: 8,
+  },
+  txnAmtEarn: {
+    color: '#16A34A',
+  },
+  txnAmtRedeem: {
+    color: '#D97706',
+  },
+  txnBalAfter: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 1,
   },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 14,
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 12,
     marginBottom: 10,
     borderWidth: 1,
     borderColor: '#EDEBE6',
@@ -640,49 +945,48 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   menuIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#F1F5F9',
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 14,
+    marginRight: 12,
   },
   menuTitle: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '700',
     color: '#0F172A',
   },
   menuSub: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#64748B',
     marginTop: 2,
   },
   menuArrow: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 18,
     color: '#94A3B8',
-    marginLeft: 8,
+    fontWeight: '700',
   },
   logoutBtn: {
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FECACA',
-    borderRadius: 12,
+    marginTop: 8,
     paddingVertical: 14,
+    backgroundColor: '#FFF1F2',
+    borderRadius: 12,
     alignItems: 'center',
-    marginTop: 16,
-    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#FECDD3',
   },
   logoutBtnText: {
-    color: '#DC2626',
-    fontSize: 14,
+    color: '#E11D48',
     fontWeight: '800',
+    fontSize: 13,
   },
   versionFooter: {
     textAlign: 'center',
     fontSize: 11,
     color: '#94A3B8',
-    marginBottom: 24,
+    marginTop: 20,
+    marginBottom: 10,
   },
 });

@@ -1862,7 +1862,8 @@ export const orderService = {
     customerGstin?: string;
     customer_gstin?: string;
     splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;
-  }): Promise<Order> {
+    walletRedeemAmount?: number;
+  }): Promise<Order & { reward_earned?: number; new_wallet_balance?: number; wallet_redeemed?: number }> {
     const {
       orderId,
       paymentMethod,
@@ -1882,6 +1883,7 @@ export const orderService = {
       customerGstin,
       customer_gstin,
       splitPayments,
+      walletRedeemAmount = 0,
     } = params;
     const effectiveCustomerGstin = (customer_gstin || customerGstin)?.trim().toUpperCase();
 
@@ -1916,6 +1918,7 @@ export const orderService = {
         p_customer_gstin: effectiveCustomerGstin || null,
         p_payment_received: paymentReceived,
         p_split_payments: splitPayments && splitPayments.length > 0 ? splitPayments : null,
+        p_wallet_redeem_amount: walletRedeemAmount || 0,
       });
 
       if (rpcErr) {
@@ -1931,7 +1934,7 @@ export const orderService = {
       clearOrdersCache(settledOrder.restaurant_id);
       const localOrders = mockStorage.getOrders(settledOrder.restaurant_id);
       const orderIndex = localOrders.findIndex((o) => o.id === orderId);
-      const fullSettledOrder: Order = {
+      const fullSettledOrder: Order & { reward_earned?: number; new_wallet_balance?: number; wallet_redeemed?: number } = {
         ...settledOrder,
         items: rpcRes?.items || [],
         payments: rpcRes?.payments || [],
@@ -1947,6 +1950,9 @@ export const orderService = {
         grand_total: grandTotal !== undefined ? grandTotal : settledOrder.grand_total,
         round_off: roundOff !== undefined ? roundOff : settledOrder.round_off,
         payable_amount: payableAmount !== undefined ? payableAmount : settledOrder.payable_amount,
+        reward_earned: Number(rpcRes?.reward_earned) || 0,
+        new_wallet_balance: Number(rpcRes?.new_wallet_balance) || 0,
+        wallet_redeemed: Number(rpcRes?.wallet_redeemed) || 0,
       };
       if (orderIndex !== -1) {
         localOrders[orderIndex] = fullSettledOrder;
@@ -2202,8 +2208,10 @@ export const orderService = {
       payable_amount?: number;
       customer_gstin?: string;
       splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;
+      wallet_redeem_amount?: number;
+      walletRedeemAmount?: number;
     }
-  ): Promise<Order> {
+  ): Promise<Order & { reward_earned?: number; new_wallet_balance?: number; wallet_redeemed?: number }> {
     return this.closeAndPayOrder({
       orderId,
       paymentMethod: params.payment_method,
@@ -2221,6 +2229,7 @@ export const orderService = {
       payableAmount: params.payable_amount,
       customer_gstin: params.customer_gstin,
       splitPayments: params.splitPayments,
+      walletRedeemAmount: params.wallet_redeem_amount ?? params.walletRedeemAmount ?? 0,
     });
   },
 

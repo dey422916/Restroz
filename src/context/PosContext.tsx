@@ -707,6 +707,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       round_off?: number;
       payable_amount?: number;
       customer_gstin?: string;
+      wallet_redeem_amount?: number;
     }
   ): Promise<Order> => {
     const updatedOrder = await orderService.closeAndSettleOrder(orderId, {
@@ -714,9 +715,21 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       amount,
       reference_number: ref,
       ...discountData,
+      wallet_redeem_amount: discountData?.wallet_redeem_amount || 0,
     });
 
-    showToast('success', 'Payment Completed & Bill Closed', `Order #${updatedOrder.order_number} finalized.`);
+    const rewardEarned = Number((updatedOrder as any).reward_earned) || 0;
+    const newBal = Number((updatedOrder as any).new_wallet_balance) || 0;
+
+    if (rewardEarned > 0) {
+      showToast(
+        'success',
+        'Payment Settled & Reward Earned!',
+        `Order #${updatedOrder.order_number} finalized. ₹${rewardEarned.toFixed(2)} credited to Customer Wallet (Balance: ₹${newBal.toFixed(2)}).`
+      );
+    } else {
+      showToast('success', 'Payment Completed & Bill Closed', `Order #${updatedOrder.order_number} finalized.`);
+    }
 
     clearCart();
     await refreshOrders();

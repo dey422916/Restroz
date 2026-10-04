@@ -9,13 +9,14 @@ import {
   Modal,
   Platform,
   Alert,
+  Image,
 } from 'react-native';
 import { Slot, useRouter, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../src/context/AuthContext';
 import { colors } from '../../src/utils/colors';
 
-const NAV_ITEMS = [
+const PLATFORM_NAV_ITEMS = [
   { label: '📊 Overview', route: '/super-admin', title: 'Platform Control Center' },
   { label: '🏢 Restaurants', route: '/super-admin/restaurants', title: 'Restaurant Directory' },
   { label: '👥 Admins', route: '/super-admin/admins', title: 'Restaurant Admins' },
@@ -24,6 +25,13 @@ const NAV_ITEMS = [
   { label: '💳 Payments', route: '/super-admin/payments', title: 'Payment Ledger' },
   { label: '🛡️ Audit Logs', route: '/super-admin/audit-logs', title: 'Platform Audit Trail' },
 ];
+
+const WEBSITE_NAV_ITEMS = [
+  { label: '📋 Website Leads', route: '/super-admin/website-leads', title: 'Website Sales Leads' },
+  { label: '🎨 Website Banners', route: '/super-admin/website-banners', title: 'Promotional Banners' },
+];
+
+const ALL_NAV_ITEMS = [...PLATFORM_NAV_ITEMS, ...WEBSITE_NAV_ITEMS];
 
 export default function SuperAdminLayout() {
   const { user, isSuperAdmin, loading, logout, setSuperAdminMarketplacePreview } = useAuth();
@@ -77,7 +85,7 @@ export default function SuperAdminLayout() {
 
   const getCurrentTitle = () => {
     if (pathname.includes('/super-admin/restaurant/')) return 'Restaurant Details';
-    const found = NAV_ITEMS.find((n) => isCurrentRoute(n.route));
+    const found = ALL_NAV_ITEMS.find((n) => isCurrentRoute(n.route));
     return found ? found.title : 'Super Admin';
   };
 
@@ -91,12 +99,13 @@ export default function SuperAdminLayout() {
     <View style={[styles.sidebarInner, isDrawer && styles.drawerSidebarInner]}>
       {/* Brand Header */}
       <View style={styles.brandHeader}>
-        <View style={styles.brandBadge}>
-          <Text style={{ fontSize: 18 }}>⚡</Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.brandTitle}>RESTROZ</Text>
-          <Text style={styles.brandSubtitle}>SUPER ADMIN SAAS</Text>
+        <View style={styles.brandLogoBlock}>
+          <Image
+            source={require('../../assets/images/restroz-logo.png')}
+            style={styles.brandLogoImg}
+            resizeMode="contain"
+          />
+          <Text style={styles.brandTagline}>RESTAURANT MANAGEMENT</Text>
         </View>
         {isDrawer && (
           <TouchableOpacity
@@ -114,7 +123,24 @@ export default function SuperAdminLayout() {
       {/* Nav List */}
       <ScrollView style={styles.navScroll} showsVerticalScrollIndicator={false}>
         <Text style={styles.sectionHeader}>PLATFORM MANAGEMENT</Text>
-        {NAV_ITEMS.map((item) => {
+        {PLATFORM_NAV_ITEMS.map((item) => {
+          const active = isCurrentRoute(item.route);
+          return (
+            <TouchableOpacity
+              key={item.route}
+              style={[styles.navItem, active && styles.navItemActive]}
+              onPress={() => handleNavigate(item.route)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.navItemText, active && styles.navItemTextActive]}>
+                {item.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+
+        <Text style={[styles.sectionHeader, { marginTop: 24 }]}>WEBSITE MANAGEMENT</Text>
+        {WEBSITE_NAV_ITEMS.map((item) => {
           const active = isCurrentRoute(item.route);
           return (
             <TouchableOpacity
@@ -453,25 +479,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     marginBottom: 16,
   },
-  brandBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
+  brandLogoBlock: {
+    flex: 1,
   },
-  brandTitle: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '800',
-    letterSpacing: 0.5,
+  brandLogoImg: {
+    width: 60,
+    height: 42,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    padding: 2,
   },
-  brandSubtitle: {
+  brandTagline: {
     color: '#38BDF8',
-    fontSize: 10,
-    fontWeight: '700',
+    fontSize: 9,
+    fontWeight: '800',
     letterSpacing: 1,
+    marginTop: 4,
+    textTransform: 'uppercase',
   },
   divider: {
     height: 1,

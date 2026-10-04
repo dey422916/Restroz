@@ -15,24 +15,63 @@ import {
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { couponService } from '../../src/services/api/couponService';
+import { loyaltyService } from '../../src/services/api/loyaltyService';
 import { useAuth } from '../../src/context/AuthContext';
-import { Coupon, DiscountType } from '../../src/types';
+import { Coupon, DiscountType, CustomerWalletInfo } from '../../src/types';
 import { formatCurrency } from '../../src/utils/currency';
+import { isValidIndianPhone, normalizeIndianPhone } from '../../src/utils/validation';
 
 export default function CouponsScreen() {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
   const { user, role, isAdmin: authIsAdmin, isSuperAdmin, activeRestaurantId } = useAuth();
 
+  // Tab State: 'coupons' | 'rewards'
+  const [activeTab, setActiveTab] = useState<'coupons' | 'rewards'>('coupons');
+
+  // Coupons State
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // Modal State
+  // Rewards Program State
+  const [rewardsEnabled, setRewardsEnabled] = useState(false);
+  const [spendAmount, setSpendAmount] = useState('100');
+  const [rewardAmount, setRewardAmount] = useState('1');
+  const [minRedeemBalance, setMinRedeemBalance] = useState('50');
+  const [loadingRewards, setLoadingRewards] = useState(false);
+  const [savingRewards, setSavingRewards] = useState(false);
+
+  // Customer Wallet Lookup & Directory State
+  const [lookupPhone, setLookupPhone] = useState('');
+  const [lookupWallet, setLookupWallet] = useState<CustomerWalletInfo | null>(null);
+  const [lookupTransactions, setLookupTransactions] = useState<Array<{
+    id: string;
+    transaction_type: string;
+    amount: number;
+    order_id?: string;
+    notes?: string;
+    created_at: string;
+  }>>([]);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+
+  // Active Customer Wallets List State
+  const [customerWallets, setCustomerWallets] = useState<Array<{
+    id: string;
+    customer_mobile: string;
+    balance: number;
+    total_earned: number;
+    total_redeemed: number;
+    updated_at: string;
+  }>>([]);
+  const [loadingWallets, setLoadingWallets] = useState(false);
+
+  // Coupon Modal State
   const [modalVisible, setModalVisible] = useState(false);
   const [editingCoupon, setEditingCoupon] = useState<Coupon | null>(null);
 
-  // Form Fields
+  // Coupon Form Fields
   const [code, setCode] = useState('');
   const [description, setDescription] = useState('');
   const [discountType, setDiscountType] = useState<DiscountType>('percentage');
@@ -43,6 +82,14 @@ export default function CouponsScreen() {
   const [startDate, setStartDate] = useState('');
   const [expiryDate, setExpiryDate] = useState('');
   const [isActive, setIsActive] = useState(true);
+
+  // Manual Wallet Adjustment Modal State
+  const [adjustModalVisible, setAdjustModalVisible] = useState(false);
+  const [adjustMobile, setAdjustMobile] = useState('');
+  const [adjustAmount, setAdjustAmount] = useState('');
+  const [adjustType, setAdjustType] = useState<'credit' | 'debit'>('credit');
+  const [adjustReason, setAdjustReason] = useState('');
+  const [adjusting, setAdjusting] = useState(false);
 
   // Authoritative Role check: Admin or Super Admin only
   const normalizedRole = (role || user?.role || '').toUpperCase();
@@ -61,10 +108,119 @@ export default function CouponsScreen() {
     }
   }, [activeRestaurantId]);
 
+  const loadRewardsSettings = useCallback(async () => {
+    if (!activeRestaurantId) return;
+    try {
+      setLoadingRewards(true);
+      const settings = await loyaltyService.getLoyaltySettings(activeRestaurantId);
+      setRewardsEnabled(settings.is_enabled);
+      setSpendAmount(String(settings.spend_amount));
+      setRewardAmount(String(settings.reward_amount));
+      setMinRedeemBalance(String(settings.min_redeem_balance));
+    } catch (e: any) {
+      console.warn('Error loading rewards settings:', e);
+    } finally {
+      setLoadingRewards(false);
+    }
+  }, [activeRestaurantId]);
+
+  const loadCustomerWallets = useCallback(async () => {
+    if (!activeRestaurantId) return;
+    try {
+      setLoadingWallets(true);
+      const wallets = await loyaltyService.getRestaurantCustomerWallets(activeRestaurantId);
+      setCustomerWallets(wallets);
+    } catch (e: any) {
+      console.warn('Error loading customer wallets:', e);
+    } finally {
+      setLoadingWallets(false);
+    }
+  }, [activeRestaurantId]);
+
+  const handleLookupCustomer = async (targetPhone?: string) => {
+    const query = (targetPhone || lookupPhone).trim();
+    if (!query) {
+      Alert.alert('Phone Required', 'Please enter a customer mobile number to check balance.');
+      return;
+    }
+    if (!activeRestaurantId) return;
+
+    const normalized = normalizeIndianPhone(query);
+    setLookupLoading(true);
+    setHasSearched(true);
+    try {
+      const [wallet, transactions] = await Promise.all([
+        loyaltyService.getCustomerWallet(activeRestaurantId, normalized),
+        loyaltyService.getCustomerWalletTransactions(activeRestaurantId, normalized),
+      ]);
+      setLookupWallet(wallet);
+      setLookupTransactions(transactions);
+    } catch (e: any) {
+      console.warn('Error looking up customer wallet:', e);
+      Alert.alert('Lookup Error', e.message || 'Failed to fetch customer wallet details.');
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
+  const handleOpenAdjustModal = (mobile: string) => {
+    setAdjustMobile(mobile);
+    setAdjustAmount('');
+    setAdjustType('credit');
+    setAdjustReason('');
+    setAdjustModalVisible(true);
+  };
+
+  const handlePerformAdjustment = async () => {
+    if (!activeRestaurantId) return;
+    const cleanMobile = normalizeIndianPhone(adjustMobile);
+    if (!cleanMobile) {
+      Alert.alert('Validation Error', 'Invalid customer mobile number.');
+      return;
+    }
+    const val = parseFloat(adjustAmount);
+    if (isNaN(val) || val <= 0) {
+      Alert.alert('Validation Error', 'Please enter a valid positive adjustment amount.');
+      return;
+    }
+    if (!adjustReason.trim()) {
+      Alert.alert('Validation Error', 'Please enter a reason or note for this wallet adjustment.');
+      return;
+    }
+
+    const signedAmount = adjustType === 'credit' ? val : -val;
+    setAdjusting(true);
+    try {
+      const res = await loyaltyService.adjustCustomerWallet({
+        restaurant_id: activeRestaurantId,
+        customer_mobile: cleanMobile,
+        amount: signedAmount,
+        notes: adjustReason.trim(),
+        type: 'adjustment',
+      });
+
+      Alert.alert(
+        'Adjustment Successful',
+        `${adjustType === 'credit' ? 'Credited' : 'Debited'} ${formatCurrency(val)} ${adjustType === 'credit' ? 'to' : 'from'} customer wallet. New Balance: ${formatCurrency(res.new_balance)}`
+      );
+      setAdjustModalVisible(false);
+      loadCustomerWallets();
+      if (hasSearched && (lookupWallet?.customer_mobile === cleanMobile || lookupPhone === cleanMobile)) {
+        handleLookupCustomer(cleanMobile);
+      }
+    } catch (e: any) {
+      Alert.alert('Adjustment Error', e.message || 'Failed to adjust customer wallet balance.');
+    } finally {
+      setAdjusting(false);
+    }
+  };
+
   useFocusEffect(
     useCallback(() => {
       loadCoupons();
-    }, [loadCoupons])
+      loadRewardsSettings();
+      loadCustomerWallets();
+    }, [loadCoupons, loadRewardsSettings, loadCustomerWallets])
   );
 
   const openCreateModal = () => {
@@ -151,18 +307,58 @@ export default function CouponsScreen() {
     }
   };
 
+  const handleSaveRewards = async () => {
+    if (!activeRestaurantId) return;
+    const spend = parseFloat(spendAmount);
+    const reward = parseFloat(rewardAmount);
+    const minRedeem = parseFloat(minRedeemBalance);
+
+    if (isNaN(spend) || spend <= 0) {
+      Alert.alert('Validation Error', 'Spend amount must be greater than 0.');
+      return;
+    }
+    if (isNaN(reward) || reward < 0) {
+      Alert.alert('Validation Error', 'Reward amount cannot be negative.');
+      return;
+    }
+    if (isNaN(minRedeem) || minRedeem < 0) {
+      Alert.alert('Validation Error', 'Minimum redeem balance cannot be negative.');
+      return;
+    }
+
+    setSavingRewards(true);
+    try {
+      await loyaltyService.saveLoyaltySettings({
+        restaurant_id: activeRestaurantId,
+        is_enabled: rewardsEnabled,
+        spend_amount: spend,
+        reward_amount: reward,
+        min_redeem_balance: minRedeem,
+      });
+      Alert.alert('Success', 'Loyalty Rewards program settings saved successfully!');
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to save rewards settings.');
+    } finally {
+      setSavingRewards(false);
+    }
+  };
+
   const handleToggleActive = async (cpn: Coupon) => {
     try {
       await couponService.saveCoupon(
         {
-          ...cpn,
+          id: cpn.id,
+          restaurant_id: cpn.restaurant_id,
+          code: cpn.code,
+          discount_type: cpn.discount_type,
+          discount_value: cpn.discount_value,
           is_active: !cpn.is_active,
         },
         activeRestaurantId || undefined
       );
       loadCoupons();
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to update coupon status.');
+      Alert.alert('Error', e.message || 'Failed to toggle coupon status.');
     }
   };
 
@@ -170,21 +366,21 @@ export default function CouponsScreen() {
     const isArchiving = (cpn.used_count || 0) > 0;
     const title = isArchiving ? 'Archive Coupon' : 'Delete Coupon';
     const message = isArchiving
-      ? `Coupon "${cpn.code}" has been used ${cpn.used_count} time(s). It will be deactivated and archived to preserve order history.`
+      ? `Coupon "${cpn.code}" has been redeemed ${cpn.used_count} time(s). It will be archived and deactivated.`
       : `Are you sure you want to permanently delete coupon "${cpn.code}"?`;
 
     const doDelete = async () => {
       try {
         await couponService.deleteCoupon(cpn.id, activeRestaurantId || undefined);
+        Alert.alert('Success', isArchiving ? `Coupon "${cpn.code}" archived.` : `Coupon "${cpn.code}" deleted.`);
         loadCoupons();
       } catch (e: any) {
-        Alert.alert('Error', e.message || 'Failed to remove coupon.');
+        Alert.alert('Error', e.message || 'Failed to delete coupon.');
       }
     };
 
     if (Platform.OS === 'web') {
-      const confirmed = typeof window !== 'undefined' ? window.confirm(message) : true;
-      if (confirmed) {
+      if (typeof window !== 'undefined' && window.confirm(`${title}\n\n${message}`)) {
         doDelete();
       }
       return;
@@ -211,291 +407,887 @@ export default function CouponsScreen() {
           <Text style={{ fontSize: 44 }}>🔒</Text>
           <Text style={styles.restrictedTitle}>Admin Access Required</Text>
           <Text style={styles.restrictedSub}>
-            Only Restaurant Admins and Super Admins can manage coupon discounts.
+            Only Restaurant Admins and Super Admins can manage coupon discounts and loyalty rewards.
           </Text>
         </View>
       </View>
     );
   }
 
+  // Example Calculation for Preview
+  const numSpend = parseFloat(spendAmount) || 100;
+  const numReward = parseFloat(rewardAmount) || 1;
+  const previewExampleSpend = 550;
+  const previewCalculatedReward = numSpend > 0 ? ((previewExampleSpend / numSpend) * numReward).toFixed(2) : '0.00';
+
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Header & Tabs */}
       <View style={[styles.header, isMobile && styles.headerMobile]}>
         <View style={styles.headerTitleWrap}>
-          <Text style={styles.title}>Coupons & Deals ({coupons.length})</Text>
-          <Text style={styles.subTitle}>Manage promo codes, usage limits & marketplace offers</Text>
+          <Text style={styles.title}>Coupons & Loyalty Rewards</Text>
+          <Text style={styles.subTitle}>Manage promo deals, discount coupons & customer wallet cashbacks</Text>
         </View>
+
+        {activeTab === 'coupons' && (
+          <TouchableOpacity
+            style={[styles.createBtn, isMobile && styles.createBtnMobile]}
+            onPress={openCreateModal}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.createBtnText}>+ Create Coupon</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Segmented Tab Navigation */}
+      <View style={styles.tabNavRow}>
         <TouchableOpacity
-          style={[styles.createBtn, isMobile && styles.createBtnMobile]}
-          onPress={openCreateModal}
+          style={[styles.tabNavItem, activeTab === 'coupons' && styles.tabNavItemActive]}
+          onPress={() => setActiveTab('coupons')}
           activeOpacity={0.8}
         >
-          <Text style={styles.createBtnText}>+ Create Coupon</Text>
+          <Text style={[styles.tabNavText, activeTab === 'coupons' && styles.tabNavTextActive]}>
+            🎟️ Coupons ({coupons.length})
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.tabNavItem, activeTab === 'rewards' && styles.tabNavItemActive]}
+          onPress={() => setActiveTab('rewards')}
+          activeOpacity={0.8}
+        >
+          <Text style={[styles.tabNavText, activeTab === 'rewards' && styles.tabNavTextActive]}>
+            🎁 Loyalty Rewards & Wallet {rewardsEnabled ? '• ON' : ''}
+          </Text>
         </TouchableOpacity>
       </View>
 
-      {/* Main List */}
-      {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color="#2563EB" />
-          <Text style={{ marginTop: 10, color: '#64748B' }}>Loading coupons...</Text>
-        </View>
-      ) : coupons.length === 0 ? (
-        <View style={styles.emptyWrap}>
-          <Text style={{ fontSize: 44 }}>🏷️</Text>
-          <Text style={styles.emptyTitle}>No Coupons Created Yet</Text>
-          <Text style={styles.emptySub}>
-            Create flat or percentage discount coupons to delight customers and drive orders.
-          </Text>
-          <TouchableOpacity style={styles.createBtnEmpty} onPress={openCreateModal}>
-            <Text style={styles.createBtnText}>+ Create First Coupon</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <ScrollView contentContainerStyle={[styles.list, { paddingBottom: 40 }]}>
-          {coupons.map((c) => {
-            const now = new Date();
-            const isExpired = c.expiry_date && new Date(c.expiry_date) < now;
-            const notStarted = c.start_date && new Date(c.start_date) > now;
-            const isExhausted = c.usage_limit !== undefined && c.usage_limit !== null && (c.used_count || 0) >= c.usage_limit;
+      {/* TAB CONTENT: COUPONS */}
+      {activeTab === 'coupons' && (
+        <>
+          {loading ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="large" color="#2563EB" />
+              <Text style={{ marginTop: 10, color: '#64748B' }}>Loading coupons...</Text>
+            </View>
+          ) : coupons.length === 0 ? (
+            <View style={styles.emptyWrap}>
+              <Text style={{ fontSize: 44 }}>🏷️</Text>
+              <Text style={styles.emptyTitle}>No Coupons Created Yet</Text>
+              <Text style={styles.emptySub}>
+                Create flat or percentage discount coupons to delight customers and drive orders.
+              </Text>
+              <TouchableOpacity style={styles.createBtnEmpty} onPress={openCreateModal}>
+                <Text style={styles.createBtnText}>+ Create First Coupon</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <ScrollView contentContainerStyle={[styles.list, { paddingBottom: 40 }]}>
+              {coupons.map((c) => {
+                const now = new Date();
+                const isExpired = c.expiry_date && new Date(c.expiry_date) < now;
+                const notStarted = c.start_date && new Date(c.start_date) > now;
+                const isExhausted = c.usage_limit !== undefined && c.usage_limit !== null && (c.used_count || 0) >= c.usage_limit;
 
-            let statusLabel = 'ACTIVE';
-            let statusBg = '#DCFCE7';
-            let statusColor = '#15803D';
+                let statusLabel = 'ACTIVE';
+                let statusBg = '#DCFCE7';
+                let statusColor = '#15803D';
 
-            if (!c.is_active) {
-              statusLabel = 'INACTIVE';
-              statusBg = '#F1F5F9';
-              statusColor = '#64748B';
-            } else if (isExpired) {
-              statusLabel = 'EXPIRED';
-              statusBg = '#FEE2E2';
-              statusColor = '#B91C1C';
-            } else if (isExhausted) {
-              statusLabel = 'EXHAUSTED';
-              statusBg = '#FFEDD5';
-              statusColor = '#C2410C';
-            } else if (notStarted) {
-              statusLabel = 'SCHEDULED';
-              statusBg = '#EFF6FF';
-              statusColor = '#1D4ED8';
-            }
+                if (!c.is_active) {
+                  statusLabel = 'INACTIVE';
+                  statusBg = '#F1F5F9';
+                  statusColor = '#64748B';
+                } else if (isExpired) {
+                  statusLabel = 'EXPIRED';
+                  statusBg = '#FEE2E2';
+                  statusColor = '#B91C1C';
+                } else if (notStarted) {
+                  statusLabel = 'UPCOMING';
+                  statusBg = '#FEF3C7';
+                  statusColor = '#B45309';
+                } else if (isExhausted) {
+                  statusLabel = 'EXHAUSTED';
+                  statusBg = '#F3E8FF';
+                  statusColor = '#7E22CE';
+                }
 
-            return (
-              <View key={c.id} style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <View style={styles.codeRow}>
-                    <Text style={styles.codeText}>{c.code}</Text>
-                    <View style={[styles.statusBadge, { backgroundColor: statusBg }]}>
-                      <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+                return (
+                  <View key={c.id} style={styles.card}>
+                    <View style={styles.cardHeader}>
+                      <View style={styles.codeBadge}>
+                        <Text style={styles.codeText}>{c.code}</Text>
+                      </View>
+                      <View style={[styles.statusBadge, { backgroundColor: statusBg }]}>
+                        <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+                      </View>
                     </View>
-                  </View>
 
-                  <View style={styles.discountBadge}>
-                    <Text style={styles.discountBadgeText}>
+                    <Text style={styles.discountHighlight}>
                       {c.discount_type === 'percentage'
                         ? `${c.discount_value}% OFF`
                         : `₹${c.discount_value} FLAT OFF`}
                     </Text>
-                  </View>
-                </View>
 
-                {c.description ? <Text style={styles.descText}>{c.description}</Text> : null}
+                    {c.description ? <Text style={styles.descText}>{c.description}</Text> : null}
 
-                {/* Details Grid */}
-                <View style={styles.metaGrid}>
-                  <View style={styles.metaItem}>
-                    <Text style={styles.metaLabel}>MIN. ORDER</Text>
-                    <Text style={styles.metaVal}>{formatCurrency(c.min_order_value || 0)}</Text>
-                  </View>
-
-                  {c.discount_type === 'percentage' && c.max_discount ? (
-                    <View style={styles.metaItem}>
-                      <Text style={styles.metaLabel}>MAX DISCOUNT</Text>
-                      <Text style={styles.metaVal}>₹{c.max_discount}</Text>
+                    <View style={styles.metaRow}>
+                      {c.min_order_value ? (
+                        <Text style={styles.metaText}>Min Order: {formatCurrency(c.min_order_value)}</Text>
+                      ) : null}
+                      {c.max_discount ? (
+                        <Text style={styles.metaText}>Max Disc: {formatCurrency(c.max_discount)}</Text>
+                      ) : null}
+                      {c.usage_limit ? (
+                        <Text style={styles.metaText}>
+                          Usage: {c.used_count || 0} / {c.usage_limit}
+                        </Text>
+                      ) : (
+                        <Text style={styles.metaText}>Used: {c.used_count || 0} times</Text>
+                      )}
                     </View>
-                  ) : null}
 
-                  <View style={styles.metaItem}>
-                    <Text style={styles.metaLabel}>REDEMPTIONS</Text>
-                    <Text style={styles.metaVal}>
-                      {c.used_count || 0} {c.usage_limit ? `/ ${c.usage_limit} limit` : 'used'}
+                    {c.expiry_date && (
+                      <Text style={styles.expiryText}>
+                        Expires: {new Date(c.expiry_date).toLocaleDateString()}
+                      </Text>
+                    )}
+
+                    <View style={styles.actionsRow}>
+                      <TouchableOpacity
+                        style={[styles.toggleBtn, c.is_active ? styles.toggleBtnActive : styles.toggleBtnInactive]}
+                        onPress={() => handleToggleActive(c)}
+                      >
+                        <Text style={c.is_active ? styles.toggleTextActive : styles.toggleTextInactive}>
+                          {c.is_active ? 'Active' : 'Inactive'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity style={styles.editBtn} onPress={() => openEditModal(c)}>
+                        <Text style={styles.editBtnText}>Edit</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(c)}>
+                        <Text style={styles.deleteBtnText}>
+                          {(c.used_count || 0) > 0 ? 'Archive' : 'Delete'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          )}
+        </>
+      )}
+
+      {/* TAB CONTENT: REWARDS SETTINGS */}
+      {activeTab === 'rewards' && (
+        <ScrollView contentContainerStyle={[styles.rewardsContainer, { paddingBottom: 60 }]}>
+          {loadingRewards ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="large" color="#2563EB" />
+              <Text style={{ marginTop: 10, color: '#64748B' }}>Loading rewards configuration...</Text>
+            </View>
+          ) : (
+            <View style={styles.rewardsContentWrap}>
+              {/* Card 1: Configuration */}
+              <View style={styles.rewardsCard}>
+                {/* 1. Header Card */}
+                <View style={[styles.rewardsCardHeader, isMobile && styles.rewardsCardHeaderMobile]}>
+                  <View style={styles.rewardsHeaderLeft}>
+                    <View style={styles.rewardsTitleRow}>
+                      <Text style={styles.rewardsTitle}>🎁 Loyalty Cashback & Customer Wallet</Text>
+                    </View>
+                    <Text style={styles.rewardsSubtitle}>
+                      Automatically reward repeat customers with wallet cash balance on every settled order.
                     </Text>
                   </View>
+
+                  <View style={styles.rewardsHeaderRight}>
+                    <View
+                      style={[
+                        styles.rewardsStatusBadge,
+                        rewardsEnabled ? styles.rewardsStatusBadgeActive : styles.rewardsStatusBadgeInactive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.rewardsStatusText,
+                          rewardsEnabled ? styles.rewardsStatusTextActive : styles.rewardsStatusTextInactive,
+                        ]}
+                      >
+                        {rewardsEnabled ? 'ENABLED' : 'DISABLED'}
+                      </Text>
+                    </View>
+                    <Switch
+                      value={rewardsEnabled}
+                      onValueChange={setRewardsEnabled}
+                      trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                      thumbColor={rewardsEnabled ? '#2563EB' : '#FFFFFF'}
+                    />
+                  </View>
                 </View>
 
-                {/* Dates Row */}
-                <View style={styles.dateRow}>
-                  <Text style={styles.dateText}>
-                    📅 {c.start_date ? new Date(c.start_date).toLocaleDateString() : 'Immediate'} →{' '}
-                    {c.expiry_date ? new Date(c.expiry_date).toLocaleDateString() : 'No expiry'}
+                {/* 2. Cashback Earning Rule */}
+                <View style={styles.rewardsSection}>
+                  <Text style={styles.rewardsSectionTitle}>💰 Cashback Earning Rule</Text>
+                  <Text style={styles.rewardsSectionSub}>
+                    Set how much a customer must spend to earn wallet cashback on settled orders.
+                  </Text>
+
+                  <View style={[styles.rewardsInputGrid, isMobile && styles.rewardsInputGridMobile]}>
+                    <View style={styles.rewardsInputCol}>
+                      <Text style={styles.rewardsInputLabel}>Spend Amount (₹)</Text>
+                      <View style={styles.currencyInputWrap}>
+                        <Text style={styles.currencyPrefix}>₹</Text>
+                        <TextInput
+                          style={[
+                            styles.currencyInput,
+                            Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : {},
+                          ]}
+                          value={spendAmount}
+                          onChangeText={setSpendAmount}
+                          keyboardType="numeric"
+                          placeholder="100"
+                          placeholderTextColor="#94A3B8"
+                        />
+                      </View>
+                      <Text style={styles.rewardsInputHint}>Base spend benchmark required to qualify for cashback.</Text>
+                    </View>
+
+                    <View style={styles.rewardsInputCol}>
+                      <Text style={styles.rewardsInputLabel}>Earn Reward Amount (₹)</Text>
+                      <View style={styles.currencyInputWrap}>
+                        <Text style={styles.currencyPrefix}>₹</Text>
+                        <TextInput
+                          style={[
+                            styles.currencyInput,
+                            Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : {},
+                          ]}
+                          value={rewardAmount}
+                          onChangeText={setRewardAmount}
+                          keyboardType="numeric"
+                          placeholder="1"
+                          placeholderTextColor="#94A3B8"
+                        />
+                      </View>
+                      <Text style={styles.rewardsInputHint}>Wallet credit earned per qualifying spend benchmark.</Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* 3. Wallet Redemption Rule */}
+                <View style={styles.rewardsSection}>
+                  <Text style={styles.rewardsSectionTitle}>💳 Wallet Balance Redemption Rule</Text>
+                  <Text style={styles.rewardsSectionSub}>
+                    Customer can redeem their accumulated wallet balance at POS checkout once they meet this threshold.
+                  </Text>
+
+                  <View style={[styles.rewardsInputGrid, isMobile && styles.rewardsInputGridMobile]}>
+                    <View style={styles.rewardsInputCol}>
+                      <Text style={styles.rewardsInputLabel}>Minimum Wallet Balance to Redeem (₹)</Text>
+                      <View style={styles.currencyInputWrap}>
+                        <Text style={styles.currencyPrefix}>₹</Text>
+                        <TextInput
+                          style={[
+                            styles.currencyInput,
+                            Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : {},
+                          ]}
+                          value={minRedeemBalance}
+                          onChangeText={setMinRedeemBalance}
+                          keyboardType="numeric"
+                          placeholder="50"
+                          placeholderTextColor="#94A3B8"
+                        />
+                      </View>
+                      <Text style={styles.rewardsInputHint}>
+                        Prevents tiny partial redemptions before loyalty threshold is reached.
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* 4. Live Rule Simulation */}
+                <View style={styles.previewBox}>
+                  <View style={styles.previewHeaderRow}>
+                    <Text style={styles.previewTitle}>🔍 Live Rule Simulation</Text>
+                    <View style={styles.previewBadge}>
+                      <Text style={styles.previewBadgeText}>Auto-calculated Example</Text>
+                    </View>
+                  </View>
+
+                  <View style={[styles.previewCardsGrid, isMobile && styles.previewCardsGridMobile]}>
+                    <View style={styles.previewCard}>
+                      <Text style={styles.previewCardLabel}>Example Order Spend</Text>
+                      <Text style={styles.previewCardVal}>₹{previewExampleSpend}.00</Text>
+                      <Text style={styles.previewCardHint}>Customer dines & spends</Text>
+                    </View>
+
+                    <View style={[styles.previewCard, styles.previewCardHighlight]}>
+                      <Text style={[styles.previewCardLabel, { color: '#166534' }]}>Cashback Earned</Text>
+                      <Text style={[styles.previewCardVal, { color: '#15803D' }]}>+₹{previewCalculatedReward}</Text>
+                      <Text style={styles.previewCardHint}>Added to wallet upon settlement</Text>
+                    </View>
+
+                    <View style={styles.previewCard}>
+                      <Text style={styles.previewCardLabel}>Redeem Threshold</Text>
+                      <Text style={[styles.previewCardVal, { color: '#1D4ED8' }]}>₹{minRedeemBalance || '0'}.00</Text>
+                      <Text style={styles.previewCardHint}>Min balance needed at POS</Text>
+                    </View>
+                  </View>
+
+                  <Text style={styles.previewSubtext}>
+                    * Customer is uniquely identified across visits by their normalized 10-digit mobile number.
                   </Text>
                 </View>
 
-                {/* Card Actions */}
-                <View style={styles.actionsRow}>
+                {/* 5. Save Button Area */}
+                <View style={[styles.saveActionRow, isMobile && styles.saveActionRowMobile]}>
                   <TouchableOpacity
-                    style={[styles.toggleBtn, c.is_active ? styles.toggleBtnActive : styles.toggleBtnInactive]}
-                    onPress={() => handleToggleActive(c)}
+                    style={[styles.saveRewardsBtn, isMobile && styles.saveRewardsBtnMobile, savingRewards && styles.saveRewardsBtnDisabled]}
+                    onPress={handleSaveRewards}
+                    disabled={savingRewards}
+                    activeOpacity={0.8}
                   >
-                    <Text style={c.is_active ? styles.toggleTextActive : styles.toggleTextInactive}>
-                      {c.is_active ? 'Active' : 'Inactive'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.editBtn} onPress={() => openEditModal(c)}>
-                    <Text style={styles.editBtnText}>✏️ Edit</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(c)}>
-                    <Text style={styles.deleteBtnText}>🗑️</Text>
+                    {savingRewards ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.saveRewardsBtnText}>💾 Save Loyalty Settings</Text>
+                    )}
                   </TouchableOpacity>
                 </View>
               </View>
-            );
-          })}
+
+              {/* CUSTOMER WALLET BALANCE LOOKUP TOOL */}
+              <View style={styles.walletLookupCard}>
+                <View style={styles.walletLookupHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.walletLookupTitle}>🔍 Customer Wallet Balance Lookup</Text>
+                    <Text style={styles.walletLookupSubtitle}>
+                      Search by 10-digit mobile number to view live wallet balance, redemption status, and transaction history.
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={[styles.lookupInputRow, isMobile && styles.lookupInputRowMobile]}>
+                  <View style={styles.phoneInputWrap}>
+                    <Text style={styles.phoneInputPrefix}>🇮🇳 +91</Text>
+                    <TextInput
+                      style={[
+                        styles.phoneInput,
+                        Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : {},
+                      ]}
+                      value={lookupPhone}
+                      onChangeText={(val) => setLookupPhone(val.replace(/[^\d]/g, ''))}
+                      placeholder="Enter 10-digit customer mobile"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="phone-pad"
+                      maxLength={10}
+                      onSubmitEditing={() => handleLookupCustomer()}
+                    />
+                    {Boolean(lookupPhone) && (
+                      <TouchableOpacity
+                        style={styles.clearPhoneBtn}
+                        onPress={() => {
+                          setLookupPhone('');
+                          setLookupWallet(null);
+                          setLookupTransactions([]);
+                          setHasSearched(false);
+                        }}
+                      >
+                        <Text style={{ fontSize: 13, color: '#94A3B8' }}>✕</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.lookupBtn, isMobile && styles.lookupBtnMobile, lookupLoading && styles.lookupBtnDisabled]}
+                    onPress={() => handleLookupCustomer()}
+                    disabled={lookupLoading}
+                    activeOpacity={0.8}
+                  >
+                    {lookupLoading ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.lookupBtnText}>Check Balance</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+              {/* Lookup Result Box */}
+              {hasSearched && (
+                <View style={styles.lookupResultContainer}>
+                  {lookupLoading ? (
+                    <View style={styles.lookupLoadingBox}>
+                      <ActivityIndicator size="small" color="#2563EB" />
+                      <Text style={styles.lookupLoadingText}>Fetching customer wallet data...</Text>
+                    </View>
+                  ) : lookupWallet ? (
+                    <View style={styles.walletDetailCard}>
+                      <View style={styles.walletDetailHeader}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <View style={styles.phoneBadge}>
+                            <Text style={styles.phoneBadgeText}>📱 {lookupWallet.customer_mobile || lookupPhone}</Text>
+                          </View>
+                          <View style={[styles.statusBadge, { backgroundColor: '#DCFCE7' }]}>
+                            <Text style={[styles.statusText, { color: '#15803D' }]}>LOYALTY MEMBER</Text>
+                          </View>
+                        </View>
+                        <View
+                          style={[
+                            styles.eligibilityBadge,
+                            lookupWallet.can_redeem ? styles.eligibilityBadgeGreen : styles.eligibilityBadgeAmber,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.eligibilityText,
+                              lookupWallet.can_redeem ? styles.eligibilityTextGreen : styles.eligibilityTextAmber,
+                            ]}
+                          >
+                            {lookupWallet.can_redeem
+                              ? '✓ Eligible to Redeem at POS'
+                              : `⚠️ Min ₹${lookupWallet.min_redeem_balance} needed to redeem`}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Prominent Balance Row */}
+                      <View style={styles.balanceHighlightRow}>
+                        <View>
+                          <Text style={styles.balanceHighlightLabel}>Available Wallet Balance</Text>
+                          <Text style={styles.balanceHighlightAmount}>
+                            {formatCurrency(lookupWallet.balance || 0)}
+                          </Text>
+                        </View>
+                        <View style={styles.walletMiniStats}>
+                          <View style={styles.miniStatCol}>
+                            <Text style={styles.miniStatLabel}>Total Earned</Text>
+                            <Text style={[styles.miniStatValue, { color: '#15803D' }]}>
+                              +{formatCurrency(lookupWallet.total_earned || 0)}
+                            </Text>
+                          </View>
+                          <View style={styles.miniStatDivider} />
+                          <View style={styles.miniStatCol}>
+                            <Text style={styles.miniStatLabel}>Total Redeemed</Text>
+                            <Text style={[styles.miniStatValue, { color: '#2563EB' }]}>
+                              -{formatCurrency(lookupWallet.total_redeemed || 0)}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+
+                      {/* Manual Adjustment Action Button */}
+                      {isAdmin && (
+                        <View style={{ marginTop: 12, marginBottom: 8, flexDirection: 'row', justifyContent: 'flex-end' }}>
+                          <TouchableOpacity
+                            style={styles.adjustCreditBtn}
+                            onPress={() => handleOpenAdjustModal(lookupWallet.customer_mobile || lookupPhone)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.adjustCreditBtnText}>⚡ Adjust Store Credit / Wallet</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+
+                      {/* Transaction Ledger History */}
+                      <View style={styles.ledgerHeaderRow}>
+                        <Text style={styles.ledgerTitle}>
+                          📜 Recent Activity ({lookupTransactions.length})
+                        </Text>
+                      </View>
+
+                      {lookupTransactions.length === 0 ? (
+                        <View style={styles.emptyLedgerBox}>
+                          <Text style={styles.emptyLedgerText}>
+                            No wallet transactions recorded yet for this mobile number.
+                          </Text>
+                        </View>
+                      ) : (
+                        <View style={styles.ledgerList}>
+                          {lookupTransactions.map((tx) => {
+                            const isEarn = tx.transaction_type === 'earn';
+                            return (
+                              <View key={tx.id} style={styles.ledgerItem}>
+                                <View style={styles.ledgerLeft}>
+                                  <View
+                                    style={[
+                                      styles.txTypeBadge,
+                                      isEarn ? styles.txTypeEarn : styles.txTypeRedeem,
+                                    ]}
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.txTypeText,
+                                        isEarn ? styles.txTypeTextEarn : styles.txTypeTextRedeem,
+                                      ]}
+                                    >
+                                      {isEarn ? 'EARNED' : 'REDEEMED'}
+                                    </Text>
+                                  </View>
+                                  <View style={{ marginLeft: 8 }}>
+                                    <Text style={styles.txNotes}>
+                                      {tx.notes || (isEarn ? 'Cashback from settled order' : 'Redeemed on bill payment')}
+                                    </Text>
+                                    <Text style={styles.txDate}>
+                                      {new Date(tx.created_at).toLocaleString()}
+                                    </Text>
+                                  </View>
+                                </View>
+                                <Text
+                                  style={[
+                                    styles.txAmount,
+                                    isEarn ? styles.txAmountEarn : styles.txAmountRedeem,
+                                  ]}
+                                >
+                                  {isEarn ? '+' : '-'}{formatCurrency(tx.amount)}
+                                </Text>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      )}
+                    </View>
+                  ) : (
+                    <View style={styles.lookupNotFoundBox}>
+                      <Text style={{ fontSize: 24, marginBottom: 6 }}>🔍</Text>
+                      <Text style={styles.lookupNotFoundTitle}>No Wallet Found</Text>
+                      <Text style={styles.lookupNotFoundText}>
+                        No customer wallet found for mobile number "{lookupPhone}". A wallet is automatically created when an order is settled with their phone number.
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+            </View>
+
+            {/* CUSTOMER WALLETS DIRECTORY TABLE */}
+            <View style={styles.walletDirectoryCard}>
+              <View style={styles.walletDirectoryHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.walletDirectoryTitle}>
+                    👥 Customer Loyalty Directory ({customerWallets.length})
+                  </Text>
+                  <Text style={styles.walletDirectorySubtitle}>
+                    Overview of active customer wallet balances for your restaurant.
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.refreshWalletsBtn}
+                  onPress={loadCustomerWallets}
+                  disabled={loadingWallets}
+                  activeOpacity={0.8}
+                >
+                  {loadingWallets ? (
+                    <ActivityIndicator size="small" color="#2563EB" />
+                  ) : (
+                    <Text style={styles.refreshWalletsBtnText}>🔄 Refresh</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              {/* Directory Summary Metrics */}
+              {customerWallets.length > 0 && (
+                <View style={[styles.directorySummaryRow, isMobile && styles.directorySummaryRowMobile]}>
+                  <View style={styles.directoryStatBox}>
+                    <Text style={styles.directoryStatLabel}>Total Customers</Text>
+                    <Text style={styles.directoryStatVal}>{customerWallets.length}</Text>
+                  </View>
+                  <View style={styles.directoryStatBox}>
+                    <Text style={styles.directoryStatLabel}>Total Wallet Balance</Text>
+                    <Text style={[styles.directoryStatVal, { color: '#059669' }]}>
+                      {formatCurrency(customerWallets.reduce((acc, w) => acc + (w.balance || 0), 0))}
+                    </Text>
+                  </View>
+                  <View style={styles.directoryStatBox}>
+                    <Text style={styles.directoryStatLabel}>Total Rewards Issued</Text>
+                    <Text style={[styles.directoryStatVal, { color: '#2563EB' }]}>
+                      {formatCurrency(customerWallets.reduce((acc, w) => acc + (w.total_earned || 0), 0))}
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {loadingWallets ? (
+                <View style={styles.center}>
+                  <ActivityIndicator size="large" color="#2563EB" />
+                  <Text style={{ marginTop: 10, color: '#64748B' }}>Loading customer wallets...</Text>
+                </View>
+              ) : customerWallets.length === 0 ? (
+                <View style={styles.emptyWalletsBox}>
+                  <Text style={{ fontSize: 36, marginBottom: 8 }}>💳</Text>
+                  <Text style={styles.emptyWalletsTitle}>No Customer Wallets Yet</Text>
+                  <Text style={styles.emptyWalletsSub}>
+                    When orders are settled at POS with customer mobile numbers, cashbacks will automatically accrue and appear here.
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.walletsTable}>
+                  <View style={styles.walletsTableHeader}>
+                    <Text style={[styles.thCell, { flex: 2 }]}>CUSTOMER MOBILE</Text>
+                    <Text style={[styles.thCell, { flex: 1.5, textAlign: 'right' }]}>BALANCE</Text>
+                    <Text style={[styles.thCell, { flex: 1.5, textAlign: 'right' }]}>EARNED</Text>
+                    <Text style={[styles.thCell, { flex: 1.5, textAlign: 'right' }]}>REDEEMED</Text>
+                    <Text style={[styles.thCell, { flex: 1.5, textAlign: 'center' }]}>ACTION</Text>
+                  </View>
+
+                  {customerWallets.map((w) => (
+                    <View key={w.id} style={styles.walletsTableRow}>
+                      <View style={[styles.tdCell, { flex: 2 }]}>
+                        <Text style={styles.tdMobileText}>📱 {w.customer_mobile}</Text>
+                        <Text style={styles.tdDateText}>
+                          Updated: {new Date(w.updated_at).toLocaleDateString()}
+                        </Text>
+                      </View>
+                      <View style={[styles.tdCell, { flex: 1.5, alignItems: 'flex-end' }]}>
+                        <View style={styles.tableBalanceBadge}>
+                          <Text style={styles.tableBalanceText}>{formatCurrency(w.balance)}</Text>
+                        </View>
+                      </View>
+                      <View style={[styles.tdCell, { flex: 1.5, alignItems: 'flex-end' }]}>
+                        <Text style={styles.tdEarnedText}>+{formatCurrency(w.total_earned)}</Text>
+                      </View>
+                      <View style={[styles.tdCell, { flex: 1.5, alignItems: 'flex-end' }]}>
+                        <Text style={styles.tdRedeemedText}>-{formatCurrency(w.total_redeemed)}</Text>
+                      </View>
+                      <View style={[styles.tdCell, { flex: 2.2, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 }]}>
+                        <TouchableOpacity
+                          style={styles.inspectBtn}
+                          onPress={() => {
+                            setLookupPhone(w.customer_mobile);
+                            handleLookupCustomer(w.customer_mobile);
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={styles.inspectBtnText}>Inspect</Text>
+                        </TouchableOpacity>
+                        {isAdmin && (
+                          <TouchableOpacity
+                            style={[styles.inspectBtn, { backgroundColor: '#f0fdf4', borderColor: '#86efac' }]}
+                            onPress={() => handleOpenAdjustModal(w.customer_mobile)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={[styles.inspectBtnText, { color: '#16a34a' }]}>Adjust</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+              </View>
+            </View>
+          )}
         </ScrollView>
       )}
 
-      {/* Create / Edit Modal */}
-      <Modal visible={modalVisible} transparent animationType="slide">
+      {/* MANUAL WALLET ADJUSTMENT MODAL */}
+      <Modal visible={adjustModalVisible} transparent animationType="fade" onRequestClose={() => setAdjustModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxWidth: 440 }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Adjust Customer Wallet</Text>
+                <Text style={{ fontSize: 12, color: '#64748b', fontWeight: '600', marginTop: 2 }}>
+                  Mobile: +91 {adjustMobile}
+                </Text>
+              </View>
+              <TouchableOpacity style={styles.closeBtn} onPress={() => setAdjustModalVisible(false)}>
+                <Text style={{ fontSize: 18, color: '#64748B', fontWeight: 'bold' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.modalForm}>
+              <Text style={styles.label}>Adjustment Type *</Text>
+              <View style={styles.typeSelectorRow}>
+                <TouchableOpacity
+                  style={[styles.typeBtn, adjustType === 'credit' && styles.typeBtnSelected]}
+                  onPress={() => setAdjustType('credit')}
+                >
+                  <Text style={[styles.typeBtnText, adjustType === 'credit' && styles.typeBtnTextSelected]}>
+                    ➕ Add Credit (Deposit)
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.typeBtn, adjustType === 'debit' && { backgroundColor: '#fef2f2', borderColor: '#ef4444' }]}
+                  onPress={() => setAdjustType('debit')}
+                >
+                  <Text style={[styles.typeBtnText, adjustType === 'debit' && { color: '#dc2626', fontWeight: 'bold' }]}>
+                    ➖ Deduct Credit
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.label}>Amount in ₹ *</Text>
+              <TextInput
+                style={styles.input}
+                value={adjustAmount}
+                onChangeText={(t) => setAdjustAmount(t.replace(/[^0-9.]/g, ''))}
+                keyboardType="numeric"
+                placeholder="e.g. 100"
+                placeholderTextColor="#94a3b8"
+              />
+
+              <Text style={styles.label}>Reason / Note *</Text>
+              <TextInput
+                style={[styles.input, { minHeight: 60 }]}
+                value={adjustReason}
+                onChangeText={setAdjustReason}
+                placeholder="e.g. Loyalty compensation, manual refund, manager goodwill"
+                placeholderTextColor="#94a3b8"
+                multiline
+              />
+
+              <TouchableOpacity
+                style={[
+                  styles.saveBtn,
+                  adjustType === 'debit' && { backgroundColor: '#dc2626' },
+                  adjusting && { opacity: 0.6 }
+                ]}
+                onPress={handlePerformAdjustment}
+                disabled={adjusting}
+              >
+                {adjusting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.saveBtnText}>
+                    {adjustType === 'credit' ? 'Confirm Add Credit' : 'Confirm Deduct Credit'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* CREATE / EDIT COUPON MODAL */}
+      <Modal visible={modalVisible} transparent animationType="fade" onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {editingCoupon ? `Edit Coupon #${editingCoupon.code}` : 'Create New Coupon'}
+                {editingCoupon ? `Edit Coupon: ${editingCoupon.code}` : 'Create New Coupon'}
               </Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.closeBtn}>
-                <Text style={{ fontSize: 18, color: '#64748B' }}>✕</Text>
+              <TouchableOpacity style={styles.closeBtn} onPress={() => setModalVisible(false)}>
+                <Text style={{ fontSize: 18, color: '#64748B', fontWeight: 'bold' }}>✕</Text>
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalForm} showsVerticalScrollIndicator={false}>
+            <ScrollView contentContainerStyle={styles.modalForm}>
               <Text style={styles.label}>Coupon Code *</Text>
               <TextInput
                 style={styles.input}
-                placeholder="e.g. FESTIVE20"
-                placeholderTextColor="#64748b"
                 value={code}
                 onChangeText={(t) => setCode(t.toUpperCase())}
+                placeholder="e.g. FLAT50, FESTIVE10"
                 autoCapitalize="characters"
               />
 
               <Text style={styles.label}>Description</Text>
               <TextInput
                 style={styles.input}
-                placeholder="e.g. 20% off on all items above ₹500"
-                placeholderTextColor="#64748b"
                 value={description}
                 onChangeText={setDescription}
+                placeholder="e.g. Special flat discount for weekend diners"
               />
 
-              {/* Discount Type Selector */}
-              <Text style={styles.label}>Discount Type *</Text>
+              <Text style={styles.label}>Discount Type</Text>
               <View style={styles.typeSelectorRow}>
                 <TouchableOpacity
                   style={[styles.typeBtn, discountType === 'percentage' && styles.typeBtnSelected]}
                   onPress={() => setDiscountType('percentage')}
                 >
                   <Text style={[styles.typeBtnText, discountType === 'percentage' && styles.typeBtnTextSelected]}>
-                    Percentage (%)
+                    % Percentage
                   </Text>
                 </TouchableOpacity>
-
                 <TouchableOpacity
                   style={[styles.typeBtn, discountType === 'fixed' && styles.typeBtnSelected]}
                   onPress={() => setDiscountType('fixed')}
                 >
                   <Text style={[styles.typeBtnText, discountType === 'fixed' && styles.typeBtnTextSelected]}>
-                    Flat Amount (₹)
+                    ₹ Flat Amount
                   </Text>
                 </TouchableOpacity>
               </View>
 
-              <View style={styles.formRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>
-                    {discountType === 'percentage' ? 'Discount Percentage (%) *' : 'Flat Discount (₹) *'}
-                  </Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g. 20"
-                    placeholderTextColor="#64748b"
-                    keyboardType="numeric"
-                    value={discountValue}
-                    onChangeText={setDiscountValue}
-                  />
-                </View>
-
-                {discountType === 'percentage' ? (
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.label}>Max Cap (₹)</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="e.g. 150 (Optional)"
-                      placeholderTextColor="#64748b"
-                      keyboardType="numeric"
-                      value={maxDiscount}
-                      onChangeText={setMaxDiscount}
-                    />
-                  </View>
-                ) : null}
-              </View>
+              <Text style={styles.label}>
+                {discountType === 'percentage' ? 'Discount Percentage (%) *' : 'Discount Amount (₹) *'}
+              </Text>
+              <TextInput
+                style={styles.input}
+                value={discountValue}
+                onChangeText={setDiscountValue}
+                keyboardType="numeric"
+                placeholder={discountType === 'percentage' ? '10' : '50'}
+              />
 
               <View style={styles.formRow}>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, marginRight: 8 }}>
                   <Text style={styles.label}>Min Order Value (₹)</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="0 for no minimum"
-                    placeholderTextColor="#64748b"
-                    keyboardType="numeric"
                     value={minOrderValue}
                     onChangeText={setMinOrderValue}
+                    keyboardType="numeric"
+                    placeholder="0"
                   />
                 </View>
 
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={styles.label}>Max Total Coupons</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g. 100 (Optional)"
-                    placeholderTextColor="#64748b"
-                    keyboardType="numeric"
-                    value={usageLimit}
-                    onChangeText={setUsageLimit}
-                  />
-                </View>
+                {discountType === 'percentage' && (
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.label}>Max Cap (₹)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={maxDiscount}
+                      onChangeText={setMaxDiscount}
+                      keyboardType="numeric"
+                      placeholder="Optional"
+                    />
+                  </View>
+                )}
               </View>
 
+              <Text style={styles.label}>Total Usage Limit</Text>
+              <TextInput
+                style={styles.input}
+                value={usageLimit}
+                onChangeText={setUsageLimit}
+                keyboardType="numeric"
+                placeholder="Leave blank for unlimited"
+              />
+
               <View style={styles.formRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Start Date (YYYY-MM-DD)</Text>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.label}>Start Date</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#64748b"
                     value={startDate}
                     onChangeText={setStartDate}
+                    placeholder="YYYY-MM-DD"
                   />
                 </View>
-
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={styles.label}>Expiry Date (YYYY-MM-DD)</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>Expiry Date</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#64748b"
                     value={expiryDate}
                     onChangeText={setExpiryDate}
+                    placeholder="YYYY-MM-DD"
                   />
                 </View>
               </View>
 
               <View style={styles.switchRow}>
-                <Text style={styles.switchLabel}>Active & Redeemable</Text>
-                <Switch value={isActive} onValueChange={setIsActive} trackColor={{ true: '#2563EB', false: '#CBD5E1' }} />
+                <Text style={styles.switchLabel}>Active Status</Text>
+                <Switch
+                  value={isActive}
+                  onValueChange={setIsActive}
+                  trackColor={{ false: '#CBD5E1', true: '#93C5FD' }}
+                  thumbColor={isActive ? '#2563EB' : '#FFFFFF'}
+                />
               </View>
 
               <TouchableOpacity
@@ -506,9 +1298,7 @@ export default function CouponsScreen() {
                 {saving ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
-                  <Text style={styles.saveBtnText}>
-                    {editingCoupon ? 'Update Coupon' : 'Save & Publish Coupon'}
-                  </Text>
+                  <Text style={styles.saveBtnText}>{editingCoupon ? 'Update Coupon' : 'Create Coupon'}</Text>
                 )}
               </TouchableOpacity>
             </ScrollView>
@@ -521,70 +1311,132 @@ export default function CouponsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
+  adjustCreditBtn: {
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#93c5fd',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  adjustCreditBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#1d4ed8',
+  },
   header: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderColor: '#E2E8F0',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 12,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
-  headerMobile: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
-    gap: 10,
-  },
-  headerTitleWrap: {
-    flex: 1,
-    minWidth: 0,
-  },
-  title: { fontSize: 18, fontWeight: '900', color: '#0F172A' },
-  subTitle: { fontSize: 11, color: '#64748B', marginTop: 2, lineHeight: 16 },
+  headerMobile: { flexDirection: 'column', alignItems: 'flex-start', gap: 12 },
+  headerTitleWrap: { flex: 1 },
+  title: { fontSize: 20, fontWeight: '900', color: '#0F172A' },
+  subTitle: { fontSize: 13, color: '#64748B', marginTop: 2 },
   createBtn: {
     backgroundColor: '#2563EB',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     borderRadius: 8,
+  },
+  createBtnMobile: { width: '100%', alignItems: 'center' },
+  createBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 13 },
+  tabNavRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    gap: 10,
+  },
+  tabNavItem: {
+    height: 42,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    flexShrink: 0,
   },
-  createBtnMobile: {
-    width: '100%',
-    paddingVertical: 10,
+  tabNavItemActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+    shadowColor: '#2563EB',
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
+  tabNavText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  tabNavTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
+  restrictedBox: {
+    backgroundColor: '#FFFFFF',
+    margin: 20,
+    padding: 30,
+    borderRadius: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  restrictedTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginTop: 12 },
+  restrictedSub: { fontSize: 13, color: '#64748B', textAlign: 'center', marginTop: 6, maxWidth: 360 },
+  emptyWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 30,
+    backgroundColor: '#FFFFFF',
+    margin: 20,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  emptyTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginTop: 12 },
+  emptySub: { fontSize: 13, color: '#64748B', textAlign: 'center', marginTop: 6, maxWidth: 380 },
   createBtnEmpty: {
     backgroundColor: '#2563EB',
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 8,
     marginTop: 16,
-    alignItems: 'center',
   },
-  createBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
-  emptyTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginTop: 12 },
-  emptySub: { fontSize: 13, color: '#64748B', textAlign: 'center', marginTop: 6, lineHeight: 18 },
-  restrictedBox: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
-  restrictedTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginTop: 12 },
-  restrictedSub: { fontSize: 13, color: '#64748B', textAlign: 'center', marginTop: 6 },
-  list: { padding: 16 },
+  list: {
+    padding: 16,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 14,
+    borderRadius: 12,
+    padding: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    marginBottom: 12,
+    width: Platform.OS === 'web' ? 340 : '100%',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 1,
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -592,31 +1444,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
-  codeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  codeText: { fontSize: 16, fontWeight: '900', color: '#0F172A', letterSpacing: 0.5 },
-  statusBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 },
-  statusText: { fontSize: 10, fontWeight: '800' },
-  discountBadge: {
-    backgroundColor: '#DCFCE7',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+  codeBadge: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
   },
-  discountBadgeText: { fontSize: 12, fontWeight: '900', color: '#15803D' },
-  descText: { fontSize: 12, color: '#475569', marginBottom: 10, lineHeight: 16 },
-  metaGrid: {
-    flexDirection: 'row',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 8,
-    padding: 8,
-    gap: 12,
-    marginBottom: 8,
-  },
-  metaItem: { flex: 1 },
-  metaLabel: { fontSize: 9, fontWeight: '700', color: '#64748B' },
-  metaVal: { fontSize: 12, fontWeight: '800', color: '#0F172A', marginTop: 2 },
-  dateRow: { marginBottom: 12 },
-  dateText: { fontSize: 11, color: '#64748B' },
+  codeText: { fontSize: 13, fontWeight: '900', color: '#1D4ED8', letterSpacing: 0.5 },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  statusText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  discountHighlight: { fontSize: 18, fontWeight: '900', color: '#0F172A', marginBottom: 4 },
+  descText: { fontSize: 12, color: '#64748B', marginBottom: 8 },
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
+  metaText: { fontSize: 11, color: '#475569', backgroundColor: '#F8FAFC', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  expiryText: { fontSize: 11, color: '#94A3B8', marginBottom: 12 },
   actionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -653,6 +1496,268 @@ const styles = StyleSheet.create({
     borderColor: '#FECDD3',
   },
   deleteBtnText: { fontSize: 11, fontWeight: '800', color: '#E11D48' },
+  rewardsContainer: {
+    padding: 20,
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+  },
+  rewardsContentWrap: {
+    width: '100%',
+    maxWidth: 1200,
+    gap: 24,
+  },
+  rewardsCard: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  rewardsCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 16,
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  rewardsCardHeaderMobile: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  rewardsHeaderLeft: {
+    flex: 1,
+  },
+  rewardsTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  rewardsTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  rewardsSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+    marginTop: 4,
+    lineHeight: 18,
+  },
+  rewardsHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#F8FAFC',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  rewardsStatusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  rewardsStatusBadgeActive: {
+    backgroundColor: '#DCFCE7',
+  },
+  rewardsStatusBadgeInactive: {
+    backgroundColor: '#F1F5F9',
+  },
+  rewardsStatusText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  rewardsStatusTextActive: {
+    color: '#15803D',
+  },
+  rewardsStatusTextInactive: {
+    color: '#64748B',
+  },
+  rewardsSection: {
+    marginTop: 24,
+  },
+  rewardsSectionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  rewardsSectionSub: {
+    fontSize: 13,
+    color: '#64748B',
+    marginTop: 2,
+    marginBottom: 14,
+  },
+  rewardsInputGrid: {
+    flexDirection: 'row',
+    gap: 20,
+  },
+  rewardsInputGridMobile: {
+    flexDirection: 'column',
+    gap: 14,
+  },
+  rewardsInputCol: {
+    flex: 1,
+  },
+  rewardsInputLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  currencyInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    height: 44,
+    overflow: 'hidden',
+  },
+  currencyPrefix: {
+    paddingLeft: 14,
+    paddingRight: 6,
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#64748B',
+  },
+  currencyInput: {
+    flex: 1,
+    height: '100%',
+    paddingVertical: 8,
+    paddingRight: 14,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  rewardsInputHint: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 6,
+    lineHeight: 16,
+  },
+  previewBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginTop: 24,
+    marginBottom: 24,
+  },
+  previewHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  previewTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  previewBadge: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  previewBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#1D4ED8',
+  },
+  previewCardsGrid: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  previewCardsGridMobile: {
+    flexDirection: 'column',
+    gap: 8,
+  },
+  previewCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  previewCardHighlight: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  previewCardLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  previewCardVal: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginTop: 3,
+    marginBottom: 2,
+  },
+  previewCardHint: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  previewSubtext: {
+    fontSize: 11,
+    color: '#64748B',
+    fontStyle: 'italic',
+  },
+  saveActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  saveActionRowMobile: {
+    justifyContent: 'center',
+    alignItems: 'stretch',
+  },
+  saveRewardsBtn: {
+    backgroundColor: '#2563EB',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveRewardsBtnMobile: {
+    width: '100%',
+  },
+  saveRewardsBtnDisabled: {
+    opacity: 0.6,
+  },
+  saveRewardsBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  lookupBtnMobile: {
+    width: '100%',
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -722,5 +1827,456 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   saveBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+
+  // Wallet Lookup Card Styles
+  walletLookupCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginTop: 24,
+  },
+  walletLookupHeader: {
+    marginBottom: 16,
+  },
+  walletLookupTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  walletLookupSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  lookupInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  lookupInputRowMobile: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  },
+  phoneInputWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    overflow: 'hidden',
+  },
+  phoneInputPrefix: {
+    paddingLeft: 12,
+    paddingRight: 6,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  phoneInput: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingRight: 12,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  clearPhoneBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  lookupBtn: {
+    backgroundColor: '#0F172A',
+    paddingVertical: 11,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lookupBtnDisabled: {
+    opacity: 0.6,
+  },
+  lookupBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  lookupResultContainer: {
+    marginTop: 18,
+  },
+  lookupLoadingBox: {
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+  },
+  lookupLoadingText: {
+    marginTop: 8,
+    fontSize: 13,
+    color: '#64748B',
+  },
+  walletDetailCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 18,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+  },
+  walletDetailHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  phoneBadge: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  phoneBadgeText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  eligibilityBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  eligibilityBadgeGreen: {
+    backgroundColor: '#DCFCE7',
+  },
+  eligibilityBadgeAmber: {
+    backgroundColor: '#FEF3C7',
+  },
+  eligibilityText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  eligibilityTextGreen: {
+    color: '#15803D',
+  },
+  eligibilityTextAmber: {
+    color: '#B45309',
+  },
+  balanceHighlightRow: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
+  balanceHighlightLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  balanceHighlightAmount: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#059669',
+    marginTop: 2,
+  },
+  walletMiniStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  miniStatCol: {
+    alignItems: 'flex-start',
+  },
+  miniStatLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  miniStatValue: {
+    fontSize: 14,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  miniStatDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: '#E2E8F0',
+  },
+  ledgerHeaderRow: {
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  ledgerTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  emptyLedgerBox: {
+    padding: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  emptyLedgerText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontStyle: 'italic',
+  },
+  ledgerList: {
+    gap: 8,
+  },
+  ledgerItem: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  ledgerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  txTypeBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  txTypeEarn: {
+    backgroundColor: '#DCFCE7',
+  },
+  txTypeRedeem: {
+    backgroundColor: '#DBEAFE',
+  },
+  txTypeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  txTypeTextEarn: {
+    color: '#15803D',
+  },
+  txTypeTextRedeem: {
+    color: '#1D4ED8',
+  },
+  txNotes: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  txDate: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  txAmount: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  txAmountEarn: {
+    color: '#15803D',
+  },
+  txAmountRedeem: {
+    color: '#2563EB',
+  },
+  lookupNotFoundBox: {
+    padding: 20,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+  },
+  lookupNotFoundTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 4,
+  },
+  lookupNotFoundText: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+    maxWidth: 380,
+  },
+
+  // Wallet Directory Table Styles
+  walletDirectoryCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginTop: 24,
+  },
+  walletDirectoryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  walletDirectoryTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  walletDirectorySubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  refreshWalletsBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  refreshWalletsBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2563EB',
+  },
+  directorySummaryRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  directorySummaryRowMobile: {
+    flexDirection: 'column',
+  },
+  directoryStatBox: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  directoryStatLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '700',
+  },
+  directoryStatVal: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginTop: 2,
+  },
+  emptyWalletsBox: {
+    padding: 32,
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  emptyWalletsTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 4,
+  },
+  emptyWalletsSub: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+    maxWidth: 420,
+  },
+  walletsTable: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  walletsTableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#CBD5E1',
+  },
+  thCell: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#475569',
+  },
+  walletsTableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
+  },
+  tdCell: {
+    justifyContent: 'center',
+  },
+  tdMobileText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  tdDateText: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  tableBalanceBadge: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  tableBalanceText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  tdEarnedText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  tdRedeemedText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  inspectBtn: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  inspectBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
 });
 

@@ -243,8 +243,8 @@ namespace RestroZPrintAgent
             _btnTestPrint = new Button
             {
                 Text = "Send Test Print",
-                Location = new Point(180, 338),
-                Size = new Size(150, 32),
+                Location = new Point(175, 338),
+                Size = new Size(130, 32),
                 BackColor = Color.FromArgb(34, 197, 94),
                 ForeColor = Color.Black,
                 FlatStyle = FlatStyle.Flat,
@@ -255,12 +255,27 @@ namespace RestroZPrintAgent
             _btnTestPrint.Click += HandleTestPrintClick;
             this.Controls.Add(_btnTestPrint);
 
+            var btnRasterProbe = new Button
+            {
+                Text = "Raster Probe",
+                Location = new Point(315, 338),
+                Size = new Size(120, 32),
+                BackColor = Color.FromArgb(59, 130, 246),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                Cursor = Cursors.Hand
+            };
+            btnRasterProbe.FlatAppearance.BorderSize = 0;
+            btnRasterProbe.Click += HandleRasterProbeClick;
+            this.Controls.Add(btnRasterProbe);
+
             // Startup checkbox
             _chkStartup = new CheckBox
             {
-                Text = "Start with Windows",
+                Text = "Start at login",
                 Checked = _config.RunAtStartup,
-                Location = new Point(360, 344),
+                Location = new Point(445, 344),
                 AutoSize = true,
                 ForeColor = Color.FromArgb(212, 212, 216),
                 Cursor = Cursors.Hand
@@ -315,6 +330,38 @@ namespace RestroZPrintAgent
             else
             {
                 MessageBox.Show(string.Format("Test print failed: {0}", error), "Test Print Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void HandleRasterProbeClick(object sender, EventArgs e)
+        {
+            if (_lstPrinters.SelectedItem == null)
+            {
+                MessageBox.Show("Please select a printer destination from the list above first.", "Raster Probe", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            string printerName = _lstPrinters.SelectedItem.ToString();
+
+            var menu = new ContextMenuStrip();
+            menu.Items.Add("1. ESC * 24-dot: 64x64 Solid Black Square", null, (s, a) => ExecuteRasterProbe(printerName, "ESC_STAR_64_BLACK"));
+            menu.Items.Add("2. ESC * 24-dot: 64x64 Checkerboard", null, (s, a) => ExecuteRasterProbe(printerName, "ESC_STAR_64_CHECKER"));
+            menu.Items.Add("3. GS v 0: 64x64 Solid Black Square", null, (s, a) => ExecuteRasterProbe(printerName, "GS_V0_64_BLACK"));
+            menu.Items.Add("4. GS v 0: 64x64 Checkerboard", null, (s, a) => ExecuteRasterProbe(printerName, "GS_V0_64_CHECKER"));
+            menu.Items.Add("5. GS v 0: 128x64 Black Rectangle", null, (s, a) => ExecuteRasterProbe(printerName, "GS_V0_128_RECT"));
+            menu.Show(Cursor.Position);
+        }
+
+        private void ExecuteRasterProbe(string printerName, string probeType)
+        {
+            string error;
+            bool ok = _engine.SendRasterProbe(printerName, probeType, out error);
+            if (ok)
+            {
+                MessageBox.Show(string.Format("Raster probe [{0}] sent to '{1}'. Check physical print output.", probeType, printerName), "Raster Probe", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            else
+            {
+                MessageBox.Show(string.Format("Raster probe failed: {0}", error), "Raster Probe Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 

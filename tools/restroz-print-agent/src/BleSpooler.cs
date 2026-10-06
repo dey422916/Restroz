@@ -408,6 +408,108 @@ namespace RestroZPrintAgent
             return payload.ToArray();
         }
 
+        public static byte[] GenerateRasterProbePayload(string probeType, string printerName)
+        {
+            List<byte> p = new List<byte>();
+
+            // Initialize ESC @
+            p.Add(0x1B); p.Add(0x40);
+            p.Add(0x1B); p.Add(0x61); p.Add(0x01); // Center
+
+            StringBuilder header = new StringBuilder();
+            header.AppendLine();
+            header.AppendLine("=== RASTER PROBE TEST ===");
+            header.AppendLine("Type: " + probeType);
+            header.AppendLine("Printer: " + printerName);
+            header.AppendLine("------------------------");
+            p.AddRange(Encoding.ASCII.GetBytes(header.ToString()));
+
+            if (probeType == "GS_V0_64_BLACK")
+            {
+                // 1D 76 30 00 08 00 40 00 [512 bytes FF]
+                p.Add(0x1D); p.Add(0x76); p.Add(0x30); p.Add(0x00);
+                p.Add(0x08); p.Add(0x00); // 8 bytes width = 64 dots
+                p.Add(0x40); p.Add(0x00); // 64 dots height
+                for (int i = 0; i < 512; i++) p.Add(0xFF);
+                p.Add(0x0A);
+            }
+            else if (probeType == "GS_V0_64_CHECKER")
+            {
+                // 1D 76 30 00 08 00 40 00 [512 bytes checker]
+                p.Add(0x1D); p.Add(0x76); p.Add(0x30); p.Add(0x00);
+                p.Add(0x08); p.Add(0x00);
+                p.Add(0x40); p.Add(0x00);
+                for (int y = 0; y < 64; y++)
+                {
+                    bool isEvenY = (y / 8) % 2 == 0;
+                    for (int b = 0; b < 8; b++)
+                    {
+                        bool isEvenX = (b % 2 == 0);
+                        p.Add((byte)((isEvenY == isEvenX) ? 0xFF : 0x00));
+                    }
+                }
+                p.Add(0x0A);
+            }
+            else if (probeType == "GS_V0_128_RECT")
+            {
+                // 1D 76 30 00 10 00 40 00 [1024 bytes FF]
+                p.Add(0x1D); p.Add(0x76); p.Add(0x30); p.Add(0x00);
+                p.Add(0x10); p.Add(0x00); // 16 bytes width = 128 dots
+                p.Add(0x40); p.Add(0x00); // 64 dots height
+                for (int i = 0; i < 1024; i++) p.Add(0xFF);
+                p.Add(0x0A);
+            }
+            else if (probeType == "ESC_STAR_64_BLACK")
+            {
+                // 24-dot line spacing: ESC 3 24
+                p.Add(0x1B); p.Add(0x33); p.Add(24);
+                // 3 bands of 24 dots for 64 dots height
+                for (int b = 0; b < 3; b++)
+                {
+                    // ESC * 33 64 0
+                    p.Add(0x1B); p.Add(0x2A); p.Add(33);
+                    p.Add(64); p.Add(0); // 64 columns
+                    for (int x = 0; x < 64; x++)
+                    {
+                        p.Add(0xFF); p.Add(0xFF); p.Add(0xFF); // 3 bytes per column (24 vertical dots)
+                    }
+                    p.Add(0x0A); // LF
+                }
+                // ESC 2 (Restore line spacing)
+                p.Add(0x1B); p.Add(0x32); p.Add(0x0A);
+            }
+            else if (probeType == "ESC_STAR_64_CHECKER")
+            {
+                p.Add(0x1B); p.Add(0x33); p.Add(24);
+                for (int b = 0; b < 3; b++)
+                {
+                    p.Add(0x1B); p.Add(0x2A); p.Add(33);
+                    p.Add(64); p.Add(0);
+                    for (int x = 0; x < 64; x++)
+                    {
+                        bool isTileX = (x / 8) % 2 == 0;
+                        byte b0 = 0, b1 = 0, b2 = 0;
+                        for (int d = 0; d < 8; d++) { if (isTileX == (((b * 24 + d) / 8) % 2 == 0)) b0 |= (byte)(0x80 >> d); }
+                        for (int d = 0; d < 8; d++) { if (isTileX == (((b * 24 + 8 + d) / 8) % 2 == 0)) b1 |= (byte)(0x80 >> d); }
+                        for (int d = 0; d < 8; d++) { if (isTileX == (((b * 24 + 16 + d) / 8) % 2 == 0)) b2 |= (byte)(0x80 >> d); }
+                        p.Add(b0); p.Add(b1); p.Add(b2);
+                    }
+                    p.Add(0x0A);
+                }
+                p.Add(0x1B); p.Add(0x32); p.Add(0x0A);
+            }
+
+            StringBuilder footer = new StringBuilder();
+            footer.AppendLine("------------------------");
+            footer.AppendLine("*** PROBE COMPLETE ***");
+            footer.AppendLine();
+            footer.AppendLine();
+            footer.AppendLine();
+            p.AddRange(Encoding.ASCII.GetBytes(footer.ToString()));
+
+            return p.ToArray();
+        }
+
         private static string FormatMac(ulong addr)
         {
             byte[] b = BitConverter.GetBytes(addr);

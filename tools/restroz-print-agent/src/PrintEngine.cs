@@ -346,5 +346,37 @@ namespace RestroZPrintAgent
         {
             return SendTestPrint(printerName, "58mm", out error);
         }
+
+        public bool SendRasterProbe(string printerName, string probeType, out string error)
+        {
+            error = null;
+            try
+            {
+                bool isBle = BleSpooler.IsBlePrinter(printerName);
+                Log(string.Format("Executing BLE Raster Probe [{0}] on '{1}'...", probeType, printerName));
+
+                byte[] bytes = BleSpooler.GenerateRasterProbePayload(probeType, printerName);
+                if (isBle)
+                {
+                    bool ok = BleSpooler.SendBytesToBlePrinter(printerName, bytes, out error);
+                    if (ok) Log(string.Format("Raster Probe [{0}] sent successfully via Native BLE.", probeType));
+                    else Log(string.Format("Raster Probe [{0}] failed: {1}", probeType, error));
+                    return ok;
+                }
+                else
+                {
+                    bool ok = Spooler.SendBytesToPrinter(printerName, bytes, "RestroZ Raster Probe", out error);
+                    if (ok) Log(string.Format("Raster Probe [{0}] sent successfully via Spooler.", probeType));
+                    else Log(string.Format("Raster Probe [{0}] failed: {1}", probeType, error));
+                    return ok;
+                }
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                Log("SendRasterProbe error: " + ex.Message);
+                return false;
+            }
+        }
     }
 }

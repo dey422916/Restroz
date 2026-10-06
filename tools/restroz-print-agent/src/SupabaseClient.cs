@@ -280,7 +280,10 @@ namespace RestroZPrintAgent
                 for (int i = 0; i < printers.Count; i++)
                 {
                     if (i > 0) sb.Append(",");
-                    sb.Append(string.Format("{{\"printer_name\":\"{0}\",\"role\":\"both\",\"paper_width\":\"80mm\"}}", EscapeJson(printers[i])));
+                    string pName = printers[i];
+                    string pLower = (pName ?? "").ToLowerInvariant();
+                    string paperWidth = (pLower.Contains("58") || pLower.Contains("seznik") || pLower.Contains("925") || pLower.Contains("rpp") || pLower.Contains("mpt") || pLower.Contains("mini")) ? "58mm" : "80mm";
+                    sb.Append(string.Format("{{\"printer_name\":\"{0}\",\"role\":\"both\",\"paper_width\":\"{1}\"}}", EscapeJson(pName), paperWidth));
                 }
                 sb.Append("]");
 

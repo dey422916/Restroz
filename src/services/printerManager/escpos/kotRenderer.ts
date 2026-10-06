@@ -38,9 +38,13 @@ export function renderKotToEscPos(
     }
   }
 
-  const rawPaperSize = options.printer?.paper_width || settings.kot_paper_size || '80mm';
-  const paperSize: PrinterPaperWidth = rawPaperSize === '58mm' ? '58mm' : '80mm';
-  const printerName = (options.printer as any)?.name || (paperSize === '58mm' ? 'POS58 Printer' : 'POS80 Printer');
+  const printerName = (options.printer as any)?.name || '';
+  const is58mm =
+    options.printer?.paper_width === '58mm' ||
+    settings.kot_paper_size === '58mm' ||
+    /58|seznik|925|rpp|mpt|mini/i.test(printerName);
+  const paperSize: PrinterPaperWidth = is58mm ? '58mm' : '80mm';
+  const effectivePrinterName = printerName || (paperSize === '58mm' ? 'POS58 Printer' : 'POS80 Printer');
   const transport = (options.printer as any)?.transport || (options.isBle ? 'bluetooth' : 'agent');
   const isBle = Boolean(options.isBle || transport === 'bluetooth' || (options.printer as any)?.isBle || paperSize === '58mm');
 
@@ -73,7 +77,7 @@ export function renderKotToEscPos(
     }
   }
 
-  const builder = new EscPosTextBuilder(paperSize, printerName, { isBle, transport });
+  const builder = new EscPosTextBuilder(paperSize, effectivePrinterName, { isBle, transport });
 
   // 1. Restaurant Name (Centered, Bold, Normal Font A)
   const restaurantName = settings.name || (settings as any).restaurant_name;

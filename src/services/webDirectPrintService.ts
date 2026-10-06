@@ -1118,6 +1118,9 @@ export const webDirectPrintService = {
     restaurantId?: string | null
   ): Promise<ConfiguredDirectPrinter> {
     const printerId = `agent_${agent.id}_${queueName.replace(/\s+/g, '_')}`;
+    const resolvedPaperWidth: DirectPaperWidth =
+      options.paperWidth || (/58|seznik|925|rpp|mpt|mini/i.test(queueName) ? '58mm' : '80mm');
+
     const newPrinter: ConfiguredDirectPrinter = {
       id: printerId,
       name: queueName,
@@ -1125,7 +1128,7 @@ export const webDirectPrintService = {
       agentId: agent.id,
       agentDeviceName: agent.deviceName,
       windowsQueueName: queueName,
-      paperWidth: options.paperWidth || '80mm',
+      paperWidth: resolvedPaperWidth,
       role: options.role || 'both',
       isPrimary: options.isPrimary ?? true,
       status: agent.status === 'online' ? 'connected' : 'offline',
@@ -1156,7 +1159,7 @@ export const webDirectPrintService = {
           .update({
             is_primary: Boolean(newPrinter.isPrimary),
             role: options.role || 'both',
-            paper_width: options.paperWidth || '80mm',
+            paper_width: resolvedPaperWidth,
             is_active: true,
           })
           .eq('restaurant_id', restaurantId)
@@ -1621,6 +1624,11 @@ export const webDirectPrintService = {
             const chosenDevice = matchingDevices[0] || deviceRows[0];
 
             if (chosenDevice) {
+              const is58mmDevice = /58|seznik|925|rpp|mpt|mini/i.test(chosenDevice.printer_name);
+              const resolvedPaperWidth: DirectPaperWidth = is58mmDevice
+                ? '58mm'
+                : ((chosenDevice.paper_width as DirectPaperWidth) || '80mm');
+
               const agentPrinter: ConfiguredDirectPrinter = {
                 id: `agent_${agentData.id}_${chosenDevice.printer_name.replace(/\s+/g, '_')}`,
                 name: chosenDevice.printer_name,
@@ -1628,7 +1636,7 @@ export const webDirectPrintService = {
                 agentId: agentData.id,
                 agentDeviceName: agentData.device_name,
                 windowsQueueName: chosenDevice.printer_name,
-                paperWidth: (chosenDevice.paper_width as DirectPaperWidth) || '80mm',
+                paperWidth: resolvedPaperWidth,
                 role: (chosenDevice.role as DirectPrinterRole) || 'both',
                 isPrimary: Boolean(chosenDevice.is_primary),
                 status: 'connected',

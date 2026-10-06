@@ -1,8 +1,11 @@
 /**
  * ESC/POS Thermal Brand Logo Rasterizer
  * Converts restaurant logo URLs/DataURIs into centered 1-bit monochrome GS v 0 raster sequences.
- * Strictly formatted for 58mm (160–200 dots max) and 80mm (220–300 dots max) thermal printers.
+ * Formatted with full-width scanlines for 58mm (384 dots / 48 bytes) and 80mm (576 dots / 72 bytes)
+ * thermal printers to ensure perfect horizontal centering and prevent scanline buffer mismatches.
  */
+
+const logoRasterCache = new Map<string, Uint8Array>();
 
 export async function generateEscPosLogoRaster(
   logoUrl?: string | null,
@@ -12,21 +15,39 @@ export async function generateEscPosLogoRaster(
     return null;
   }
 
-  const trimmedUrl = logoUrl.trim();
-  const maxDots = paperWidth === '58mm' ? 180 : 260;
+  // Handle potential JSON string or array
+  let trimmedUrl = logoUrl.trim();
+  if (trimmedUrl.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmedUrl);
+      if (Array.isArray(parsed) && parsed[0]) {
+        trimmedUrl = String(parsed[0]).trim();
+      }
+    } catch {}
+  }
+
+  if (!trimmedUrl || (!trimmedUrl.startsWith('http') && !trimmedUrl.startsWith('data:image/'))) {
+    return null;
+  }
+
+  const cacheKey = `${trimmedUrl}_${paperWidth}`;
+  const cached = logoRasterCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
 
   try {
     if (typeof document === 'undefined' || typeof Image === 'undefined') {
       return null;
     }
 
-    // Wrap image loading in a promise with 2-second timeout
+    // Wrap image loading in a promise with 3-second timeout
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
       const image = new Image();
       image.crossOrigin = 'anonymous';
       const timeout = setTimeout(() => {
         reject(new Error('Logo load timeout'));
-      }, 2000);
+      }, 3000);
 
       image.onload = () => {
         clearTimeout(timeout);
@@ -43,28 +64,35 @@ export async function generateEscPosLogoRaster(
       return null;
     }
 
-    // Calculate dimensions preserving aspect ratio
-    let targetWidth = img.width;
-    let targetHeight = img.height;
+    // Full printable width dots (384 for 58mm, 576 for 80mm)
+    const fullWidthDots = paperWidth === '58mm' ? 384 : 576;
+    const widthBytes = Math.ceil(fullWidthDots / 8); // 48 bytes for 58mm, 72 bytes for 80mm
 
-    if (targetWidth > maxDots) {
-      const scale = maxDots / targetWidth;
-      targetWidth = maxDots;
-      targetHeight = Math.round(img.height * scale);
+    // Target logo max dimensions (centered within fullWidthDots)
+    const maxLogoWidth = paperWidth === '58mm' ? 240 : 340;
+    const maxLogoHeight = paperWidth === '58mm' ? 160 : 200;
+
+    let scaledWidth = img.width;
+    let scaledHeight = img.height;
+
+    // Scale down maintaining aspect ratio
+    if (scaledWidth > maxLogoWidth) {
+      const scale = maxLogoWidth / scaledWidth;
+      scaledWidth = maxLogoWidth;
+      scaledHeight = Math.round(img.height * scale);
     }
 
-    // Limit maximum height to avoid excessive paper feed (max 140 dots for 58mm, 180 for 80mm)
-    const maxHeight = paperWidth === '58mm' ? 140 : 180;
-    if (targetHeight > maxHeight) {
-      const scale = maxHeight / targetHeight;
-      targetHeight = maxHeight;
-      targetWidth = Math.round(targetWidth * scale);
+    if (scaledHeight > maxLogoHeight) {
+      const scale = maxLogoHeight / scaledHeight;
+      scaledHeight = maxLogoHeight;
+      scaledWidth = Math.round(scaledWidth * scale);
     }
 
-    // ESC/POS GS v 0 requires width to be byte-aligned (widthBytes = Math.ceil(targetWidth / 8))
-    const widthBytes = Math.ceil(targetWidth / 8);
-    const canvasWidth = widthBytes * 8;
-    const canvasHeight = Math.max(1, targetHeight);
+    scaledWidth = Math.max(8, scaledWidth);
+    scaledHeight = Math.max(8, scaledHeight);
+
+    const canvasWidth = fullWidthDots;
+    const canvasHeight = scaledHeight;
 
     const canvas = document.createElement('canvas');
     canvas.width = canvasWidth;
@@ -72,18 +100,18 @@ export async function generateEscPosLogoRaster(
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
-    // 1. Fill entire canvas with white (so transparent backgrounds flatten to white)
+    // 1. Fill entire full-width canvas with solid white (flatten transparency to white)
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-    // 2. Draw image centered horizontally in canvas buffer
-    const drawX = Math.max(0, Math.round((canvasWidth - targetWidth) / 2));
-    ctx.drawImage(img, drawX, 0, targetWidth, targetHeight);
+    // 2. Draw image in the exact horizontal center of the full-width canvas
+    const drawX = Math.max(0, Math.round((canvasWidth - scaledWidth) / 2));
+    ctx.drawImage(img, drawX, 0, scaledWidth, scaledHeight);
 
     const imgData = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
     const data = imgData.data; // RGBA Uint8ClampedArray
 
-    // 3. Convert to 2D grayscale array
+    // 3. Convert to 2D grayscale array with transparency handling
     const gray: number[][] = [];
     for (let y = 0; y < canvasHeight; y++) {
       gray[y] = new Array(canvasWidth);
@@ -98,7 +126,7 @@ export async function generateEscPosLogoRaster(
           // Transparent pixel -> white (255)
           gray[y][x] = 255;
         } else {
-          // Standard luminance formula
+          // Standard ITU-R BT.601 luminance
           gray[y][x] = 0.299 * r + 0.587 * g + 0.114 * b;
         }
       }
@@ -129,23 +157,18 @@ export async function generateEscPosLogoRaster(
       }
     }
 
-    // 5. Pack into ESC/POS GS v 0 raster command bytes
-    // Sequence:
-    // ESC a 1 (Align Center)
-    // GS v 0 0 xL xH yL yH (Raster header)
-    // <raw bit data>
-    // LF (Line feed)
-    // ESC a 1 (Align Center)
+    // 5. Pack into standard ESC/POS GS v 0 raster command
+    // Header: 0x1D 0x76 0x30 0x00 xL xH yL yH
+    // Body: widthBytes * canvasHeight
+    // Footer: 0x0A (LF)
     const rasterDataSize = widthBytes * canvasHeight;
     const header = [
-      0x1B, 0x61, 0x01, // ESC a 1 (Center)
       0x1D, 0x76, 0x30, 0x00, // GS v 0 0 (Normal mode)
-      widthBytes & 0xFF, (widthBytes >> 8) & 0xFF, // xL, xH (bytes per scanline)
-      canvasHeight & 0xFF, (canvasHeight >> 8) & 0xFF, // yL, yH (number of scanlines)
+      widthBytes & 0xFF, (widthBytes >> 8) & 0xFF, // xL, xH
+      canvasHeight & 0xFF, (canvasHeight >> 8) & 0xFF, // yL, yH
     ];
     const footer = [
-      0x0A, // LF
-      0x1B, 0x61, 0x01, // ESC a 1 (Keep center alignment for restaurant name)
+      0x0A, // LF (Flushes the raster line cleanly)
     ];
 
     const result = new Uint8Array(header.length + rasterDataSize + footer.length);
@@ -168,20 +191,30 @@ export async function generateEscPosLogoRaster(
 
     result.set(footer, offset);
 
+    // Cache successful raster
+    logoRasterCache.set(cacheKey, result);
+
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
       console.log(
-        `[ESC_POS_LOGO]\n` +
-        `Logo processed: ${canvasWidth}x${canvasHeight} dots\n` +
-        `Bytes per row: ${widthBytes}\n` +
-        `Total bytes: ${result.length}\n` +
-        `Centered: YES`
+        `[THERMAL_LOGO]\n` +
+        `LogoSource: ${trimmedUrl}\n` +
+        `Paper: ${paperWidth}\n` +
+        `OriginalDimensions: ${img.width}x${img.height}\n` +
+        `ScaledDimensions: ${scaledWidth}x${scaledHeight}\n` +
+        `Canvas: ${canvasWidth}x${canvasHeight}\n` +
+        `WidthBytes: ${widthBytes}\n` +
+        `RasterBytesExpected: ${rasterDataSize}\n` +
+        `RasterBytesActual: ${result.length - header.length - footer.length}\n` +
+        `TotalCommandBytes: ${result.length}\n` +
+        `RasterCommand: GS_V_0\n` +
+        `Result: SUCCESS`
       );
     }
 
     return result;
   } catch (err) {
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
-      console.warn('[ESC_POS_LOGO] Logo rasterization failed, falling back to text header:', err);
+      console.warn('[THERMAL_LOGO] Logo rasterization failed, continuing with text-only bill:', err);
     }
     return null;
   }

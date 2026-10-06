@@ -2396,15 +2396,37 @@ export const webDirectPrintService = {
   /**
    * Generates a clean ESC/POS binary test receipt
    */
-  generateTestReceipt(
+  /**
+   * Generates a clean ESC/POS binary test receipt
+   */
+  async generateTestReceipt(
     printer: ConfiguredDirectPrinter,
     settings?: RestaurantSettings | null
-  ): Uint8Array {
+  ): Promise<Uint8Array> {
     const builder = new EscPosTextBuilder(printer.paperWidth, printer.name, {
       isBle: printer.transport === 'bluetooth',
       disableCutCmd: printer.transport === 'bluetooth',
     });
     const restName = settings?.name || 'RESTROZ POS';
+    const logoUrl =
+      settings?.logo_url ||
+      (settings as any)?.restaurant?.logo_url;
+
+    if (logoUrl) {
+      try {
+        const logoBytes = await generateEscPosLogoRaster(
+          logoUrl,
+          printer.paperWidth === '58mm' ? '58mm' : '80mm'
+        );
+        if (logoBytes && logoBytes.length > 0) {
+          builder.addRawBytes(logoBytes);
+        }
+      } catch (logoErr) {
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.warn('[webDirectPrintService] Test receipt logo rasterization failed:', logoErr);
+        }
+      }
+    }
 
     builder.addLine(restName.toUpperCase(), { align: 'center', bold: true, scale: 'double_height' });
     builder.addLine('HARDWARE TEST RECEIPT', { align: 'center', bold: true });
@@ -2440,7 +2462,7 @@ export const webDirectPrintService = {
     settings?: RestaurantSettings | null,
     restaurantId?: string | null
   ): Promise<WebDirectPrintResult> {
-    const bytes = this.generateTestReceipt(printer, settings);
+    const bytes = await this.generateTestReceipt(printer, settings);
     const restId = restaurantId || settings?.restaurant_id || (settings as any)?.id;
     const sessionKey = getBleSessionKey(printer);
 
@@ -2698,7 +2720,11 @@ export const webDirectPrintService = {
     const jobName = `Bill_${invNum}`;
 
     // Generate Brand Logo Raster if configured
-    const logoUrl = settings.logo_url || (order as any).restaurant?.logo_url;
+    const logoUrl =
+      settings.logo_url ||
+      (settings as any).restaurant?.logo_url ||
+      (order as any).restaurant?.logo_url ||
+      (order as any).logo_url;
     let logoRasterBytes: Uint8Array | null = null;
     if (logoUrl) {
       try {

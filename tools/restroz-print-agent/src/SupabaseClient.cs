@@ -136,9 +136,13 @@ namespace RestroZPrintAgent
                 isPaired = ExtractBool(res, "is_paired");
                 pairingCode = ExtractString(res, "pairing_code");
                 restaurantId = ExtractString(res, "restaurant_id");
+                string agentId = ExtractString(res, "agent_id");
                 string agentToken = ExtractString(res, "agent_token");
-                DateTime? expiresAt = ExtractDateTime(res, "pairing_expires_at");
-
+                DateTime? expiresAt = ExtractDateTime(res, "pairing_code_expires_at");
+                if (!string.IsNullOrEmpty(agentId))
+                {
+                    _config.AgentId = agentId;
+                }
                 if (!string.IsNullOrEmpty(agentToken))
                 {
                     _config.AgentToken = agentToken;
@@ -169,6 +173,48 @@ namespace RestroZPrintAgent
             }
         }
 
+        public bool UnpairAgent(out string error)
+        {
+            error = null;
+            try
+            {
+                string agentId = _config.AgentId;
+                string restId = _config.RestaurantId;
+
+                if (!string.IsNullOrEmpty(agentId) && !string.IsNullOrEmpty(restId))
+                {
+                    string json = string.Format(
+                        "{{\"p_agent_id\":\"{0}\",\"p_restaurant_id\":\"{1}\"}}",
+                        EscapeJson(agentId),
+                        EscapeJson(restId)
+                    );
+
+                    PostRpc("unpair_print_agent", json);
+                    Log(string.Format("unpair_print_agent: 200 OK | Agent detached from restaurant ({0})", restId));
+                }
+
+                _config.IsPaired = false;
+                _config.RestaurantId = null;
+                _config.PairingCode = null;
+                _config.PairingExpiresAt = null;
+                Security.SaveConfig(_config);
+
+                Log("Print Agent state successfully reset to NOT PAIRED.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                Log("UnpairAgent error: " + ex.Message);
+                _config.IsPaired = false;
+                _config.RestaurantId = null;
+                _config.PairingCode = null;
+                _config.PairingExpiresAt = null;
+                Security.SaveConfig(_config);
+                return false;
+            }
+        }
+
         public bool RegeneratePairingCode(out string newCode, out DateTime? expiresAt, out string error)
         {
             newCode = null;
@@ -186,6 +232,11 @@ namespace RestroZPrintAgent
                 bool isPaired = ExtractBool(res, "is_paired");
                 newCode = ExtractString(res, "pairing_code");
                 expiresAt = ExtractDateTime(res, "pairing_expires_at");
+                string agentId = ExtractString(res, "agent_id");
+                if (!string.IsNullOrEmpty(agentId))
+                {
+                    _config.AgentId = agentId;
+                }
 
                 if (isPaired)
                 {
@@ -243,6 +294,11 @@ namespace RestroZPrintAgent
                 isPaired = ExtractBool(res, "is_paired");
                 restaurantId = ExtractString(res, "restaurant_id");
                 string agentId = ExtractString(res, "agent_id");
+
+                if (!string.IsNullOrEmpty(agentId))
+                {
+                    _config.AgentId = agentId;
+                }
 
                 if (isPaired != _config.IsPaired || restaurantId != _config.RestaurantId)
                 {

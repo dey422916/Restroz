@@ -83,6 +83,28 @@ namespace RestroZPrintAgent
             return ok;
         }
 
+        public bool Unpair(out string error)
+        {
+            error = null;
+            Log("Unpairing Print Agent from current restaurant...");
+            bool ok = _client.UnpairAgent(out error);
+            if (ok)
+            {
+                Log("Agent successfully unpaired from restaurant. Regenerating fresh pairing code...");
+                string newCode;
+                DateTime? expiresAt;
+                string regenErr;
+                _client.RegeneratePairingCode(out newCode, out expiresAt, out regenErr);
+                RefreshPrinters();
+                if (OnStatusChanged != null) OnStatusChanged();
+            }
+            else
+            {
+                Log("Unpair failed: " + error);
+            }
+            return ok;
+        }
+
         private void WorkerLoop()
         {
             int syncCounter = 0;

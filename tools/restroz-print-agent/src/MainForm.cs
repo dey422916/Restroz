@@ -17,6 +17,7 @@ namespace RestroZPrintAgent
         private Label _lblExpiry;
         private Button _btnCopyCode;
         private Button _btnGenerateNewCode;
+        private Button _btnUnpair;
         private ListBox _lstPrinters;
         private Button _btnRefreshPrinters;
         private Button _btnTestPrint;
@@ -164,6 +165,43 @@ namespace RestroZPrintAgent
             };
             _pnlPairing.Controls.Add(_btnGenerateNewCode);
 
+            _btnUnpair = new Button
+            {
+                Text = "Unpair Restaurant",
+                Location = new Point(340, 40),
+                Size = new Size(165, 36),
+                BackColor = Color.FromArgb(220, 38, 38),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                Cursor = Cursors.Hand,
+                Visible = false
+            };
+            _btnUnpair.FlatAppearance.BorderSize = 0;
+            _btnUnpair.Click += (s, e) =>
+            {
+                var result = MessageBox.Show(
+                    this,
+                    "Unpair this Print Agent from the current restaurant?\n\nMobile and remote print jobs will no longer be sent to this computer until the Print Agent is paired again.",
+                    "Unpair Restaurant",
+                    MessageBoxButtons.OKCancel,
+                    MessageBoxIcon.Warning
+                );
+
+                if (result == DialogResult.OK)
+                {
+                    _btnUnpair.Enabled = false;
+                    string err;
+                    bool ok = _engine.Unpair(out err);
+                    if (!ok)
+                    {
+                        MessageBox.Show(this, "Failed to unpair agent: " + err, "Unpair Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                    _btnUnpair.Enabled = true;
+                }
+            };
+            _pnlPairing.Controls.Add(_btnUnpair);
+
             this.Controls.Add(_pnlPairing);
 
             // Printers Section
@@ -293,15 +331,17 @@ namespace RestroZPrintAgent
                 _lblStatus.Text = string.Format("● ONLINE • Paired with Restaurant ({0})", _config.RestaurantId ?? "Active");
                 _lblStatus.ForeColor = Color.FromArgb(34, 197, 94);
                 _lblPairingHeader.Text = "DEVICE STATUS:";
-                _lblPairingCode.Text = "PAIRED & READY";
+                _lblPairingCode.Text = "PAIRED READY";
                 _lblPairingCode.ForeColor = Color.FromArgb(34, 197, 94);
                 _lblPairingCode.Font = new Font("Segoe UI", 18f, FontStyle.Bold);
                 _btnCopyCode.Visible = false;
                 _btnGenerateNewCode.Visible = false;
+                _btnUnpair.Visible = true;
                 _lblExpiry.Text = "";
             }
             else
             {
+                _btnUnpair.Visible = false;
                 bool isExpired = _config.PairingExpiresAt.HasValue && DateTime.Now > _config.PairingExpiresAt.Value;
                 bool hasCode = !string.IsNullOrEmpty(_config.PairingCode) && _config.PairingCode != "------";
 

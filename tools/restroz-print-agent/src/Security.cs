@@ -10,6 +10,7 @@ namespace RestroZPrintAgent
     {
         public string DeviceId { get; set; }
         public string DeviceName { get; set; }
+        public string AgentId { get; set; }
         public string AgentToken { get; set; }
         public string RestaurantId { get; set; }
         public string PairingCode { get; set; }
@@ -23,6 +24,7 @@ namespace RestroZPrintAgent
         {
             DeviceId = Guid.NewGuid().ToString("N");
             DeviceName = Environment.MachineName;
+            AgentId = null;
             AgentToken = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
             RestaurantId = null;
             PairingCode = null;
@@ -64,6 +66,7 @@ namespace RestroZPrintAgent
                 var sb = new StringBuilder();
                 sb.AppendLine("DeviceId=" + (config.DeviceId ?? ""));
                 sb.AppendLine("DeviceName=" + (config.DeviceName ?? ""));
+                sb.AppendLine("AgentId=" + (config.AgentId ?? ""));
                 sb.AppendLine("AgentToken=" + (config.AgentToken ?? ""));
                 sb.AppendLine("RestaurantId=" + (config.RestaurantId ?? ""));
                 sb.AppendLine("PairingCode=" + (config.PairingCode ?? ""));
@@ -117,6 +120,7 @@ namespace RestroZPrintAgent
                         {
                             case "DeviceId": if (!string.IsNullOrEmpty(val)) config.DeviceId = val; break;
                             case "DeviceName": if (!string.IsNullOrEmpty(val)) config.DeviceName = val; break;
+                            case "AgentId": if (!string.IsNullOrEmpty(val)) config.AgentId = val; break;
                             case "AgentToken": if (!string.IsNullOrEmpty(val)) config.AgentToken = val; break;
                             case "RestaurantId": if (!string.IsNullOrEmpty(val)) config.RestaurantId = val; break;
                             case "PairingCode": if (!string.IsNullOrEmpty(val)) config.PairingCode = val; break;

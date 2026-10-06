@@ -14,6 +14,10 @@ if not exist "%OUT_BIN%" mkdir "%OUT_BIN%"
 echo 1. Compiling RestroZ-Print-Agent.exe...
 %CSC% /target:winexe /optimize+ /platform:anycpu /out:"%OUT_BIN%\RestroZ-Print-Agent.exe" ^
     /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Security.dll,System.Core.dll ^
+    /r:C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Runtime.dll ^
+    /r:C:\Windows\System32\WinMetadata\Windows.Foundation.winmd ^
+    /r:C:\Windows\System32\WinMetadata\Windows.Devices.winmd ^
+    /r:C:\Windows\System32\WinMetadata\Windows.Storage.winmd ^
     "%ROOT_DIR%src\*.cs"
 
 if %ERRORLEVEL% NEQ 0 (

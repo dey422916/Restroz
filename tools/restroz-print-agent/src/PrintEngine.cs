@@ -52,12 +52,58 @@ namespace RestroZPrintAgent
             }
         }
 
+        public List<string> GetDiscoveredPrinters()
+        {
+            var list = new List<string>();
+
+            // 1. Discovered Native Windows BLE Printers (Preferred for Bluetooth hardware)
+            try
+            {
+                var blePrinters = BleSpooler.GetDiscoveredBlePrinters();
+                foreach (var bp in blePrinters)
+                {
+                    if (!string.IsNullOrEmpty(bp.DisplayName) && !list.Contains(bp.DisplayName))
+                    {
+                        list.Add(bp.DisplayName);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("BLE Printer discovery error: " + ex.Message);
+            }
+
+            // 2. Windows Printer Spooler Queues (POS80, etc.)
+            try
+            {
+                var winPrinters = Spooler.GetInstalledPrinters();
+                foreach (var wp in winPrinters)
+                {
+                    // If Windows queue is named SEZNIK and we already have Native BLE Seznik, do not prioritize the broken SEZNIK queue
+                    if (string.Equals(wp, "SEZNIK", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue; // Bypassed in favor of Seznik-Veer_925C [Native BLE]
+                    }
+                    if (!list.Contains(wp))
+                    {
+                        list.Add(wp);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("Windows Spooler discovery error: " + ex.Message);
+            }
+
+            return list;
+        }
+
         public void RefreshPrinters()
         {
             try
             {
-                var printers = Spooler.GetInstalledPrinters();
-                Log(string.Format("Detected {0} Windows printer queue(s): {1}", printers.Count, string.Join(", ", printers.ToArray())));
+                var printers = GetDiscoveredPrinters();
+                Log(string.Format("Discovered {0} printer destination(s): {1}", printers.Count, string.Join(", ", printers.ToArray())));
                 bool isPaired;
                 string restId, error;
                 _client.SyncPrinters(printers, out isPaired, out restId, out error);
@@ -124,7 +170,6 @@ namespace RestroZPrintAgent
             if (OnStatusChanged != null) OnStatusChanged();
 
             // Continuous background loop (Heartbeat, Printer sync, Job polling)
-            // DO NOT call register_print_agent inside this loop!
             while (_isRunning)
             {
                 try
@@ -144,14 +189,14 @@ namespace RestroZPrintAgent
                         // Sync printers and heartbeat every 30 seconds
                         if (syncCounter % 15 == 0)
                         {
-                            var printers = Spooler.GetInstalledPrinters();
+                            var printers = GetDiscoveredPrinters();
                             _client.SyncPrinters(printers, out isPaired, out restId, out err);
                         }
                     }
                     else
                     {
                         // Unpaired: check pairing status & heartbeat via SyncPrinters (never calls register_print_agent)
-                        var printers = Spooler.GetInstalledPrinters();
+                        var printers = GetDiscoveredPrinters();
                         bool wasPaired = _config.IsPaired;
                         _client.SyncPrinters(printers, out isPaired, out restId, out err);
                         if (isPaired && !wasPaired)
@@ -201,7 +246,11 @@ namespace RestroZPrintAgent
                 }
             }
 
-            Log(string.Format("Processing Print Job [{0}] Type: {1}, Printer: '{2}'", job.JobTitle ?? job.Id, job.JobType, job.PrinterName));
+            bool isBle = BleSpooler.IsBlePrinter(job.PrinterName);
+            string transportType = isBle ? "NATIVE_BLE" : "WINDOWS_QUEUE";
+
+            Log(string.Format("Processing Print Job [{0}] Type: {1}, Printer: '{2}' via {3}",
+                job.JobTitle ?? job.Id, job.JobType, job.PrinterName, transportType));
 
             // Mark received/printing
             _client.AckJob(job.Id, "printing");
@@ -211,18 +260,31 @@ namespace RestroZPrintAgent
                 // Decode base64 ESC/POS payload
                 byte[] rawBytes = Convert.FromBase64String(job.PayloadBase64);
                 string spoolError;
-                bool success = Spooler.SendBytesToPrinter(job.PrinterName, rawBytes, job.JobTitle ?? "RestroZ Print Job", out spoolError);
+                bool success = false;
+
+                if (isBle)
+                {
+                    // Route to Native WinRT BLE Spooler
+                    success = BleSpooler.SendBytesToBlePrinter(job.PrinterName, rawBytes, out spoolError);
+                }
+                else
+                {
+                    // Route to Windows Print Spooler (winspool.drv)
+                    success = Spooler.SendBytesToPrinter(job.PrinterName, rawBytes, job.JobTitle ?? "RestroZ Print Job", out spoolError);
+                }
 
                 if (success)
                 {
-                    Log(string.Format("PRINT SUCCESS: Job '{0}' sent to '{1}' ({2} bytes)", job.JobTitle, job.PrinterName, rawBytes.Length));
+                    Log(string.Format("PRINT SUCCESS ({0}): Job '{1}' sent to '{2}' ({3} bytes)",
+                        transportType, job.JobTitle, job.PrinterName, rawBytes.Length));
                     _processedJobs.Add(job.Id);
                     Security.RecordJobProcessed(job.Id);
                     _client.AckJob(job.Id, "printed");
                 }
                 else
                 {
-                    Log(string.Format("PRINT FAILED: Job '{0}' on '{1}'. Reason: {2}", job.JobTitle, job.PrinterName, spoolError));
+                    Log(string.Format("PRINT FAILED ({0}): Job '{1}' on '{2}'. Reason: {3}",
+                        transportType, job.JobTitle, job.PrinterName, spoolError));
                     _client.AckJob(job.Id, "failed", spoolError);
                 }
             }
@@ -238,18 +300,39 @@ namespace RestroZPrintAgent
             error = null;
             try
             {
-                Log(string.Format("Sending hardware test print to '{0}' ({1})...", printerName, paperWidth));
-                byte[] bytes = Spooler.GenerateEscPosTestReceipt(printerName, _config.DeviceName, paperWidth);
-                bool ok = Spooler.SendBytesToPrinter(printerName, bytes, "RestroZ Hardware Test", out error);
-                if (ok)
+                bool isBle = BleSpooler.IsBlePrinter(printerName);
+                string transportType = isBle ? "Native Windows BLE" : "Windows Print Spooler";
+
+                Log(string.Format("Sending hardware test print to '{0}' ({1}) via {2}...", printerName, paperWidth, transportType));
+
+                if (isBle)
                 {
-                    Log("Test print sent successfully to Windows queue: " + printerName);
+                    byte[] bytes = BleSpooler.GenerateEscPosTestReceipt(printerName, _config.DeviceName, paperWidth);
+                    bool ok = BleSpooler.SendBytesToBlePrinter(printerName, bytes, out error);
+                    if (ok)
+                    {
+                        Log(string.Format("Test print sent successfully via Native BLE to: {0}", printerName));
+                    }
+                    else
+                    {
+                        Log(string.Format("Native BLE test print failed: {0}", error));
+                    }
+                    return ok;
                 }
                 else
                 {
-                    Log("Test print failed: " + error);
+                    byte[] bytes = Spooler.GenerateEscPosTestReceipt(printerName, _config.DeviceName, paperWidth);
+                    bool ok = Spooler.SendBytesToPrinter(printerName, bytes, "RestroZ Hardware Test", out error);
+                    if (ok)
+                    {
+                        Log("Test print sent successfully to Windows queue: " + printerName);
+                    }
+                    else
+                    {
+                        Log("Test print failed: " + error);
+                    }
+                    return ok;
                 }
-                return ok;
             }
             catch (Exception ex)
             {
@@ -261,7 +344,7 @@ namespace RestroZPrintAgent
 
         public bool SendTestPrint(string printerName, out string error)
         {
-            return SendTestPrint(printerName, "80mm", out error);
+            return SendTestPrint(printerName, "58mm", out error);
         }
     }
 }

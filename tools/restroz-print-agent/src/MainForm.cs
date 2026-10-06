@@ -391,7 +391,7 @@ namespace RestroZPrintAgent
 
             // Update printer list
             _lstPrinters.Items.Clear();
-            var printers = Spooler.GetInstalledPrinters();
+            var printers = _engine.GetDiscoveredPrinters();
             foreach (var p in printers)
             {
                 _lstPrinters.Items.Add(p);

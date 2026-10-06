@@ -1141,6 +1141,32 @@ export const webDirectPrintService = {
     filtered.push(newPrinter);
     this.savePrinters(filtered, restaurantId);
 
+    // Sync primary selection and role to Supabase printer_devices for cross-device mobile resolution
+    if (restaurantId) {
+      try {
+        if (newPrinter.isPrimary) {
+          await supabase
+            .from('printer_devices')
+            .update({ is_primary: false })
+            .eq('restaurant_id', restaurantId)
+            .eq('agent_id', agent.id);
+        }
+        await supabase
+          .from('printer_devices')
+          .update({
+            is_primary: Boolean(newPrinter.isPrimary),
+            role: options.role || 'both',
+            paper_width: options.paperWidth || '80mm',
+            is_active: true,
+          })
+          .eq('restaurant_id', restaurantId)
+          .eq('agent_id', agent.id)
+          .eq('printer_name', queueName);
+      } catch (syncDbErr) {
+        console.warn('[webDirectPrintService] Could not sync printer_devices primary status to DB:', syncDbErr);
+      }
+    }
+
     return newPrinter;
   },
 
@@ -1577,7 +1603,21 @@ export const webDirectPrintService = {
             const matchingDevices = deviceRows.filter(
               (d: any) => d.role === role || d.role === 'both' || !d.role
             );
-            matchingDevices.sort((a: any, b: any) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0));
+            matchingDevices.sort((a: any, b: any) => {
+              if ((b.is_primary ? 1 : 0) !== (a.is_primary ? 1 : 0)) {
+                return (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0);
+              }
+              // Prioritize physical thermal printer queues (POS80, POS58, Thermal, etc.) over virtual drivers
+              const isThermalA = /^(pos|thermal|receipt|kot|sr|rpp|xp|epson|tsp|58|80)/i.test(a.printer_name);
+              const isThermalB = /^(pos|thermal|receipt|kot|sr|rpp|xp|epson|tsp|58|80)/i.test(b.printer_name);
+              if (isThermalA !== isThermalB) return (isThermalB ? 1 : 0) - (isThermalA ? 1 : 0);
+
+              const isVirtualA = /pdf|xps|fax|onenote|anydesk|document writer/i.test(a.printer_name);
+              const isVirtualB = /pdf|xps|fax|onenote|anydesk|document writer/i.test(b.printer_name);
+              if (isVirtualA !== isVirtualB) return (isVirtualA ? 1 : 0) - (isVirtualB ? 1 : 0);
+
+              return a.printer_name.localeCompare(b.printer_name);
+            });
             const chosenDevice = matchingDevices[0] || deviceRows[0];
 
             if (chosenDevice) {

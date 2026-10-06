@@ -1141,6 +1141,32 @@ export const webDirectPrintService = {
     filtered.push(newPrinter);
     this.savePrinters(filtered, restaurantId);
 
+    // Sync primary selection and role to Supabase printer_devices for cross-device mobile resolution
+    if (restaurantId) {
+      try {
+        if (newPrinter.isPrimary) {
+          await supabase
+            .from('printer_devices')
+            .update({ is_primary: false })
+            .eq('restaurant_id', restaurantId)
+            .eq('agent_id', agent.id);
+        }
+        await supabase
+          .from('printer_devices')
+          .update({
+            is_primary: Boolean(newPrinter.isPrimary),
+            role: options.role || 'both',
+            paper_width: options.paperWidth || '80mm',
+            is_active: true,
+          })
+          .eq('restaurant_id', restaurantId)
+          .eq('agent_id', agent.id)
+          .eq('printer_name', queueName);
+      } catch (syncDbErr) {
+        console.warn('[webDirectPrintService] Could not sync printer_devices primary status to DB:', syncDbErr);
+      }
+    }
+
     return newPrinter;
   },
 
@@ -1456,7 +1482,6 @@ export const webDirectPrintService = {
     }
 
     const rawList = this.getSavedPrinters(restaurantId);
-    if (rawList.length === 0) return null;
 
     // 1. Find configured candidate printers matching role (kot/both or bill/both)
     const candidates = rawList.filter((p) => p.role === role || p.role === 'both');
@@ -1552,6 +1577,90 @@ export const webDirectPrintService = {
 
       target = readyPrinters[0] || null;
       isFallback = Boolean(target && primary && target.id !== primary.id);
+    }
+
+    // Remote Print Agent resolution for mobile/waiter clients:
+    // If no local ready printer is found and a restaurantId is available, query Supabase for the restaurant's active Print Agent and registered printer devices.
+    if (!target && restaurantId) {
+      try {
+        const { data: agentData } = await supabase
+          .from('print_agents')
+          .select('id, device_id, device_name, status, is_paired, last_seen')
+          .eq('restaurant_id', restaurantId)
+          .eq('is_paired', true)
+          .order('last_seen', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (agentData) {
+          const { data: deviceRows } = await supabase
+            .from('printer_devices')
+            .select('*')
+            .eq('agent_id', agentData.id)
+            .eq('is_active', true);
+
+          if (deviceRows && deviceRows.length > 0) {
+            const matchingDevices = deviceRows.filter(
+              (d: any) => d.role === role || d.role === 'both' || !d.role
+            );
+            matchingDevices.sort((a: any, b: any) => {
+              if ((b.is_primary ? 1 : 0) !== (a.is_primary ? 1 : 0)) {
+                return (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0);
+              }
+              // Prioritize physical thermal printer queues (POS80, POS58, Thermal, etc.) over virtual drivers
+              const isThermalA = /^(pos|thermal|receipt|kot|sr|rpp|xp|epson|tsp|58|80)/i.test(a.printer_name);
+              const isThermalB = /^(pos|thermal|receipt|kot|sr|rpp|xp|epson|tsp|58|80)/i.test(b.printer_name);
+              if (isThermalA !== isThermalB) return (isThermalB ? 1 : 0) - (isThermalA ? 1 : 0);
+
+              const isVirtualA = /pdf|xps|fax|onenote|anydesk|document writer/i.test(a.printer_name);
+              const isVirtualB = /pdf|xps|fax|onenote|anydesk|document writer/i.test(b.printer_name);
+              if (isVirtualA !== isVirtualB) return (isVirtualA ? 1 : 0) - (isVirtualB ? 1 : 0);
+
+              return a.printer_name.localeCompare(b.printer_name);
+            });
+            const chosenDevice = matchingDevices[0] || deviceRows[0];
+
+            if (chosenDevice) {
+              const agentPrinter: ConfiguredDirectPrinter = {
+                id: `agent_${agentData.id}_${chosenDevice.printer_name.replace(/\s+/g, '_')}`,
+                name: chosenDevice.printer_name,
+                transport: 'agent',
+                agentId: agentData.id,
+                agentDeviceName: agentData.device_name,
+                windowsQueueName: chosenDevice.printer_name,
+                paperWidth: (chosenDevice.paper_width as DirectPaperWidth) || '80mm',
+                role: (chosenDevice.role as DirectPrinterRole) || 'both',
+                isPrimary: Boolean(chosenDevice.is_primary),
+                status: 'connected',
+                statusMessage: `RestroZ Print Agent Online (${agentData.device_name})`,
+                lastConnectedAt: Date.now(),
+              };
+
+              // Cache in memory / local store for this restaurant
+              const currentSaved = this.getSavedPrinters(restaurantId);
+              const exists = currentSaved.find((p) => p.id === agentPrinter.id);
+              if (!exists) {
+                this.savePrinters([...currentSaved, agentPrinter], restaurantId);
+              }
+
+              if (typeof __DEV__ !== 'undefined' && __DEV__) {
+                console.log(
+                  `[REMOTE_AGENT_ROUTED]\n` +
+                  `Role: ${role.toUpperCase()}\n` +
+                  `Restaurant ID: ${restaurantId}\n` +
+                  `Agent: ${agentData.device_name} (${agentData.id})\n` +
+                  `Windows Queue: ${chosenDevice.printer_name}\n` +
+                  `Paper Width: ${agentPrinter.paperWidth}`
+                );
+              }
+
+              target = agentPrinter;
+            }
+          }
+        }
+      } catch (agentErr) {
+        console.warn('[webDirectPrintService] Remote agent resolution error:', agentErr);
+      }
     }
 
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
@@ -2202,12 +2311,41 @@ export const webDirectPrintService = {
       throw new Error('No RestroZ Print Agent is paired for this restaurant. Please pair Print Agent in Settings.');
     }
 
-    // Convert binary to base64
-    let binaryStr = '';
-    for (let i = 0; i < data.length; i++) {
-      binaryStr += String.fromCharCode(data[i]);
+    // Convert binary to base64 safely across Web, Node, and React Native (Hermes)
+    let payloadBase64 = '';
+    if (typeof (globalThis as any).Buffer !== 'undefined') {
+      payloadBase64 = (globalThis as any).Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('base64');
+    } else if (typeof (globalThis as any).btoa === 'function') {
+      let binaryStr = '';
+      for (let i = 0; i < data.length; i++) {
+        binaryStr += String.fromCharCode(data[i]);
+      }
+      payloadBase64 = (globalThis as any).btoa(binaryStr);
+    } else {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+      let i = 0;
+      const len = data.length;
+      while (i < len) {
+        const b1 = data[i++];
+        const b2 = i < len ? data[i++] : NaN;
+        const b3 = i < len ? data[i++] : NaN;
+        const e1 = b1 >> 2;
+        const e2 = ((b1 & 3) << 4) | (isNaN(b2) ? 0 : b2 >> 4);
+        const e3 = isNaN(b2) ? 64 : ((b2 & 15) << 2) | (isNaN(b3) ? 0 : b3 >> 6);
+        const e4 = isNaN(b3) ? 64 : b3 & 63;
+        payloadBase64 += chars.charAt(e1) + chars.charAt(e2) + (e3 === 64 ? '=' : chars.charAt(e3)) + (e4 === 64 ? '=' : chars.charAt(e4));
+      }
     }
-    const payloadBase64 = btoa(binaryStr);
+
+    console.log(
+      `[PRINT_AGENT_JOB_DISPATCH]\n` +
+      `Restaurant ID: ${restaurantId || 'N/A'}\n` +
+      `Agent ID: ${agentId}\n` +
+      `Printer Queue: ${queueName}\n` +
+      `Job Type: ${jobType.toUpperCase()}\n` +
+      `Job Title: ${jobTitle}\n` +
+      `Payload Bytes: ${data.length}`
+    );
 
     // Insert into public.print_jobs
     const { data: job, error } = await supabase
@@ -2226,8 +2364,17 @@ export const webDirectPrintService = {
       .single();
 
     if (error) {
+      console.warn('[webDirectPrintService] Failed to insert print job into Supabase:', error);
       throw new Error(`Failed to queue print job for RestroZ Print Agent: ${error.message}`);
     }
+
+    console.log(
+      `[PRINT_AGENT_JOB_ENQUEUED]\n` +
+      `Job ID: ${job.id}\n` +
+      `Status: ${job.status}\n` +
+      `Queue: ${queueName}\n` +
+      `Created At: ${job.created_at}`
+    );
 
     return {
       success: true,

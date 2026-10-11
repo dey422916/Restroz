@@ -28,7 +28,8 @@ import { downloadSampleProductsCsv } from '../../src/utils/sampleCsv';
 
 export default function ProductsScreen() {
   const router = useRouter();
-  const { activeRestaurantId } = useAuth();
+  const { activeRestaurantId, hasPermission } = useAuth();
+  const canManageProducts = hasPermission ? hasPermission('can_manage_products') : true;
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -36,6 +37,11 @@ export default function ProductsScreen() {
   const [search, setSearch] = useState<string>('');
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   const [stockFilter, setStockFilter] = useState<'all' | 'instock' | 'outofstock' | 'inactive'>('all');
+
+  // Bulk Selection & Deletion State
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState<boolean>(false);
+  const [isDeletingBulk, setIsDeletingBulk] = useState<boolean>(false);
 
   // Add / Edit Modal
   const [showProductModal, setShowProductModal] = useState<boolean>(false);
@@ -98,6 +104,11 @@ export default function ProductsScreen() {
   useEffect(() => {
     loadData();
   }, [activeRestaurantId]);
+
+  // Clear selections when major filter, search, or active restaurant changes
+  useEffect(() => {
+    setSelectedProductIds([]);
+  }, [search, selectedCatId, stockFilter, activeRestaurantId]);
 
   const resetForm = () => {
     setEditingProduct(null);
@@ -361,6 +372,81 @@ export default function ProductsScreen() {
     return true;
   });
 
+  const visibleProductIds = filteredProducts.map((p) => p.id);
+  const selectedVisibleIds = selectedProductIds.filter((id) => visibleProductIds.includes(id));
+  const isAllVisibleSelected =
+    visibleProductIds.length > 0 && visibleProductIds.every((id) => selectedProductIds.includes(id));
+  const isSomeVisibleSelected =
+    !isAllVisibleSelected && visibleProductIds.some((id) => selectedProductIds.includes(id));
+
+  const toggleSelectProduct = (id: string) => {
+    if (!canManageProducts) return;
+    setSelectedProductIds((prev) =>
+      prev.includes(id) ? prev.filter((pId) => pId !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (!canManageProducts) return;
+    if (isAllVisibleSelected) {
+      // Deselect all visible
+      setSelectedProductIds((prev) => prev.filter((id) => !visibleProductIds.includes(id)));
+    } else {
+      // Select all visible
+      setSelectedProductIds((prev) => {
+        const set = new Set([...prev, ...visibleProductIds]);
+        return Array.from(set);
+      });
+    }
+  };
+
+  const handleConfirmBulkDelete = async () => {
+    if (!canManageProducts || selectedProductIds.length === 0) return;
+    setIsDeletingBulk(true);
+    try {
+      const targetRestId = activeRestaurantId;
+      const res = await productService.deleteProducts(selectedProductIds, targetRestId);
+
+      setShowBulkDeleteModal(false);
+      const prevCount = selectedProductIds.length;
+      setSelectedProductIds([]);
+      await loadData(true);
+
+      const totalProcessed = res.deletedCount + res.deactivatedCount;
+      if (res.failedIds.length > 0) {
+        if (totalProcessed > 0) {
+          Alert.alert(
+            'Partial Deletion',
+            `${totalProcessed} products processed (${res.deletedCount} permanently removed, ${res.deactivatedCount} safely deactivated), but ${res.failedIds.length} failed.`
+          );
+        } else {
+          Alert.alert('Delete Failed', `Failed to delete ${res.failedIds.length} selected products.`);
+        }
+      } else {
+        if (res.deactivatedCount > 0 && res.deletedCount > 0) {
+          Alert.alert(
+            'Success',
+            `${res.deletedCount} products deleted and ${res.deactivatedCount} safely deactivated.`
+          );
+        } else if (res.deactivatedCount > 0) {
+          Alert.alert(
+            'Success',
+            `${res.deactivatedCount} products referenced in past orders were safely deactivated.`
+          );
+        } else {
+          Alert.alert(
+            'Success',
+            `${prevCount} products deleted successfully.`
+          );
+        }
+      }
+    } catch (err: any) {
+      Alert.alert('Bulk Delete Error', err.message || 'An error occurred during bulk deletion.');
+    } finally {
+      setIsDeletingBulk(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       {/* Top Header */}
@@ -467,6 +553,54 @@ export default function ProductsScreen() {
         </ScrollView>
       </View>
 
+      {/* Bulk Action / Selection Bar */}
+      {canManageProducts && !loading && filteredProducts.length > 0 && (
+        <View style={styles.bulkActionBar}>
+          <TouchableOpacity
+            style={styles.selectAllBtn}
+            onPress={toggleSelectAll}
+            activeOpacity={0.7}
+            testID="select-all-products-btn"
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: isAllVisibleSelected }}
+          >
+            <View style={[styles.bulkCheckbox, isAllVisibleSelected && styles.bulkCheckboxSelected]}>
+              {isAllVisibleSelected ? (
+                <Text style={styles.bulkCheckmark}>✓</Text>
+              ) : isSomeVisibleSelected ? (
+                <View style={styles.bulkIndeterminateDash} />
+              ) : null}
+            </View>
+            <Text style={styles.selectAllText}>
+              Select All ({filteredProducts.length})
+            </Text>
+          </TouchableOpacity>
+
+          <View style={styles.bulkRightSection}>
+            {selectedVisibleIds.length > 0 && (
+              <View style={styles.selectedCountBadge}>
+                <Text style={styles.selectedCountText}>
+                  {selectedVisibleIds.length} selected
+                </Text>
+              </View>
+            )}
+
+            {selectedVisibleIds.length > 0 && (
+              <TouchableOpacity
+                style={styles.bulkDeleteBtn}
+                onPress={() => setShowBulkDeleteModal(true)}
+                activeOpacity={0.8}
+                testID="bulk-delete-btn"
+              >
+                <Text style={styles.bulkDeleteBtnText}>
+                  🗑️ Delete Selected ({selectedVisibleIds.length})
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      )}
+
       {/* Product List Content */}
       {loading ? (
         <View style={styles.centerLoading}>
@@ -498,6 +632,7 @@ export default function ProductsScreen() {
             filteredProducts.map((prod) => {
               const isOutOfStock = prod.stock_quantity <= 0;
               const isVeg = prod.food_type === 'veg';
+              const isSelected = selectedProductIds.includes(prod.id);
               const isDrink =
                 prod.sku.startsWith('BEV') ||
                 prod.sku.startsWith('CSR') ||
@@ -526,6 +661,7 @@ export default function ProductsScreen() {
                     styles.card,
                     responsiveCardStyle,
                     (!prod.is_active || isOutOfStock) && styles.cardDimmed,
+                    isSelected && styles.cardSelected,
                   ]}
                 >
                   {/* Image & Indicators */}
@@ -539,6 +675,26 @@ export default function ProductsScreen() {
                       style={styles.img}
                       resizeMode="cover"
                     />
+
+                    {/* Checkbox (Bulk Selection) */}
+                    {canManageProducts && (
+                      <TouchableOpacity
+                        style={styles.cardCheckboxContainer}
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          toggleSelectProduct(prod.id);
+                        }}
+                        activeOpacity={0.7}
+                        testID={`select-product-${prod.id}`}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: isSelected }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <View style={[styles.cardCheckboxBox, isSelected && styles.cardCheckboxBoxSelected]}>
+                          {isSelected && <Text style={styles.cardCheckboxCheckText}>✓</Text>}
+                        </View>
+                      </TouchableOpacity>
+                    )}
 
                     {/* Food Type Indicator Badge */}
                     <View style={styles.badgeContainer}>
@@ -1064,6 +1220,65 @@ export default function ProductsScreen() {
           </View>
         </Modal>
       )}
+
+      {/* ============================================================ */}
+      {/* 3. BULK DELETE CONFIRMATION MODAL                            */}
+      {/* ============================================================ */}
+      <Modal
+        visible={showBulkDeleteModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!isDeletingBulk) setShowBulkDeleteModal(false);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.confirmModalBox}>
+            <View style={styles.confirmModalIconCircle}>
+              <Text style={{ fontSize: 28 }}>🗑️</Text>
+            </View>
+
+            <Text style={styles.confirmModalTitle}>
+              Delete {selectedProductIds.length} selected product{selectedProductIds.length > 1 ? 's' : ''}?
+            </Text>
+
+            <Text style={styles.confirmModalDesc}>
+              This action will remove the selected products from this restaurant's menu.
+            </Text>
+
+            <Text style={styles.confirmModalNote}>
+              Note: If any selected dish was ordered in historical invoices, it will be safely deactivated to preserve past audit reports and order receipts.
+            </Text>
+
+            <View style={styles.confirmModalBtnsRow}>
+              <TouchableOpacity
+                style={styles.confirmCancelBtn}
+                onPress={() => setShowBulkDeleteModal(false)}
+                disabled={isDeletingBulk}
+                testID="cancel-bulk-delete-btn"
+              >
+                <Text style={styles.confirmCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.confirmDeleteBtn, isDeletingBulk && { opacity: 0.6 }]}
+                onPress={handleConfirmBulkDelete}
+                disabled={isDeletingBulk}
+                testID="confirm-bulk-delete-btn"
+              >
+                {isDeletingBulk ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <ActivityIndicator size="small" color="#ffffff" />
+                    <Text style={styles.confirmDeleteBtnText}>Deleting...</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.confirmDeleteBtnText}>Delete Products</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1849,5 +2064,221 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 12,
     fontWeight: '900',
+  },
+  bulkActionBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginHorizontal: 14,
+    marginTop: 10,
+    marginBottom: 6,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  selectAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  bulkCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: '#94a3b8',
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bulkCheckboxSelected: {
+    borderColor: '#2563eb',
+    backgroundColor: '#2563eb',
+  },
+  bulkCheckmark: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '900',
+    lineHeight: 14,
+  },
+  bulkIndeterminateDash: {
+    width: 10,
+    height: 2.5,
+    backgroundColor: '#2563eb',
+    borderRadius: 1,
+  },
+  selectAllText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  bulkRightSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  selectedCountBadge: {
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  selectedCountText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1d4ed8',
+  },
+  bulkDeleteBtn: {
+    backgroundColor: '#dc2626',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
+    shadowColor: '#dc2626',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  bulkDeleteBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  cardSelected: {
+    borderColor: '#3b82f6',
+    borderWidth: 1.5,
+    backgroundColor: '#f8fafc',
+  },
+  cardCheckboxContainer: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    zIndex: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 6,
+    padding: 3,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.18,
+    shadowRadius: 2,
+    elevation: 4,
+  },
+  cardCheckboxBox: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#64748b',
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardCheckboxBoxSelected: {
+    borderColor: '#2563eb',
+    backgroundColor: '#2563eb',
+  },
+  cardCheckboxCheckText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '900',
+    lineHeight: 13,
+  },
+  confirmModalBox: {
+    width: '90%',
+    maxWidth: 440,
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  confirmModalIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#fee2e2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  confirmModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0f172a',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  confirmModalDesc: {
+    fontSize: 14,
+    color: '#475569',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 8,
+  },
+  confirmModalNote: {
+    fontSize: 11.5,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 16,
+    backgroundColor: '#f8fafc',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 20,
+  },
+  confirmModalBtnsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  confirmCancelBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  confirmCancelBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  confirmDeleteBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 10,
+    backgroundColor: '#dc2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#dc2626',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  confirmDeleteBtnText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#ffffff',
   },
 });

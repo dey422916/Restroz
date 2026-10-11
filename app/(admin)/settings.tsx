@@ -34,6 +34,7 @@ import {
   getRestaurantOnlineOrderingUrl,
   copyRestaurantUrlToClipboard,
   openRestaurantWebsite,
+  downloadRestaurantQrCode,
 } from '../../src/utils/restaurantUrl';
 
 export default function SettingsScreen() {
@@ -1496,9 +1497,16 @@ export default function SettingsScreen() {
                   <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A', marginBottom: 12 }} numberOfLines={1}>
                     {getRestaurantOnlineOrderingUrl(activeRestaurant?.slug || settings.slug || activeRestaurantId)}
                   </Text>
-                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
                     <TouchableOpacity
-                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', borderRadius: 8, paddingVertical: 9, paddingHorizontal: 12 }}
+                      style={{ flex: 1, minWidth: 120, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#BBF7D0', borderRadius: 8, paddingVertical: 9, paddingHorizontal: 12 }}
+                      onPress={() => openRestaurantWebsite(activeRestaurant?.slug || settings.slug || activeRestaurantId)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#16A34A' }}>🌐 View Website</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ flex: 1, minWidth: 110, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', borderRadius: 8, paddingVertical: 9, paddingHorizontal: 12 }}
                       onPress={async () => {
                         const url = getRestaurantOnlineOrderingUrl(activeRestaurant?.slug || settings.slug || activeRestaurantId);
                         const copied = await copyRestaurantUrlToClipboard(url);
@@ -1509,14 +1517,19 @@ export default function SettingsScreen() {
                       }}
                       activeOpacity={0.8}
                     >
-                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#2563EB' }}>📋 Copy Website Link</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#2563EB' }}>📋 Copy Link</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#BBF7D0', borderRadius: 8, paddingVertical: 9, paddingHorizontal: 12 }}
-                      onPress={() => openRestaurantWebsite(activeRestaurant?.slug || settings.slug || activeRestaurantId)}
+                      style={{ flex: 1, minWidth: 140, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EEF2FF', borderWidth: 1, borderColor: '#C7D2FE', borderRadius: 8, paddingVertical: 9, paddingHorizontal: 12 }}
+                      onPress={async () => {
+                        await downloadRestaurantQrCode(
+                          activeRestaurant?.slug || settings.slug || activeRestaurantId,
+                          activeRestaurant?.name || settings.name
+                        );
+                      }}
                       activeOpacity={0.8}
                     >
-                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#16A34A' }}>🌐 Open Website</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#4F46E5' }}>📥 Download QR Code</Text>
                     </TouchableOpacity>
                   </View>
                 </View>

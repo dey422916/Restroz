@@ -28,7 +28,7 @@ export default function CustomerOrdersScreen() {
   const isDesktop = width >= 768;
   const { user, loading: authLoading } = useAuth();
   const { populateCart } = useCustomerCart();
-  const { isDedicated, dedicatedRestaurant, getMenuRoute } = useStorefront();
+  const { isDedicated, dedicatedRestaurantId, dedicatedRestaurant, getMenuRoute } = useStorefront();
 
   const [activeTab, setActiveTab] = useState<'live' | 'history'>('live');
   const [liveOrders, setLiveOrders] = useState<Order[]>([]);
@@ -176,6 +176,22 @@ export default function CustomerOrdersScreen() {
     loadOrders();
   };
 
+  const filteredLiveOrders = React.useMemo(() => {
+    if (isDedicated && dedicatedRestaurantId) {
+      return liveOrders.filter((o) => o.restaurant_id === dedicatedRestaurantId);
+    }
+    return liveOrders;
+  }, [liveOrders, isDedicated, dedicatedRestaurantId]);
+
+  const filteredHistoryOrders = React.useMemo(() => {
+    if (isDedicated && dedicatedRestaurantId) {
+      return historyOrders.filter((o) => o.restaurant_id === dedicatedRestaurantId);
+    }
+    return historyOrders;
+  }, [historyOrders, isDedicated, dedicatedRestaurantId]);
+
+  const displayOrders = activeTab === 'live' ? filteredLiveOrders : filteredHistoryOrders;
+
   if (authLoading || loading) {
     return (
       <View style={styles.center}>
@@ -202,8 +218,6 @@ export default function CustomerOrdersScreen() {
       </View>
     );
   }
-
-  const displayOrders = activeTab === 'live' ? liveOrders : historyOrders;
 
   const render3StageProgress = (status: string) => {
     const isStage1Active = true; // Ordered is always done if active
@@ -262,14 +276,30 @@ export default function CustomerOrdersScreen() {
           {/* Header Bar */}
           <View style={styles.header}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <Image
-                source={require('../../assets/images/restroz_logo.png')}
-                style={styles.headerLogo}
-                resizeMode="contain"
-              />
+              {isDedicated && dedicatedRestaurant?.logo_url ? (
+                <Image
+                  source={{ uri: dedicatedRestaurant.logo_url }}
+                  style={styles.headerLogo}
+                  resizeMode="contain"
+                />
+              ) : isDedicated ? (
+                <View style={[styles.headerLogo, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#EFF6FF', borderRadius: 8 }]}>
+                  <Text style={{ fontSize: 20 }}>🍽️</Text>
+                </View>
+              ) : (
+                <Image
+                  source={require('../../assets/images/restroz_logo.png')}
+                  style={styles.headerLogo}
+                  resizeMode="contain"
+                />
+              )}
               <View>
-                <Text style={styles.headerTitle}>My Orders</Text>
-                <Text style={styles.headerSubtitle}>Track live orders and view order history</Text>
+                <Text style={styles.headerTitle}>
+                  {isDedicated ? `${dedicatedRestaurant?.name || 'Restaurant'} Orders` : 'My Orders'}
+                </Text>
+                <Text style={styles.headerSubtitle}>
+                  {isDedicated ? 'Track your orders with this restaurant' : 'Track live orders and view order history'}
+                </Text>
               </View>
             </View>
 
@@ -281,7 +311,7 @@ export default function CustomerOrdersScreen() {
                 activeOpacity={0.8}
               >
                 <Text style={[styles.tabText, activeTab === 'live' && styles.tabTextActive]}>
-                  🔥 Live ({liveOrders.length})
+                  🔥 Live ({filteredLiveOrders.length})
                 </Text>
               </TouchableOpacity>
 
@@ -291,7 +321,7 @@ export default function CustomerOrdersScreen() {
                 activeOpacity={0.8}
               >
                 <Text style={[styles.tabText, activeTab === 'history' && styles.tabTextActive]}>
-                  📜 History ({historyOrders.length})
+                  📜 History ({filteredHistoryOrders.length})
                 </Text>
               </TouchableOpacity>
             </View>
@@ -313,9 +343,13 @@ export default function CustomerOrdersScreen() {
                 {activeTab === 'live' ? 'No Active Deliveries' : 'No Past Orders'}
               </Text>
               <Text style={styles.emptySub}>
-                {activeTab === 'live'
-                  ? 'When you place an order, live 3-stage delivery tracking will appear here in real time.'
-                  : 'Your delivered and completed meal orders will be safely archived here.'}
+                {isDedicated
+                  ? (activeTab === 'live'
+                      ? `When you place an order with ${dedicatedRestaurant?.name || 'this restaurant'}, live tracking will appear here.`
+                      : `Your past orders with ${dedicatedRestaurant?.name || 'this restaurant'} will appear here.`)
+                  : (activeTab === 'live'
+                      ? 'When you place an order, live 3-stage delivery tracking will appear here in real time.'
+                      : 'Your delivered and completed meal orders will be safely archived here.')}
               </Text>
               <TouchableOpacity
                 style={styles.exploreBtn}

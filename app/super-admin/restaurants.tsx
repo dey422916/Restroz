@@ -37,6 +37,7 @@ import {
   getRestaurantOnlineOrderingUrl,
   copyRestaurantUrlToClipboard,
   openRestaurantWebsite,
+  downloadRestaurantQrCode,
 } from '../../src/utils/restaurantUrl';
 
 export default function SuperAdminRestaurantsScreen() {
@@ -552,9 +553,16 @@ export default function SuperAdminRestaurantsScreen() {
                       <Text style={{ fontSize: 12, fontWeight: '600', color: '#0F172A', marginBottom: 8 }} numberOfLines={1}>
                         {getRestaurantOnlineOrderingUrl(r.slug || r.id)}
                       </Text>
-                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
                         <TouchableOpacity
-                          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', borderRadius: 6, paddingVertical: 6, paddingHorizontal: 10 }}
+                          style={{ flex: 1, minWidth: 90, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#BBF7D0', borderRadius: 6, paddingVertical: 6, paddingHorizontal: 8 }}
+                          onPress={() => openRestaurantWebsite(r.slug || r.id)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#16A34A' }}>🌐 View Website</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={{ flex: 1, minWidth: 80, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', borderRadius: 6, paddingVertical: 6, paddingHorizontal: 8 }}
                           onPress={async () => {
                             const url = getRestaurantOnlineOrderingUrl(r.slug || r.id);
                             const copied = await copyRestaurantUrlToClipboard(url);
@@ -562,14 +570,16 @@ export default function SuperAdminRestaurantsScreen() {
                           }}
                           activeOpacity={0.8}
                         >
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#2563EB' }}>📋 Copy URL</Text>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#2563EB' }}>📋 Copy Link</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#BBF7D0', borderRadius: 6, paddingVertical: 6, paddingHorizontal: 10 }}
-                          onPress={() => openRestaurantWebsite(r.slug || r.id)}
+                          style={{ flex: 1, minWidth: 100, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EEF2FF', borderWidth: 1, borderColor: '#C7D2FE', borderRadius: 6, paddingVertical: 6, paddingHorizontal: 8 }}
+                          onPress={async () => {
+                            await downloadRestaurantQrCode(r.slug || r.id, r.name);
+                          }}
                           activeOpacity={0.8}
                         >
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#16A34A' }}>🌐 Open Website</Text>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#4F46E5' }}>📥 Download QR Code</Text>
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -673,6 +683,12 @@ export default function SuperAdminRestaurantsScreen() {
                       </Text>
                       <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
                         <TouchableOpacity
+                          style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#BBF7D0', borderRadius: 4, paddingVertical: 3, paddingHorizontal: 6 }}
+                          onPress={() => openRestaurantWebsite(r.slug || r.id)}
+                        >
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#16A34A' }}>🌐 View</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
                           style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', borderRadius: 4, paddingVertical: 3, paddingHorizontal: 6 }}
                           onPress={async () => {
                             const copied = await copyRestaurantUrlToClipboard(onlineUrl);
@@ -682,10 +698,12 @@ export default function SuperAdminRestaurantsScreen() {
                           <Text style={{ fontSize: 11, fontWeight: '700', color: '#2563EB' }}>📋 Copy</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                          style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#BBF7D0', borderRadius: 4, paddingVertical: 3, paddingHorizontal: 6 }}
-                          onPress={() => openRestaurantWebsite(r.slug || r.id)}
+                          style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#EEF2FF', borderWidth: 1, borderColor: '#C7D2FE', borderRadius: 4, paddingVertical: 3, paddingHorizontal: 6 }}
+                          onPress={async () => {
+                            await downloadRestaurantQrCode(r.slug || r.id, r.name);
+                          }}
                         >
-                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#16A34A' }}>🌐 Open</Text>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#4F46E5' }}>📥 QR Code</Text>
                         </TouchableOpacity>
                       </View>
                     </View>

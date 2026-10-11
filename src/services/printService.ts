@@ -772,7 +772,13 @@ export const printService = {
         ? 'Takeaway'
         : 'Delivery';
 
-    const logoUrl = formatLogoDataUri(settings?.logo_url || (order as any)?.restaurant?.logo_url);
+    // Dedicated Bill Logo & Payment QR from Printer Settings:
+    // Logo and payment QR uploaded in general Settings should NOT be printed in the invoice.
+    const shouldPrintLogo = Boolean(settings?.print_bill_logo && settings?.bill_logo_url?.trim());
+    const logoUrl = shouldPrintLogo ? formatLogoDataUri(settings.bill_logo_url!.trim()) : '';
+
+    const shouldPrintQr = Boolean(settings?.print_bill_payment_qr && settings?.bill_payment_qr_url?.trim());
+    const paymentQrUrl = shouldPrintQr ? formatLogoDataUri(settings.bill_payment_qr_url!.trim()) : '';
 
     const billPageCss = isA4
       ? `@page { size: A4 portrait; margin: 10mm 12mm; }
@@ -1080,6 +1086,15 @@ export const printService = {
             <div class="center bold" style="margin-top: 5px; font-size: 11.5px; letter-spacing: 0.3px;">
               Thank You Visit Again!
             </div>
+            ${
+              paymentQrUrl
+                ? `
+            <div class="center" style="margin-top: 6px;">
+              <img src="${paymentQrUrl}" width="${is58 ? '155' : isA4 ? '210' : '185'}" height="${is58 ? '155' : isA4 ? '210' : '185'}" style="width: ${is58 ? '155px' : isA4 ? '210px' : '185px'}; height: ${is58 ? '155px' : isA4 ? '210px' : '185px'}; object-fit: contain; display: block; margin: 0 auto;" alt="Payment QR" />
+              <div class="bold" style="font-size: 10px; margin-top: 4px; letter-spacing: 0.3px;">Scan & Pay via UPI</div>
+            </div>`
+                : ''
+            }
           </div>
         </body>
       </html>

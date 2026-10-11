@@ -466,6 +466,9 @@ export class EscPosTextBuilder {
    */
   public addFeedAndCut(feedLines: number = 3): this {
     if (feedLines > 0) {
+      // Append explicit LF (0x0A) bytes to ensure line buffers flush and advance on 58mm firmware that ignores ESC d n
+      const lfBytes = new Uint8Array(feedLines).fill(0x0A);
+      this.appendBytes(lfBytes);
       this.appendBytes(ESC_POS_COMMANDS.FEED_LINES(feedLines));
     }
     // Only send GS V if cutter is NOT disabled (portable BLE 58mm printers lack cutter and may stall or ignore on GS V)

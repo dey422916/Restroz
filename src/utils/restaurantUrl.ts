@@ -46,6 +46,132 @@ export function getRestaurantQrFilename(
   return `restroz-${cleanSlug || 'restaurant'}-ordering-qr.png`;
 }
 
+// Pure JS base64 encoder without Node Buffer dependency
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = '';
+  const len = bytes.length;
+  for (let i = 0; i < len; i += 3) {
+    const b0 = bytes[i];
+    const b1 = i + 1 < len ? bytes[i + 1] : 0;
+    const b2 = i + 2 < len ? bytes[i + 2] : 0;
+    result += chars[b0 >> 2];
+    result += chars[((b0 & 3) << 4) | (b1 >> 4)];
+    result += i + 1 < len ? chars[((b1 & 15) << 2) | (b2 >> 6)] : '=';
+    result += i + 2 < len ? chars[b2 & 63] : '=';
+  }
+  return result;
+}
+
+// Pure JS PNG encoder without Node.js 'util' or 'stream' standard libraries
+function encodePureJsPng(width: number, height: number, getPixel: (x: number, y: number) => number): Uint8Array {
+  const crcTable = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    crcTable[n] = c;
+  }
+  function crc32(buf: Uint8Array, start: number, len: number): number {
+    let c = 0xffffffff;
+    for (let i = start; i < start + len; i++) {
+      c = crcTable[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+    }
+    return (c ^ 0xffffffff) >>> 0;
+  }
+  function adler32(buf: Uint8Array): number {
+    let a = 1, b = 0;
+    for (let i = 0; i < buf.length; i++) {
+      a = (a + buf[i]) % 65521;
+      b = (b + a) % 65521;
+    }
+    return ((b << 16) | a) >>> 0;
+  }
+
+  const rawRowLen = 1 + width;
+  const rawData = new Uint8Array(rawRowLen * height);
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * rawRowLen;
+    rawData[rowOffset] = 0; // Filter: 0 (None)
+    for (let x = 0; x < width; x++) {
+      rawData[rowOffset + 1 + x] = getPixel(x, y);
+    }
+  }
+
+  const maxBlockSize = 65535;
+  const numBlocks = Math.ceil(rawData.length / maxBlockSize) || 1;
+  const idatDataSize = 2 + (numBlocks * 5) + rawData.length + 4;
+  const idatData = new Uint8Array(idatDataSize);
+
+  idatData[0] = 0x78;
+  idatData[1] = 0x01;
+  let inPos = 0, outPos = 2;
+
+  for (let b = 0; b < numBlocks; b++) {
+    const isLast = (b === numBlocks - 1);
+    const blockSize = Math.min(maxBlockSize, rawData.length - inPos);
+    idatData[outPos++] = isLast ? 0x01 : 0x00;
+    idatData[outPos++] = blockSize & 0xff;
+    idatData[outPos++] = (blockSize >>> 8) & 0xff;
+    const nlen = (~blockSize) & 0xffff;
+    idatData[outPos++] = nlen & 0xff;
+    idatData[outPos++] = (nlen >>> 8) & 0xff;
+    idatData.set(rawData.subarray(inPos, inPos + blockSize), outPos);
+    outPos += blockSize;
+    inPos += blockSize;
+  }
+
+  const adler = adler32(rawData);
+  idatData[outPos++] = (adler >>> 24) & 0xff;
+  idatData[outPos++] = (adler >>> 16) & 0xff;
+  idatData[outPos++] = (adler >>> 8) & 0xff;
+  idatData[outPos++] = adler & 0xff;
+
+  const totalPngLen = 8 + 25 + (12 + idatData.length) + 12;
+  const png = new Uint8Array(totalPngLen);
+  let p = 0;
+
+  png.set([137, 80, 78, 71, 13, 10, 26, 10], p); p += 8;
+
+  function writeChunk(typeStr: string, data: Uint8Array) {
+    const len = data.length;
+    png[p++] = (len >>> 24) & 0xff;
+    png[p++] = (len >>> 16) & 0xff;
+    png[p++] = (len >>> 8) & 0xff;
+    png[p++] = len & 0xff;
+    const typeStart = p;
+    for (let i = 0; i < 4; i++) png[p++] = typeStr.charCodeAt(i);
+    png.set(data, p); p += len;
+    const crc = crc32(png, typeStart, 4 + len);
+    png[p++] = (crc >>> 24) & 0xff;
+    png[p++] = (crc >>> 16) & 0xff;
+    png[p++] = (crc >>> 8) & 0xff;
+    png[p++] = crc & 0xff;
+  }
+
+  const ihdr = new Uint8Array(13);
+  ihdr[0] = (width >>> 24) & 0xff;
+  ihdr[1] = (width >>> 16) & 0xff;
+  ihdr[2] = (width >>> 8) & 0xff;
+  ihdr[3] = width & 0xff;
+  ihdr[4] = (height >>> 24) & 0xff;
+  ihdr[5] = (height >>> 16) & 0xff;
+  ihdr[6] = (height >>> 8) & 0xff;
+  ihdr[7] = height & 0xff;
+  ihdr[8] = 8; // 8-bit depth
+  ihdr[9] = 0; // Grayscale
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+  writeChunk('IHDR', ihdr);
+
+  writeChunk('IDAT', idatData);
+  writeChunk('IEND', new Uint8Array(0));
+
+  return png;
+}
+
 /**
  * Generates a high-resolution (default 1024x1024) PNG base64 Data URL for the restaurant's dedicated URL.
  * Works seamlessly across Web (HTML5 canvas) and Node/Native (pure JS PNG writer).
@@ -74,9 +200,8 @@ export async function generateRestaurantQrDataUrl(
     });
   }
 
-  // Pure JS Matrix + PNG writer (works in Node and React Native without DOM)
+  // Pure JS Matrix + Zero-Dependency PNG writer (runs natively on Android & iOS without Node modules)
   const QRCode = require('qrcode');
-  const { PNG } = require('pngjs');
   const qr = QRCode.create(url, { errorCorrectionLevel: 'M' });
   const modules = qr.modules;
   const modCount = modules.size;
@@ -84,23 +209,14 @@ export async function generateRestaurantQrDataUrl(
   const totalModules = modCount + marginModules * 2;
   const scale = size / totalModules;
 
-  const png = new PNG({ width: size, height: size });
-  for (let y = 0; y < size; y++) {
+  const pngBytes = encodePureJsPng(size, size, (x, y) => {
     const r = Math.floor(y / scale) - marginModules;
-    for (let x = 0; x < size; x++) {
-      const c = Math.floor(x / scale) - marginModules;
-      const isDark = r >= 0 && r < modCount && c >= 0 && c < modCount && modules.get(r, c);
-      const idx = (y * size + x) * 4;
-      const color = isDark ? 0 : 255;
-      png.data[idx] = color;
-      png.data[idx + 1] = color;
-      png.data[idx + 2] = color;
-      png.data[idx + 3] = 255;
-    }
-  }
+    const c = Math.floor(x / scale) - marginModules;
+    const isDark = r >= 0 && r < modCount && c >= 0 && c < modCount && modules.get(r, c);
+    return isDark ? 0 : 255;
+  });
 
-  const buf = PNG.sync.write(png);
-  return `data:image/png;base64,${buf.toString('base64')}`;
+  return `data:image/png;base64,${uint8ArrayToBase64(pngBytes)}`;
 }
 
 /**

@@ -45,6 +45,8 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
   const [pairingCodeInput, setPairingCodeInput] = useState('');
   const [isPairingAgent, setIsPairingAgent] = useState(false);
   const [isUnpairingAgent, setIsUnpairingAgent] = useState(false);
+  const [detectedAgentName, setDetectedAgentName] = useState<string | null>(null);
+  const [isDetectingAgent, setIsDetectingAgent] = useState(false);
 
   // Wizard Modal State
   const [wizardVisible, setWizardVisible] = useState(false);
@@ -112,6 +114,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
     setWizardPaperWidth('80mm');
     setWizardIsPrimary(printers.length === 0);
     setPairingCodeInput('');
+    setDetectedAgentName(null);
     setWizardVisible(true);
   };
 
@@ -223,11 +226,68 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
         }
       } else {
         setWizardStep('windows_agent_pair');
+        // Auto-detect running desktop Print Agent if available
+        try {
+          const detected = await webDirectPrintService.detectRunningPrintAgent();
+          if (detected && detected.pairingCode) {
+            setPairingCodeInput(detected.pairingCode);
+            setDetectedAgentName(detected.deviceName);
+          }
+        } catch (_) {}
       }
     } finally {
       setIsWizardLoading(false);
     }
   };
+
+  // Manual trigger for auto-detecting desktop print agent code
+  const handleAutoDetectAgentCode = async () => {
+    setIsDetectingAgent(true);
+    try {
+      const detected = await webDirectPrintService.detectRunningPrintAgent();
+      if (detected && detected.pairingCode) {
+        setPairingCodeInput(detected.pairingCode);
+        setDetectedAgentName(detected.deviceName);
+        showToast('success', 'Print Agent Detected', `Auto-detected code from ${detected.deviceName}!`);
+      } else {
+        showToast('info', 'No Agent Detected', 'Make sure RestroZ Print Agent is running on this computer.');
+      }
+    } catch (err: any) {
+      showToast('error', 'Detection Failed', err.message || 'Could not detect Print Agent.');
+    } finally {
+      setIsDetectingAgent(false);
+    }
+  };
+
+  // Poll for active desktop print agent while on pairing step
+  useEffect(() => {
+    if (wizardStep === 'windows_agent_pair') {
+      let isMounted = true;
+      const checkAgent = async () => {
+        try {
+          const detected = await webDirectPrintService.detectRunningPrintAgent();
+          if (isMounted && detected && detected.pairingCode) {
+            setPairingCodeInput((prev) => prev || detected.pairingCode);
+            setDetectedAgentName(detected.deviceName);
+          }
+        } catch (_) {}
+      };
+
+      checkAgent();
+      const interval = setInterval(() => {
+        if (!pairingCodeInput) {
+          checkAgent();
+        }
+      }, 3000);
+
+      return () => {
+        isMounted = false;
+        clearInterval(interval);
+      };
+    } else {
+      setDetectedAgentName(null);
+    }
+  }, [wizardStep, pairingCodeInput]);
 
   // Pair Agent with pairing code
   const handlePairAgentSubmit = async () => {
@@ -711,11 +771,24 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
                 <Text style={styles.stepTitle}>Pair RestroZ Print Agent:</Text>
                 <Text style={styles.stepDesc}>
                   1. Launch "RestroZ-Print-Agent-Setup.exe" on your Windows PC.
-                  {'\n'}2. Enter the 6-digit Pairing Code displayed on the Print Agent below:
+                  {'\n'}2. Enter or auto-detect the 6-digit Pairing Code displayed on the Print Agent:
                 </Text>
 
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Enter 6-Digit Pairing Code:</Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <Text style={[styles.inputLabel, { marginBottom: 0 }]}>Enter 6-Digit Pairing Code:</Text>
+                    <TouchableOpacity
+                      style={styles.autoDetectBtn}
+                      onPress={handleAutoDetectAgentCode}
+                      disabled={isDetectingAgent}
+                    >
+                      {isDetectingAgent ? (
+                        <ActivityIndicator size="small" color="#f97316" />
+                      ) : (
+                        <Text style={styles.autoDetectBtnText}>⚡ Auto-Detect Code</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
                   <TextInput
                     style={styles.pairingInput}
                     placeholder="e.g. 482913"
@@ -723,8 +796,16 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
                     keyboardType="number-pad"
                     maxLength={6}
                     value={pairingCodeInput}
-                    onChangeText={setPairingCodeInput}
+                    onChangeText={(val) => {
+                      setPairingCodeInput(val);
+                      if (!val) setDetectedAgentName(null);
+                    }}
                   />
+                  {detectedAgentName && pairingCodeInput ? (
+                    <Text style={{ fontSize: 12, color: '#22c55e', marginTop: 5, fontWeight: '700' }}>
+                      ⚡ Auto-detected from {detectedAgentName}
+                    </Text>
+                  ) : null}
                 </View>
 
                 <TouchableOpacity
@@ -1451,6 +1532,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#ffffff',
     marginBottom: 6,
+  },
+  autoDetectBtn: {
+    backgroundColor: '#3f3f46',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  autoDetectBtnText: {
+    color: '#fb923c',
+    fontSize: 11,
+    fontWeight: '700',
   },
   pairingInput: {
     backgroundColor: '#27272a',

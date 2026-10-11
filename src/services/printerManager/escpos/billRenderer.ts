@@ -16,6 +16,7 @@ export interface BillRenderOptions {
   billedBy?: string;
   isBle?: boolean;
   logoRasterBytes?: Uint8Array | null;
+  paymentQrRasterBytes?: Uint8Array | null;
 }
 
 /**
@@ -218,6 +219,12 @@ export function renderBillToEscPos(
   // 7. Footer
   const footerText = (settings as any).receipt_footer_text || 'Thank you! Visit Again.';
   builder.addLine(footerText, { align: 'center', bold: true });
+
+  // Payment QR Code (attached at the end before cut, if uploaded and rasterized)
+  if (options.paymentQrRasterBytes && options.paymentQrRasterBytes.length > 0) {
+    builder.addLine('Scan & Pay via UPI', { align: 'center', bold: true });
+    builder.addRawBytes(options.paymentQrRasterBytes);
+  }
 
   // 8. Feed and Cut
   builder.addFeedAndCut(3);

@@ -4,6 +4,8 @@ import { RestaurantPrinter, PrinterRole } from '../../types';
 import { calibrationService } from './calibration';
 import { devicePrinterBindingService } from './devicePrinterBindings';
 
+let hasPrintersTable = true;
+
 export const printerRepository = {
   /**
    * Fetches all configured printers for a restaurant.
@@ -28,7 +30,7 @@ export const printerRepository = {
     }
 
     let cloudPrinters: RestaurantPrinter[] = [];
-    if (restaurantId) {
+    if (restaurantId && hasPrintersTable) {
       try {
         const { data, error } = await supabase
           .from('restaurant_printers')
@@ -36,7 +38,11 @@ export const printerRepository = {
           .eq('restaurant_id', restaurantId)
           .order('created_at', { ascending: true });
 
-        if (!error && data) {
+        if (error) {
+          if (error.code === 'PGRST205' || error.message?.includes('schema cache')) {
+            hasPrintersTable = false;
+          }
+        } else if (data) {
           cloudPrinters = data as RestaurantPrinter[];
         }
       } catch (err: any) {
@@ -63,7 +69,7 @@ export const printerRepository = {
     if (localMatch) return localMatch;
 
     const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
-    if (isDirect) {
+    if (isDirect || !hasPrintersTable) {
       return null;
     }
 
@@ -153,8 +159,8 @@ export const printerRepository = {
     };
     await devicePrinterBindingService.saveDevicePrinter(localPrinterRecord);
 
-    if (isDirect) {
-      // In DIRECT_DEVICE mode, return the local record immediately without calling Supabase
+    if (isDirect || !hasPrintersTable) {
+      // In DIRECT_DEVICE mode or when cloud table is not present, return local record immediately
       return localPrinterRecord;
     }
 
@@ -232,8 +238,8 @@ export const printerRepository = {
     await devicePrinterBindingService.saveDevicePrinter(updatedMerged);
 
     const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
-    if (isDirect) {
-      // In DIRECT_DEVICE mode, return updated record immediately without calling Supabase
+    if (isDirect || !hasPrintersTable) {
+      // In DIRECT_DEVICE mode or when cloud table is not present, return updated record immediately
       return updatedMerged;
     }
 
@@ -268,7 +274,7 @@ export const printerRepository = {
     await devicePrinterBindingService.removeDevicePrinter(id);
 
     const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
-    if (isDirect) {
+    if (isDirect || !hasPrintersTable) {
       return;
     }
 
@@ -309,7 +315,7 @@ export const printerRepository = {
     }
 
     const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
-    if (isDirect) {
+    if (isDirect || !hasPrintersTable) {
       return;
     }
 

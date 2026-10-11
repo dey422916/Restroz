@@ -61,6 +61,10 @@ const RESTAURANT_SETTINGS_COLUMNS = new Set([
   'is_gst_enabled',
   'gst_registered',
   'tax_invoice_enabled',
+  'bill_logo_url',
+  'print_bill_logo',
+  'bill_payment_qr_url',
+  'print_bill_payment_qr',
   'restaurant_id',
   'updated_at',
 ]);
@@ -161,7 +165,15 @@ export const settingsService = {
       return mockStorage.getSettings();
     }
     // 0. Load local printer & GST settings cache if available
-    let localPrinterSettings: { kot_paper_size?: PaperSize; bill_paper_size?: PaperSize; auto_print_kot?: boolean } | null = null;
+    let localPrinterSettings: {
+      kot_paper_size?: PaperSize;
+      bill_paper_size?: PaperSize;
+      auto_print_kot?: boolean;
+      bill_logo_url?: string;
+      print_bill_logo?: boolean;
+      bill_payment_qr_url?: string;
+      print_bill_payment_qr?: boolean;
+    } | null = null;
     let localGstSettings: { gst_registered?: boolean; is_gst_enabled?: boolean; tax_invoice_enabled?: boolean } | null = null;
 
     try {
@@ -243,6 +255,14 @@ export const settingsService = {
         const resolvedAutoPrint: boolean = data?.kot_auto_print !== undefined && data?.kot_auto_print !== null
           ? Boolean(data.kot_auto_print)
           : (localPrinterSettings?.auto_print_kot !== undefined ? localPrinterSettings.auto_print_kot : false);
+        const resolvedBillLogoUrl: string = data?.bill_logo_url || localPrinterSettings?.bill_logo_url || '';
+        const resolvedPrintBillLogo: boolean = data?.print_bill_logo !== undefined && data?.print_bill_logo !== null
+          ? Boolean(data.print_bill_logo)
+          : (localPrinterSettings?.print_bill_logo !== undefined ? Boolean(localPrinterSettings.print_bill_logo) : false);
+        const resolvedBillPaymentQrUrl: string = data?.bill_payment_qr_url || localPrinterSettings?.bill_payment_qr_url || '';
+        const resolvedPrintBillPaymentQr: boolean = data?.print_bill_payment_qr !== undefined && data?.print_bill_payment_qr !== null
+          ? Boolean(data.print_bill_payment_qr)
+          : (localPrinterSettings?.print_bill_payment_qr !== undefined ? Boolean(localPrinterSettings.print_bill_payment_qr) : false);
 
         // Resolve GST & Tax configuration
         const effectiveGstin = (data?.gstin || '').trim();
@@ -274,6 +294,10 @@ export const settingsService = {
             kot_paper_size: resolvedKotPaper,
             bill_paper_size: resolvedBillPaper,
             auto_print_kot: resolvedAutoPrint,
+            bill_logo_url: resolvedBillLogoUrl,
+            print_bill_logo: resolvedPrintBillLogo,
+            bill_payment_qr_url: resolvedBillPaymentQrUrl,
+            print_bill_payment_qr: resolvedPrintBillPaymentQr,
           })
         ).catch(() => {});
 
@@ -306,6 +330,10 @@ export const settingsService = {
             kot_paper_size: resolvedKotPaper,
             bill_paper_size: resolvedBillPaper,
             auto_print_kot: resolvedAutoPrint,
+            bill_logo_url: resolvedBillLogoUrl,
+            print_bill_logo: resolvedPrintBillLogo,
+            bill_payment_qr_url: resolvedBillPaymentQrUrl,
+            print_bill_payment_qr: resolvedPrintBillPaymentQr,
             gst_registered: resolvedGstRegistered,
             is_gst_enabled: resolvedIsGstEnabled,
             tax_invoice_enabled: resolvedTaxInvoiceEnabled,
@@ -455,6 +483,11 @@ export const settingsService = {
       targetTaxInvoiceEnabled = false;
     }
 
+    const targetBillLogoUrl = settings.bill_logo_url !== undefined ? settings.bill_logo_url : current.bill_logo_url;
+    const targetPrintBillLogo = settings.print_bill_logo !== undefined ? Boolean(settings.print_bill_logo) : Boolean(current.print_bill_logo);
+    const targetBillPaymentQrUrl = settings.bill_payment_qr_url !== undefined ? settings.bill_payment_qr_url : current.bill_payment_qr_url;
+    const targetPrintBillPaymentQr = settings.print_bill_payment_qr !== undefined ? Boolean(settings.print_bill_payment_qr) : Boolean(current.print_bill_payment_qr);
+
     // Save to local AsyncStorage cache for instant response
     try {
       await Promise.all([
@@ -464,6 +497,10 @@ export const settingsService = {
             kot_paper_size: targetKotPaper,
             bill_paper_size: targetBillPaper,
             auto_print_kot: targetAutoPrint,
+            bill_logo_url: targetBillLogoUrl,
+            print_bill_logo: targetPrintBillLogo,
+            bill_payment_qr_url: targetBillPaymentQrUrl,
+            print_bill_payment_qr: targetPrintBillPaymentQr,
           })
         ),
         AsyncStorage.setItem(
@@ -575,11 +612,37 @@ export const settingsService = {
         sanitizedSettingsPayload.banner_url = safeBannerPayload || null;
       }
 
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('restaurant_settings')
         .upsert(sanitizedSettingsPayload, { onConflict: 'restaurant_id' })
         .select()
         .single();
+
+      // Gracefully handle missing columns in remote Supabase schema cache (PGRST204)
+      if (error && (error.code === 'PGRST204' || error.message?.includes('schema cache'))) {
+        console.warn('[settingsService] Supabase restaurant_settings table is missing some columns in schema cache. Retrying without optional branding columns:', error.message);
+        const retryPayload = { ...sanitizedSettingsPayload };
+        const optionalBrandingCols = ['bill_logo_url', 'print_bill_logo', 'bill_payment_qr_url', 'print_bill_payment_qr'];
+        optionalBrandingCols.forEach((col) => delete retryPayload[col]);
+
+        const match = error.message?.match(/Could not find the '([^']+)' column/);
+        if (match && match[1]) {
+          delete retryPayload[match[1]];
+        }
+
+        const retry = await supabase
+          .from('restaurant_settings')
+          .upsert(retryPayload, { onConflict: 'restaurant_id' })
+          .select()
+          .single();
+
+        if (!retry.error) {
+          data = retry.data;
+          error = null;
+        } else {
+          error = retry.error;
+        }
+      }
 
       if (error) {
         console.error('Supabase restaurant_settings error:', error);
@@ -599,6 +662,10 @@ export const settingsService = {
         kot_paper_size: targetKotPaper,
         bill_paper_size: targetBillPaper,
         auto_print_kot: targetAutoPrint,
+        bill_logo_url: targetBillLogoUrl,
+        print_bill_logo: targetPrintBillLogo,
+        bill_payment_qr_url: targetBillPaymentQrUrl,
+        print_bill_payment_qr: targetPrintBillPaymentQr,
         gst_registered: targetGstRegistered,
         is_gst_enabled: targetIsGstEnabled,
         tax_invoice_enabled: targetTaxInvoiceEnabled,
@@ -616,6 +683,10 @@ export const settingsService = {
 
     const persistedLocal: RestaurantSettings = {
       ...updated,
+      bill_logo_url: targetBillLogoUrl,
+      print_bill_logo: targetPrintBillLogo,
+      bill_payment_qr_url: targetBillPaymentQrUrl,
+      print_bill_payment_qr: targetPrintBillPaymentQr,
       gst_registered: targetGstRegistered,
       is_gst_enabled: targetIsGstEnabled,
       tax_invoice_enabled: targetTaxInvoiceEnabled,

@@ -9,7 +9,8 @@ const logoRasterCache = new Map<string, Uint8Array>();
 
 export async function generateEscPosLogoRaster(
   logoUrl?: string | null,
-  paperWidth: '58mm' | '80mm' = '58mm'
+  paperWidth: '58mm' | '80mm' = '58mm',
+  options?: { isQrCode?: boolean }
 ): Promise<Uint8Array | null> {
   if (!logoUrl || typeof logoUrl !== 'string' || !logoUrl.trim()) {
     return null;
@@ -30,7 +31,8 @@ export async function generateEscPosLogoRaster(
     return null;
   }
 
-  const cacheKey = `${trimmedUrl}_${paperWidth}`;
+  const isQr = Boolean(options?.isQrCode);
+  const cacheKey = `${trimmedUrl}_${paperWidth}_${isQr ? 'qr_m1cm' : 'logo'}`;
   const cached = logoRasterCache.get(cacheKey);
   if (cached) {
     return cached;
@@ -67,9 +69,14 @@ export async function generateEscPosLogoRaster(
     // Full printable width dots (384 for 58mm, 576 for 80mm)
     const fullWidthDots = paperWidth === '58mm' ? 384 : 576;
 
-    // Target logo max dimensions (centered within fullWidthDots)
-    const maxLogoWidth = paperWidth === '58mm' ? 240 : 340;
-    const maxLogoHeight = paperWidth === '58mm' ? 160 : 200;
+    // Target dimensions (centered within fullWidthDots)
+    // Sized with ~1 cm margin on each side (230 dots on 58mm leaves 77 dots / ~1.0cm margin on each side)
+    const maxLogoWidth = isQr
+      ? (paperWidth === '58mm' ? 230 : 340)
+      : (paperWidth === '58mm' ? 240 : 340);
+    const maxLogoHeight = isQr
+      ? (paperWidth === '58mm' ? 230 : 340)
+      : (paperWidth === '58mm' ? 160 : 200);
 
     let scaledWidth = img.width;
     let scaledHeight = img.height;

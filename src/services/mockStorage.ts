@@ -41,6 +41,10 @@ export const DEFAULT_SETTINGS: RestaurantSettings = {
   kot_paper_size: '80mm',
   bill_paper_size: '80mm',
   auto_print_kot: false,
+  bill_logo_url: '',
+  print_bill_logo: false,
+  bill_payment_qr_url: '',
+  print_bill_payment_qr: false,
 };
 
 export const SEED_PROFILES: UserProfile[] = [

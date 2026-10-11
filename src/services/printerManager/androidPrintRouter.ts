@@ -19,6 +19,7 @@ import { devicePrinterBindingService } from './devicePrinterBindings';
 import { printerRoutingService, CategoryPrintSplit } from './routing';
 import { renderKotToEscPos } from './escpos/kotRenderer';
 import { renderBillToEscPos } from './escpos/billRenderer';
+import { generateEscPosLogoRaster } from './escpos/logoRaster';
 import { tcpTransport, bluetoothTransport, bleGattTransport, usbTransport } from './transports';
 import { isAutoPrintEnabled } from '../directPrintService';
 import { printedKotTracker } from '../../utils/printedKotTracker';
@@ -685,8 +686,36 @@ export const androidPrintRouter = {
     }
 
     // 6. Render ESC/POS Document
+    let logoRasterBytes: Uint8Array | null = null;
+    let paymentQrRasterBytes: Uint8Array | null = null;
+    const shouldPrintLogo = Boolean(settings.print_bill_logo && settings.bill_logo_url?.trim());
+    const shouldPrintQr = Boolean(settings.print_bill_payment_qr && settings.bill_payment_qr_url?.trim());
+    const effectiveWidth = targetPrinter.paper_width === '58mm' ? '58mm' : '80mm';
+
+    if (shouldPrintLogo && settings.bill_logo_url) {
+      try {
+        logoRasterBytes = await generateEscPosLogoRaster(settings.bill_logo_url.trim(), effectiveWidth);
+      } catch (e) {
+        console.warn('[androidPrintRouter] Logo rasterization failed:', e);
+      }
+    }
+
+    if (shouldPrintQr && settings.bill_payment_qr_url) {
+      try {
+        paymentQrRasterBytes = await generateEscPosLogoRaster(
+          settings.bill_payment_qr_url.trim(),
+          effectiveWidth,
+          { isQrCode: true }
+        );
+      } catch (e) {
+        console.warn('[androidPrintRouter] QR rasterization failed:', e);
+      }
+    }
+
     const doc = renderBillToEscPos(order, settings, billedBy || 'Staff', {
       printer: targetPrinter,
+      logoRasterBytes,
+      paymentQrRasterBytes,
     });
 
     // 7. Dispatch to Transport with Fallback

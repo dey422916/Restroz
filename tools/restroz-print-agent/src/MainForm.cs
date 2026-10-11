@@ -114,8 +114,8 @@ namespace RestroZPrintAgent
             _btnCopyCode = new Button
             {
                 Text = "Copy Code",
-                Location = new Point(360, 40),
-                Size = new Size(145, 36),
+                Location = new Point(245, 40),
+                Size = new Size(125, 36),
                 BackColor = Color.FromArgb(249, 115, 22),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
@@ -141,26 +141,39 @@ namespace RestroZPrintAgent
 
             _btnGenerateNewCode = new Button
             {
-                Text = "Generate New Code",
-                Location = new Point(340, 40),
-                Size = new Size(165, 36),
+                Text = "Refresh Code",
+                Location = new Point(380, 40),
+                Size = new Size(130, 36),
                 BackColor = Color.FromArgb(234, 179, 8),
                 ForeColor = Color.Black,
                 FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
                 Cursor = Cursors.Hand,
-                Visible = false
+                Visible = true
             };
             _btnGenerateNewCode.FlatAppearance.BorderSize = 0;
             _btnGenerateNewCode.Click += (s, e) =>
             {
                 _btnGenerateNewCode.Enabled = false;
+                _btnGenerateNewCode.Text = "Refreshing...";
                 string err;
                 bool ok = _engine.RequestNewPairingCode(out err);
-                if (!ok)
+                if (ok)
+                {
+                    if (!string.IsNullOrEmpty(_config.PairingCode) && _config.PairingCode != "------")
+                    {
+                        try
+                        {
+                            Clipboard.SetText(_config.PairingCode);
+                        }
+                        catch {}
+                    }
+                }
+                else
                 {
                     MessageBox.Show("Failed to generate fresh pairing code: " + err, "Pairing Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
+                _btnGenerateNewCode.Text = "Refresh Code";
                 _btnGenerateNewCode.Enabled = true;
             };
             _pnlPairing.Controls.Add(_btnGenerateNewCode);
@@ -400,11 +413,13 @@ namespace RestroZPrintAgent
                     _lblPairingCode.Text = "EXPIRED";
                     _lblPairingCode.ForeColor = Color.FromArgb(239, 68, 68);
                     _lblPairingCode.Font = new Font("Segoe UI", 22f, FontStyle.Bold);
-                    _lblExpiry.Text = "Pairing code expired. Click Generate New Code to refresh.";
+                    _lblExpiry.Text = "Pairing code expired. Click Refresh Code to generate a new one.";
                     _lblExpiry.ForeColor = Color.FromArgb(239, 68, 68);
-                    _btnCopyCode.Visible = false;
+                    _btnCopyCode.Visible = true;
+                    _btnCopyCode.Enabled = false;
                     _btnGenerateNewCode.Visible = true;
                     _btnGenerateNewCode.Enabled = true;
+                    _btnGenerateNewCode.Text = "Generate Code";
                 }
                 else if (hasCode)
                 {
@@ -416,7 +431,9 @@ namespace RestroZPrintAgent
                     _lblPairingCode.Font = new Font("Segoe UI", 26f, FontStyle.Bold);
                     _btnCopyCode.Visible = true;
                     _btnCopyCode.Enabled = true;
-                    _btnGenerateNewCode.Visible = false;
+                    _btnGenerateNewCode.Visible = true;
+                    _btnGenerateNewCode.Enabled = true;
+                    _btnGenerateNewCode.Text = "Refresh Code";
 
                     UpdateExpiryCountdown();
                 }
@@ -430,7 +447,9 @@ namespace RestroZPrintAgent
                     _lblPairingCode.Font = new Font("Segoe UI", 26f, FontStyle.Bold);
                     _btnCopyCode.Visible = true;
                     _btnCopyCode.Enabled = false;
-                    _btnGenerateNewCode.Visible = false;
+                    _btnGenerateNewCode.Visible = true;
+                    _btnGenerateNewCode.Enabled = true;
+                    _btnGenerateNewCode.Text = "Generate Code";
                     _lblExpiry.Text = "Connecting to RestroZ Cloud...";
                     _lblExpiry.ForeColor = Color.FromArgb(161, 161, 170);
                 }

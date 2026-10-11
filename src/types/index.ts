@@ -82,6 +82,10 @@ export interface RestaurantSettings {
   bill_paper_size?: PaperSize;
   auto_print_kot?: boolean;
   kot_printer_name?: string;
+  bill_logo_url?: string;
+  print_bill_logo?: boolean;
+  bill_payment_qr_url?: string;
+  print_bill_payment_qr?: boolean;
   online_orders_enabled?: boolean;
   delivery_payment_qr_url?: string;
   delivery_upi_id?: string;

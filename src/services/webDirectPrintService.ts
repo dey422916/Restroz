@@ -79,7 +79,7 @@ export interface PrintAgentInfo {
 export const BLE_PRINTER_SERVICE_UUIDS = [
   '000018f0-0000-1000-8000-00805f9b34fb', // Standard Bluetooth SIG Printing Service
   '0000ffe0-0000-1000-8000-00805f9b34fb', // HM-10 / CC2541 / MPT-II / POS58 / POS80
-  '0000ff00-0000-1000-8000-00805f9b34fb', // Common Thermal ESC/POS BLE
+  '0000ff00-0000-1000-8000-00805f9b34fb', // Common Thermal ESC/POS BLE (Seznik / Veer)
   '0000fff0-0000-1000-8000-00805f9b34fb', // Common Serial BLE
   'e7810a71-73ae-499d-8c15-faa9aef0c3f2', // Nordic UART (legacy)
   '6e400001-b5a3-f393-e0a9-e50e24dcca9e', // Nordic UART (standard)
@@ -89,6 +89,56 @@ export const BLE_PRINTER_SERVICE_UUIDS = [
   '0000af30-0000-1000-8000-00805f9b34fb', // Xprinter BLE
   '0000fee7-0000-1000-8000-00805f9b34fb', // Tencent / WeChat IoT BLE
   '000018f1-0000-1000-8000-00805f9b34fb',
+  '0000ffff-0000-1000-8000-00805f9b34fb',
+];
+
+/**
+ * Verified thermal printer write characteristics mapped in priority order
+ */
+export const KNOWN_THERMAL_WRITE_CHAR_UUIDS = [
+  '0000ff02-0000-1000-8000-00805f9b34fb', // Seznik / Veer / JieLi / POS58 (Top Priority!)
+  '0000ffe1-0000-1000-8000-00805f9b34fb', // HM-10 / MPT-II / POS80
+  '00002af1-0000-1000-8000-00805f9b34fb', // Standard SIG Printing characteristic
+  '6e400002-b5a3-f393-e0a9-e50e24dcca9e', // Nordic UART TX
+  '49535343-8841-43f4-a8d4-ecbe34729bb3', // ISSC UART TX
+  '0000ae01-0000-1000-8000-00805f9b34fb', // Rongta / RPP
+  '0000ae32-0000-1000-8000-00805f9b34fb',
+  '0000af31-0000-1000-8000-00805f9b34fb', // Xprinter
+  '0000fff2-0000-1000-8000-00805f9b34fb',
+];
+
+/**
+ * Standard Bluetooth SIG services that must NEVER be used for thermal printing
+ */
+export const BLACKLISTED_BLE_SERVICES = [
+  '00001800', // Generic Access
+  '00001801', // Generic Attribute
+  '0000180a', // Device Information
+  '0000180f', // Battery Service
+  '00001805', // Current Time
+  '0000180d', // Heart Rate
+  '00001804', // Tx Power
+  '00001812', // HID
+];
+
+/**
+ * Standard Bluetooth SIG / non-printer characteristics that must NEVER be used as print write targets
+ */
+export const BLACKLISTED_BLE_CHARS = [
+  '2a00', // Device Name (Never write print data here!)
+  '2a01', // Appearance
+  '2a02',
+  '2a03',
+  '2a04',
+  '2a05',
+  '2a29', // Manufacturer Name
+  '2a24', // Model Number
+  '2a25', // Serial Number
+  '2a26', // Firmware Revision
+  '2a27', // Hardware Revision
+  '2a28', // Software Revision
+  '2a19', // Battery Level
+  'ff01', // Notify / Read ONLY on Seznik/Veer (NEVER write ESC/POS here!)
 ];
 
 export interface BleSession {
@@ -976,6 +1026,59 @@ export const webDirectPrintService = {
   },
 
   /**
+   * Automatically detects an online, active RestroZ Print Agent running on the desktop/network.
+   * Checks Supabase cloud table for recently active unpaired agents (heartbeat in last 3 minutes),
+   * and optionally checks browser clipboard if available.
+   */
+  async detectRunningPrintAgent(): Promise<{ pairingCode: string; deviceName: string } | null> {
+    try {
+      // 1. Query Supabase for active unpaired agent with a valid pairing code seen in the last 3 minutes
+      const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+      const { data, error } = await supabase
+        .from('print_agents')
+        .select('id, pairing_code, device_name, status, last_seen, pairing_expires_at')
+        .eq('is_paired', false)
+        .eq('status', 'online')
+        .not('pairing_code', 'is', null)
+        .gte('last_seen', threeMinutesAgo)
+        .order('last_seen', { ascending: false })
+        .limit(1);
+
+      if (!error && data && data.length > 0 && data[0]?.pairing_code) {
+        const agent = data[0];
+        const code = String(agent.pairing_code).trim();
+        if (/^\d{6}$/.test(code)) {
+          return {
+            pairingCode: code,
+            deviceName: agent.device_name || 'Windows Desktop',
+          };
+        }
+      }
+    } catch (err) {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.warn('[webDirectPrintService] Error detecting print agent in Supabase:', err);
+      }
+    }
+
+    // 2. Check Clipboard fallback on Web
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+      try {
+        const clipText = await navigator.clipboard.readText();
+        if (clipText && /^\d{6}$/.test(clipText.trim())) {
+          return {
+            pairingCode: clipText.trim(),
+            deviceName: 'Clipboard',
+          };
+        }
+      } catch (_) {
+        // Clipboard read permission might not be granted; ignore silently
+      }
+    }
+
+    return null;
+  },
+
+  /**
    * Pairs RestroZ Print Agent with the current restaurant using a 6-digit pairing code
    */
   async pairPrintAgent(pairingCode: string, restaurantId: string): Promise<PrintAgentInfo> {
@@ -1313,18 +1416,27 @@ export const webDirectPrintService = {
       (targetDevId ? activeBleSessions.get(targetDevId) : null);
 
     if (existing && existing.device && existing.gattServer?.connected && existing.writeCharacteristic) {
-      console.log(
-        `[BLE_PRE_ROUTE_RECOVERY]\n` +
-        `Printer: ${printer.name}\n` +
-        `Saved Status: ${savedStatus}\n` +
-        `Saved Bluetooth Device ID: ${targetDevId || 'N/A'}\n` +
-        `Active Session: YES\n` +
-        `Authorized Devices: 1\n` +
-        `Matched Device: YES\n` +
-        `GATT Recovery: SUCCESS\n` +
-        `Final Runtime Status: READY`
-      );
-      return existing;
+      if (this.isInvalidBlePrintCharacteristic(existing.serviceUuid, existing.characteristicUuid, printer.name)) {
+        console.warn(
+          `[BLE_AUTO_REPAIR] Invaliding existing session with bogus characteristic ${existing.characteristicUuid} on "${printer.name}"`
+        );
+        existing.writeCharacteristic = null;
+        existing.serviceUuid = undefined;
+        existing.characteristicUuid = undefined;
+      } else {
+        console.log(
+          `[BLE_PRE_ROUTE_RECOVERY]\n` +
+          `Printer: ${printer.name}\n` +
+          `Saved Status: ${savedStatus}\n` +
+          `Saved Bluetooth Device ID: ${targetDevId || 'N/A'}\n` +
+          `Active Session: YES\n` +
+          `Authorized Devices: 1\n` +
+          `Matched Device: YES\n` +
+          `GATT Recovery: SUCCESS\n` +
+          `Final Runtime Status: READY`
+        );
+        return existing;
+      }
     }
 
     // 2. Query browser authorized devices without popping chooser
@@ -1390,6 +1502,15 @@ export const webDirectPrintService = {
     let serviceUuid = printer.serviceUuid;
     let characteristicUuid = printer.characteristicUuid;
 
+    // Auto-repair check: if saved UUIDs are blacklisted or invalid for this printer model, discard them
+    if (this.isInvalidBlePrintCharacteristic(serviceUuid, characteristicUuid, printer.name)) {
+      console.warn(
+        `[BLE_AUTO_REPAIR] Printer "${printer.name}" has invalid saved BLE characteristic (${characteristicUuid}). Discarding and re-discovering...`
+      );
+      serviceUuid = undefined;
+      characteristicUuid = undefined;
+    }
+
     if (serviceUuid && characteristicUuid) {
       try {
         const s = await gattServer.getPrimaryService(serviceUuid);
@@ -1403,7 +1524,7 @@ export const webDirectPrintService = {
 
     if (!writeChar) {
       try {
-        writeChar = await this.locateGattWriteCharacteristic(gattServer);
+        writeChar = await this.locateGattWriteCharacteristic(gattServer, printer.name);
         serviceUuid = writeChar.service?.uuid;
         characteristicUuid = writeChar.uuid;
       } catch (e) {
@@ -1421,6 +1542,18 @@ export const webDirectPrintService = {
         );
         return null;
       }
+    }
+
+    // Auto-repair saved printer record in storage if UUIDs were repaired
+    if (serviceUuid !== printer.serviceUuid || characteristicUuid !== printer.characteristicUuid) {
+      const repaired: ConfiguredDirectPrinter = {
+        ...printer,
+        serviceUuid,
+        characteristicUuid,
+        status: 'connected',
+        statusMessage: 'Bluetooth connected.',
+      };
+      this.updatePrinter(repaired, restaurantId);
     }
 
     // 5. Store session in global activeBleSessions registry
@@ -1708,9 +1841,80 @@ export const webDirectPrintService = {
   },
 
   /**
-   * Helper: Traverses GATT server services to find a writable characteristic
+   * Helper: Validates if a service or characteristic UUID is bogus / non-printing (e.g. Generic Access, Device Name).
    */
-  async locateGattWriteCharacteristic(server: any): Promise<any> {
+  isInvalidBlePrintCharacteristic(serviceUuid?: string, charUuid?: string, printerName?: string): boolean {
+    if (!charUuid) return true;
+    const c = charUuid.toLowerCase();
+    const s = (serviceUuid || '').toLowerCase();
+
+    // Blacklisted characteristic prefixes/substrings (e.g. 2a00 Device Name, ff01 Notify)
+    if (BLACKLISTED_BLE_CHARS.some((bl) => c.includes(bl.toLowerCase()))) {
+      return true;
+    }
+
+    // Blacklisted service UUIDs (e.g. 1800 Generic Access, 180a Device Information)
+    if (BLACKLISTED_BLE_SERVICES.some((bl) => s.includes(bl.toLowerCase()))) {
+      return true;
+    }
+
+    // For Seznik / Veer printers, the verified ESC/POS write characteristic is ALWAYS ff02
+    const isSeznik = Boolean(printerName && /seznik|veer/i.test(printerName));
+    if (isSeznik && !c.includes('ff02')) {
+      return true;
+    }
+
+    return false;
+  },
+
+  /**
+   * Helper: Traverses GATT server services to find the genuine thermal printer write characteristic.
+   * Explicitly avoids generic SIG services (1800, 1801, 180a, 180f) and characteristic 2a00 (Device Name).
+   * Prioritizes Seznik (ff00/ff02), HM-10 (ffe0/ffe1), and standard ESC/POS UART characteristics.
+   */
+  async locateGattWriteCharacteristic(server: any, preferredPrinterName?: string): Promise<any> {
+    // 1. Direct fast-path for known vendor services (Seznik/Veer ff00/ff02, HM-10 ffe0/ffe1, standard 18f0/2af1)
+    const directQueries = [
+      { serviceUuid: '0000ff00-0000-1000-8000-00805f9b34fb', charUuid: '0000ff02-0000-1000-8000-00805f9b34fb' },
+      { serviceUuid: '0000ffe0-0000-1000-8000-00805f9b34fb', charUuid: '0000ffe1-0000-1000-8000-00805f9b34fb' },
+      { serviceUuid: '000018f0-0000-1000-8000-00805f9b34fb', charUuid: '00002af1-0000-1000-8000-00805f9b34fb' },
+      { serviceUuid: '6e400001-b5a3-f393-e0a9-e50e24dcca9e', charUuid: '6e400002-b5a3-f393-e0a9-e50e24dcca9e' },
+      { serviceUuid: '49535343-fe7d-4ae5-8fa9-9fafd205e455', charUuid: '49535343-8841-43f4-a8d4-ecbe34729bb3' },
+    ];
+
+    for (const entry of directQueries) {
+      try {
+        const s = await server.getPrimaryService(entry.serviceUuid);
+        if (s) {
+          try {
+            const c = await s.getCharacteristic(entry.charUuid);
+            if (c && (c.properties.write || c.properties.writeWithoutResponse)) {
+              console.log(
+                `[webDirectPrintService] Direct thermal characteristic match: service=${entry.serviceUuid}, char=${entry.charUuid}`
+              );
+              return c;
+            }
+          } catch {}
+
+          // If exact char lookup failed, inspect all characteristics in this known thermal service
+          try {
+            const chars = await s.getCharacteristics();
+            for (const c of chars) {
+              const cuuid = (c.uuid || '').toLowerCase();
+              if (BLACKLISTED_BLE_CHARS.some((bl) => cuuid.includes(bl.toLowerCase()))) continue;
+              if (c.properties.write || c.properties.writeWithoutResponse) {
+                console.log(
+                  `[webDirectPrintService] Known thermal service characteristic match: service=${s.uuid}, char=${c.uuid}`
+                );
+                return c;
+              }
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+
+    // 2. Discover all primary services if direct fast-path did not match
     let services: any[] = [];
     try {
       services = await server.getPrimaryServices();
@@ -1727,18 +1931,62 @@ export const webDirectPrintService = {
       throw new Error('No compatible BLE GATT primary services discovered.');
     }
 
-    for (const service of services) {
+    // 3. Filter out generic SIG services (1800 Generic Access, 1801, 180a Device Info, 180f Battery, etc.)
+    const validServices = services.filter((s: any) => {
+      const suuid = (s.uuid || '').toLowerCase();
+      return !BLACKLISTED_BLE_SERVICES.some((bl) => suuid.includes(bl.toLowerCase()));
+    });
+
+    interface ScoredCandidate {
+      char: any;
+      score: number;
+      serviceUuid: string;
+      charUuid: string;
+    }
+    const candidates: ScoredCandidate[] = [];
+
+    for (const service of validServices) {
       try {
         const chars = await service.getCharacteristics();
-        for (const char of chars) {
-          if (char.properties.write || char.properties.writeWithoutResponse) {
-            return char;
+        for (const c of chars) {
+          const cuuid = (c.uuid || '').toLowerCase();
+          // Skip blacklisted characteristics (2a00 Device Name, ff01 Notify, etc.)
+          if (BLACKLISTED_BLE_CHARS.some((bl) => cuuid.includes(bl.toLowerCase()))) {
+            continue;
           }
+          if (!c.properties.write && !c.properties.writeWithoutResponse) {
+            continue;
+          }
+
+          let score = 0;
+          if (KNOWN_THERMAL_WRITE_CHAR_UUIDS.some((known) => cuuid === known.toLowerCase())) {
+            score += 100;
+          } else if (cuuid.includes('ff02') || cuuid.includes('ffe1')) {
+            score += 80;
+          }
+          if (c.properties.writeWithoutResponse) score += 20;
+          if (c.properties.write) score += 10;
+
+          candidates.push({
+            char: c,
+            score,
+            serviceUuid: service.uuid,
+            charUuid: c.uuid,
+          });
         }
       } catch {}
     }
 
-    throw new Error('No writable GATT characteristic discovered on BLE printer.');
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => b.score - a.score);
+      const chosen = candidates[0];
+      console.log(
+        `[webDirectPrintService] Discovered thermal write characteristic: service=${chosen.serviceUuid}, char=${chosen.charUuid}, score=${chosen.score}`
+      );
+      return chosen.char;
+    }
+
+    throw new Error('No writable thermal print GATT characteristic discovered on BLE printer.');
   },
 
   /**
@@ -1765,10 +2013,19 @@ export const webDirectPrintService = {
       (targetDevId ? activeBleSessions.get(targetDevId) : null);
 
     if (session && session.device && session.gattServer?.connected && session.writeCharacteristic) {
-      activeBleSessions.set(sessionKey, session);
-      activeBleSessions.set(printer.id, session);
-      if (session.device.id) activeBleSessions.set(session.device.id, session);
-      return session;
+      if (this.isInvalidBlePrintCharacteristic(session.serviceUuid, session.characteristicUuid, printer.name)) {
+        console.warn(
+          `[BLE_AUTO_REPAIR] Invaliding cached session with bogus characteristic ${session.characteristicUuid} on "${printer.name}"`
+        );
+        session.writeCharacteristic = null;
+        session.serviceUuid = undefined;
+        session.characteristicUuid = undefined;
+      } else {
+        activeBleSessions.set(sessionKey, session);
+        activeBleSessions.set(printer.id, session);
+        if (session.device.id) activeBleSessions.set(session.device.id, session);
+        return session;
+      }
     }
 
     // 2. Find device from existing session object, cache, or getDevices()
@@ -1857,6 +2114,20 @@ export const webDirectPrintService = {
     let serviceUuid: string | undefined = session?.serviceUuid || printer.serviceUuid;
     let characteristicUuid: string | undefined = session?.characteristicUuid || printer.characteristicUuid;
 
+    // Auto-repair check: if saved UUIDs are blacklisted or invalid for this printer model, discard them
+    if (this.isInvalidBlePrintCharacteristic(serviceUuid, characteristicUuid, printer.name)) {
+      console.warn(
+        `[BLE_AUTO_REPAIR] Detected invalid BLE print characteristic (${characteristicUuid}) on "${printer.name}". Re-discovering...`
+      );
+      serviceUuid = undefined;
+      characteristicUuid = undefined;
+      if (session) {
+        session.serviceUuid = undefined;
+        session.characteristicUuid = undefined;
+        session.writeCharacteristic = null;
+      }
+    }
+
     if (serviceUuid && characteristicUuid) {
       try {
         const s = await gattServer.getPrimaryService(serviceUuid);
@@ -1869,7 +2140,7 @@ export const webDirectPrintService = {
     }
 
     if (!writeChar) {
-      writeChar = await this.locateGattWriteCharacteristic(gattServer);
+      writeChar = await this.locateGattWriteCharacteristic(gattServer, printer.name);
       serviceUuid = writeChar.service?.uuid;
       characteristicUuid = writeChar.uuid;
     }
@@ -2019,7 +2290,7 @@ export const webDirectPrintService = {
       for (let i = 0; i < data.length; i += CHUNK_SIZE) {
         const chunkIndex = Math.floor(i / CHUNK_SIZE);
         const chunkNumber = chunkIndex + 1;
-        const chunk = data.subarray(i, Math.min(i + CHUNK_SIZE, data.length));
+        const chunk = data.slice(i, Math.min(i + CHUNK_SIZE, data.length));
 
         console.log(`Chunk ${chunkNumber}/${totalChunks} -> START`);
 
@@ -2034,13 +2305,33 @@ export const webDirectPrintService = {
           successChunkCount++;
           console.log(`Chunk ${chunkNumber}/${totalChunks} -> SUCCESS`);
         } catch (chunkErr: any) {
-          failedChunk = chunkNumber;
-          console.error(
-            `Chunk ${chunkNumber}/${totalChunks} -> FAILED\n` +
-            `Error name: ${chunkErr?.name || 'Error'}\n` +
-            `Error message: ${chunkErr?.message || String(chunkErr)}`
-          );
-          throw chunkErr;
+          // If writeValueWithoutResponse failed, attempt fallback once with writeValueWithResponse/writeValue
+          let recovered = false;
+          if (writeMethod === 'writeValueWithoutResponse') {
+            try {
+              if (typeof writeChar.writeValue === 'function') {
+                await writeChar.writeValue(chunk);
+                recovered = true;
+              } else if (typeof writeChar.writeValueWithResponse === 'function') {
+                await writeChar.writeValueWithResponse(chunk);
+                recovered = true;
+              }
+            } catch {}
+          }
+
+          if (recovered) {
+            successChunkCount++;
+            writeMethod = 'writeValue';
+            console.log(`Chunk ${chunkNumber}/${totalChunks} -> RECOVERED via write fallback`);
+          } else {
+            failedChunk = chunkNumber;
+            console.error(
+              `Chunk ${chunkNumber}/${totalChunks} -> FAILED\n` +
+              `Error name: ${chunkErr?.name || 'Error'}\n` +
+              `Error message: ${chunkErr?.message || String(chunkErr)}`
+            );
+            throw chunkErr;
+          }
         }
 
         // Sequential inter-chunk delay: 50ms gives thermal printer MCU time to drain UART FIFO
@@ -2408,11 +2699,10 @@ export const webDirectPrintService = {
       disableCutCmd: printer.transport === 'bluetooth',
     });
     const restName = settings?.name || 'RESTROZ POS';
-    const logoUrl =
-      settings?.logo_url ||
-      (settings as any)?.restaurant?.logo_url;
+    const shouldPrintLogo = Boolean(settings?.print_bill_logo && settings?.bill_logo_url?.trim());
+    const logoUrl = shouldPrintLogo ? settings!.bill_logo_url!.trim() : null;
 
-    if (logoUrl) {
+    if (logoUrl && printer.transport !== 'bluetooth') {
       try {
         const logoBytes = await generateEscPosLogoRaster(
           logoUrl,
@@ -2719,22 +3009,37 @@ export const webDirectPrintService = {
     const invNum = order.invoice_number || order.order_number;
     const jobName = `Bill_${invNum}`;
 
-    // Generate Brand Logo Raster if configured
-    const logoUrl =
-      settings.logo_url ||
-      (settings as any).restaurant?.logo_url ||
-      (order as any).restaurant?.logo_url ||
-      (order as any).logo_url;
+    // Generate Bill Logo Raster ONLY if explicitly enabled in Printer Settings and bill_logo_url is present.
+    // General Settings logo_url must NOT be printed on the invoice.
+    const shouldPrintLogo = Boolean(settings.print_bill_logo && settings.bill_logo_url && settings.bill_logo_url.trim());
     let logoRasterBytes: Uint8Array | null = null;
-    if (logoUrl) {
+    if (shouldPrintLogo && settings.bill_logo_url) {
       try {
         logoRasterBytes = await generateEscPosLogoRaster(
-          logoUrl,
+          settings.bill_logo_url.trim(),
           targetPrinter.paperWidth === '58mm' ? '58mm' : '80mm'
         );
       } catch (logoErr) {
         if (typeof __DEV__ !== 'undefined' && __DEV__) {
-          console.warn('[webDirectPrintService] Logo generation failed, printing text-only receipt:', logoErr);
+          console.warn('[webDirectPrintService] Bill logo rasterization failed, printing text-only receipt:', logoErr);
+        }
+      }
+    }
+
+    // Generate Payment QR Raster ONLY if explicitly enabled in Printer Settings and bill_payment_qr_url is present.
+    // General Settings delivery_payment_qr_url must NOT be printed on the invoice.
+    const shouldPrintQr = Boolean(settings.print_bill_payment_qr && settings.bill_payment_qr_url && settings.bill_payment_qr_url.trim());
+    let paymentQrRasterBytes: Uint8Array | null = null;
+    if (shouldPrintQr && settings.bill_payment_qr_url) {
+      try {
+        paymentQrRasterBytes = await generateEscPosLogoRaster(
+          settings.bill_payment_qr_url.trim(),
+          targetPrinter.paperWidth === '58mm' ? '58mm' : '80mm',
+          { isQrCode: true }
+        );
+      } catch (qrErr) {
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.warn('[webDirectPrintService] Payment QR generation failed, printing receipt without QR:', qrErr);
         }
       }
     }
@@ -2743,6 +3048,7 @@ export const webDirectPrintService = {
       printer: { paper_width: targetPrinter.paperWidth, transport: targetPrinter.transport, name: targetPrinter.name } as any,
       isBle: targetPrinter.transport === 'bluetooth',
       logoRasterBytes,
+      paymentQrRasterBytes,
     });
 
     console.log(

@@ -60,6 +60,8 @@ export default function AdminLayout() {
     currentPath.startsWith('/bulk-import/') ||
     currentPath === '/staff' ||
     currentPath.startsWith('/staff/') ||
+    currentPath === '/printers' ||
+    currentPath.startsWith('/printers/') ||
     currentPath === '/my-plan' ||
     currentPath.startsWith('/my-plan/') ||
     currentPath === '/settings' ||
@@ -79,6 +81,7 @@ export default function AdminLayout() {
         const isCoupons = currentPath === '/coupons' || currentPath === '/(admin)/coupons' || currentPath.startsWith('/(admin)/coupons/');
         const isBulkImport = currentPath === '/bulk-import' || currentPath === '/(admin)/bulk-import' || currentPath.startsWith('/(admin)/bulk-import/');
         const isSettings = currentPath === '/settings' || currentPath === '/(admin)/settings' || currentPath.startsWith('/(admin)/settings/');
+        const isPrinters = currentPath === '/printers' || currentPath === '/(admin)/printers' || currentPath.startsWith('/(admin)/printers/');
         const isStaff = currentPath === '/staff' || currentPath === '/(admin)/staff' || currentPath.startsWith('/(admin)/staff/');
         const isMyPlan = currentPath === '/my-plan' || currentPath === '/(admin)/my-plan' || currentPath.startsWith('/(admin)/my-plan/');
         const isOrders = currentPath === '/orders' || currentPath === '/(admin)/orders' || currentPath.startsWith('/(admin)/orders/');
@@ -92,7 +95,7 @@ export default function AdminLayout() {
           router.replace('/(admin)/pos');
         } else if (isStaff && !hasPermission('can_manage_staff')) {
           router.replace('/(admin)/pos');
-        } else if ((isSettings || isMyPlan) && !hasPermission('can_view_settings')) {
+        } else if ((isSettings || isMyPlan || isPrinters) && !hasPermission('can_view_settings')) {
           router.replace('/(admin)/pos');
         } else if (isOrders && !hasPermission('can_view_orders')) {
           router.replace('/(admin)/pos');
@@ -124,6 +127,7 @@ export default function AdminLayout() {
     { label: '📂 Categories', route: '/(admin)/categories', match: ['/categories', '/(admin)/categories'], perm: 'can_manage_categories' },
     { label: '🎟️ Coupons', route: '/(admin)/coupons', match: ['/coupons', '/(admin)/coupons'], perm: 'can_manage_coupons' },
     { label: '👥 Staff & Roles', route: '/(admin)/staff', match: ['/staff', '/(admin)/staff'], perm: 'can_manage_staff' },
+    { label: '🖨️ Printers', route: '/(admin)/printers', match: ['/printers', '/(admin)/printers'], perm: 'can_view_settings' },
     { label: '💎 My Plan', route: '/(admin)/my-plan', match: ['/my-plan', '/(admin)/my-plan'], perm: 'can_view_settings' },
     { label: '⚙️ Settings', route: '/(admin)/settings', match: ['/settings', '/(admin)/settings'], perm: 'can_view_settings' },
   ];

@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { supabase } from '../supabase';
 import { RestaurantPrinter, PrinterRole } from '../../types';
 import { calibrationService } from './calibration';
@@ -5,7 +6,9 @@ import { devicePrinterBindingService } from './devicePrinterBindings';
 
 export const printerRepository = {
   /**
-   * Fetches all configured printers for a restaurant, merging device-local direct printers with Supabase.
+   * Fetches all configured printers for a restaurant.
+   * On native Android / DIRECT_DEVICE mode, returns device-local direct printers exclusively.
+   * On Web / Central Print Station mode, merges device-local with Supabase.
    */
   async getRestaurantPrinters(restaurantId: string): Promise<RestaurantPrinter[]> {
     const localPrinters = await devicePrinterBindingService.getDevicePrinters();
@@ -17,6 +20,12 @@ export const printerRepository = {
         p.connection_type === 'bluetooth' ||
         p.connection_type === 'usb'
     );
+
+    const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
+    if (isDirect) {
+      // In native Android DIRECT_DEVICE mode, return AsyncStorage printers directly
+      return localFiltered;
+    }
 
     let cloudPrinters: RestaurantPrinter[] = [];
     if (restaurantId) {
@@ -53,6 +62,11 @@ export const printerRepository = {
     const localMatch = localPrinters.find((p) => p.id === id);
     if (localMatch) return localMatch;
 
+    const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
+    if (isDirect) {
+      return null;
+    }
+
     try {
       const { data, error } = await supabase
         .from('restaurant_printers')
@@ -70,12 +84,15 @@ export const printerRepository = {
 
   /**
    * Creates a new printer definition with strict validation and primary exclusivity handling.
+   * On native Android / DIRECT_DEVICE mode, saves to AsyncStorage only (zero Supabase calls).
    */
   async createPrinter(
     printer: Omit<RestaurantPrinter, 'id' | 'created_at' | 'updated_at'>
   ): Promise<RestaurantPrinter> {
+    const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
+
     // 1. Basic Field Validation
-    if (!printer.restaurant_id) throw new Error('Restaurant ID is required.');
+    if (!printer.restaurant_id && !isDirect) throw new Error('Restaurant ID is required.');
     if (!printer.name || !printer.name.trim()) throw new Error('Printer name is required.');
     if (!['bluetooth', 'usb', 'lan', 'wifi'].includes(printer.connection_type)) {
       throw new Error('Invalid connection type.');
@@ -108,7 +125,7 @@ export const printerRepository = {
 
     // 4. Handle Primary Printer Exclusivity
     if (printer.is_primary) {
-      await this.unsetExistingPrimary(printer.restaurant_id, printer.printer_role);
+      await this.unsetExistingPrimary(printer.restaurant_id || '', printer.printer_role);
     }
 
     const payload = {
@@ -136,6 +153,11 @@ export const printerRepository = {
     };
     await devicePrinterBindingService.saveDevicePrinter(localPrinterRecord);
 
+    if (isDirect) {
+      // In DIRECT_DEVICE mode, return the local record immediately without calling Supabase
+      return localPrinterRecord;
+    }
+
     try {
       const { data, error } = await supabase
         .from('restaurant_printers')
@@ -159,6 +181,7 @@ export const printerRepository = {
 
   /**
    * Updates an existing printer with validation and circular fallback prevention.
+   * On native Android / DIRECT_DEVICE mode, updates AsyncStorage only (zero Supabase calls).
    */
   async updatePrinter(
     id: string,
@@ -179,7 +202,7 @@ export const printerRepository = {
         if (!fallbackTarget) {
           throw new Error('Fallback printer does not exist.');
         }
-        if (fallbackTarget.restaurant_id !== existing.restaurant_id) {
+        if (fallbackTarget.restaurant_id && existing.restaurant_id && fallbackTarget.restaurant_id !== existing.restaurant_id) {
           throw new Error('Fallback printer must belong to the same restaurant.');
         }
         if (fallbackTarget.fallback_printer_id === id) {
@@ -197,7 +220,7 @@ export const printerRepository = {
 
     // 3. Primary Exclusivity
     if (updates.is_primary && !existing.is_primary) {
-      await this.unsetExistingPrimary(existing.restaurant_id, updates.printer_role || existing.printer_role, id);
+      await this.unsetExistingPrimary(existing.restaurant_id || '', updates.printer_role || existing.printer_role, id);
     }
 
     const payload = {
@@ -207,6 +230,12 @@ export const printerRepository = {
 
     const updatedMerged = { ...existing, ...payload };
     await devicePrinterBindingService.saveDevicePrinter(updatedMerged);
+
+    const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
+    if (isDirect) {
+      // In DIRECT_DEVICE mode, return updated record immediately without calling Supabase
+      return updatedMerged;
+    }
 
     try {
       const { data, error } = await supabase
@@ -232,10 +261,17 @@ export const printerRepository = {
 
   /**
    * Deletes a printer.
+   * On native Android / DIRECT_DEVICE mode, deletes from AsyncStorage only (zero Supabase calls).
    */
   async deletePrinter(id: string): Promise<void> {
     if (!id) return;
     await devicePrinterBindingService.removeDevicePrinter(id);
+
+    const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
+    if (isDirect) {
+      return;
+    }
+
     try {
       const { error } = await supabase
         .from('restaurant_printers')
@@ -252,12 +288,31 @@ export const printerRepository = {
 
   /**
    * Unsets previous primary printer for the given role to maintain single primary integrity.
+   * In DIRECT_DEVICE mode, updates device-local printers in AsyncStorage only (zero Supabase calls).
    */
   async unsetExistingPrimary(
     restaurantId: string,
     role: PrinterRole,
     excludeId?: string
   ): Promise<void> {
+    // 1. Unset existing primary in device-local storage
+    const localPrinters = await devicePrinterBindingService.getDevicePrinters();
+    for (const p of localPrinters) {
+      if (p.id !== excludeId && p.is_primary) {
+        const matchesRole = role === 'both' || p.printer_role === 'both' || p.printer_role === role;
+        if (matchesRole) {
+          p.is_primary = false;
+          p.updated_at = new Date().toISOString();
+          await devicePrinterBindingService.saveDevicePrinter(p);
+        }
+      }
+    }
+
+    const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
+    if (isDirect) {
+      return;
+    }
+
     try {
       let query = supabase
         .from('restaurant_printers')

@@ -6,10 +6,9 @@ import { useNotification } from '../../src/context/NotificationContext';
 import { authService } from '../../src/services/api/authService';
 import { storageService } from '../../src/services/api/storageService';
 import { supabase } from '../../src/services/supabase';
+import { useRouter } from 'expo-router';
 import { UserRole, PaperSize, Category } from '../../src/types';
 import { OptimizedImage } from '../../src/components/common/OptimizedImage';
-import { PrinterManagementSection } from '../../src/components/PrinterManagementSection';
-import { SeznikPrinterManagementSection } from '../../src/components/SeznikPrinterManagementSection';
 import {
   directPrintService,
   getLocalKotPrinter,
@@ -37,6 +36,7 @@ import {
 } from '../../src/utils/restaurantUrl';
 
 export default function SettingsScreen() {
+  const router = useRouter();
   const { width: windowWidth } = useWindowDimensions();
   const isDesktop = windowWidth >= 1150;
   const { settings, updateSettings, isOnlineOrdersEnabled, toggleOnlineOrders, loading: settingsLoading } = useSettings();
@@ -1772,128 +1772,20 @@ export default function SettingsScreen() {
                 </TouchableOpacity>
               </View>
 
-              {/* 4. Printer Settings */}
+              {/* 4. Printer Settings Link Card */}
               <View style={styles.card}>
-                <View style={{ marginBottom: 12 }}>
-                  <Text style={styles.cardHeader}>🖨️ Printer Settings</Text>
+                <View style={{ marginBottom: 10 }}>
+                  <Text style={styles.cardHeader}>🖨️ Thermal Printers & Hardware Management</Text>
                   <Text style={styles.cardSubHeader}>
-                    Configure default receipt dimensions and auto-printing.
+                    Printer setup, ESC/POS hardware bindings, KOT/Bill routing, paper width, and Master Auto Print have moved to the dedicated Printers tab.
                   </Text>
                 </View>
-
-                <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
-                  {/* KOT Paper Size */}
-                  <View style={styles.formCol}>
-                    <Text style={styles.label}>KOT Paper Size</Text>
-                    <View style={styles.segmentedRow}>
-                      {(['58mm', '80mm', 'A4'] as PaperSize[]).map((size) => (
-                        <TouchableOpacity
-                          key={`kot-${size}`}
-                          testID={`kot-paper-${size}`}
-                          style={[
-                            styles.segmentBtn,
-                            kotPaperSize === size && styles.segmentBtnActive,
-                          ]}
-                          onPress={() => setKotPaperSize(size)}
-                        >
-                          <Text
-                            style={[
-                              styles.segmentBtnText,
-                              kotPaperSize === size && styles.segmentBtnTextActive,
-                            ]}
-                          >
-                            {size}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  </View>
-
-                  {/* Bill Paper Size */}
-                  <View style={styles.formCol}>
-                    <Text style={styles.label}>Bill Paper Size</Text>
-                    <View style={styles.segmentedRow}>
-                      {(['58mm', '80mm', 'A4'] as PaperSize[]).map((size) => (
-                        <TouchableOpacity
-                          key={`bill-${size}`}
-                          testID={`bill-paper-${size}`}
-                          style={[
-                            styles.segmentBtn,
-                            billPaperSize === size && styles.segmentBtnActive,
-                          ]}
-                          onPress={() => setBillPaperSize(size)}
-                        >
-                          <Text
-                            style={[
-                              styles.segmentBtnText,
-                              billPaperSize === size && styles.segmentBtnTextActive,
-                            ]}
-                          >
-                            {size}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  </View>
-                </View>
-
-                {/* Auto Print Toggle */}
-                <View style={[styles.toggleCard, { marginTop: 4 }]}>
-                  <View style={styles.toggleHeaderRow}>
-                    <Text style={styles.toggleTitle}>Auto Print</Text>
-                    <TouchableOpacity
-                      testID="toggle-auto-print-kot"
-                      style={[
-                        styles.toggleBadge,
-                        autoPrintKot ? styles.toggleBadgeOn : styles.toggleBadgeOff,
-                      ]}
-                      onPress={() => handleToggleAutoPrint(!autoPrintKot)}
-                    >
-                      <Text style={[styles.toggleBadgeText, !autoPrintKot && styles.toggleBadgeTextOff]}>
-                        {autoPrintKot ? '● ON' : '○ OFF'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={styles.toggleDesc}>
-                    {autoPrintKot
-                      ? 'Thermal prints (KOT & Bills) are sent directly and immediately to the configured thermal printer (Bluetooth / USB / Serial / Print Agent).'
-                      : 'Thermal prints open the browser print preview for manual confirmation & printing.'}
-                  </Text>
-                </View>
-
                 <TouchableOpacity
-                  testID="save-printer-settings-btn"
-                  style={[styles.saveBtn, (isSavingPrinter || !canManage) && { opacity: 0.6 }]}
-                  onPress={handleSavePrinterSettings}
-                  disabled={isSavingPrinter || !canManage}
+                  style={[styles.saveBtn, { backgroundColor: '#2563eb', marginTop: 6 }]}
+                  onPress={() => router.push('/(admin)/printers')}
                 >
-                  {isSavingPrinter ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <ActivityIndicator color="#ffffff" size="small" />
-                      <Text style={styles.saveBtnText}>Saving...</Text>
-                    </View>
-                  ) : (
-                    <Text style={styles.saveBtnText}>Save Printer Settings</Text>
-                  )}
+                  <Text style={styles.saveBtnText}>Open Dedicated Printers Tab →</Text>
                 </TouchableOpacity>
-
-                {/* Seznik Direct Bluetooth & USB Printer Management (Web Bluetooth & WebUSB - Web Only) */}
-                {Platform.OS === 'web' && effectiveRestaurantId ? (
-                  <SeznikPrinterManagementSection
-                    restaurantId={effectiveRestaurantId}
-                    canManage={canManage}
-                    settings={settings}
-                    showToast={showToast}
-                  />
-                ) : null}
-
-                {/* 4.1 Advanced Multi-Printer Management & Calibration */}
-                <PrinterManagementSection
-                  restaurantId={effectiveRestaurantId || ''}
-                  categories={categories}
-                  canManage={canManage}
-                  showToast={showToast}
-                />
               </View>
             </View>
 

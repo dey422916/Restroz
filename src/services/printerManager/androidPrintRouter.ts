@@ -366,7 +366,7 @@ export const androidPrintRouter = {
     );
 
     if (activeKotPrinters.length === 0) {
-      const err = 'No direct thermal printer is configured on this device. Go to Settings → Multi-Printer Management → Add Printer.';
+      const err = 'No direct thermal printer is configured on this device. Go to Printers → Add Printer.';
       return {
         success: false,
         allSucceeded: false,
@@ -617,7 +617,7 @@ export const androidPrintRouter = {
     );
 
     if (activeBillPrinters.length === 0) {
-      const err = 'No direct thermal printer is configured on this device. Go to Settings → Multi-Printer Management → Add Printer.';
+      const err = 'No direct thermal printer is configured on this device. Go to Printers → Add Printer.';
       return {
         success: false,
         allSucceeded: false,

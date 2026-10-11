@@ -163,7 +163,7 @@ export const androidPrintRouter = {
       );
     } else if (printer.connection_type === 'bluetooth') {
       const binding = await devicePrinterBindingService.getDeviceBinding(printer.id);
-      const address = binding?.bluetooth_mac_address;
+      const address = binding?.bluetooth_mac_address || (printer as any).bluetooth_mac_address;
       if (!address) {
         transportRes = {
           success: false,
@@ -177,7 +177,7 @@ export const androidPrintRouter = {
         transportRes = await bluetoothTransport.sendPayload(
           {
             address,
-            name: binding.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+            name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
           },
           bytes,
           printer.id
@@ -185,8 +185,8 @@ export const androidPrintRouter = {
       }
     } else if (printer.connection_type === 'usb') {
       const binding = await devicePrinterBindingService.getDeviceBinding(printer.id);
-      const vendorId = binding?.usb_vendor_id;
-      const productId = binding?.usb_product_id;
+      const vendorId = binding?.usb_vendor_id ?? (printer as any).usb_vendor_id;
+      const productId = binding?.usb_product_id ?? (printer as any).usb_product_id;
       if (vendorId === undefined || vendorId === null || productId === undefined || productId === null) {
         transportRes = {
           success: false,
@@ -201,7 +201,7 @@ export const androidPrintRouter = {
           {
             vendorId,
             productId,
-            serialNumber: binding?.usb_serial_number || undefined,
+            serialNumber: binding?.usb_serial_number || (printer as any).usb_serial_number || undefined,
           },
           bytes,
           printer.id
@@ -311,12 +311,13 @@ export const androidPrintRouter = {
     kot?: KOT,
     options: {
       isReprint?: boolean;
+      isManual?: boolean;
       retryPrinterIds?: string[];
       customPrinters?: RestaurantPrinter[];
     } = {}
   ): Promise<MultiDestinationPrintResult> {
     // 1. MASTER AUTO PRINT GATE (Absolute First Step)
-    if (!isAutoPrintEnabled(settings) && !options.isReprint) {
+    if (!isAutoPrintEnabled(settings) && !options.isReprint && !options.isManual) {
       return {
         success: false,
         allSucceeded: false,
@@ -564,11 +565,12 @@ export const androidPrintRouter = {
     billedBy?: string,
     options: {
       isReprint?: boolean;
+      isManual?: boolean;
       customPrinters?: RestaurantPrinter[];
     } = {}
   ): Promise<MultiDestinationPrintResult> {
     // 1. MASTER AUTO PRINT GATE
-    if (!isAutoPrintEnabled(settings) && !options.isReprint) {
+    if (!isAutoPrintEnabled(settings) && !options.isReprint && !options.isManual) {
       return {
         success: false,
         allSucceeded: false,

@@ -33,6 +33,7 @@ import {
   PrinterSystemCheckReport,
 } from '../services/printerManager/diagnostics';
 import { isAutoPrintEnabled } from '../services/directPrintService';
+import { devicePrinterBindingService, DevicePrintMode } from '../services/printerManager/devicePrinterBindings';
 
 interface Props {
   restaurantId: string;
@@ -64,10 +65,12 @@ export const PrinterManagementSection: React.FC<Props> = ({
   const [editingPrinter, setEditingPrinter] = useState<RestaurantPrinter | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Device-local defaults
+  // Device-local defaults & print mode
   const [deviceKotPrinterId, setDeviceKotPrinterId] = useState<string>('');
   const [deviceBillPrinterId, setDeviceBillPrinterId] = useState<string>('');
   const [isSavingDeviceDefaults, setIsSavingDeviceDefaults] = useState(false);
+  const [devicePrintMode, setDevicePrintMode] = useState<DevicePrintMode>('DIRECT_DEVICE');
+  const [isModalTesting, setIsModalTesting] = useState(false);
 
   // Form State
   const [name, setName] = useState('');
@@ -147,6 +150,10 @@ export const PrinterManagementSection: React.FC<Props> = ({
       const defaults = await printerManager.getDeviceDefaults();
       if (defaults.default_kot_printer_id) setDeviceKotPrinterId(defaults.default_kot_printer_id);
       if (defaults.default_bill_printer_id) setDeviceBillPrinterId(defaults.default_bill_printer_id);
+
+      // Load device print routing mode
+      const mode = await devicePrinterBindingService.getDevicePrintMode();
+      setDevicePrintMode(mode);
     } catch (err: any) {
       console.warn('[PrinterManagementSection] Load error:', err);
       showToast('error', 'Error', err.message || 'Could not load printers');
@@ -375,6 +382,27 @@ export const PrinterManagementSection: React.FC<Props> = ({
         }
       }
 
+      // Persist DIRECT_DEVICE routing mode for this physical Android device
+      await devicePrinterBindingService.setDevicePrintMode('DIRECT_DEVICE');
+      setDevicePrintMode('DIRECT_DEVICE');
+
+      // Ensure local defaults bind to this printer if none was set
+      const currentDefaults = await printerManager.getDeviceDefaults();
+      let newKotDef = currentDefaults.default_kot_printer_id || deviceKotPrinterId;
+      let newBillDef = currentDefaults.default_bill_printer_id || deviceBillPrinterId;
+      if (!newKotDef && (printerRole === 'kot' || printerRole === 'both') && savedPrinterId) {
+        newKotDef = savedPrinterId;
+        setDeviceKotPrinterId(savedPrinterId);
+      }
+      if (!newBillDef && (printerRole === 'bill' || printerRole === 'both') && savedPrinterId) {
+        newBillDef = savedPrinterId;
+        setDeviceBillPrinterId(savedPrinterId);
+      }
+      await printerManager.saveDeviceDefaults({
+        default_kot_printer_id: newKotDef,
+        default_bill_printer_id: newBillDef,
+      });
+
       setModalVisible(false);
       await loadPrinters();
     } catch (err: any) {
@@ -484,6 +512,54 @@ export const PrinterManagementSection: React.FC<Props> = ({
       showToast('error', 'Print Error', err?.message || 'Could not send test print.');
     } finally {
       setTestingPrinterId(null);
+    }
+  };
+
+  const handleModalTestPrint = async () => {
+    setIsModalTesting(true);
+    try {
+      const candidate: RestaurantPrinter = {
+        id: editingPrinter?.id || 'modal_test_candidate',
+        restaurant_id: restaurantId,
+        name: name.trim() || 'Thermal Printer',
+        connection_type: connectionType,
+        paper_width: paperWidth,
+        printer_role: printerRole,
+        is_active: true,
+        is_primary: isPrimary,
+        bluetooth_device_name: bluetoothDeviceName.trim() || null,
+        ip_address: ['lan', 'wifi'].includes(connectionType) ? ipAddress.trim() : null,
+        port: ['lan', 'wifi'].includes(connectionType) ? Number(port) || 9100 : null,
+        alignment,
+        horizontal_shift_mm: horizontalShiftMm,
+        margin_left_mm: marginLeftMm,
+        margin_right_mm: marginRightMm,
+        margin_top_mm: marginTopMm,
+        margin_bottom_mm: marginBottomMm,
+      } as RestaurantPrinter;
+
+      if (connectionType === 'bluetooth') {
+        (candidate as any).bluetooth_mac_address = selectedBluetoothMac;
+      } else if (connectionType === 'usb') {
+        const vIdStr = usbVendorId.trim();
+        const pIdStr = usbProductId.trim();
+        const vId = vIdStr.startsWith('0x') || vIdStr.startsWith('0X') ? parseInt(vIdStr, 16) : parseInt(vIdStr, 10);
+        const pId = pIdStr.startsWith('0x') || pIdStr.startsWith('0X') ? parseInt(pIdStr, 16) : parseInt(pIdStr, 10);
+        if (!isNaN(vId)) (candidate as any).usb_vendor_id = vId;
+        if (!isNaN(pId)) (candidate as any).usb_product_id = pId;
+        (candidate as any).usb_serial_number = usbSerialNumber.trim() || undefined;
+      }
+
+      const res = await printerManager.printTestReceipt(candidate);
+      if (res.success) {
+        showToast('success', 'Test Print Successful', `Direct ESC/POS test receipt printed (${res.bytesSent} bytes).`);
+      } else {
+        showToast('error', 'Test Print Failed', res.message || 'Direct print failed. Check printer connection.');
+      }
+    } catch (err: any) {
+      showToast('error', 'Test Print Error', err?.message || 'Direct print failed. Check printer connection.');
+    } finally {
+      setIsModalTesting(false);
     }
   };
 
@@ -1009,6 +1085,57 @@ export const PrinterManagementSection: React.FC<Props> = ({
                   </Text>
                 </TouchableOpacity>
               </View>
+            </View>
+          </View>
+
+          <View style={{ marginTop: 12, marginBottom: 8, padding: 12, backgroundColor: '#f1f5f9', borderRadius: 8 }}>
+            <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b', marginBottom: 4 }}>
+              📡 Print Routing Mode for This Device:
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  padding: 8,
+                  borderRadius: 6,
+                  borderWidth: 1,
+                  backgroundColor: devicePrintMode === 'DIRECT_DEVICE' ? '#dbeafe' : '#ffffff',
+                  borderColor: devicePrintMode === 'DIRECT_DEVICE' ? '#2563eb' : '#cbd5e1',
+                  alignItems: 'center',
+                }}
+                onPress={async () => {
+                  await devicePrinterBindingService.setDevicePrintMode('DIRECT_DEVICE');
+                  setDevicePrintMode('DIRECT_DEVICE');
+                  showToast('info', 'Mode Updated', 'Switched to Android Direct Device mode (Bluetooth / USB).');
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: devicePrintMode === 'DIRECT_DEVICE' ? '#1d4ed8' : '#475569' }}>
+                  Mode A: Direct Device
+                </Text>
+                <Text style={{ fontSize: 10, color: '#64748b' }}>Bluetooth / USB ESC/POS</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  padding: 8,
+                  borderRadius: 6,
+                  borderWidth: 1,
+                  backgroundColor: devicePrintMode === 'CENTRAL_PRINT_STATION' ? '#dbeafe' : '#ffffff',
+                  borderColor: devicePrintMode === 'CENTRAL_PRINT_STATION' ? '#2563eb' : '#cbd5e1',
+                  alignItems: 'center',
+                }}
+                onPress={async () => {
+                  await devicePrinterBindingService.setDevicePrintMode('CENTRAL_PRINT_STATION');
+                  setDevicePrintMode('CENTRAL_PRINT_STATION');
+                  showToast('info', 'Mode Updated', 'Switched to Central Print Station mode (Windows Agent).');
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: devicePrintMode === 'CENTRAL_PRINT_STATION' ? '#1d4ed8' : '#475569' }}>
+                  Mode B: Central Print
+                </Text>
+                <Text style={{ fontSize: 10, color: '#64748b' }}>Windows RestroZ Agent</Text>
+              </TouchableOpacity>
             </View>
           </View>
 
@@ -1763,6 +1890,19 @@ export const PrinterManagementSection: React.FC<Props> = ({
               >
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.calTestBtn, { paddingHorizontal: 12, paddingVertical: 10 }]}
+                onPress={handleModalTestPrint}
+                disabled={isModalTesting}
+              >
+                {isModalTesting ? (
+                  <ActivityIndicator size="small" color="#2563eb" />
+                ) : (
+                  <Text style={styles.calTestBtnText}>🖨️ Test Print</Text>
+                )}
+              </TouchableOpacity>
+
               <TouchableOpacity
                 style={styles.saveModalBtn}
                 onPress={handleSavePrinter}
@@ -1772,7 +1912,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
                   <Text style={styles.saveModalBtnText}>
-                    {editingPrinter ? 'Save Changes' : 'Create Printer'}
+                    {editingPrinter ? 'Save' : 'Save'}
                   </Text>
                 )}
               </TouchableOpacity>

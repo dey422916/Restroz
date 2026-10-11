@@ -7,6 +7,7 @@ import { formatOrderDateTime } from '../utils/dateUtils';
 import { directPrintService, resolveKotPrinterName, resolveBillPrinterName, isAutoPrintEnabled, DirectPrintError } from './directPrintService';
 import { webDirectPrintService } from './webDirectPrintService';
 import { androidPrintRouter } from './printerManager/androidPrintRouter';
+import { devicePrinterBindingService } from './printerManager/devicePrinterBindings';
 import { supabase } from './supabase';
 import { resolveReceiptIdentity } from '../utils/receiptIdentity';
 
@@ -26,6 +27,18 @@ export async function handleThermalPrintFallback(
       Alert.alert('Print In Progress', 'A print job is already in progress. Please wait.');
     }
     return false;
+  }
+
+  if (Platform.OS !== 'web') {
+    const isDirectDevice = error?.isDirectDevice || (await devicePrinterBindingService.isDirectDeviceMode());
+    if (isDirectDevice) {
+      Alert.alert(
+        'Direct Print Failed',
+        'Direct print failed. Check printer connection.',
+        [{ text: 'OK', style: 'default' }]
+      );
+      return false;
+    }
   }
 
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -202,6 +215,13 @@ async function executeIsolatedPrint(html: string): Promise<void> {
         });
       } else {
         // Native (Android / iOS) printing using expo-print
+        // In DIRECT_DEVICE mode, never show system print dialog / expo-print
+        const isDirect = await devicePrinterBindingService.isDirectDeviceMode();
+        if (isDirect) {
+          console.warn('[printService] executeIsolatedPrint blocked in DIRECT_DEVICE mode to prevent Android system print dialog.');
+          return;
+        }
+
         try {
           const Print = await import('expo-print');
           await Print.printAsync({ html });
@@ -529,7 +549,7 @@ export const printService = {
     settings: RestaurantSettings,
     kot?: KOT,
     isReprint: boolean = false,
-    options?: { forceBrowser?: boolean }
+    options?: { forceBrowser?: boolean; isManual?: boolean }
   ): Promise<{ direct: boolean; printerName?: string }> {
     const html = this.generateKotHtml(order, settings, kot, isReprint);
     const paperSize = settings.kot_paper_size || '80mm';
@@ -544,8 +564,47 @@ export const printService = {
 
     const autoPrintEnabled = isAutoPrintEnabled(settings);
     const restId = order.restaurant_id || settings.restaurant_id || (settings as any).id;
+    const isDirectDevice = Platform.OS !== 'web' && (await devicePrinterBindingService.isDirectDeviceMode());
 
-    // 1. Central Print Agent / Direct Thermal Printer (Active on ALL platforms including Android Waiter & Desktop)
+    // MODE A — ANDROID DIRECT_DEVICE (Bluetooth / USB direct ESC/POS)
+    if (isDirectDevice && !options?.forceBrowser) {
+      if (!autoPrintEnabled && !isReprint && !options?.isManual) {
+        return { direct: false };
+      }
+
+      try {
+        const routerResult = await androidPrintRouter.printKot(order, settings, kot, {
+          isReprint,
+          isManual: !autoPrintEnabled || options?.isManual,
+        });
+
+        if (routerResult.success || routerResult.allSucceeded) {
+          const printerNames = routerResult.destinations.map((d) => d.printerName).join(', ');
+          if (__DEV__) {
+            console.log('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinters: ' + printerNames);
+          }
+          return { direct: true, printerName: printerNames };
+        } else {
+          if (__DEV__) {
+            console.warn('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
+          }
+          const firstErr = routerResult.destinations.find((d) => d.status !== 'success' && d.status !== 'skipped_dedup');
+          const errObj: any = new Error(firstErr?.message || routerResult.summary || 'Direct print failed. Check printer connection.');
+          errObj.isDirectDevice = true;
+          errObj.status = firstErr?.status || 'failed_before_write';
+          errObj.destinationResults = routerResult.destinations;
+          throw errObj;
+        }
+      } catch (nativeErr: any) {
+        if (__DEV__) {
+          console.warn('[THERMAL PRINT] Android direct router error:', nativeErr?.message || nativeErr);
+        }
+        nativeErr.isDirectDevice = true;
+        throw nativeErr;
+      }
+    }
+
+    // MODE B — CENTRAL_PRINT_STATION (Central Print Agent / Windows / Web)
     if (!options?.forceBrowser) {
       try {
         const directResult = await webDirectPrintService.printKot(order, settings, kot, { isReprint });
@@ -580,41 +639,7 @@ export const printService = {
       }
     }
 
-    // 2. Android Direct Hardware Printer (Fallback for native platforms if no Central Print Agent is configured)
-    if (Platform.OS !== 'web' && autoPrintEnabled && !options?.forceBrowser) {
-      try {
-        const routerResult = await androidPrintRouter.printKot(order, settings, kot, {
-          isReprint,
-        });
-
-        if (routerResult.success || routerResult.allSucceeded) {
-          const printerNames = routerResult.destinations.map((d) => d.printerName).join(', ');
-          if (__DEV__) {
-            console.log('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinters: ' + printerNames);
-          }
-          return { direct: true, printerName: printerNames };
-        } else {
-          if (__DEV__) {
-            console.warn('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
-          }
-          const firstErr = routerResult.destinations.find((d) => d.status !== 'success' && d.status !== 'skipped_dedup');
-          const errObj: any = new Error(routerResult.summary || 'Android direct KOT print failed');
-          errObj.status = firstErr?.status || 'failed_before_write';
-          errObj.destinationResults = routerResult.destinations;
-          throw errObj;
-        }
-      } catch (nativeErr: any) {
-        if (__DEV__) {
-          console.warn('[THERMAL PRINT] Android direct router fallback note:', nativeErr?.message || nativeErr);
-        }
-        if (autoPrintEnabled) {
-          return { direct: false };
-        }
-        throw nativeErr;
-      }
-    }
-
-    // 3. Fallback: Browser / Native Isolated Print Dialog
+    // Fallback: Browser / Isolated Print Dialog (Web only or non-direct fallback)
     if (__DEV__) {
       console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: ' + autoPrintEnabled + '\nRoute: BROWSER_MANUAL');
     }
@@ -630,7 +655,7 @@ export const printService = {
     order: Order,
     settings: RestaurantSettings,
     billedBy?: string,
-    options?: { forceBrowser?: boolean }
+    options?: { forceBrowser?: boolean; isReprint?: boolean; isManual?: boolean }
   ): Promise<{ direct: boolean; printerName?: string }> {
     return this.printFinalReceiptThermal(order, settings, billedBy, options);
   },
@@ -1084,7 +1109,7 @@ export const printService = {
     order: Order,
     settings: RestaurantSettings,
     billedBy?: string,
-    options?: { forceBrowser?: boolean }
+    options?: { forceBrowser?: boolean; isReprint?: boolean; isManual?: boolean }
   ): Promise<{ direct: boolean; printerName?: string }> {
     const identity = resolveReceiptIdentity(settings, undefined, billedBy);
     const resolvedBilledBy = identity.billedBy;
@@ -1101,8 +1126,48 @@ export const printService = {
 
     const autoPrintEnabled = isAutoPrintEnabled(settings);
     const restId = order.restaurant_id || settings.restaurant_id || (settings as any).id;
+    const isDirectDevice = Platform.OS !== 'web' && (await devicePrinterBindingService.isDirectDeviceMode());
 
-    // 1. Central Print Agent / Direct Thermal Printer (Active on ALL platforms including Android Waiter & Desktop)
+    // MODE A — ANDROID DIRECT_DEVICE (Bluetooth / USB direct ESC/POS)
+    if (isDirectDevice && !options?.forceBrowser) {
+      const isReprintAction = !!options?.isReprint;
+      if (!autoPrintEnabled && !isReprintAction && !options?.isManual) {
+        return { direct: false };
+      }
+
+      try {
+        const routerResult = await androidPrintRouter.printBill(order, settings, resolvedBilledBy, {
+          isReprint: isReprintAction,
+          isManual: !autoPrintEnabled || options?.isManual,
+        });
+
+        if (routerResult.success || routerResult.allSucceeded) {
+          const printerNames = routerResult.destinations.map((d) => d.printerName).join(', ');
+          if (__DEV__) {
+            console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinter: ' + printerNames);
+          }
+          return { direct: true, printerName: printerNames };
+        } else {
+          if (__DEV__) {
+            console.warn('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
+          }
+          const firstErr = routerResult.destinations.find((d) => d.status !== 'success' && d.status !== 'skipped_dedup');
+          const errObj: any = new Error(firstErr?.message || routerResult.summary || 'Direct print failed. Check printer connection.');
+          errObj.isDirectDevice = true;
+          errObj.status = firstErr?.status || 'failed_before_write';
+          errObj.destinationResults = routerResult.destinations;
+          throw errObj;
+        }
+      } catch (nativeErr: any) {
+        if (__DEV__) {
+          console.warn('[THERMAL PRINT] Android direct router error:', nativeErr?.message || nativeErr);
+        }
+        nativeErr.isDirectDevice = true;
+        throw nativeErr;
+      }
+    }
+
+    // MODE B — CENTRAL_PRINT_STATION (Central Print Agent / Windows / Web)
     if (!options?.forceBrowser) {
       try {
         const directResult = await webDirectPrintService.printBill(order, settings, resolvedBilledBy);
@@ -1137,41 +1202,7 @@ export const printService = {
       }
     }
 
-    // 2. Android Direct Hardware Printer (Fallback for native platforms if no Central Print Agent is configured)
-    if (Platform.OS !== 'web' && autoPrintEnabled && !options?.forceBrowser) {
-      try {
-        const routerResult = await androidPrintRouter.printBill(order, settings, billedBy, {
-          isReprint: options?.forceBrowser ? false : false,
-        });
-
-        if (routerResult.success || routerResult.allSucceeded) {
-          const printerNames = routerResult.destinations.map((d) => d.printerName).join(', ');
-          if (__DEV__) {
-            console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinter: ' + printerNames);
-          }
-          return { direct: true, printerName: printerNames };
-        } else {
-          if (__DEV__) {
-            console.warn('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
-          }
-          const firstErr = routerResult.destinations.find((d) => d.status !== 'success' && d.status !== 'skipped_dedup');
-          const errObj: any = new Error(routerResult.summary || 'Android direct Bill print failed');
-          errObj.status = firstErr?.status || 'failed_before_write';
-          errObj.destinationResults = routerResult.destinations;
-          throw errObj;
-        }
-      } catch (nativeErr: any) {
-        if (__DEV__) {
-          console.warn('[THERMAL PRINT] Android direct router fallback note:', nativeErr?.message || nativeErr);
-        }
-        if (autoPrintEnabled) {
-          return { direct: false };
-        }
-        throw nativeErr;
-      }
-    }
-
-    // 3. Fallback: Browser / Native Isolated Print Dialog
+    // Fallback: Browser / Isolated Print Dialog (Web only or non-direct fallback)
     if (__DEV__) {
       console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nAuto Print: ' + autoPrintEnabled + '\nRoute: BROWSER_MANUAL');
     }
@@ -1226,7 +1257,7 @@ export const printService = {
       settings,
       kotData,
       true,
-      { forceBrowser }
+      { forceBrowser, isManual: true }
     );
   },
 
@@ -1249,7 +1280,11 @@ export const printService = {
       throw new Error(`Could not load Order: ${orderErr?.message || 'Not found'}`);
     }
 
-    await this.printFinalReceiptThermal(orderData, settings, billedBy, { forceBrowser });
+    await this.printFinalReceiptThermal(orderData, settings, billedBy, {
+      forceBrowser,
+      isReprint: true,
+      isManual: true,
+    });
   },
 
   /**

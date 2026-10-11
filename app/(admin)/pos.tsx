@@ -556,7 +556,7 @@ export default function PosScreen() {
     }
     try {
       const billedBy = getCurrentLoggedInUserDisplayName(user);
-      const res = await printService.printBillThermal(createdOrder, settings, billedBy);
+      const res = await printService.printBillThermal(createdOrder, settings, billedBy, { isManual: true });
       if (res && res.direct) {
         showToast('success', 'Print Bill', `Bill printed for #${createdOrder.order_number}`);
       }
@@ -2239,7 +2239,7 @@ export default function PosScreen() {
                           if (currentOrder) {
                             try {
                               const billedBy = getCurrentLoggedInUserDisplayName(user);
-                              const res = await printService.printBillThermal(currentOrder, settings, billedBy);
+                              const res = await printService.printBillThermal(currentOrder, settings, billedBy, { isManual: true });
                               if (res && res.direct) {
                                 showToast('success', 'Thermal Bill', 'Bill printed.');
                               }

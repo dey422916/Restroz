@@ -1,51 +1,66 @@
 import { supabase } from '../supabase';
 import { RestaurantPrinter, PrinterRole } from '../../types';
 import { calibrationService } from './calibration';
+import { devicePrinterBindingService } from './devicePrinterBindings';
 
 export const printerRepository = {
   /**
-   * Fetches all configured printers for a restaurant from Supabase.
+   * Fetches all configured printers for a restaurant, merging device-local direct printers with Supabase.
    */
   async getRestaurantPrinters(restaurantId: string): Promise<RestaurantPrinter[]> {
-    if (!restaurantId) return [];
+    const localPrinters = await devicePrinterBindingService.getDevicePrinters();
+    const localFiltered = localPrinters.filter(
+      (p) => !restaurantId || !p.restaurant_id || p.restaurant_id === restaurantId
+    );
 
-    const { data, error } = await supabase
-      .from('restaurant_printers')
-      .select('*')
-      .eq('restaurant_id', restaurantId)
-      .order('created_at', { ascending: true });
+    let cloudPrinters: RestaurantPrinter[] = [];
+    if (restaurantId) {
+      try {
+        const { data, error } = await supabase
+          .from('restaurant_printers')
+          .select('*')
+          .eq('restaurant_id', restaurantId)
+          .order('created_at', { ascending: true });
 
-    if (error) {
-      if (error.code === 'PGRST205' || error.message?.includes('restaurant_printers') || error.message?.includes('does not exist')) {
-        // Table intentionally absent in Central Print Agent environment
-        return [];
+        if (!error && data) {
+          cloudPrinters = data as RestaurantPrinter[];
+        }
+      } catch (err: any) {
+        console.warn('[printerRepository] Cloud fetch ignored, using local:', err?.message || err);
       }
-      console.warn('[printerRepository] Error fetching printers:', error);
-      throw new Error(`Failed to load printers: ${error.message}`);
     }
 
-    return (data || []) as RestaurantPrinter[];
+    // Merge: local direct printers take priority for this physical device
+    const printerMap = new Map<string, RestaurantPrinter>();
+    cloudPrinters.forEach((p) => printerMap.set(p.id, p));
+    localFiltered.forEach((p) => printerMap.set(p.id, p));
+
+    return Array.from(printerMap.values());
   },
 
   /**
-   * Fetches a single printer by ID.
+   * Fetches a single printer by ID from local storage or Supabase.
    */
   async getPrinterById(id: string): Promise<RestaurantPrinter | null> {
     if (!id) return null;
 
-    const { data, error } = await supabase
-      .from('restaurant_printers')
-      .select('*')
-      .eq('id', id)
-      .single();
+    const localPrinters = await devicePrinterBindingService.getDevicePrinters();
+    const localMatch = localPrinters.find((p) => p.id === id);
+    if (localMatch) return localMatch;
 
-    if (error) {
-      if (error.code === 'PGRST116') return null; // Not found
-      console.warn('[printerRepository] Error fetching printer by id:', error);
-      throw new Error(`Failed to load printer: ${error.message}`);
-    }
+    try {
+      const { data, error } = await supabase
+        .from('restaurant_printers')
+        .select('*')
+        .eq('id', id)
+        .single();
 
-    return data as RestaurantPrinter;
+      if (!error && data) {
+        return data as RestaurantPrinter;
+      }
+    } catch (_) {}
+
+    return null;
   },
 
   /**
@@ -109,18 +124,32 @@ export const printerRepository = {
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await supabase
-      .from('restaurant_printers')
-      .insert(payload)
-      .select()
-      .single();
+    const localId = `local_prn_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const localPrinterRecord: RestaurantPrinter = {
+      id: localId,
+      ...payload,
+    };
+    await devicePrinterBindingService.saveDevicePrinter(localPrinterRecord);
 
-    if (error) {
-      console.warn('[printerRepository] Error inserting printer:', error);
-      throw new Error(`Failed to create printer: ${error.message}`);
+    try {
+      const { data, error } = await supabase
+        .from('restaurant_printers')
+        .insert(payload)
+        .select()
+        .single();
+
+      if (!error && data) {
+        await devicePrinterBindingService.saveDevicePrinter(data as RestaurantPrinter);
+        return data as RestaurantPrinter;
+      }
+      if (error) {
+        console.warn('[printerRepository] Cloud insert error, retained locally:', error.message);
+      }
+    } catch (insertErr: any) {
+      console.warn('[printerRepository] Cloud insert exception, retained locally:', insertErr?.message || insertErr);
     }
 
-    return data as RestaurantPrinter;
+    return localPrinterRecord;
   },
 
   /**
@@ -171,19 +200,29 @@ export const printerRepository = {
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await supabase
-      .from('restaurant_printers')
-      .update(payload)
-      .eq('id', id)
-      .select()
-      .single();
+    const updatedMerged = { ...existing, ...payload };
+    await devicePrinterBindingService.saveDevicePrinter(updatedMerged);
 
-    if (error) {
-      console.warn('[printerRepository] Error updating printer:', error);
-      throw new Error(`Failed to update printer: ${error.message}`);
+    try {
+      const { data, error } = await supabase
+        .from('restaurant_printers')
+        .update(payload)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (!error && data) {
+        await devicePrinterBindingService.saveDevicePrinter(data as RestaurantPrinter);
+        return data as RestaurantPrinter;
+      }
+      if (error) {
+        console.warn('[printerRepository] Cloud update error, updated locally:', error.message);
+      }
+    } catch (updateErr: any) {
+      console.warn('[printerRepository] Cloud update exception, updated locally:', updateErr?.message || updateErr);
     }
 
-    return data as RestaurantPrinter;
+    return updatedMerged;
   },
 
   /**
@@ -191,14 +230,18 @@ export const printerRepository = {
    */
   async deletePrinter(id: string): Promise<void> {
     if (!id) return;
-    const { error } = await supabase
-      .from('restaurant_printers')
-      .delete()
-      .eq('id', id);
+    await devicePrinterBindingService.removeDevicePrinter(id);
+    try {
+      const { error } = await supabase
+        .from('restaurant_printers')
+        .delete()
+        .eq('id', id);
 
-    if (error) {
-      console.warn('[printerRepository] Error deleting printer:', error);
-      throw new Error(`Failed to delete printer: ${error.message}`);
+      if (error) {
+        console.warn('[printerRepository] Error deleting printer from cloud:', error);
+      }
+    } catch (e) {
+      console.warn('[printerRepository] Cloud delete exception:', e);
     }
   },
 

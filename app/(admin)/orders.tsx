@@ -2037,7 +2037,7 @@ export default function OrdersScreen() {
                           onPress={async () => {
                             try {
                               const billedBy = getCurrentLoggedInUserDisplayName(user);
-                              const res = await printService.printFinalReceiptThermal(order, settings, billedBy);
+                              const res = await printService.printFinalReceiptThermal(order, settings, billedBy, { isManual: true });
                               if (res && res.direct) {
                                 showAlert('🖨️ Bill Printed', `Thermal bill printed for Order #${order.order_number}.`);
                               }
@@ -3596,7 +3596,7 @@ export default function OrdersScreen() {
                       onPress={async () => {
                         try {
                           const billedBy = getCurrentLoggedInUserDisplayName(user);
-                          const res = await printService.printFinalReceiptThermal(viewOrderModal, settings, billedBy);
+                          const res = await printService.printFinalReceiptThermal(viewOrderModal, settings, billedBy, { isManual: true });
                           if (res && res.direct) {
                             showAlert('🖨️ Bill Printed', `Thermal bill printed for Order #${viewOrderModal.order_number}.`);
                           }

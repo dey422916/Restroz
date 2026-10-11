@@ -1826,7 +1826,10 @@ export default function PosScreen() {
                           <View style={styles.cardStepper}>
                             <TouchableOpacity
                               style={styles.cardStepBtnMinus}
-                              onPress={() => handleQuantityChange(item.id, inCart.quantity - 1)}
+                              onPress={(e) => {
+                                e?.stopPropagation?.();
+                                handleQuantityChange(inCart.id || item.id, inCart.quantity - 1);
+                              }}
                               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                               activeOpacity={0.7}
                             >
@@ -1837,7 +1840,10 @@ export default function PosScreen() {
 
                             <TouchableOpacity
                               style={styles.cardStepBtnPlus}
-                              onPress={() => handleQuantityChange(item.id, inCart.quantity + 1)}
+                              onPress={(e) => {
+                                e?.stopPropagation?.();
+                                handleQuantityChange(inCart.id || item.id, inCart.quantity + 1);
+                              }}
                               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                               activeOpacity={0.7}
                             >
@@ -1847,7 +1853,10 @@ export default function PosScreen() {
                         ) : (
                           <TouchableOpacity
                             style={styles.quickAddBtn}
-                            onPress={() => handleProductCardPress(item)}
+                            onPress={(e) => {
+                              e?.stopPropagation?.();
+                              handleProductCardPress(item);
+                            }}
                             activeOpacity={0.8}
                           >
                             <Text style={styles.quickAddBtnText}>+ ADD</Text>

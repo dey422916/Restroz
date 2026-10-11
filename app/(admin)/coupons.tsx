@@ -422,43 +422,57 @@ export default function CouponsScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header & Tabs */}
+      {/* Header */}
       <View style={[styles.header, isMobile && styles.headerMobile]}>
         <View style={styles.headerTitleWrap}>
           <Text style={styles.title}>Coupons & Loyalty Rewards</Text>
           <Text style={styles.subTitle}>Manage promo deals, discount coupons & customer wallet cashbacks</Text>
         </View>
-
-        {activeTab === 'coupons' && (
-          <TouchableOpacity
-            style={[styles.createBtn, isMobile && styles.createBtnMobile]}
-            onPress={openCreateModal}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.createBtnText}>+ Create Coupon</Text>
-          </TouchableOpacity>
-        )}
       </View>
 
       {/* Segmented Tab Navigation */}
-      <View style={styles.tabNavRow}>
+      <View style={[styles.tabNavRow, isMobile && styles.tabNavRowMobile]}>
         <TouchableOpacity
-          style={[styles.tabNavItem, activeTab === 'coupons' && styles.tabNavItemActive]}
+          style={[
+            styles.tabNavItem,
+            isMobile && styles.tabNavItemMobile,
+            activeTab === 'coupons' && styles.tabNavItemActive,
+          ]}
           onPress={() => setActiveTab('coupons')}
           activeOpacity={0.8}
         >
-          <Text style={[styles.tabNavText, activeTab === 'coupons' && styles.tabNavTextActive]}>
+          <Text
+            style={[
+              styles.tabNavText,
+              isMobile && styles.tabNavTextMobile,
+              activeTab === 'coupons' && styles.tabNavTextActive,
+            ]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
             🎟️ Coupons ({coupons.length})
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.tabNavItem, activeTab === 'rewards' && styles.tabNavItemActive]}
+          style={[
+            styles.tabNavItem,
+            isMobile && styles.tabNavItemMobile,
+            activeTab === 'rewards' && styles.tabNavItemActive,
+          ]}
           onPress={() => setActiveTab('rewards')}
           activeOpacity={0.8}
         >
-          <Text style={[styles.tabNavText, activeTab === 'rewards' && styles.tabNavTextActive]}>
-            🎁 Loyalty Rewards & Wallet {rewardsEnabled ? '• ON' : ''}
+          <Text
+            style={[
+              styles.tabNavText,
+              isMobile && styles.tabNavTextMobile,
+              activeTab === 'rewards' && styles.tabNavTextActive,
+            ]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            🎁 Loyalty Rewards & Wallet
           </Text>
         </TouchableOpacity>
       </View>
@@ -466,6 +480,15 @@ export default function CouponsScreen() {
       {/* TAB CONTENT: COUPONS */}
       {activeTab === 'coupons' && (
         <>
+          <View style={[styles.createBtnRow, isMobile && styles.createBtnRowMobile]}>
+            <TouchableOpacity
+              style={[styles.createBtn, isMobile && styles.createBtnMobile]}
+              onPress={openCreateModal}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.createBtnText}>+ Create Coupon</Text>
+            </TouchableOpacity>
+          </View>
           {loading ? (
             <View style={styles.center}>
               <ActivityIndicator size="large" color="#2563EB" />
@@ -1347,9 +1370,22 @@ const styles = StyleSheet.create({
   },
   createBtnMobile: { width: '100%', alignItems: 'center' },
   createBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 13 },
+  createBtnRow: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 4,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  createBtnRowMobile: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 4,
+    width: '100%',
+    alignItems: 'center',
+  },
   tabNavRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 20,
@@ -1357,6 +1393,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
     gap: 10,
+  },
+  tabNavRowMobile: {
+    paddingHorizontal: 12,
+    gap: 8,
   },
   tabNavItem: {
     height: 42,
@@ -1368,6 +1408,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  tabNavItemMobile: {
+    flex: 1,
+    paddingHorizontal: 6,
   },
   tabNavItemActive: {
     backgroundColor: '#2563EB',
@@ -1382,6 +1426,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#334155',
+    textAlign: 'center',
+  },
+  tabNavTextMobile: {
+    fontSize: 12,
   },
   tabNavTextActive: {
     color: '#FFFFFF',

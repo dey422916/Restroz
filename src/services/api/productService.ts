@@ -214,14 +214,22 @@ export const productService = {
     clearProductsCache(restaurantId);
     if (isSupabaseConfigured) {
       try {
-        const { error } = await supabase.from('products').delete().eq('id', id);
+        let deleteQuery = supabase.from('products').delete().eq('id', id);
+        if (restaurantId) {
+          deleteQuery = deleteQuery.eq('restaurant_id', restaurantId);
+        }
+        const { error } = await deleteQuery;
         if (!error) {
           mockStorage.deleteProduct(id);
           await this.getProducts(restaurantId, true);
           return { deleted: true, deactivated: false };
         }
         // If error (e.g. referenced in order_items before FK update), fallback to deactivation
-        const { error: updateErr } = await supabase.from('products').update({ is_active: false, is_available: false }).eq('id', id);
+        let updateQuery = supabase.from('products').update({ is_active: false, is_available: false }).eq('id', id);
+        if (restaurantId) {
+          updateQuery = updateQuery.eq('restaurant_id', restaurantId);
+        }
+        const { error: updateErr } = await updateQuery;
         if (updateErr) {
           console.error('Supabase deactivate fallback error:', updateErr);
           throw updateErr;
@@ -237,6 +245,67 @@ export const productService = {
     mockStorage.deleteProduct(id);
     await this.getProducts(restaurantId, true);
     return { deleted: true, deactivated: false };
+  },
+
+  async deleteProducts(
+    ids: string[],
+    restaurantId?: string
+  ): Promise<{ deletedCount: number; deactivatedCount: number; failedIds: string[] }> {
+    clearProductsCache(restaurantId);
+    let deletedCount = 0;
+    let deactivatedCount = 0;
+    const failedIds: string[] = [];
+
+    if (!ids || ids.length === 0) {
+      return { deletedCount: 0, deactivatedCount: 0, failedIds: [] };
+    }
+
+    if (isSupabaseConfigured) {
+      for (const id of ids) {
+        try {
+          let deleteQuery = supabase.from('products').delete().eq('id', id);
+          if (restaurantId) {
+            deleteQuery = deleteQuery.eq('restaurant_id', restaurantId);
+          }
+          const { error } = await deleteQuery;
+          if (!error) {
+            mockStorage.deleteProduct(id);
+            deletedCount++;
+            continue;
+          }
+
+          // Fallback to safe deactivation if referenced in order_items or foreign keys
+          let updateQuery = supabase.from('products').update({ is_active: false, is_available: false }).eq('id', id);
+          if (restaurantId) {
+            updateQuery = updateQuery.eq('restaurant_id', restaurantId);
+          }
+          const { error: updateErr } = await updateQuery;
+          if (updateErr) {
+            console.error(`Supabase deactivate fallback error for product ${id}:`, updateErr);
+            failedIds.push(id);
+          } else {
+            mockStorage.updateProduct(id, { is_active: false, is_available: false } as any);
+            deactivatedCount++;
+          }
+        } catch (e: any) {
+          console.error(`Supabase delete error for product ${id}:`, e);
+          failedIds.push(id);
+        }
+      }
+      await this.getProducts(restaurantId, true);
+      return { deletedCount, deactivatedCount, failedIds };
+    }
+
+    for (const id of ids) {
+      try {
+        mockStorage.deleteProduct(id);
+        deletedCount++;
+      } catch (e) {
+        failedIds.push(id);
+      }
+    }
+    await this.getProducts(restaurantId, true);
+    return { deletedCount, deactivatedCount, failedIds };
   },
 
   async toggleAvailability(id: string, restaurantId?: string): Promise<Product> {

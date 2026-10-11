@@ -27,6 +27,8 @@ import {
   tcpTransport,
   bluetoothTransport,
   usbTransport,
+  bleGattTransport,
+  BluetoothDeviceInfo,
   TestConnectionResult,
   PrintTransportResult,
 } from './transports';
@@ -48,6 +50,43 @@ export const printerManager = {
   isBluetoothEnabled: () => bluetoothTransport.isEnabled(),
   getBluetoothPairedDevices: () => bluetoothTransport.getPairedDevices(),
   startBluetoothDiscovery: () => bluetoothTransport.startDiscovery(),
+  scanBleDevices: (timeoutMs?: number) => bleGattTransport.scanForDevices(timeoutMs),
+  getUnifiedBluetoothDevices: async (): Promise<BluetoothDeviceInfo[]> => {
+    try {
+      await bluetoothTransport.requestPermissions();
+    } catch (_) {}
+    if (bleGattTransport.isAvailable()) {
+      try {
+        await bleGattTransport.requestPermissions();
+      } catch (_) {}
+    }
+
+    const paired = await bluetoothTransport.getPairedDevices().catch(() => []);
+    let ble: BluetoothDeviceInfo[] = [];
+    if (bleGattTransport.isAvailable()) {
+      ble = await bleGattTransport.scanForDevices(3500).catch(() => []);
+    }
+
+    const map = new Map<string, BluetoothDeviceInfo>();
+    for (const d of paired) {
+      const isSez = /seznik|925/i.test(d.name);
+      map.set(d.address || d.id, {
+        ...d,
+        transportType: isSez ? 'ble_gatt' : 'spp',
+      });
+    }
+    for (const d of ble) {
+      const key = d.address || d.id;
+      if (!map.has(key)) {
+        map.set(key, { ...d, transportType: 'ble_gatt' });
+      } else {
+        if (/seznik|925/i.test(d.name)) {
+          map.set(key, { ...map.get(key)!, transportType: 'ble_gatt' });
+        }
+      }
+    }
+    return Array.from(map.values());
+  },
 
   // USB Discovery and Status APIs
   isUsbHostSupported: () => usbTransport.isUsbHostSupported(),
@@ -60,7 +99,7 @@ export const printerManager = {
   async testPrinterConnection(printer: RestaurantPrinter): Promise<TestConnectionResult> {
     if (printer.connection_type === 'bluetooth') {
       const binding = await devicePrinterBindingService.getDeviceBinding(printer.id);
-      const address = binding?.bluetooth_mac_address;
+      const address = binding?.bluetooth_mac_address || (printer as any).bluetooth_mac_address;
       if (!address) {
         return {
           reachable: false,
@@ -70,9 +109,22 @@ export const printerManager = {
         };
       }
 
+      const isSeznik =
+        /seznik|925/i.test(printer.name) ||
+        /seznik|925/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '') ||
+        (binding as any)?.bluetooth_transport_type === 'ble_gatt';
+
+      if (isSeznik && bleGattTransport.isAvailable()) {
+        return bleGattTransport.testConnection({
+          address,
+          name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+          transportType: 'ble_gatt',
+        });
+      }
+
       return bluetoothTransport.testConnection({
         address,
-        name: binding.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+        name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
       });
     }
 
@@ -122,7 +174,7 @@ export const printerManager = {
 
     if (printer.connection_type === 'bluetooth') {
       const binding = await devicePrinterBindingService.getDeviceBinding(printer.id);
-      const address = binding?.bluetooth_mac_address;
+      const address = binding?.bluetooth_mac_address || (printer as any).bluetooth_mac_address;
       if (!address) {
         return {
           success: false,
@@ -134,8 +186,25 @@ export const printerManager = {
         };
       }
 
+      const isSeznik =
+        /seznik|925/i.test(printer.name) ||
+        /seznik|925/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '') ||
+        (binding as any)?.bluetooth_transport_type === 'ble_gatt';
+
+      if (isSeznik && bleGattTransport.isAvailable()) {
+        return bleGattTransport.sendPayload(
+          {
+            address,
+            name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+            transportType: 'ble_gatt',
+          },
+          doc.bytes,
+          printer.id
+        );
+      }
+
       return bluetoothTransport.sendPayload(
-        { address, name: binding.bluetooth_device_name || undefined },
+        { address, name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined },
         doc.bytes,
         printer.id
       );
@@ -211,8 +280,25 @@ export const printerManager = {
         };
       }
 
+      const isSeznik =
+        /seznik|925/i.test(printer.name) ||
+        /seznik|925/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '') ||
+        (binding as any)?.bluetooth_transport_type === 'ble_gatt';
+
+      if (isSeznik && bleGattTransport.isAvailable()) {
+        return bleGattTransport.sendPayload(
+          {
+            address,
+            name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+            transportType: 'ble_gatt',
+          },
+          doc.bytes,
+          printer.id
+        );
+      }
+
       return bluetoothTransport.sendPayload(
-        { address, name: binding.bluetooth_device_name || undefined },
+        { address, name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined },
         doc.bytes,
         printer.id
       );

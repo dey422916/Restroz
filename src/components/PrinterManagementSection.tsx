@@ -91,6 +91,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
     import('../services/printerManager/transports/types').BluetoothDeviceInfo[]
   >([]);
   const [isScanningBt, setIsScanningBt] = useState(false);
+  const [btTransportType, setBtTransportType] = useState<'spp' | 'ble_gatt'>('spp');
 
   // USB fields
   const [usbVendorId, setUsbVendorId] = useState('');
@@ -130,10 +131,9 @@ export const PrinterManagementSection: React.FC<Props> = ({
   const autoPrintActive = isAutoPrintEnabled(settings);
 
   const loadPrinters = useCallback(async () => {
-    if (!restaurantId) return;
     setIsLoading(true);
     try {
-      const data = await printerManager.getRestaurantPrinters(restaurantId);
+      const data = await printerManager.getRestaurantPrinters(restaurantId || '');
       setPrinters(data);
 
       // Load device bindings for all printers
@@ -165,12 +165,12 @@ export const PrinterManagementSection: React.FC<Props> = ({
   const handleScanBluetoothDevices = async () => {
     setIsScanningBt(true);
     try {
-      const paired = await printerManager.getBluetoothPairedDevices();
-      setDiscoveredBluetoothDevices(paired);
-      if (paired.length === 0) {
-        showToast('info', 'No Paired Devices', 'Pair your thermal printer in Android Bluetooth Settings first.');
+      const devices = await printerManager.getUnifiedBluetoothDevices();
+      setDiscoveredBluetoothDevices(devices);
+      if (devices.length === 0) {
+        showToast('info', 'No Bluetooth Devices', 'Make sure Bluetooth is ON and thermal printer is turned on.');
       } else {
-        showToast('success', 'Bluetooth Devices Found', `Found ${paired.length} paired Bluetooth printer(s).`);
+        showToast('success', 'Bluetooth Devices Found', `Found ${devices.length} Bluetooth printer(s).`);
       }
     } catch (err: any) {
       showToast('error', 'Scan Error', err?.message || 'Could not scan Bluetooth devices.');
@@ -203,15 +203,17 @@ export const PrinterManagementSection: React.FC<Props> = ({
   const openAddModal = () => {
     setEditingPrinter(null);
     setName('');
-    setConnectionType('wifi');
-    setPaperWidth('80mm');
-    setPrinterRole('kot');
-    setIsPrimary(false);
+    const defaultConn = Platform.OS !== 'web' ? 'bluetooth' : 'wifi';
+    setConnectionType(defaultConn);
+    setPaperWidth(Platform.OS !== 'web' ? '58mm' : '80mm');
+    setPrinterRole(Platform.OS !== 'web' ? 'both' : 'kot');
+    setIsPrimary(true);
     setFallbackPrinterId('');
     setIpAddress('');
     setPort('9100');
     setBluetoothDeviceName('');
     setSelectedBluetoothMac('');
+    setBtTransportType('ble_gatt');
     setDiscoveredBluetoothDevices([]);
     setUsbVendorId('');
     setUsbProductId('');
@@ -222,6 +224,12 @@ export const PrinterManagementSection: React.FC<Props> = ({
     setSelectedSections([]);
     resetCalibrationForm();
     setModalVisible(true);
+
+    if (Platform.OS !== 'web') {
+      setTimeout(() => {
+        handleScanBluetoothDevices();
+      }, 150);
+    }
   };
 
   const openEditModal = (printer: RestaurantPrinter) => {
@@ -239,6 +247,14 @@ export const PrinterManagementSection: React.FC<Props> = ({
     setDiscoveredBluetoothDevices([]);
 
     const b = deviceBindings[printer.id];
+    const isSez =
+      /seznik|925/i.test(printer.name) ||
+      /seznik|925/i.test(printer.bluetooth_device_name || '') ||
+      (b as any)?.bluetooth_transport_type === 'ble_gatt';
+    setBtTransportType(
+      (b?.bluetooth_transport_type as any) || (isSez ? 'ble_gatt' : 'spp')
+    );
+
     if (b && b.usb_vendor_id !== undefined && b.usb_vendor_id !== null) {
       setUsbVendorId(`0x${b.usb_vendor_id.toString(16).toUpperCase()}`);
     } else {
@@ -335,7 +351,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
         showToast('success', 'Printer Updated', `${name} updated successfully.`);
       } else {
         const created = await printerManager.createPrinter({
-          restaurant_id: restaurantId,
+          restaurant_id: restaurantId || '',
           name: name.trim(),
           connection_type: connectionType,
           paper_width: paperWidth,
@@ -356,11 +372,17 @@ export const PrinterManagementSection: React.FC<Props> = ({
 
       // Save device-local Bluetooth binding if configured
       if (savedPrinterId && connectionType === 'bluetooth' && selectedBluetoothMac) {
+        const isSeznik =
+          /seznik|925/i.test(name) ||
+          /seznik|925/i.test(bluetoothDeviceName) ||
+          btTransportType === 'ble_gatt';
+
         await printerManager.saveDeviceBinding({
           restaurant_printer_id: savedPrinterId,
           connection_type: 'bluetooth',
           bluetooth_mac_address: selectedBluetoothMac,
           bluetooth_device_name: bluetoothDeviceName || undefined,
+          bluetooth_transport_type: isSeznik ? 'ble_gatt' : 'spp',
         });
       }
 
@@ -386,17 +408,21 @@ export const PrinterManagementSection: React.FC<Props> = ({
       await devicePrinterBindingService.setDevicePrintMode('DIRECT_DEVICE');
       setDevicePrintMode('DIRECT_DEVICE');
 
-      // Ensure local defaults bind to this printer if none was set
+      // Ensure local defaults bind to this printer
       const currentDefaults = await printerManager.getDeviceDefaults();
       let newKotDef = currentDefaults.default_kot_printer_id || deviceKotPrinterId;
       let newBillDef = currentDefaults.default_bill_printer_id || deviceBillPrinterId;
-      if (!newKotDef && (printerRole === 'kot' || printerRole === 'both') && savedPrinterId) {
-        newKotDef = savedPrinterId;
-        setDeviceKotPrinterId(savedPrinterId);
+      if (!newKotDef || isPrimary || (printerRole === 'kot' || printerRole === 'both')) {
+        if ((printerRole === 'kot' || printerRole === 'both') && savedPrinterId) {
+          newKotDef = savedPrinterId;
+          setDeviceKotPrinterId(savedPrinterId);
+        }
       }
-      if (!newBillDef && (printerRole === 'bill' || printerRole === 'both') && savedPrinterId) {
-        newBillDef = savedPrinterId;
-        setDeviceBillPrinterId(savedPrinterId);
+      if (!newBillDef || isPrimary || (printerRole === 'bill' || printerRole === 'both')) {
+        if ((printerRole === 'bill' || printerRole === 'both') && savedPrinterId) {
+          newBillDef = savedPrinterId;
+          setDeviceBillPrinterId(savedPrinterId);
+        }
       }
       await printerManager.saveDeviceDefaults({
         default_kot_printer_id: newKotDef,
@@ -540,6 +566,11 @@ export const PrinterManagementSection: React.FC<Props> = ({
 
       if (connectionType === 'bluetooth') {
         (candidate as any).bluetooth_mac_address = selectedBluetoothMac;
+        const isSeznik =
+          /seznik|925/i.test(candidate.name) ||
+          /seznik|925/i.test(bluetoothDeviceName) ||
+          btTransportType === 'ble_gatt';
+        (candidate as any).bluetooth_transport_type = isSeznik ? 'ble_gatt' : 'spp';
       } else if (connectionType === 'usb') {
         const vIdStr = usbVendorId.trim();
         const pIdStr = usbProductId.trim();
@@ -942,6 +973,9 @@ export const PrinterManagementSection: React.FC<Props> = ({
                     {deviceBindings[p.id]?.bluetooth_mac_address
                       ? `(${deviceBindings[p.id]?.bluetooth_mac_address})`
                       : '(⚠️ Not bound on this tablet)'}
+                    {deviceBindings[p.id]?.bluetooth_transport_type === 'ble_gatt' || /seznik|925/i.test(p.name)
+                      ? ' • BLE GATT'
+                      : ' • SPP'}
                   </Text>
                 )}
                 {p.connection_type === 'usb' && (
@@ -1581,9 +1615,9 @@ export const PrinterManagementSection: React.FC<Props> = ({
               {/* Bluetooth Specific Fields */}
               {connectionType === 'bluetooth' && (
                 <View style={styles.infoNoticeBox}>
-                  <Text style={styles.infoNoticeTitle}>🔵 Bluetooth Classic Printer (SPP / RFCOMM)</Text>
+                  <Text style={styles.infoNoticeTitle}>🔵 Native Android Bluetooth Thermal Printer</Text>
                   <Text style={styles.infoNoticeText}>
-                    Pair your Bluetooth thermal printer in Android Settings, then scan below to bind it to this device.
+                    Supports BLE GATT (e.g. Seznik-Veer 925C) and Classic RFCOMM SPP. Tap scan below to detect nearby or paired thermal printers.
                   </Text>
 
                   <TouchableOpacity
@@ -1594,51 +1628,111 @@ export const PrinterManagementSection: React.FC<Props> = ({
                     {isScanningBt ? (
                       <ActivityIndicator size="small" color="#fff" />
                     ) : (
-                      <Text style={styles.addBtnText}>🔍 Scan Paired Bluetooth Devices</Text>
+                      <Text style={styles.addBtnText}>🔍 Scan Bluetooth Printers</Text>
                     )}
                   </TouchableOpacity>
 
                   {selectedBluetoothMac ? (
                     <View style={{ marginTop: 8, padding: 8, backgroundColor: '#ecfdf5', borderRadius: 6, borderWidth: 1, borderColor: '#a7f3d0' }}>
                       <Text style={{ fontSize: 12, fontWeight: '700', color: '#065f46' }}>
-                        ✓ Bound Device: {bluetoothDeviceName || 'Thermal Printer'}
+                        ✓ Bound Device: {bluetoothDeviceName || name || 'Thermal Printer'}
                       </Text>
                       <Text style={{ fontSize: 11, color: '#047857' }}>MAC Address: {selectedBluetoothMac}</Text>
+                      <Text style={{ fontSize: 11, color: '#047857' }}>
+                        Protocol: {btTransportType === 'ble_gatt' ? 'BLE GATT (Seznik FF00/FF02)' : 'Classic SPP (RFCOMM)'}
+                      </Text>
                     </View>
                   ) : null}
 
                   {discoveredBluetoothDevices.length > 0 && (
                     <View style={{ marginTop: 10, gap: 6 }}>
-                      <Text style={[styles.fieldLabel, { marginBottom: 2 }]}>Available Paired Devices:</Text>
-                      {discoveredBluetoothDevices.map((d) => (
-                        <TouchableOpacity
-                          key={d.address}
-                          style={{
-                            padding: 8,
-                            backgroundColor: selectedBluetoothMac === d.address ? '#dbeafe' : '#f8fafc',
-                            borderRadius: 6,
-                            borderWidth: 1,
-                            borderColor: selectedBluetoothMac === d.address ? '#2563eb' : '#cbd5e1',
-                          }}
-                          onPress={() => {
-                            setSelectedBluetoothMac(d.address);
-                            if (d.name && !name) setName(d.name);
-                            if (d.name) setBluetoothDeviceName(d.name);
-                          }}
-                        >
-                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>
-                            {d.name} {selectedBluetoothMac === d.address ? '✓' : ''}
-                          </Text>
-                          <Text style={{ fontSize: 11, color: '#64748b' }}>MAC: {d.address}</Text>
-                        </TouchableOpacity>
-                      ))}
+                      <Text style={[styles.fieldLabel, { marginBottom: 2 }]}>Detected Printers (Tap to Select):</Text>
+                      {discoveredBluetoothDevices.map((d) => {
+                        const isSelected = selectedBluetoothMac === d.address;
+                        const isSez = /seznik|925/i.test(d.name) || d.transportType === 'ble_gatt';
+                        return (
+                          <TouchableOpacity
+                            key={d.address || d.id}
+                            style={{
+                              padding: 10,
+                              backgroundColor: isSelected ? '#dbeafe' : '#f8fafc',
+                              borderRadius: 6,
+                              borderWidth: 1,
+                              borderColor: isSelected ? '#2563eb' : '#cbd5e1',
+                              flexDirection: 'row',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                            }}
+                            onPress={() => {
+                              setSelectedBluetoothMac(d.address);
+                              const devName = d.name || 'Thermal Printer';
+                              if (!name || name === 'Thermal Printer') setName(devName);
+                              setBluetoothDeviceName(devName);
+                              const selectedIsSez = /seznik|925/i.test(devName) || d.transportType === 'ble_gatt';
+                              setBtTransportType(selectedIsSez ? 'ble_gatt' : 'spp');
+                              if (selectedIsSez) {
+                                setPaperWidth('58mm');
+                                setPrinterRole('both');
+                                setIsPrimary(true);
+                              }
+                            }}
+                          >
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>
+                                {d.name} {isSelected ? '✓' : ''}
+                              </Text>
+                              <Text style={{ fontSize: 11, color: '#64748b' }}>MAC: {d.address}</Text>
+                            </View>
+                            <View
+                              style={{
+                                paddingHorizontal: 6,
+                                paddingVertical: 2,
+                                borderRadius: 4,
+                                backgroundColor: isSez ? '#fef3c7' : '#e0e7ff',
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: '800',
+                                  color: isSez ? '#b45309' : '#3730a3',
+                                }}
+                              >
+                                {isSez ? 'BLE GATT' : 'SPP'}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </View>
                   )}
+
+                  <View style={{ marginTop: 10 }}>
+                    <Text style={styles.fieldLabel}>Bluetooth Protocol / Transport</Text>
+                    <View style={styles.segmentedRow}>
+                      <TouchableOpacity
+                        style={[styles.segmentBtn, btTransportType === 'ble_gatt' && styles.segmentBtnActive]}
+                        onPress={() => setBtTransportType('ble_gatt')}
+                      >
+                        <Text style={[styles.segmentBtnText, btTransportType === 'ble_gatt' && styles.segmentBtnTextActive]}>
+                          BLE GATT (Seznik FF00/FF02)
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.segmentBtn, btTransportType === 'spp' && styles.segmentBtnActive]}
+                        onPress={() => setBtTransportType('spp')}
+                      >
+                        <Text style={[styles.segmentBtnText, btTransportType === 'spp' && styles.segmentBtnTextActive]}>
+                          Classic SPP (RFCOMM)
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
 
                   <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Device Name (Optional)</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="e.g. POS-80, MPT-II"
+                    placeholder="e.g. Seznik-Veer_925C, POS-80"
                     placeholderTextColor="#94a3b8"
                     value={bluetoothDeviceName}
                     onChangeText={setBluetoothDeviceName}

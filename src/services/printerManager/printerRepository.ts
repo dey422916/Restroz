@@ -10,7 +10,12 @@ export const printerRepository = {
   async getRestaurantPrinters(restaurantId: string): Promise<RestaurantPrinter[]> {
     const localPrinters = await devicePrinterBindingService.getDevicePrinters();
     const localFiltered = localPrinters.filter(
-      (p) => !restaurantId || !p.restaurant_id || p.restaurant_id === restaurantId
+      (p) =>
+        !restaurantId ||
+        !p.restaurant_id ||
+        p.restaurant_id === restaurantId ||
+        p.connection_type === 'bluetooth' ||
+        p.connection_type === 'usb'
     );
 
     let cloudPrinters: RestaurantPrinter[] = [];

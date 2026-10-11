@@ -35,17 +35,23 @@ export interface TcpConnectionConfig {
   timeoutMs?: number;
 }
 
+export type BluetoothTransportType = 'spp' | 'ble_gatt';
+
 export interface BluetoothDeviceInfo {
   id: string; // MAC address
   address: string; // MAC address
   name: string;
   bonded?: boolean;
+  transportType?: BluetoothTransportType;
 }
 
 export interface BluetoothConnectionConfig {
   address: string;
   name?: string;
   timeoutMs?: number;
+  transportType?: BluetoothTransportType;
+  serviceUuid?: string;
+  characteristicUuid?: string;
 }
 
 export interface UsbDeviceInfo {
@@ -90,3 +96,9 @@ export const DEFAULT_USB_TIMEOUT_MS = 5000;
 export const DEFAULT_USB_CHUNK_SIZE = 512;
 export const USB_PRINTER_INTERFACE_CLASS = 7;
 export const SPP_UUID = '00001101-0000-1000-8000-00805F9B34FB';
+
+export const SEZNIK_BLE_SERVICE_UUID = '0000ff00-0000-1000-8000-00805f9b34fb';
+export const SEZNIK_BLE_WRITE_CHAR_UUID = '0000ff02-0000-1000-8000-00805f9b34fb';
+export const SEZNIK_BLE_CHUNK_SIZE = 20;
+export const SEZNIK_BLE_INTER_CHUNK_DELAY_MS = 50;
+export const SEZNIK_BLE_POST_DOCUMENT_DELAY_MS = 200;

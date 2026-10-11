@@ -446,6 +446,7 @@ export interface DevicePrinterBinding {
   connection_type: PrinterConnectionType;
   bluetooth_mac_address?: string | null;
   bluetooth_device_name?: string | null;
+  bluetooth_transport_type?: 'spp' | 'ble_gatt' | null;
   usb_vendor_id?: number | null;
   usb_product_id?: number | null;
   usb_serial_number?: string | null;

@@ -1877,8 +1877,8 @@ export default function SettingsScreen() {
                   )}
                 </TouchableOpacity>
 
-                {/* Seznik Direct Bluetooth & USB Printer Management (Web Bluetooth & WebUSB) */}
-                {effectiveRestaurantId ? (
+                {/* Seznik Direct Bluetooth & USB Printer Management (Web Bluetooth & WebUSB - Web Only) */}
+                {Platform.OS === 'web' && effectiveRestaurantId ? (
                   <SeznikPrinterManagementSection
                     restaurantId={effectiveRestaurantId}
                     canManage={canManage}
@@ -1887,15 +1887,13 @@ export default function SettingsScreen() {
                   />
                 ) : null}
 
-                {/* 4.1 Advanced Multi-Printer Management & Calibration (Native/Android) */}
-                {Platform.OS !== 'web' && effectiveRestaurantId ? (
-                  <PrinterManagementSection
-                    restaurantId={effectiveRestaurantId}
-                    categories={categories}
-                    canManage={canManage}
-                    showToast={showToast}
-                  />
-                ) : null}
+                {/* 4.1 Advanced Multi-Printer Management & Calibration */}
+                <PrinterManagementSection
+                  restaurantId={effectiveRestaurantId || ''}
+                  categories={categories}
+                  canManage={canManage}
+                  showToast={showToast}
+                />
               </View>
             </View>
 

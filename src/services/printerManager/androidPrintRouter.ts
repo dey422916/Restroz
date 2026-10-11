@@ -19,7 +19,7 @@ import { devicePrinterBindingService } from './devicePrinterBindings';
 import { printerRoutingService, CategoryPrintSplit } from './routing';
 import { renderKotToEscPos } from './escpos/kotRenderer';
 import { renderBillToEscPos } from './escpos/billRenderer';
-import { tcpTransport, bluetoothTransport, usbTransport } from './transports';
+import { tcpTransport, bluetoothTransport, bleGattTransport, usbTransport } from './transports';
 import { isAutoPrintEnabled } from '../directPrintService';
 import { printedKotTracker } from '../../utils/printedKotTracker';
 
@@ -174,14 +174,32 @@ export const androidPrintRouter = {
           durationMs: 0,
         };
       } else {
-        transportRes = await bluetoothTransport.sendPayload(
-          {
-            address,
-            name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
-          },
-          bytes,
-          printer.id
-        );
+        const isSeznik =
+          /seznik|925/i.test(printer.name) ||
+          /seznik|925/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '') ||
+          (binding as any)?.bluetooth_transport_type === 'ble_gatt' ||
+          (printer as any).bluetooth_transport_type === 'ble_gatt';
+
+        if (isSeznik && bleGattTransport.isAvailable()) {
+          transportRes = await bleGattTransport.sendPayload(
+            {
+              address,
+              name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+              transportType: 'ble_gatt',
+            },
+            bytes,
+            printer.id
+          );
+        } else {
+          transportRes = await bluetoothTransport.sendPayload(
+            {
+              address,
+              name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+            },
+            bytes,
+            printer.id
+          );
+        }
       }
     } else if (printer.connection_type === 'usb') {
       const binding = await devicePrinterBindingService.getDeviceBinding(printer.id);
@@ -334,14 +352,12 @@ export const androidPrintRouter = {
     if (options.customPrinters && options.customPrinters.length > 0) {
       activePrinters = options.customPrinters.filter((p) => p.is_active);
     } else {
-      const restId = settings.id || order.restaurant_id || '';
-      if (restId) {
-        try {
-          const all = await printerRepository.getRestaurantPrinters(restId);
-          activePrinters = (all || []).filter((p) => p.is_active);
-        } catch (err: any) {
-          console.warn('[androidPrintRouter] Error loading printers from DB:', err);
-        }
+      const restId = settings?.id || (order as any)?.restaurant_id || '';
+      try {
+        const all = await printerRepository.getRestaurantPrinters(restId);
+        activePrinters = (all || []).filter((p) => p.is_active);
+      } catch (err: any) {
+        console.warn('[androidPrintRouter] Error loading printers:', err);
       }
     }
 
@@ -350,7 +366,7 @@ export const androidPrintRouter = {
     );
 
     if (activeKotPrinters.length === 0) {
-      const err = 'NO_PRINTER_CONFIGURED: No active KOT printer found.';
+      const err = 'No direct thermal printer is configured on this device. Go to Settings → Multi-Printer Management → Add Printer.';
       return {
         success: false,
         allSucceeded: false,
@@ -364,7 +380,7 @@ export const androidPrintRouter = {
             status: 'not_configured',
             bytesSent: 0,
             totalBytes: 0,
-            message: 'No active thermal printer configured for KOT. Configure in Settings.',
+            message: err,
           },
         ],
         errors: [err],
@@ -587,14 +603,12 @@ export const androidPrintRouter = {
     if (options.customPrinters && options.customPrinters.length > 0) {
       activePrinters = options.customPrinters.filter((p) => p.is_active);
     } else {
-      const restId = settings.id || order.restaurant_id || '';
-      if (restId) {
-        try {
-          const all = await printerRepository.getRestaurantPrinters(restId);
-          activePrinters = (all || []).filter((p) => p.is_active);
-        } catch (err: any) {
-          console.warn('[androidPrintRouter] Error loading printers from DB:', err);
-        }
+      const restId = settings?.id || (order as any)?.restaurant_id || '';
+      try {
+        const all = await printerRepository.getRestaurantPrinters(restId);
+        activePrinters = (all || []).filter((p) => p.is_active);
+      } catch (err: any) {
+        console.warn('[androidPrintRouter] Error loading printers:', err);
       }
     }
 
@@ -603,7 +617,7 @@ export const androidPrintRouter = {
     );
 
     if (activeBillPrinters.length === 0) {
-      const err = 'NO_PRINTER_CONFIGURED: No active Bill printer found.';
+      const err = 'No direct thermal printer is configured on this device. Go to Settings → Multi-Printer Management → Add Printer.';
       return {
         success: false,
         allSucceeded: false,
@@ -617,7 +631,7 @@ export const androidPrintRouter = {
             status: 'not_configured',
             bytesSent: 0,
             totalBytes: 0,
-            message: 'No active thermal printer configured for Bill. Configure in Settings.',
+            message: err,
           },
         ],
         errors: [err],

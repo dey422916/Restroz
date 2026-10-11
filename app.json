@@ -43,7 +43,14 @@
       "expo-sharing",
       "expo-font",
       "expo-status-bar",
-      "expo-updates"
+      "expo-updates",
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": ["peripheral", "central"]
+        }
+      ]
     ],
     "extra": {
       "router": {},

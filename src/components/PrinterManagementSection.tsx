@@ -41,6 +41,7 @@ interface Props {
   canManage: boolean;
   settings?: RestaurantSettings | null;
   showToast: (type: 'success' | 'error' | 'info', title: string, message: string) => void;
+  showAutoPrintBanner?: boolean;
 }
 
 const TABLE_SECTIONS: TableSection[] = [
@@ -58,6 +59,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
   canManage,
   settings,
   showToast,
+  showAutoPrintBanner = false,
 }) => {
   const [printers, setPrinters] = useState<RestaurantPrinter[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -894,22 +896,24 @@ export const PrinterManagementSection: React.FC<Props> = ({
 
   return (
     <View style={styles.container}>
-      {/* 1. Master Auto Print Status Banner */}
-      <View style={[styles.autoPrintBanner, autoPrintActive ? styles.autoPrintBannerOn : styles.autoPrintBannerOff]}>
-        <View style={{ flex: 1 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={{ fontSize: 16 }}>{autoPrintActive ? '🟢' : '⚪'}</Text>
-            <Text style={styles.autoPrintBannerTitle}>
-              Master Auto Print: {autoPrintActive ? 'ON' : 'OFF'}
+      {/* 1. Master Auto Print Status Banner (Optional) */}
+      {showAutoPrintBanner && (
+        <View style={[styles.autoPrintBanner, autoPrintActive ? styles.autoPrintBannerOn : styles.autoPrintBannerOff]}>
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={{ fontSize: 16 }}>{autoPrintActive ? '🟢' : '⚪'}</Text>
+              <Text style={styles.autoPrintBannerTitle}>
+                Master Auto Print: {autoPrintActive ? 'ON' : 'OFF'}
+              </Text>
+            </View>
+            <Text style={styles.autoPrintBannerText}>
+              {autoPrintActive
+                ? 'Automatically sends thermal KOTs and bills directly to configured printers.'
+                : 'Uses manual printing. Direct printers will not trigger automatically.'}
             </Text>
           </View>
-          <Text style={styles.autoPrintBannerText}>
-            {autoPrintActive
-              ? 'Automatically sends thermal KOTs and bills directly to configured printers.'
-              : 'Uses manual printing. Direct printers will not trigger automatically.'}
-          </Text>
         </View>
-      </View>
+      )}
 
       {/* 2. Header and Diagnostic Actions Bar */}
       <View style={styles.headerRow}>

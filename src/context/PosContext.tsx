@@ -358,7 +358,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     setCartItems((prev) =>
       prev.map((item) => {
-        if (item.id === lineIdOrProductId || item.product_id === lineIdOrProductId) {
+        if ((item.id && item.id === lineIdOrProductId) || (!item.id && item.product_id === lineIdOrProductId)) {
           const subtotal = Number((quantity * item.unit_price).toFixed(2));
           const taxAmount = Number(((subtotal * item.tax_rate) / 100).toFixed(2));
           return {
@@ -376,14 +376,12 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const removeItem = (lineIdOrProductId: string) => {
-    setCartItems((prev) =>
-      prev.filter((item) => item.id !== lineIdOrProductId && item.product_id !== lineIdOrProductId)
-    );
+    setCartItems((prev) => prev.filter((item) => (item.id ? item.id !== lineIdOrProductId : item.product_id !== lineIdOrProductId)));
   };
 
   const setItemNotes = (lineIdOrProductId: string, notes: string) => {
     setCartItems((prev) =>
-      prev.map((item) => (item.id === lineIdOrProductId || item.product_id === lineIdOrProductId ? { ...item, item_notes: notes } : item))
+      prev.map((item) => ((item.id && item.id === lineIdOrProductId) || (!item.id && item.product_id === lineIdOrProductId) ? { ...item, item_notes: notes } : item))
     );
   };
 

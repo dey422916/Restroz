@@ -73,8 +73,7 @@ export default function AdminLayout() {
         router.replace('/(auth)/login');
       } else if (role === 'CUSTOMER') {
         router.replace('/(marketplace)');
-      } else if (!isSuperAdmin && (isAdmin || role === 'STAFF')) {
-        // Granular permission check for restaurant staff & admin
+      } else if (!isAdmin && !isSuperAdmin) {
         const isDashboard = currentPath === '/dashboard' || currentPath === '/(admin)/dashboard' || currentPath.startsWith('/(admin)/dashboard/');
         const isProducts = currentPath === '/products' || currentPath === '/(admin)/products' || currentPath.startsWith('/(admin)/products/');
         const isCategories = currentPath === '/categories' || currentPath === '/(admin)/categories' || currentPath.startsWith('/(admin)/categories/');

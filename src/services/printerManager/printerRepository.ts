@@ -23,7 +23,7 @@ export const printerRepository = {
         p.connection_type === 'usb'
     );
 
-    const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
+    const isDirect = Platform.OS !== 'web' && (await devicePrinterBindingService.isDirectDeviceMode());
     if (isDirect) {
       // In native Android DIRECT_DEVICE mode, return AsyncStorage printers directly
       return localFiltered;

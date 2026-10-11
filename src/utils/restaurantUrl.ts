@@ -171,7 +171,6 @@ function encodePureJsPng(width: number, height: number, getPixel: (x: number, y:
 
   return png;
 }
-
 /**
  * Generates a high-resolution (default 1024x1024) PNG base64 Data URL for the restaurant's dedicated URL.
  * Works seamlessly across Web (HTML5 canvas) and Node/Native (pure JS PNG writer).

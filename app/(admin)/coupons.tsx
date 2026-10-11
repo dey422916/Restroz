@@ -422,7 +422,7 @@ export default function CouponsScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Header & Tabs */}
       <View style={[styles.header, isMobile && styles.headerMobile]}>
         <View style={styles.headerTitleWrap}>
           <Text style={styles.title}>Coupons & Loyalty Rewards</Text>
@@ -472,7 +472,7 @@ export default function CouponsScreen() {
             numberOfLines={1}
             ellipsizeMode="tail"
           >
-            🎁 Loyalty Rewards & Wallet
+            🎁 Loyalty Rewards & Wallet {rewardsEnabled ? '• ON' : ''}
           </Text>
         </TouchableOpacity>
       </View>
@@ -1386,6 +1386,7 @@ const styles = StyleSheet.create({
   },
   tabNavRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 20,

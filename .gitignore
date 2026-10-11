@@ -9,7 +9,6 @@ scripts/
 !scripts/test-personal-website-dev.js
 !scripts/test-dedicated-qr.js
 !scripts/test-bulk-products-dev.js
-
 android/
 ios/
 

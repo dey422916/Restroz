@@ -85,59 +85,173 @@ export const bleGattTransport = {
 
   /**
    * Requests necessary Android Bluetooth and Location permissions for BLE GATT scanning/connecting.
+   * Android 12+ (API 31+): BLUETOOTH_SCAN, BLUETOOTH_CONNECT, ACCESS_FINE_LOCATION
+   * Android 11 and below (API <= 30): ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION
    */
-  async requestPermissions(): Promise<boolean> {
-    if (Platform.OS !== 'android') return true;
+  async requestPermissions(): Promise<{ granted: boolean; error?: string }> {
+    if (Platform.OS !== 'android') return { granted: true };
 
     try {
       const apiLevel = Number(Platform.Version);
       if (apiLevel >= 31) {
-        const granted = await PermissionsAndroid.requestMultiple([
+        const permissions = [
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-        ]);
-
-        return (
-          granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT] === PermissionsAndroid.RESULTS.GRANTED &&
-          granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN] === PermissionsAndroid.RESULTS.GRANTED
-        );
-      } else {
-        const granted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-          {
-            title: 'Nearby Printer Permission',
-            message: 'RestroZ needs location permission to detect nearby BLE thermal printers.',
-            buttonPositive: 'Allow',
-          }
-        );
-        return granted === PermissionsAndroid.RESULTS.GRANTED;
+        ];
+        const granted = await PermissionsAndroid.requestMultiple(permissions);
+
+        const scanOk = granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN] === PermissionsAndroid.RESULTS.GRANTED;
+        const connectOk = granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT] === PermissionsAndroid.RESULTS.GRANTED;
+
+        if (!scanOk || !connectOk) {
+          return {
+            granted: false,
+            error: 'Bluetooth Scan and Connect permissions are required to detect nearby printers.',
+          };
+        }
+        return { granted: true };
+      } else {
+        const permissions = [
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+        ];
+        const granted = await PermissionsAndroid.requestMultiple(permissions);
+        const fineOk = granted[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] === PermissionsAndroid.RESULTS.GRANTED;
+        const coarseOk = granted[PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION] === PermissionsAndroid.RESULTS.GRANTED;
+
+        if (!fineOk && !coarseOk) {
+          return {
+            granted: false,
+            error: 'Location permission is required to discover Bluetooth devices on Android 11 and below.',
+          };
+        }
+        return { granted: true };
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('[BLE GATT Transport] Permission request error:', err);
-      return false;
+      return { granted: false, error: err?.message || 'Permission request failed' };
     }
   },
 
   /**
-   * Scans for nearby BLE devices and returns detected thermal printers.
+   * Verifies that the Bluetooth adapter is powered ON.
+   * Gracefully waits for initial Unknown/Resetting state transitions during app startup.
    */
-  async scanForDevices(timeoutMs: number = 4000): Promise<BluetoothDeviceInfo[]> {
+  async ensurePoweredOn(timeoutMs = 3000): Promise<{ poweredOn: boolean; state: string }> {
+    const manager = getBleManager();
+    if (!manager) {
+      const classicEnabled = await bluetoothTransport.isEnabled().catch(() => false);
+      return { poweredOn: classicEnabled, state: classicEnabled ? 'PoweredOn' : 'PoweredOff' };
+    }
+
+    try {
+      const currentState = await manager.state().catch(() => 'Unknown');
+      if (currentState === 'PoweredOn') {
+        return { poweredOn: true, state: 'PoweredOn' };
+      }
+      if (currentState === 'PoweredOff' || currentState === 'Unauthorized' || currentState === 'Unsupported') {
+        return { poweredOn: false, state: currentState };
+      }
+
+      // Wait for state transition if Unknown or Resetting
+      return await new Promise((resolve) => {
+        let resolved = false;
+        let sub: any = null;
+
+        const timer = setTimeout(async () => {
+          if (!resolved) {
+            resolved = true;
+            try {
+              if (sub && typeof sub.remove === 'function') sub.remove();
+            } catch (_) {}
+            const finalState = await manager.state().catch(() => 'Unknown');
+            resolve({ poweredOn: finalState === 'PoweredOn', state: finalState });
+          }
+        }, timeoutMs);
+
+        try {
+          sub = manager.onStateChange((state: string) => {
+            if (state !== 'Unknown' && state !== 'Resetting') {
+              if (!resolved) {
+                resolved = true;
+                clearTimeout(timer);
+                try {
+                  if (sub && typeof sub.remove === 'function') sub.remove();
+                } catch (_) {}
+                resolve({ poweredOn: state === 'PoweredOn', state });
+              }
+            }
+          }, true);
+        } catch (_) {
+          clearTimeout(timer);
+          resolve({ poweredOn: false, state: currentState });
+        }
+      });
+    } catch (err: any) {
+      console.warn('[BLE GATT Transport] Error verifying Bluetooth state:', err);
+      return { poweredOn: false, state: 'Error' };
+    }
+  },
+
+  /**
+   * Stops any currently running BLE scanning.
+   */
+  stopScan(): void {
+    const manager = getBleManager();
+    if (manager) {
+      try {
+        manager.stopDeviceScan();
+      } catch (_) {}
+    }
+  },
+
+  /**
+   * Scans for nearby BLE devices for 10-15 seconds (default: 12 seconds).
+   * Streams discovered devices progressively via onDeviceDiscovered callback.
+   * Captures named printers and unnamed BLE devices without restriction to FF00 advertisements.
+   */
+  async scanForDevices(options?: {
+    timeoutMs?: number;
+    onDeviceDiscovered?: (device: BluetoothDeviceInfo) => void;
+  } | number): Promise<BluetoothDeviceInfo[]> {
+    const timeoutMs = typeof options === 'number' ? options : options?.timeoutMs ?? 12000;
+    const onDeviceDiscovered = typeof options === 'object' ? options?.onDeviceDiscovered : undefined;
+
     const manager = getBleManager();
     if (!manager) {
       // Fallback to Classic Bluetooth discovery if BLE native module is not linked
       return bluetoothTransport.getPairedDevices();
     }
 
-    const hasPerm = await this.requestPermissions();
-    if (!hasPerm) return [];
+    // 1. Verify runtime permissions
+    const permStatus = await this.requestPermissions();
+    if (!permStatus.granted) {
+      throw new Error(permStatus.error || 'BLUETOOTH_PERMISSION_DENIED');
+    }
+
+    // 2. Verify Bluetooth adapter power state
+    const powerStatus = await this.ensurePoweredOn();
+    if (!powerStatus.poweredOn) {
+      throw new Error('BLUETOOTH_POWERED_OFF');
+    }
+
+    // Stop any lingering scan before initiating new one
+    this.stopScan();
 
     const discoveredMap = new Map<string, BluetoothDeviceInfo>();
 
     return new Promise<BluetoothDeviceInfo[]>((resolve) => {
+      let finished = false;
       let scanTimer: any = null;
 
       const finish = () => {
-        if (scanTimer) clearTimeout(scanTimer);
+        if (finished) return;
+        finished = true;
+        if (scanTimer) {
+          clearTimeout(scanTimer);
+          scanTimer = null;
+        }
         try {
           manager.stopDeviceScan();
         } catch (_) {}
@@ -148,25 +262,46 @@ export const bleGattTransport = {
 
       try {
         manager.startDeviceScan(
-          null, // Scan all advertising services
+          null, // Scan all advertising services — DO NOT restrict to FF00!
           { allowDuplicates: false },
           (error: any, device: any) => {
+            if (finished) return;
+
             if (error) {
-              console.warn('[BLE GATT Transport] Scan error:', error);
-              finish();
+              console.warn('[BLE GATT Transport] Scan callback warning:', error?.message || error);
               return;
             }
 
             if (device && device.id) {
-              const devName = device.name || device.localName;
-              if (devName && devName.trim()) {
-                discoveredMap.set(device.id, {
-                  id: device.id,
-                  address: device.id,
-                  name: devName.trim(),
-                  bonded: false,
-                  transportType: 'ble_gatt',
-                });
+              const rawName = (device.name || device.localName || '').trim();
+              const devName = rawName || `Unnamed BLE Device (${device.id.slice(-5)})`;
+              const isSeznik = /seznik|925/i.test(devName);
+
+              const info: BluetoothDeviceInfo = {
+                id: device.id,
+                address: device.id,
+                name: devName,
+                bonded: false,
+                transportType: 'ble_gatt',
+              };
+
+              if (!discoveredMap.has(device.id)) {
+                discoveredMap.set(device.id, info);
+                if (onDeviceDiscovered) {
+                  try {
+                    onDeviceDiscovered(info);
+                  } catch (cbErr) {
+                    console.warn('[BLE GATT Transport] onDeviceDiscovered callback error:', cbErr);
+                  }
+                }
+              } else if (rawName && discoveredMap.get(device.id)!.name.startsWith('Unnamed')) {
+                // Update unnamed entry if name became available in a later packet
+                discoveredMap.set(device.id, info);
+                if (onDeviceDiscovered) {
+                  try {
+                    onDeviceDiscovered(info);
+                  } catch (_) {}
+                }
               }
             }
           }

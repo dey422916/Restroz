@@ -51,41 +51,102 @@ export const printerManager = {
   getBluetoothPairedDevices: () => bluetoothTransport.getPairedDevices(),
   startBluetoothDiscovery: () => bluetoothTransport.startDiscovery(),
   scanBleDevices: (timeoutMs?: number) => bleGattTransport.scanForDevices(timeoutMs),
-  getUnifiedBluetoothDevices: async (): Promise<BluetoothDeviceInfo[]> => {
-    try {
-      await bluetoothTransport.requestPermissions();
-    } catch (_) {}
+  getUnifiedBluetoothDevices: async (options?: {
+    timeoutMs?: number;
+    onProgress?: (devices: BluetoothDeviceInfo[]) => void;
+  }): Promise<BluetoothDeviceInfo[]> => {
+    const timeoutMs = options?.timeoutMs ?? 12000;
+    const onProgress = options?.onProgress;
+
+    // 1. Request/verify permissions
+    let permOk = true;
+    let permError: string | undefined;
+
     if (bleGattTransport.isAvailable()) {
-      try {
-        await bleGattTransport.requestPermissions();
-      } catch (_) {}
+      const p = await bleGattTransport.requestPermissions();
+      if (!p.granted) {
+        permOk = false;
+        permError = p.error;
+      }
+    } else {
+      permOk = await bluetoothTransport.requestPermissions();
     }
 
-    const paired = await bluetoothTransport.getPairedDevices().catch(() => []);
-    let ble: BluetoothDeviceInfo[] = [];
+    if (!permOk) {
+      throw new Error(permError || 'BLUETOOTH_PERMISSION_DENIED');
+    }
+
+    // 2. Verify Bluetooth adapter power state
+    let poweredOn = true;
     if (bleGattTransport.isAvailable()) {
-      ble = await bleGattTransport.scanForDevices(3500).catch(() => []);
+      const pStatus = await bleGattTransport.ensurePoweredOn();
+      poweredOn = pStatus.poweredOn;
+    } else {
+      poweredOn = await bluetoothTransport.isEnabled().catch(() => true);
+    }
+
+    if (!poweredOn) {
+      throw new Error('BLUETOOTH_POWERED_OFF');
     }
 
     const map = new Map<string, BluetoothDeviceInfo>();
-    for (const d of paired) {
-      const isSez = /seznik|925/i.test(d.name);
-      map.set(d.address || d.id, {
-        ...d,
-        transportType: isSez ? 'ble_gatt' : 'spp',
-      });
+
+    // 3. Immediately query paired Classic SPP devices for instant initial feedback
+    try {
+      const paired = await bluetoothTransport.getPairedDevices().catch(() => []);
+      for (const d of paired) {
+        const isSez = /seznik|925/i.test(d.name);
+        map.set(d.address || d.id, {
+          ...d,
+          transportType: isSez ? 'ble_gatt' : 'spp',
+        });
+      }
+      if (onProgress && map.size > 0) {
+        onProgress(Array.from(map.values()));
+      }
+    } catch (pairedErr) {
+      console.warn('[PrinterManager] Error reading paired devices:', pairedErr);
     }
-    for (const d of ble) {
-      const key = d.address || d.id;
-      if (!map.has(key)) {
-        map.set(key, { ...d, transportType: 'ble_gatt' });
-      } else {
-        if (/seznik|925/i.test(d.name)) {
-          map.set(key, { ...map.get(key)!, transportType: 'ble_gatt' });
+
+    // 4. Scan BLE GATT devices for 10-15 seconds with progressive streaming
+    if (bleGattTransport.isAvailable()) {
+      try {
+        await bleGattTransport.scanForDevices({
+          timeoutMs,
+          onDeviceDiscovered: (bleDev) => {
+            const key = bleDev.address || bleDev.id;
+            const existing = map.get(key);
+            if (!existing) {
+              map.set(key, bleDev);
+            } else {
+              const isSez = /seznik|925/i.test(bleDev.name) || /seznik|925/i.test(existing.name);
+              map.set(key, {
+                ...existing,
+                name: existing.name.startsWith('Unnamed') && !bleDev.name.startsWith('Unnamed') ? bleDev.name : existing.name,
+                transportType: isSez ? 'ble_gatt' : existing.transportType,
+              });
+            }
+            if (onProgress) {
+              onProgress(Array.from(map.values()));
+            }
+          },
+        });
+      } catch (bleErr: any) {
+        console.warn('[PrinterManager] BLE Scan error:', bleErr);
+        if (bleErr?.message === 'BLUETOOTH_POWERED_OFF' || bleErr?.message === 'BLUETOOTH_PERMISSION_DENIED') {
+          throw bleErr;
         }
       }
     }
-    return Array.from(map.values());
+
+    const finalList = Array.from(map.values());
+    if (onProgress) {
+      onProgress(finalList);
+    }
+    return finalList;
+  },
+  stopBluetoothScan: () => {
+    bleGattTransport.stopScan();
   },
 
   // USB Discovery and Status APIs

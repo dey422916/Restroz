@@ -48,6 +48,7 @@ export const bluetoothTransport = {
         const granted = await PermissionsAndroid.requestMultiple([
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
         ]);
 
         return (

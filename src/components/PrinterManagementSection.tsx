@@ -91,7 +91,10 @@ export const PrinterManagementSection: React.FC<Props> = ({
     import('../services/printerManager/transports/types').BluetoothDeviceInfo[]
   >([]);
   const [isScanningBt, setIsScanningBt] = useState(false);
-  const [btTransportType, setBtTransportType] = useState<'spp' | 'ble_gatt'>('spp');
+  const [btScanError, setBtScanError] = useState<string | null>(null);
+  const [btScanErrorType, setBtScanErrorType] = useState<'permission' | 'disabled' | 'error' | null>(null);
+  const [btScanComplete, setBtScanComplete] = useState(false);
+  const [btTransportType, setBtTransportType] = useState<'spp' | 'ble_gatt'>('ble_gatt');
 
   // USB fields
   const [usbVendorId, setUsbVendorId] = useState('');
@@ -164,16 +167,45 @@ export const PrinterManagementSection: React.FC<Props> = ({
 
   const handleScanBluetoothDevices = async () => {
     setIsScanningBt(true);
+    setBtScanError(null);
+    setBtScanErrorType(null);
+    setBtScanComplete(false);
+
     try {
-      const devices = await printerManager.getUnifiedBluetoothDevices();
+      const devices = await printerManager.getUnifiedBluetoothDevices({
+        timeoutMs: 12000,
+        onProgress: (live) => {
+          setDiscoveredBluetoothDevices([...live]);
+        },
+      });
       setDiscoveredBluetoothDevices(devices);
+      setBtScanComplete(true);
       if (devices.length === 0) {
         showToast('info', 'No Bluetooth Devices', 'Make sure Bluetooth is ON and thermal printer is turned on.');
       } else {
         showToast('success', 'Bluetooth Devices Found', `Found ${devices.length} Bluetooth printer(s).`);
       }
     } catch (err: any) {
-      showToast('error', 'Scan Error', err?.message || 'Could not scan Bluetooth devices.');
+      console.warn('[PrinterManagementSection] BT Scan Error:', err);
+      const msg = err?.message || '';
+      if (msg === 'BLUETOOTH_POWERED_OFF' || /power|disabled|turn on/i.test(msg)) {
+        setBtScanErrorType('disabled');
+        setBtScanError('Bluetooth is turned OFF. Please turn ON Bluetooth in Android Settings and try again.');
+        showToast('error', 'Bluetooth Disabled', 'Please turn on Bluetooth in Settings.');
+      } else if (msg === 'BLUETOOTH_PERMISSION_DENIED' || /permission/i.test(msg)) {
+        setBtScanErrorType('permission');
+        setBtScanError(
+          msg.length > 30
+            ? msg
+            : 'Bluetooth and Location permissions are required to scan nearby printers. Please allow permissions in Android Settings.'
+        );
+        showToast('error', 'Permission Required', 'Bluetooth permissions are required.');
+      } else {
+        setBtScanErrorType('error');
+        setBtScanError(err?.message || 'Could not scan Bluetooth devices.');
+        showToast('error', 'Scan Error', err?.message || 'Could not scan Bluetooth devices.');
+      }
+      setBtScanComplete(true);
     } finally {
       setIsScanningBt(false);
     }
@@ -215,6 +247,9 @@ export const PrinterManagementSection: React.FC<Props> = ({
     setSelectedBluetoothMac('');
     setBtTransportType('ble_gatt');
     setDiscoveredBluetoothDevices([]);
+    setBtScanError(null);
+    setBtScanErrorType(null);
+    setBtScanComplete(false);
     setUsbVendorId('');
     setUsbProductId('');
     setUsbSerialNumber('');
@@ -1620,20 +1655,214 @@ export const PrinterManagementSection: React.FC<Props> = ({
                     Supports BLE GATT (e.g. Seznik-Veer 925C) and Classic RFCOMM SPP. Tap scan below to detect nearby or paired thermal printers.
                   </Text>
 
-                  <TouchableOpacity
-                    style={[styles.addBtn, { marginTop: 10, alignSelf: 'flex-start', backgroundColor: '#0284c7' }]}
-                    onPress={handleScanBluetoothDevices}
-                    disabled={isScanningBt}
-                  >
-                    {isScanningBt ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <Text style={styles.addBtnText}>🔍 Scan Bluetooth Printers</Text>
-                    )}
-                  </TouchableOpacity>
+                  {/* Scan Action Button */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }}>
+                    <TouchableOpacity
+                      style={[
+                        styles.addBtn,
+                        { alignSelf: 'flex-start', backgroundColor: '#0284c7' },
+                        isScanningBt && { opacity: 0.7 },
+                      ]}
+                      onPress={handleScanBluetoothDevices}
+                      disabled={isScanningBt}
+                    >
+                      {isScanningBt ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <ActivityIndicator size="small" color="#ffffff" />
+                          <Text style={styles.addBtnText}>Scanning Bluetooth (12s)...</Text>
+                        </View>
+                      ) : (
+                        <Text style={styles.addBtnText}>
+                          {discoveredBluetoothDevices.length > 0 || btScanComplete
+                            ? '🔄 Scan Bluetooth Again'
+                            : '🔍 Scan Bluetooth Printers'}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
 
+                  {/* Active Scanning Indicator */}
+                  {isScanningBt && (
+                    <View
+                      style={{
+                        marginTop: 10,
+                        padding: 12,
+                        backgroundColor: '#eff6ff',
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: '#bfdbfe',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 12,
+                      }}
+                    >
+                      <ActivityIndicator size="small" color="#2563eb" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e40af' }}>
+                          Scanning nearby Bluetooth thermal printers...
+                        </Text>
+                        <Text style={{ fontSize: 11, color: '#3b82f6', marginTop: 2 }}>
+                          Listening for BLE GATT advertisements & paired devices ({discoveredBluetoothDevices.length} found)
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Bluetooth Powered Off Error Card */}
+                  {btScanErrorType === 'disabled' && (
+                    <View
+                      style={{
+                        marginTop: 10,
+                        padding: 12,
+                        backgroundColor: '#fffbeb',
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: '#fde68a',
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#92400e', marginBottom: 4 }}>
+                        ⚠️ Bluetooth is Turned OFF
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#b45309', marginBottom: 10 }}>
+                        {btScanError || 'Please enable Bluetooth in Android Settings or Quick Settings, then retry.'}
+                      </Text>
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#d97706',
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
+                          borderRadius: 6,
+                          alignSelf: 'flex-start',
+                        }}
+                        onPress={handleScanBluetoothDevices}
+                      >
+                        <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 12 }}>
+                          🔄 Turn ON Bluetooth & Retry
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* Permission Denied Error Card */}
+                  {btScanErrorType === 'permission' && (
+                    <View
+                      style={{
+                        marginTop: 10,
+                        padding: 12,
+                        backgroundColor: '#fef2f2',
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: '#fecaca',
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#991b1b', marginBottom: 4 }}>
+                        ⚠️ Bluetooth / Location Permission Required
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#b91c1c', marginBottom: 10 }}>
+                        {btScanError ||
+                          'Android requires Nearby Devices (Scan & Connect) and Location permissions to discover Bluetooth thermal printers.'}
+                      </Text>
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#dc2626',
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
+                          borderRadius: 6,
+                          alignSelf: 'flex-start',
+                        }}
+                        onPress={handleScanBluetoothDevices}
+                      >
+                        <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 12 }}>
+                          🔄 Grant Permissions & Retry
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* General Scan Error Card */}
+                  {btScanErrorType === 'error' && (
+                    <View
+                      style={{
+                        marginTop: 10,
+                        padding: 12,
+                        backgroundColor: '#fef2f2',
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: '#fecaca',
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#991b1b', marginBottom: 4 }}>
+                        ⚠️ Scan Error
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#b91c1c', marginBottom: 10 }}>
+                        {btScanError || 'Could not scan for Bluetooth printers.'}
+                      </Text>
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#dc2626',
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
+                          borderRadius: 6,
+                          alignSelf: 'flex-start',
+                        }}
+                        onPress={handleScanBluetoothDevices}
+                      >
+                        <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 12 }}>🔄 Retry Scan</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* Scan Timeout / No Devices Found Card */}
+                  {!isScanningBt && btScanComplete && discoveredBluetoothDevices.length === 0 && !btScanError && (
+                    <View
+                      style={{
+                        marginTop: 10,
+                        padding: 12,
+                        backgroundColor: '#f8fafc',
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: '#e2e8f0',
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155', marginBottom: 4 }}>
+                        ℹ️ No Bluetooth Printers Found (12s Scan Finished)
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>
+                        • Turn on your thermal printer (e.g. Seznik-Veer_925C) and check the blue LED light.
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>
+                        • For Classic Bluetooth printers, pair the printer first in Android Bluetooth settings.
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 10 }}>
+                        • Keep the printer within 2–5 meters of this tablet.
+                      </Text>
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#0284c7',
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
+                          borderRadius: 6,
+                          alignSelf: 'flex-start',
+                        }}
+                        onPress={handleScanBluetoothDevices}
+                      >
+                        <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 12 }}>🔄 Scan Again</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* Currently Selected & Bound Device Card */}
                   {selectedBluetoothMac ? (
-                    <View style={{ marginTop: 8, padding: 8, backgroundColor: '#ecfdf5', borderRadius: 6, borderWidth: 1, borderColor: '#a7f3d0' }}>
+                    <View
+                      style={{
+                        marginTop: 8,
+                        padding: 10,
+                        backgroundColor: '#ecfdf5',
+                        borderRadius: 6,
+                        borderWidth: 1,
+                        borderColor: '#a7f3d0',
+                      }}
+                    >
                       <Text style={{ fontSize: 12, fontWeight: '700', color: '#065f46' }}>
                         ✓ Bound Device: {bluetoothDeviceName || name || 'Thermal Printer'}
                       </Text>
@@ -1641,15 +1870,29 @@ export const PrinterManagementSection: React.FC<Props> = ({
                       <Text style={{ fontSize: 11, color: '#047857' }}>
                         Protocol: {btTransportType === 'ble_gatt' ? 'BLE GATT (Seznik FF00/FF02)' : 'Classic SPP (RFCOMM)'}
                       </Text>
+                      <Text style={{ fontSize: 11, color: '#047857' }}>
+                        Config: {paperWidth} • Role: {printerRole.toUpperCase()} • Primary: {isPrimary ? 'Yes' : 'No'}
+                      </Text>
                     </View>
                   ) : null}
 
+                  {/* Discovered Device List */}
                   {discoveredBluetoothDevices.length > 0 && (
                     <View style={{ marginTop: 10, gap: 6 }}>
-                      <Text style={[styles.fieldLabel, { marginBottom: 2 }]}>Detected Printers (Tap to Select):</Text>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text style={[styles.fieldLabel, { marginBottom: 2 }]}>
+                          Detected Printers ({discoveredBluetoothDevices.length}) - Tap to Select:
+                        </Text>
+                        {!isScanningBt && (
+                          <TouchableOpacity onPress={handleScanBluetoothDevices} style={{ padding: 4 }}>
+                            <Text style={{ fontSize: 11, color: '#0284c7', fontWeight: '700' }}>🔄 Refresh</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+
                       {discoveredBluetoothDevices.map((d) => {
                         const isSelected = selectedBluetoothMac === d.address;
-                        const isSez = /seznik|925/i.test(d.name) || d.transportType === 'ble_gatt';
+                        const isSez = /seznik|925/i.test(d.name) || (isSelected && btTransportType === 'ble_gatt');
                         return (
                           <TouchableOpacity
                             key={d.address || d.id}
@@ -1666,7 +1909,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
                             onPress={() => {
                               setSelectedBluetoothMac(d.address);
                               const devName = d.name || 'Thermal Printer';
-                              if (!name || name === 'Thermal Printer') setName(devName);
+                              setName(devName);
                               setBluetoothDeviceName(devName);
                               const selectedIsSez = /seznik|925/i.test(devName) || d.transportType === 'ble_gatt';
                               setBtTransportType(selectedIsSez ? 'ble_gatt' : 'spp');
@@ -1674,6 +1917,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
                                 setPaperWidth('58mm');
                                 setPrinterRole('both');
                                 setIsPrimary(true);
+                                showToast('success', 'Configured Seznik Printer', '58mm • BLE GATT • Role: BOTH • Primary');
                               }
                             }}
                           >
@@ -1696,9 +1940,10 @@ export const PrinterManagementSection: React.FC<Props> = ({
                                   fontSize: 10,
                                   fontWeight: '800',
                                   color: isSez ? '#b45309' : '#3730a3',
+                                  textTransform: 'uppercase',
                                 }}
                               >
-                                {isSez ? 'BLE GATT' : 'SPP'}
+                                {isSez ? 'BLE GATT (Seznik)' : (d.transportType === 'ble_gatt' ? 'BLE GATT' : 'Classic SPP')}
                               </Text>
                             </View>
                           </TouchableOpacity>

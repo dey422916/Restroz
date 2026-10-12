@@ -24,6 +24,7 @@ import { kotService, clearKotsCache } from '../../src/services/api/kotService';
 import { printService, formatLogoDataUri, handleThermalPrintFallback } from '../../src/services/printService';
 import { Order, OrderItem, OrderStatus, PaymentStatus, OrderSource, Product, DiningTable, RestaurantSettings, PaymentMethod } from '../../src/types';
 import { formatCurrency, numberToWords } from '../../src/utils/currency';
+import { calculateSplitAutoFill } from '../../src/utils/splitPayment';
 import { getOrderSubtotal, calculateOrderTotals, getOrderTaxableBreakdown, getOrderInvoiceTotals, getOrderTaxRate, isOrderGstApplicable } from '../../src/utils/gst';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { useAuth } from '../../src/context/AuthContext';
@@ -2753,8 +2754,10 @@ export default function OrdersScreen() {
                             keyboardType="numeric"
                             value={sp.amount}
                             onChangeText={(val) => {
-                              const clean = val.replace(/[^0-9.]/g, '');
-                              setPartialPaySplits(partialPaySplits.map((item) => (item.id === sp.id ? { ...item, amount: clean } : item)));
+                              const payable = Number(partialPayModal?.payable_amount ?? partialPayModal?.grand_total ?? 0);
+                              const paid = Number(partialPayModal?.paid_amount ?? 0);
+                              const balance = Math.max(0, payable - paid);
+                              setPartialPaySplits(calculateSplitAutoFill(partialPaySplits, sp.id, val, balance));
                             }}
                           />
                           <TextInput

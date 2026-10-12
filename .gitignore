@@ -10,6 +10,7 @@ scripts/
 !scripts/test-dedicated-qr.js
 !scripts/test-bulk-products-dev.js
 !scripts/test-split-payment-autofill.js
+!scripts/test-settle-split-payment.js
 android/
 ios/
 

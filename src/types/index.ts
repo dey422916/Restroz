@@ -132,6 +132,7 @@ export interface Product {
   stock_quantity: number;
   unit: string;
   preparation_time_mins: number;
+  preparation_time?: number;
   is_active: boolean;
   created_at?: string;
 }

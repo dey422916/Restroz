@@ -32,7 +32,7 @@ export const productService = {
       try {
         let query = supabase
           .from('products')
-          .select('id, restaurant_id, category_id, category_name, name, description, price, discounted_price, tax_rate, is_active, is_available, food_type, image_url, sku, stock_quantity, unit, preparation_time_mins, hsn_code')
+          .select('id, restaurant_id, category_id, category_name, name, description, price, discounted_price, tax_rate, is_active, is_available, food_type, image_url, sku, stock_quantity, unit, preparation_time_mins, preparation_time, hsn_code')
           .order('name', { ascending: true });
 
         if (targetRestId) {
@@ -41,7 +41,18 @@ export const productService = {
 
         const { data, error } = await query;
         if (!error && data) {
-          const list = (data as Product[]).map(p => ({ ...p, restaurant_id: p.restaurant_id || targetRestId }));
+          const list = (data as any[]).map(p => {
+            const taxNum = (p.tax_rate !== undefined && p.tax_rate !== null && !isNaN(Number(p.tax_rate))) ? Number(p.tax_rate) : 5;
+            const prepNum = (p.preparation_time_mins !== undefined && p.preparation_time_mins !== null && !isNaN(Number(p.preparation_time_mins)))
+              ? Number(p.preparation_time_mins)
+              : ((p.preparation_time !== undefined && p.preparation_time !== null && !isNaN(Number(p.preparation_time))) ? Number(p.preparation_time) : 15);
+            return {
+              ...p,
+              restaurant_id: p.restaurant_id || targetRestId,
+              tax_rate: taxNum,
+              preparation_time_mins: prepNum,
+            };
+          });
           inMemoryProductsCache[cacheKey] = {
             timestamp: now,
             data: list,
@@ -121,6 +132,17 @@ export const productService = {
         catName = cats.find((c) => c.id === categoryId)?.name || 'General';
       }
     }
+    const rawTax = product.tax_rate;
+    const taxRate = (rawTax !== undefined && rawTax !== null && !isNaN(Number(rawTax)))
+      ? Math.max(0, Number(rawTax))
+      : 5;
+
+    const rawPrep = product.preparation_time_mins !== undefined && product.preparation_time_mins !== null
+      ? product.preparation_time_mins
+      : (product as any).preparation_time;
+    const prepTime = (rawPrep !== undefined && rawPrep !== null && !isNaN(Number(rawPrep)))
+      ? Math.max(0, Math.round(Number(rawPrep)))
+      : 15;
 
     const payload: any = {
       restaurant_id: targetRestId,
@@ -133,11 +155,10 @@ export const productService = {
       stock_quantity: stock,
       food_type: product.food_type || 'veg',
       unit: product.unit || 'portion',
-      tax_rate: (product.tax_rate !== undefined && product.tax_rate !== null && !isNaN(Number(product.tax_rate)))
-        ? Number(product.tax_rate)
-        : 5,
+      tax_rate: taxRate,
       hsn_code: product.hsn_code || '996331',
-      preparation_time_mins: product.preparation_time_mins ? Number(product.preparation_time_mins) : 15,
+      preparation_time_mins: prepTime,
+      preparation_time: prepTime,
       image_url:
         (await storageService.ensureCdnUrl(
           product.image_url,
@@ -171,7 +192,14 @@ export const productService = {
           if (data) {
             clearProductsCache(targetRestId);
             await this.getProducts(targetRestId, true);
-            return data as Product;
+            const savedItem = {
+              ...data,
+              tax_rate: (data.tax_rate !== undefined && data.tax_rate !== null && !isNaN(Number(data.tax_rate))) ? Number(data.tax_rate) : taxRate,
+              preparation_time_mins: (data.preparation_time_mins !== undefined && data.preparation_time_mins !== null && !isNaN(Number(data.preparation_time_mins)))
+                ? Number(data.preparation_time_mins)
+                : ((data.preparation_time !== undefined && data.preparation_time !== null && !isNaN(Number(data.preparation_time))) ? Number(data.preparation_time) : prepTime),
+            };
+            return savedItem as Product;
           }
         } else {
           const { data, error } = await supabase
@@ -187,7 +215,14 @@ export const productService = {
           if (data) {
             clearProductsCache(targetRestId);
             await this.getProducts(targetRestId, true);
-            return data as Product;
+            const savedItem = {
+              ...data,
+              tax_rate: (data.tax_rate !== undefined && data.tax_rate !== null && !isNaN(Number(data.tax_rate))) ? Number(data.tax_rate) : taxRate,
+              preparation_time_mins: (data.preparation_time_mins !== undefined && data.preparation_time_mins !== null && !isNaN(Number(data.preparation_time_mins)))
+                ? Number(data.preparation_time_mins)
+                : ((data.preparation_time !== undefined && data.preparation_time !== null && !isNaN(Number(data.preparation_time))) ? Number(data.preparation_time) : prepTime),
+            };
+            return savedItem as Product;
           }
         }
       } catch (e: any) {
@@ -199,12 +234,20 @@ export const productService = {
     // Local fallback
     clearProductsCache(targetRestId);
     if (product.id) {
-      const updated = mockStorage.updateProduct(product.id, payload);
+      const updated = mockStorage.updateProduct(product.id, {
+        ...payload,
+        tax_rate: taxRate,
+        preparation_time_mins: prepTime,
+      });
       if (!updated) throw new Error('Product not found in local cache.');
       await this.getProducts(targetRestId, true);
       return updated;
     } else {
-      const added = mockStorage.addProduct(payload as Omit<Product, 'id'>);
+      const added = mockStorage.addProduct({
+        ...payload,
+        tax_rate: taxRate,
+        preparation_time_mins: prepTime,
+      } as Omit<Product, 'id'>);
       await this.getProducts(targetRestId, true);
       return added;
     }

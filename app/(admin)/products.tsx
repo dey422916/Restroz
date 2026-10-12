@@ -163,9 +163,17 @@ export default function ProductsScreen() {
     setFormStock(String(p.stock_quantity));
     setFormFoodType(p.food_type);
     setFormUnit(p.unit || 'portion');
-    setFormTaxRate(String(p.tax_rate !== undefined && p.tax_rate !== null ? p.tax_rate : 5));
+    const taxVal = (p.tax_rate !== undefined && p.tax_rate !== null && !isNaN(Number(p.tax_rate)))
+      ? String(Number(p.tax_rate))
+      : '5';
+    setFormTaxRate(taxVal);
     setFormHsn(p.hsn_code || '996331');
-    setFormPrepTime(String(p.preparation_time_mins || 15));
+    const prepVal = (p.preparation_time_mins !== undefined && p.preparation_time_mins !== null && !isNaN(Number(p.preparation_time_mins)))
+      ? String(Number(p.preparation_time_mins))
+      : ((p as any).preparation_time !== undefined && (p as any).preparation_time !== null && !isNaN(Number((p as any).preparation_time)))
+        ? String(Number((p as any).preparation_time))
+        : '15';
+    setFormPrepTime(prepVal);
     setFormImageUrl(p.image_url || '');
     setFormDesc(p.description || '');
     setFormIsActive(p.is_active);
@@ -219,6 +227,12 @@ export default function ProductsScreen() {
       return;
     }
 
+    const parsedTax = parseFloat(formTaxRate);
+    const validTaxRate = (!isNaN(parsedTax) && parsedTax >= 0) ? parsedTax : 5;
+
+    const parsedPrep = parseInt(formPrepTime, 10);
+    const validPrepTime = (!isNaN(parsedPrep) && parsedPrep >= 0) ? parsedPrep : 15;
+
     setModalError(null);
     setSavingProduct(true);
     const targetRestId = activeRestaurantId;
@@ -238,9 +252,10 @@ export default function ProductsScreen() {
         stock_quantity: stockNum,
         food_type: formFoodType,
         unit: formUnit.trim() || 'portion',
-        tax_rate: (formTaxRate !== '' && !isNaN(parseFloat(formTaxRate))) ? parseFloat(formTaxRate) : 5,
+        tax_rate: validTaxRate,
         hsn_code: formHsn.trim() || '996331',
-        preparation_time_mins: parseInt(formPrepTime, 10) || 15,
+        preparation_time_mins: validPrepTime,
+        preparation_time: validPrepTime,
         image_url: formImageUrl.trim() || undefined,
         description: formDesc.trim(),
         is_active: formIsActive,
@@ -761,7 +776,7 @@ export default function ProductsScreen() {
                     </Text>
 
                     <Text style={styles.categoryMeta} numberOfLines={1}>
-                      📁 {prod.category_name || 'General'} • {prod.unit || 'portion'} • Tax: {prod.tax_rate}%
+                      📁 {prod.category_name || 'General'} • {prod.unit || 'portion'} • Tax: {prod.tax_rate}% • ⏱️ {prod.preparation_time_mins ?? (prod as any).preparation_time ?? 15}m
                     </Text>
 
                     <View style={styles.priceRow}>
@@ -1077,21 +1092,43 @@ export default function ProductsScreen() {
                   </View>
                 </View>
 
-                {/* Tax Rate & HSN Code Row */}
+                {/* GST Tax Rate */}
+                <View style={{ marginTop: 4 }}>
+                  <Text style={styles.fieldLabel}>GST Tax Rate (%)</Text>
+                  <View style={styles.presetChipsRow}>
+                    {['0', '5', '12', '18', '28'].map((rate) => {
+                      const isSelected = formTaxRate === rate || parseFloat(formTaxRate) === parseFloat(rate);
+                      return (
+                        <TouchableOpacity
+                          key={rate}
+                          style={[styles.presetChip, isSelected && styles.presetChipActive]}
+                          onPress={() => setFormTaxRate(rate)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.presetChipText, isSelected && styles.presetChipTextActive]}>
+                            {rate === '0' ? '0% (Exempt)' : `${rate}%`}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                {/* Tax Rate Custom Input & HSN Code Row */}
                 <View style={styles.dualFieldRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.fieldLabel}>GST Tax Rate (%)</Text>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.fieldLabel}>Custom Tax Rate (%)</Text>
                     <TextInput
                       style={styles.fieldInput}
                       placeholder="5"
                       placeholderTextColor="#64748b"
-                      keyboardType="numeric"
+                      keyboardType="decimal-pad"
                       value={formTaxRate}
                       onChangeText={setFormTaxRate}
                     />
                   </View>
 
-                  <View style={{ flex: 1 }}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={styles.fieldLabel}>HSN / SAC Code</Text>
                     <TextInput
                       style={styles.fieldInput}
@@ -1104,15 +1141,34 @@ export default function ProductsScreen() {
                 </View>
 
                 {/* Preparation Time */}
-                <Text style={styles.fieldLabel}>Preparation Time (Minutes)</Text>
-                <TextInput
-                  style={styles.fieldInput}
-                  placeholder="15"
-                  placeholderTextColor="#64748b"
-                  keyboardType="numeric"
-                  value={formPrepTime}
-                  onChangeText={setFormPrepTime}
-                />
+                <View style={{ marginTop: 4 }}>
+                  <Text style={styles.fieldLabel}>Preparation Time (Minutes)</Text>
+                  <View style={styles.presetChipsRow}>
+                    {['5', '10', '15', '20', '25', '30', '45'].map((mins) => {
+                      const isSelected = formPrepTime === mins || parseInt(formPrepTime, 10) === parseInt(mins, 10);
+                      return (
+                        <TouchableOpacity
+                          key={mins}
+                          style={[styles.presetChip, isSelected && styles.presetChipActive]}
+                          onPress={() => setFormPrepTime(mins)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.presetChipText, isSelected && styles.presetChipTextActive]}>
+                            {mins}m
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  <TextInput
+                    style={[styles.fieldInput, { marginTop: 4 }]}
+                    placeholder="15"
+                    placeholderTextColor="#64748b"
+                    keyboardType="number-pad"
+                    value={formPrepTime}
+                    onChangeText={setFormPrepTime}
+                  />
+                </View>
 
                 {/* Description */}
                 <Text style={styles.fieldLabel}>Description (Optional)</Text>
@@ -1969,6 +2025,33 @@ const styles = StyleSheet.create({
   dualFieldRow: {
     flexDirection: 'row',
     gap: 8,
+  },
+  presetChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 4,
+  },
+  presetChip: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  presetChipActive: {
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
+  },
+  presetChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  presetChipTextActive: {
+    color: '#ffffff',
+    fontWeight: '800',
   },
   checkRow: {
     flexDirection: 'row',

@@ -25,14 +25,39 @@ namespace RestroZPrintAgentInstaller
 
                 string targetExe = Path.Combine(targetDir, "RestroZ-Print-Agent.exe");
 
-                // Locate source binary (either in same folder, bin subfolder, or embedded)
+                // Locate source binary (embedded resource, same folder, or bin subfolder)
+                byte[] embeddedBytes = null;
+                try
+                {
+                    using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("RestroZ-Print-Agent.exe"))
+                    {
+                        if (stream != null)
+                        {
+                            embeddedBytes = new byte[stream.Length];
+                            stream.Read(embeddedBytes, 0, (int)stream.Length);
+                        }
+                    }
+                }
+                catch {}
+
                 string sourceExe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bin", "RestroZ-Print-Agent.exe");
                 if (!File.Exists(sourceExe))
                 {
                     sourceExe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "RestroZ-Print-Agent.exe");
                 }
 
-                if (File.Exists(sourceExe))
+                if (embeddedBytes != null && embeddedBytes.Length > 0)
+                {
+                    // Stop any existing process if running
+                    var running = Process.GetProcessesByName("RestroZ-Print-Agent");
+                    foreach (var p in running)
+                    {
+                        try { p.Kill(); p.WaitForExit(3000); } catch {}
+                    }
+
+                    File.WriteAllBytes(targetExe, embeddedBytes);
+                }
+                else if (File.Exists(sourceExe))
                 {
                     // Stop any existing process if running
                     var running = Process.GetProcessesByName("RestroZ-Print-Agent");

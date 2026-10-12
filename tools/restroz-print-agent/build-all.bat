@@ -25,8 +25,9 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b %ERRORLEVEL%
 )
 
-echo 2. Compiling RestroZ-Print-Agent-Setup.exe...
+echo 2. Compiling RestroZ-Print-Agent-Setup.exe (embedding Agent payload)...
 %CSC% /target:winexe /optimize+ /platform:anycpu /out:"%OUT_BIN%\RestroZ-Print-Agent-Setup.exe" ^
+    /resource:"%OUT_BIN%\RestroZ-Print-Agent.exe",RestroZ-Print-Agent.exe ^
     /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Core.dll ^
     "%ROOT_DIR%installer\Setup.cs"
 

@@ -1092,11 +1092,29 @@ export const webDirectPrintService = {
     });
 
     if (error) {
+      console.warn('[webDirectPrintService] pairPrintAgent RPC failure:', {
+        timestamp: new Date().toISOString(),
+        operation: 'pair_print_agent',
+        category: 'BACKEND_RPC_ERROR',
+        message: error.message,
+      });
       throw new Error(`Agent pairing error: ${error.message}`);
     }
 
     if (!data || !data.success) {
-      throw new Error(data?.error || 'Failed to pair Print Agent.');
+      const rawError = data?.error || 'Invalid or expired pairing code.';
+      const errorCode = data?.error_code || (rawError.toLowerCase().includes('expired') ? 'CODE_EXPIRED' : 'INVALID_CODE');
+      console.warn('[webDirectPrintService] pairPrintAgent validation failure:', {
+        timestamp: new Date().toISOString(),
+        operation: 'pair_print_agent',
+        category: errorCode,
+      });
+
+      let userMsg = data?.error;
+      if (!userMsg || userMsg.includes('Invalid or expired')) {
+        userMsg = 'Invalid or expired pairing code. Please ensure your Windows Print Agent is running in the correct environment (PROD: restroz.shop) and check the 6-digit code.';
+      }
+      throw new Error(userMsg);
     }
 
     // Poll printer_devices for up to 3 seconds to capture immediate queue sync

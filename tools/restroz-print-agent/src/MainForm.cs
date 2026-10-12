@@ -11,6 +11,8 @@ namespace RestroZPrintAgent
 
         private Label _lblTitle;
         private Label _lblStatus;
+        private Label _lblEnvBadge;
+        private Button _btnSwitchBackend;
         private Panel _pnlPairing;
         private Label _lblPairingHeader;
         private Label _lblPairingCode;
@@ -61,6 +63,52 @@ namespace RestroZPrintAgent
                 AutoSize = true
             };
             this.Controls.Add(_lblTitle);
+
+            // Cloud Environment Badge
+            _lblEnvBadge = new Label
+            {
+                Text = _config.IsProduction ? "☁ PROD" : "🛠 DEV",
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+                ForeColor = _config.IsProduction ? Color.FromArgb(34, 197, 94) : Color.FromArgb(234, 179, 8),
+                BackColor = Color.FromArgb(39, 39, 42),
+                Padding = new Padding(4, 2, 4, 2),
+                Location = new Point(330, 19),
+                AutoSize = true
+            };
+            this.Controls.Add(_lblEnvBadge);
+
+            // Switch Backend Button
+            _btnSwitchBackend = new Button
+            {
+                Text = _config.IsProduction ? "Switch to DEV" : "Switch to PROD",
+                Location = new Point(416, 16),
+                Size = new Size(128, 26),
+                BackColor = Color.FromArgb(39, 39, 42),
+                ForeColor = Color.FromArgb(212, 212, 216),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8f, FontStyle.Regular),
+                Cursor = Cursors.Hand
+            };
+            _btnSwitchBackend.FlatAppearance.BorderSize = 1;
+            _btnSwitchBackend.FlatAppearance.BorderColor = Color.FromArgb(63, 63, 70);
+            _btnSwitchBackend.Click += (s, e) =>
+            {
+                var targetEnv = _config.IsProduction ? "DEVELOPMENT (Test Env)" : "PRODUCTION (restroz.shop)";
+                var res = MessageBox.Show(
+                    this,
+                    string.Format("Switch Print Agent backend to {0}?\n\nThis will re-register this Print Agent with that environment.", targetEnv),
+                    "Switch Cloud Environment",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question
+                );
+                if (res == DialogResult.Yes)
+                {
+                    _config.SwitchEnvironment(!_config.IsProduction);
+                    _engine.ReinitializeBackend();
+                    UpdateUiState();
+                }
+            };
+            this.Controls.Add(_btnSwitchBackend);
 
             // Status Label
             _lblStatus = new Label
@@ -384,6 +432,16 @@ namespace RestroZPrintAgent
             {
                 this.BeginInvoke(new Action(UpdateUiState));
                 return;
+            }
+
+            if (_lblEnvBadge != null)
+            {
+                _lblEnvBadge.Text = _config.IsProduction ? "☁ PROD" : "🛠 DEV";
+                _lblEnvBadge.ForeColor = _config.IsProduction ? Color.FromArgb(34, 197, 94) : Color.FromArgb(234, 179, 8);
+            }
+            if (_btnSwitchBackend != null)
+            {
+                _btnSwitchBackend.Text = _config.IsProduction ? "Switch to DEV" : "Switch to PROD";
             }
 
             if (_config.IsPaired)

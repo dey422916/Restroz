@@ -7,7 +7,7 @@ namespace RestroZPrintAgent
     public class PrintEngine
     {
         private readonly AgentConfig _config;
-        private readonly SupabaseClient _client;
+        private SupabaseClient _client;
         private Thread _workerThread;
         private bool _isRunning;
         private readonly HashSet<string> _processedJobs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -115,12 +115,26 @@ namespace RestroZPrintAgent
             }
         }
 
+        public void ReinitializeBackend()
+        {
+            Log(string.Format("Reinitializing backend connection for: {0}", _config.IsProduction ? "PRODUCTION" : "DEVELOPMENT"));
+            _client = new SupabaseClient(_config);
+            _client.OnLog += Log;
+            string code, restId, err;
+            bool isPaired;
+            if (_client.RegisterAgent(out code, out isPaired, out restId, out err))
+            {
+                RefreshPrinters();
+            }
+            if (OnStatusChanged != null) OnStatusChanged();
+        }
+
         public bool RequestNewPairingCode(out string error)
         {
             error = null;
             string newCode;
             DateTime? expiresAt;
-            Log("Requesting manual pairing code regeneration from DEV backend...");
+            Log(string.Format("Requesting manual pairing code regeneration from {0} backend...", _config.IsProduction ? "PROD" : "DEV"));
             bool ok = _client.RegeneratePairingCode(out newCode, out expiresAt, out error);
             if (ok)
             {

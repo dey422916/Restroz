@@ -20,6 +20,38 @@ namespace RestroZPrintAgent
         public string SupabaseAnonKey { get; set; }
         public bool RunAtStartup { get; set; }
 
+        public const string ProdUrl = "https://szpjsibrwxegaopcaukb.supabase.co";
+        public const string ProdAnonKey = "sb_publishable_Jh0O9Why0grSgCb3WjjpYQ_Uwj7RclD";
+
+        public const string DevUrl = "https://ymonclyfwtdyjagrnvpo.supabase.co";
+        public const string DevAnonKey = "sb_publishable_XA2rhUq_SMpuL3CFxxU3ZQ_3V14WziJ";
+
+        public bool IsProduction
+        {
+            get
+            {
+                return !string.IsNullOrEmpty(SupabaseUrl) && SupabaseUrl.IndexOf("szpjsibrwxegaopcaukb", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+        }
+
+        public void SwitchEnvironment(bool useProd)
+        {
+            if (useProd)
+            {
+                SupabaseUrl = ProdUrl;
+                SupabaseAnonKey = ProdAnonKey;
+            }
+            else
+            {
+                SupabaseUrl = DevUrl;
+                SupabaseAnonKey = DevAnonKey;
+            }
+            IsPaired = false;
+            RestaurantId = null;
+            PairingCode = null;
+            PairingExpiresAt = null;
+        }
+
         public AgentConfig()
         {
             DeviceId = Guid.NewGuid().ToString("N");
@@ -30,8 +62,8 @@ namespace RestroZPrintAgent
             PairingCode = null;
             PairingExpiresAt = null;
             IsPaired = false;
-            SupabaseUrl = "https://szpjsibrwxegaopcaukb.supabase.co";
-            SupabaseAnonKey = "sb_publishable_Jh0O9Why0grSgCb3WjjpYQ_Uwj7RclD";
+            SupabaseUrl = ProdUrl;
+            SupabaseAnonKey = ProdAnonKey;
             RunAtStartup = true;
         }
     }

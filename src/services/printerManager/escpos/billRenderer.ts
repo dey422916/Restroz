@@ -227,7 +227,7 @@ export function renderBillToEscPos(
   }
 
   // 8. Feed and Cut
-  builder.addFeedAndCut(3);
+  builder.addFeedAndCut(is58mm ? 2 : 3);
 
   return builder.build();
 }

@@ -2756,7 +2756,7 @@ export const webDirectPrintService = {
     builder.addLine('*** TEST PRINT SUCCESSFUL ***', { align: 'center' });
     builder.addDivider('-');
 
-    builder.addFeedAndCut(4);
+    builder.addFeedAndCut(2);
 
     const doc = builder.build();
     return doc.bytes;

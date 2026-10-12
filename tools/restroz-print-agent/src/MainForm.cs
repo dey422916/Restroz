@@ -397,7 +397,10 @@ namespace RestroZPrintAgent
 
             if (testType == "STANDARD")
             {
-                ok = _engine.SendTestPrint(printerName, "80mm", out error);
+                string paperWidth = (printerName.IndexOf("58", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                     printerName.IndexOf("seznik", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                     printerName.IndexOf("mini", StringComparison.OrdinalIgnoreCase) >= 0) ? "58mm" : "80mm";
+                ok = _engine.SendTestPrint(printerName, paperWidth, out error);
             }
             else if (testType == "MINIMAL_ESCPOS")
             {

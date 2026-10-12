@@ -158,18 +158,11 @@ namespace RestroZPrintAgent
                     return false;
                 }
 
-                if (!StartPagePrinter(hPrinter))
-                {
-                    int err = Marshal.GetLastWin32Error();
-                    EndDocPrinter(hPrinter);
-                    errorMessage = string.Format("StartPagePrinter failed for '{0}'. Error code: {1}", printerName, err);
-                    if (logger != null)
-                    {
-                        logger(string.Format("[USB PRINT]\nQueue: {0}\nDriver: {1}\nPort: {2}\nPayload bytes: {3}\nPrint mode: RAW\nSpool submission: FAILED (StartPagePrinter)\nSpool job ID: {4}\nResult: FAILED\nWin32 error: {5}", printerName, driverName, portName, bytes.Length, jobId, err));
-                    }
-                    return false;
-                }
-
+                // NOTE: In Win32 RAW printing to thermal printers, StartPagePrinter / EndPagePrinter
+                // MUST NOT be called. Calling EndPagePrinter causes Windows printer drivers (e.g. POS58ENG)
+                // to interpret the end-of-page and inject large form-feed / page-ejection blank paper
+                // matching the driver's fixed form height (e.g. 210mm - 1200mm).
+                // Thermal receipt ESC/POS data is streamed directly between StartDocPrinter and EndDocPrinter.
                 IntPtr pUnmanagedBytes = Marshal.AllocCoTaskMem(bytes.Length);
                 Marshal.Copy(bytes, 0, pUnmanagedBytes, bytes.Length);
 
@@ -180,7 +173,6 @@ namespace RestroZPrintAgent
                 if (!writeSuccess || written != bytes.Length)
                 {
                     int err = Marshal.GetLastWin32Error();
-                    EndPagePrinter(hPrinter);
                     EndDocPrinter(hPrinter);
                     errorMessage = string.Format("WritePrinter failed on '{0}'. Written: {1}/{2}. Error code: {3}", printerName, written, bytes.Length, err);
                     if (logger != null)
@@ -190,7 +182,6 @@ namespace RestroZPrintAgent
                     return false;
                 }
 
-                EndPagePrinter(hPrinter);
                 EndDocPrinter(hPrinter);
 
                 if (logger != null)
@@ -297,13 +288,17 @@ namespace RestroZPrintAgent
                 bw.Write(new byte[] { 0x1B, 0x45, 0x01 });
                 WriteEscPosText(bw, "*** PRINT TEST SUCCESSFUL ***\n");
                 bw.Write(new byte[] { 0x1B, 0x45, 0x00 });
-                WriteEscPosText(bw, "ZERO QZ TRAY • NATIVE SPOOLER\n\n");
+                WriteEscPosText(bw, "ZERO QZ TRAY • NATIVE SPOOLER\n");
 
-                // Feed lines: ESC d 4
-                bw.Write(new byte[] { 0x1B, 0x64, 0x04 });
+                // Compact tear-off feed: 2 lines
+                bw.Write(new byte[] { 0x1B, 0x64, 0x02 });
 
-                // Paper Cut: GS V 66 0
-                bw.Write(new byte[] { 0x1D, 0x56, 0x42, 0x00 });
+                // Paper Cut: only for 80mm printers with auto-cutters (58mm thermal printers lack cutters)
+                if (!is58)
+                {
+                    bw.Write(new byte[] { 0x1B, 0x64, 0x01 });
+                    bw.Write(new byte[] { 0x1D, 0x56, 0x42, 0x00 });
+                }
 
                 return ms.ToArray();
             }
@@ -314,7 +309,7 @@ namespace RestroZPrintAgent
         /// </summary>
         public static byte[] GeneratePlainTextTest(string printerName)
         {
-            string text = string.Format("RESTROZ USB TEST\r\n1234567890\r\nQueue: {0}\r\nTime: {1}\r\n\r\n\r\n\r\n", printerName, DateTime.Now.ToString("HH:mm:ss"));
+            string text = string.Format("RESTROZ USB TEST\r\n1234567890\r\nQueue: {0}\r\nTime: {1}\r\n\r\n", printerName, DateTime.Now.ToString("HH:mm:ss"));
             return System.Text.Encoding.ASCII.GetBytes(text);
         }
 
@@ -323,6 +318,10 @@ namespace RestroZPrintAgent
         /// </summary>
         public static byte[] GenerateMinimalEscPosTest(string printerName)
         {
+            bool is58 = printerName.IndexOf("58", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        printerName.IndexOf("seznik", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        printerName.IndexOf("mini", StringComparison.OrdinalIgnoreCase) >= 0;
+
             using (var ms = new MemoryStream())
             {
                 // ESC @ (Initialize)
@@ -335,10 +334,13 @@ namespace RestroZPrintAgent
                 ms.Write(header, 0, header.Length);
                 // ESC E 0 (Bold OFF)
                 ms.Write(new byte[] { 0x1B, 0x45, 0x00 }, 0, 3);
-                byte[] body = System.Text.Encoding.ASCII.GetBytes(string.Format("1234567890\r\nQueue: {0}\r\nTime: {1}\r\n\r\n\r\n\r\n", printerName, DateTime.Now.ToString("HH:mm:ss")));
+                byte[] body = System.Text.Encoding.ASCII.GetBytes(string.Format("1234567890\r\nQueue: {0}\r\nTime: {1}\r\n\r\n", printerName, DateTime.Now.ToString("HH:mm:ss")));
                 ms.Write(body, 0, body.Length);
-                // GS V B 0 (Cut)
-                ms.Write(new byte[] { 0x1D, 0x56, 0x42, 0x00 }, 0, 4);
+                if (!is58)
+                {
+                    // GS V B 0 (Cut)
+                    ms.Write(new byte[] { 0x1D, 0x56, 0x42, 0x00 }, 0, 4);
+                }
                 return ms.ToArray();
             }
         }

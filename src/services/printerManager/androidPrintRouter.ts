@@ -50,6 +50,7 @@ export interface DestinationPrintResult {
 
 export interface MultiDestinationPrintResult {
   success: boolean;
+  skipped?: boolean;
   allSucceeded: boolean;
   hasFailures: boolean;
   hasPartialOrUnknown: boolean;
@@ -367,24 +368,15 @@ export const androidPrintRouter = {
     );
 
     if (activeKotPrinters.length === 0) {
-      const err = 'No direct thermal printer is configured on this device. Go to Printers → Add Printer.';
+      const err = 'No eligible KOT printer is configured on this device.';
       return {
         success: false,
+        skipped: true,
         allSucceeded: false,
-        hasFailures: true,
+        hasFailures: false,
         hasPartialOrUnknown: false,
-        destinations: [
-          {
-            printerId: 'none',
-            printerName: 'Unconfigured KOT Printer',
-            role: 'kot',
-            status: 'not_configured',
-            bytesSent: 0,
-            totalBytes: 0,
-            message: err,
-          },
-        ],
-        errors: [err],
+        destinations: [],
+        errors: [],
         summary: err,
       };
     }
@@ -618,24 +610,15 @@ export const androidPrintRouter = {
     );
 
     if (activeBillPrinters.length === 0) {
-      const err = 'No direct thermal printer is configured on this device. Go to Printers → Add Printer.';
+      const err = 'No eligible Bill printer is configured on this device.';
       return {
         success: false,
+        skipped: true,
         allSucceeded: false,
-        hasFailures: true,
+        hasFailures: false,
         hasPartialOrUnknown: false,
-        destinations: [
-          {
-            printerId: 'none',
-            printerName: 'Unconfigured Bill Printer',
-            role: 'bill',
-            status: 'not_configured',
-            bytesSent: 0,
-            totalBytes: 0,
-            message: err,
-          },
-        ],
-        errors: [err],
+        destinations: [],
+        errors: [],
         summary: err,
       };
     }

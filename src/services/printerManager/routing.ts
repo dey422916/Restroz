@@ -20,23 +20,28 @@ export const printerRoutingService = {
     const activePrinters = (printers || []).filter((p) => p.is_active);
     if (activePrinters.length === 0) return null;
 
-    // 1. Device-local override if valid and active
+    const roleMatches = (printerRole: string | undefined | null) => {
+      const r = (printerRole || '').trim().toLowerCase();
+      return r === role || r === 'both';
+    };
+
+    // 1. Device-local override if valid and active for this role
     if (deviceDefaultId) {
       const devicePref = activePrinters.find(
-        (p) => p.id === deviceDefaultId && (p.printer_role === role || p.printer_role === 'both')
+        (p) => p.id === deviceDefaultId && roleMatches(p.printer_role)
       );
       if (devicePref) return devicePref;
     }
 
-    // 2. Primary Cloud Printer for role
+    // 2. Primary Cloud Printer for this role ONLY
     const primary = activePrinters.find(
-      (p) => p.is_primary && (p.printer_role === role || p.printer_role === 'both')
+      (p) => p.is_primary && roleMatches(p.printer_role)
     );
     if (primary) return primary;
 
-    // 3. First active printer matching role
+    // 3. First active printer matching this role
     const matching = activePrinters.find(
-      (p) => p.printer_role === role || p.printer_role === 'both'
+      (p) => roleMatches(p.printer_role)
     );
     return matching || null;
   },

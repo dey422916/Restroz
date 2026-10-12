@@ -7,7 +7,7 @@ namespace RestroZPrintAgent
     public class PrintEngine
     {
         private readonly AgentConfig _config;
-        private readonly SupabaseClient _client;
+        private SupabaseClient _client;
         private Thread _workerThread;
         private bool _isRunning;
         private readonly HashSet<string> _processedJobs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -115,12 +115,26 @@ namespace RestroZPrintAgent
             }
         }
 
+        public void ReinitializeBackend()
+        {
+            Log(string.Format("Reinitializing backend connection for: {0}", _config.IsProduction ? "PRODUCTION" : "DEVELOPMENT"));
+            _client = new SupabaseClient(_config);
+            _client.OnLog += Log;
+            string code, restId, err;
+            bool isPaired;
+            if (_client.RegisterAgent(out code, out isPaired, out restId, out err))
+            {
+                RefreshPrinters();
+            }
+            if (OnStatusChanged != null) OnStatusChanged();
+        }
+
         public bool RequestNewPairingCode(out string error)
         {
             error = null;
             string newCode;
             DateTime? expiresAt;
-            Log("Requesting manual pairing code regeneration from DEV backend...");
+            Log(string.Format("Requesting manual pairing code regeneration from {0} backend...", _config.IsProduction ? "PROD" : "DEV"));
             bool ok = _client.RegeneratePairingCode(out newCode, out expiresAt, out error);
             if (ok)
             {
@@ -270,7 +284,7 @@ namespace RestroZPrintAgent
                 else
                 {
                     // Route to Windows Print Spooler (winspool.drv)
-                    success = Spooler.SendBytesToPrinter(job.PrinterName, rawBytes, job.JobTitle ?? "RestroZ Print Job", out spoolError);
+                    success = Spooler.SendBytesToPrinter(job.PrinterName, rawBytes, job.JobTitle ?? "RestroZ Print Job", Log, out spoolError);
                 }
 
                 if (success)
@@ -322,7 +336,7 @@ namespace RestroZPrintAgent
                 else
                 {
                     byte[] bytes = Spooler.GenerateEscPosTestReceipt(printerName, _config.DeviceName, paperWidth);
-                    bool ok = Spooler.SendBytesToPrinter(printerName, bytes, "RestroZ Hardware Test", out error);
+                    bool ok = Spooler.SendBytesToPrinter(printerName, bytes, "RestroZ Hardware Test", Log, out error);
                     if (ok)
                     {
                         Log("Test print sent successfully to Windows queue: " + printerName);
@@ -345,6 +359,46 @@ namespace RestroZPrintAgent
         public bool SendTestPrint(string printerName, out string error)
         {
             return SendTestPrint(printerName, "58mm", out error);
+        }
+
+        public bool SendPlainTextTest(string printerName, out string error)
+        {
+            error = null;
+            try
+            {
+                Log(string.Format("Sending Plain Text Test to '{0}'...", printerName));
+                byte[] bytes = Spooler.GeneratePlainTextTest(printerName);
+                bool ok = Spooler.SendBytesToPrinter(printerName, bytes, "RestroZ Plain Text Test", Log, out error);
+                if (ok) Log("Plain text test sent successfully to Windows queue: " + printerName);
+                else Log("Plain text test failed: " + error);
+                return ok;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                Log("Plain text test exception: " + ex.Message);
+                return false;
+            }
+        }
+
+        public bool SendMinimalEscPosTest(string printerName, out string error)
+        {
+            error = null;
+            try
+            {
+                Log(string.Format("Sending Minimal ESC/POS Test to '{0}'...", printerName));
+                byte[] bytes = Spooler.GenerateMinimalEscPosTest(printerName);
+                bool ok = Spooler.SendBytesToPrinter(printerName, bytes, "RestroZ Minimal ESC/POS Test", Log, out error);
+                if (ok) Log("Minimal ESC/POS test sent successfully to Windows queue: " + printerName);
+                else Log("Minimal ESC/POS test failed: " + error);
+                return ok;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                Log("Minimal ESC/POS test exception: " + ex.Message);
+                return false;
+            }
         }
 
         public bool SendRasterProbe(string printerName, string probeType, out string error)

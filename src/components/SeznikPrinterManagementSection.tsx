@@ -18,7 +18,7 @@ import {
   DirectPaperWidth,
   PrintAgentInfo,
 } from '../services/webDirectPrintService';
-import { setLocalKotPrinter } from '../services/directPrintService';
+import { setLocalKotPrinter, setLocalBillPrinter } from '../services/directPrintService';
 
 interface Props {
   restaurantId: string;
@@ -388,7 +388,17 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
     };
     webDirectPrintService.updatePrinter(updated, restaurantId);
     if (updated.transport === 'agent' && (wizardIsPrimary || updated.isPrimary)) {
-      setLocalKotPrinter(updated.windowsQueueName || updated.name, restaurantId);
+      const qName = updated.windowsQueueName || updated.name;
+      if (updated.role === 'kot' || updated.role === 'both') {
+        setLocalKotPrinter(qName, restaurantId);
+      } else {
+        setLocalKotPrinter('', restaurantId);
+      }
+      if (updated.role === 'bill' || updated.role === 'both') {
+        setLocalBillPrinter(qName, restaurantId);
+      } else {
+        setLocalBillPrinter('', restaurantId);
+      }
     }
     await loadPrintersAndAgent();
     setWizardVisible(false);
@@ -449,7 +459,17 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
     };
     webDirectPrintService.updatePrinter(updated, restaurantId);
     if (updated.transport === 'agent' && (editIsPrimary || editingPrinter.isPrimary)) {
-      setLocalKotPrinter(updated.windowsQueueName || updated.name, restaurantId);
+      const qName = updated.windowsQueueName || updated.name;
+      if (updated.role === 'kot' || updated.role === 'both') {
+        setLocalKotPrinter(qName, restaurantId);
+      } else {
+        setLocalKotPrinter('', restaurantId);
+      }
+      if (updated.role === 'bill' || updated.role === 'both') {
+        setLocalBillPrinter(qName, restaurantId);
+      } else {
+        setLocalBillPrinter('', restaurantId);
+      }
     }
     setEditingPrinter(null);
     showToast('success', 'Printer Updated', `Configuration updated for "${updated.name}".`);

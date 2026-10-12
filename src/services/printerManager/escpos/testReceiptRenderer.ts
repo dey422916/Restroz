@@ -310,7 +310,7 @@ export function renderWidthDiagnosticToEscPos(
 
   builder.addDivider('-');
   builder.addLine('Check which line wraps on paper.', { align: 'center', bold: true });
-  builder.addFeedAndCut(3);
+  builder.addFeedAndCut(2);
 
   return builder.build();
 }

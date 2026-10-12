@@ -33,6 +33,22 @@ export type DirectPrinterRole = 'kot' | 'bill' | 'both';
 export type DirectPaperWidth = '58mm' | '80mm';
 export type DirectPrinterStatus = 'connected' | 'available' | 'reconnect_required' | 'unsupported' | 'offline' | 'disconnected';
 
+/**
+ * Strict role matching rule:
+ * - 'both' is eligible for both 'kot' and 'bill'
+ * - 'kot' is eligible ONLY for 'kot'
+ * - 'bill' is eligible ONLY for 'bill'
+ * - Empty / null / unknown is NOT eligible
+ */
+export function isPrinterRoleEligible(
+  printerRole: string | undefined | null,
+  targetRole: 'kot' | 'bill'
+): boolean {
+  if (!printerRole) return false;
+  const r = printerRole.trim().toLowerCase();
+  return r === targetRole || r === 'both';
+}
+
 export interface ConfiguredDirectPrinter {
   id: string;
   name: string;
@@ -58,6 +74,7 @@ export interface ConfiguredDirectPrinter {
 
 export interface WebDirectPrintResult {
   success: boolean;
+  skipped?: boolean;
   printerName: string;
   transport: DirectTransportType;
   jobName: string;
@@ -1092,11 +1109,29 @@ export const webDirectPrintService = {
     });
 
     if (error) {
+      console.warn('[webDirectPrintService] pairPrintAgent RPC failure:', {
+        timestamp: new Date().toISOString(),
+        operation: 'pair_print_agent',
+        category: 'BACKEND_RPC_ERROR',
+        message: error.message,
+      });
       throw new Error(`Agent pairing error: ${error.message}`);
     }
 
     if (!data || !data.success) {
-      throw new Error(data?.error || 'Failed to pair Print Agent.');
+      const rawError = data?.error || 'Invalid or expired pairing code.';
+      const errorCode = data?.error_code || (rawError.toLowerCase().includes('expired') ? 'CODE_EXPIRED' : 'INVALID_CODE');
+      console.warn('[webDirectPrintService] pairPrintAgent validation failure:', {
+        timestamp: new Date().toISOString(),
+        operation: 'pair_print_agent',
+        category: errorCode,
+      });
+
+      let userMsg = data?.error;
+      if (!userMsg || userMsg.includes('Invalid or expired')) {
+        userMsg = 'Invalid or expired pairing code. Please ensure your Windows Print Agent is running in the correct environment (PROD: restroz.shop) and check the 6-digit code.';
+      }
+      throw new Error(userMsg);
     }
 
     // Poll printer_devices for up to 3 seconds to capture immediate queue sync
@@ -1391,6 +1426,26 @@ export const webDirectPrintService = {
       return p;
     });
     this.savePrinters(mapped, restaurantId);
+
+    // Sync role, paper width, and primary status to Supabase printer_devices
+    if (restaurantId && updated.transport === 'agent') {
+      const queueName = updated.windowsQueueName || updated.name;
+      supabase
+        .from('printer_devices')
+        .update({
+          role: updated.role,
+          paper_width: updated.paperWidth,
+          is_primary: Boolean(updated.isPrimary),
+          is_active: true,
+        })
+        .eq('restaurant_id', restaurantId)
+        .eq('printer_name', queueName)
+        .then(({ error }) => {
+          if (error) {
+            console.warn('[webDirectPrintService] Error syncing printer_devices update to DB:', error);
+          }
+        });
+    }
   },
 
   /**
@@ -1619,9 +1674,9 @@ export const webDirectPrintService = {
 
     const rawList = this.getSavedPrinters(restaurantId);
 
-    // 1. Find configured candidate printers matching role (kot/both or bill/both)
-    const candidates = rawList.filter((p) => p.role === role || p.role === 'both');
-    // 2. Prefer Primary configured printer first
+    // 1. Find configured candidate printers matching role strictly (kot/both or bill/both)
+    const candidates = rawList.filter((p) => isPrinterRoleEligible(p.role, role));
+    // 2. Prefer Primary configured printer first AMONG ELIGIBLE CANDIDATES ONLY
     candidates.sort((a, b) => (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0));
 
     // 3. For Bluetooth candidate printers, FIRST attempt runtime recovery before status evaluation
@@ -1683,7 +1738,8 @@ export const webDirectPrintService = {
       return p;
     });
 
-    const primary = list.find((p) => p.isPrimary && (p.role === role || p.role === 'both')) || null;
+    // Primary printer is ONLY selected if it is eligible for the requested role!
+    const primary = list.find((p) => p.isPrimary && isPrinterRoleEligible(p.role, role)) || null;
     const isPrimaryReady = Boolean(primary && (primary.status === 'connected' || primary.status === 'available'));
 
     let target: ConfiguredDirectPrinter | null = null;
@@ -1693,9 +1749,9 @@ export const webDirectPrintService = {
       target = primary;
       isFallback = false;
     } else {
-      // Find all ready printers matching role (NEVER route to reconnect_required / offline / unsupported)
+      // Find all ready printers matching role strictly (NEVER route to reconnect_required / offline / unsupported / role mismatch)
       const readyPrinters = list.filter(
-        (p) => (p.status === 'connected' || p.status === 'available') && (p.role === role || p.role === 'both')
+        (p) => (p.status === 'connected' || p.status === 'available') && isPrinterRoleEligible(p.role, role)
       );
 
       // Sort by silent automatic printing preference: Agent > USB > Serial > Bluetooth
@@ -1736,9 +1792,13 @@ export const webDirectPrintService = {
             .eq('is_active', true);
 
           if (deviceRows && deviceRows.length > 0) {
-            const matchingDevices = deviceRows.filter(
-              (d: any) => d.role === role || d.role === 'both' || !d.role
-            );
+            const currentSaved = this.getSavedPrinters(restaurantId);
+            const matchingDevices = deviceRows.filter((d: any) => {
+              const localMatch = currentSaved.find((p) => p.windowsQueueName === d.printer_name || p.name === d.printer_name);
+              const effectiveRole = localMatch?.role || d.role;
+              return isPrinterRoleEligible(effectiveRole, role);
+            });
+
             matchingDevices.sort((a: any, b: any) => {
               if ((b.is_primary ? 1 : 0) !== (a.is_primary ? 1 : 0)) {
                 return (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0);
@@ -1754,13 +1814,18 @@ export const webDirectPrintService = {
 
               return a.printer_name.localeCompare(b.printer_name);
             });
-            const chosenDevice = matchingDevices[0] || deviceRows[0];
+
+            // STRICT: Only choose from matchingDevices! NEVER fall back to deviceRows[0]!
+            const chosenDevice = matchingDevices.length > 0 ? matchingDevices[0] : null;
 
             if (chosenDevice) {
               const is58mmDevice = /58|seznik|925|rpp|mpt|mini/i.test(chosenDevice.printer_name);
               const resolvedPaperWidth: DirectPaperWidth = is58mmDevice
                 ? '58mm'
                 : ((chosenDevice.paper_width as DirectPaperWidth) || '80mm');
+
+              const localMatch = currentSaved.find((p) => p.windowsQueueName === chosenDevice.printer_name || p.name === chosenDevice.printer_name);
+              const effectiveRole = (localMatch?.role || chosenDevice.role || role) as DirectPrinterRole;
 
               const agentPrinter: ConfiguredDirectPrinter = {
                 id: `agent_${agentData.id}_${chosenDevice.printer_name.replace(/\s+/g, '_')}`,
@@ -1770,7 +1835,7 @@ export const webDirectPrintService = {
                 agentDeviceName: agentData.device_name,
                 windowsQueueName: chosenDevice.printer_name,
                 paperWidth: resolvedPaperWidth,
-                role: (chosenDevice.role as DirectPrinterRole) || 'both',
+                role: effectiveRole,
                 isPrimary: Boolean(chosenDevice.is_primary),
                 status: 'connected',
                 statusMessage: `RestroZ Print Agent Online (${agentData.device_name})`,
@@ -1778,7 +1843,6 @@ export const webDirectPrintService = {
               };
 
               // Cache in memory / local store for this restaurant
-              const currentSaved = this.getSavedPrinters(restaurantId);
               const exists = currentSaved.find((p) => p.id === agentPrinter.id);
               if (!exists) {
                 this.savePrinters([...currentSaved, agentPrinter], restaurantId);
@@ -2597,6 +2661,33 @@ export const webDirectPrintService = {
     restaurantId?: string | null
   ): Promise<WebDirectPrintResult> {
     const queueName = printer.windowsQueueName || printer.name;
+    const normRole = (printer.role || '').toLowerCase();
+
+    if (jobType === 'kot' && normRole === 'bill') {
+      console.warn(`[PRINT_AGENT_GUARD] Refusing to send KOT job to BILL-only printer "${queueName}"`);
+      return {
+        success: false,
+        skipped: true,
+        printerName: queueName,
+        transport: 'agent',
+        jobName: jobTitle,
+        code: 'ROLE_MISMATCH',
+        message: `Printer "${queueName}" has role BILL and cannot receive KOT print jobs.`,
+      };
+    }
+    if (jobType === 'bill' && normRole === 'kot') {
+      console.warn(`[PRINT_AGENT_GUARD] Refusing to send Bill job to KOT-only printer "${queueName}"`);
+      return {
+        success: false,
+        skipped: true,
+        printerName: queueName,
+        transport: 'agent',
+        jobName: jobTitle,
+        code: 'ROLE_MISMATCH',
+        message: `Printer "${queueName}" has role KOT and cannot receive Bill print jobs.`,
+      };
+    }
+
     let agentId = printer.agentId;
 
     if (!agentId && restaurantId) {
@@ -2738,7 +2829,7 @@ export const webDirectPrintService = {
     builder.addLine('*** TEST PRINT SUCCESSFUL ***', { align: 'center' });
     builder.addDivider('-');
 
-    builder.addFeedAndCut(4);
+    builder.addFeedAndCut(2);
 
     const doc = builder.build();
     return doc.bytes;
@@ -2855,20 +2946,19 @@ export const webDirectPrintService = {
     );
 
     if (!targetPrinter) {
-      console.warn(
-        `[KOT_REAL_FLOW]\n` +
-        `Handler entered: YES\n` +
-        `Printer resolved: NO\n` +
-        `Printer: None\n` +
-        `Transport: NONE\n` +
-        `Status: N/A\n` +
-        `Reached printKot(): YES\n` +
-        `Renderer completed: NO\n` +
-        `Rendered bytes: 0\n` +
-        `Reached sendEscPosToBluetooth(): NO\n` +
-        `Final transport result: FAILED (NO_RESOLVED_PRINTER)`
+      console.log(
+        `[KOT ROUTING] No eligible KOT printer configured — printing skipped.\n` +
+        `Order Number: ${order.order_number}`
       );
-      return null;
+      return {
+        success: false,
+        skipped: true,
+        printerName: 'None',
+        transport: 'agent',
+        jobName: `KOT_${order.order_number}`,
+        code: 'NO_ELIGIBLE_PRINTER',
+        message: 'No eligible KOT printer configured — printing skipped.',
+      };
     }
 
     const kotNum = kot?.kot_number || (order.kots && order.kots[0]?.kot_number) || order.order_number;
@@ -2990,20 +3080,19 @@ export const webDirectPrintService = {
     );
 
     if (!targetPrinter) {
-      console.warn(
-        `[BILL_REAL_FLOW]\n` +
-        `Handler entered: YES\n` +
-        `Printer resolved: NO\n` +
-        `Printer: None\n` +
-        `Transport: NONE\n` +
-        `Status: N/A\n` +
-        `Reached printBill(): YES\n` +
-        `Renderer completed: NO\n` +
-        `Rendered bytes: 0\n` +
-        `Reached sendEscPosToBluetooth(): NO\n` +
-        `Final transport result: FAILED (NO_RESOLVED_PRINTER)`
+      console.log(
+        `[BILL ROUTING] No eligible Bill printer configured — printing skipped.\n` +
+        `Order Number: ${order.order_number}`
       );
-      return null;
+      return {
+        success: false,
+        skipped: true,
+        printerName: 'None',
+        transport: 'agent',
+        jobName: `Bill_${order.order_number}`,
+        code: 'NO_ELIGIBLE_PRINTER',
+        message: 'No eligible Bill printer configured — printing skipped.',
+      };
     }
 
     const invNum = order.invoice_number || order.order_number;

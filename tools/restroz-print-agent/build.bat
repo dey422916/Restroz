@@ -17,6 +17,10 @@ if not exist "%OUT_DIR%" mkdir "%OUT_DIR%"
 
 %CSC% /target:winexe /optimize+ /platform:anycpu /out:"%OUT_DIR%\RestroZ-Print-Agent.exe" ^
     /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Security.dll,System.Core.dll ^
+    /r:C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Runtime.dll ^
+    /r:C:\Windows\System32\WinMetadata\Windows.Foundation.winmd ^
+    /r:C:\Windows\System32\WinMetadata\Windows.Devices.winmd ^
+    /r:C:\Windows\System32\WinMetadata\Windows.Storage.winmd ^
     "%~dp0src\*.cs"
 
 if %ERRORLEVEL% EQU 0 (

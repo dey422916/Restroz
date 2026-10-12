@@ -80,6 +80,43 @@ export function setLocalKotPrinter(printerName: string, restaurantId?: string | 
   }
 }
 
+export function getLocalBillPrinter(restaurantId?: string | null): string {
+  try {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      if (restaurantId) {
+        const perRest = window.localStorage.getItem(`restroz_printer_${restaurantId}_bill`);
+        if (perRest) return perRest;
+      }
+      const legacyOrGlobal = window.localStorage.getItem('restroz_printer_bill');
+      if (legacyOrGlobal) return legacyOrGlobal;
+    }
+  } catch (e) {
+    console.warn('[directPrintService] Error reading local Bill printer:', e);
+  }
+  return '';
+}
+
+export function setLocalBillPrinter(printerName: string, restaurantId?: string | null): void {
+  try {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      if (restaurantId) {
+        if (printerName) {
+          window.localStorage.setItem(`restroz_printer_${restaurantId}_bill`, printerName);
+        } else {
+          window.localStorage.removeItem(`restroz_printer_${restaurantId}_bill`);
+        }
+      }
+      if (printerName) {
+        window.localStorage.setItem('restroz_printer_bill', printerName);
+      } else {
+        window.localStorage.removeItem('restroz_printer_bill');
+      }
+    }
+  } catch (e) {
+    console.warn('[directPrintService] Error saving local Bill printer:', e);
+  }
+}
+
 /**
  * Resolves the configured KOT printer name from device local storage or RestaurantSettings
  */
@@ -89,7 +126,7 @@ export function resolveKotPrinterName(settings?: RestaurantSettings | null, rest
   if (local) return local;
 
   if (settings) {
-    const fromSettings = (settings as any).kot_printer_name || (settings as any).thermal_printer_name;
+    const fromSettings = (settings as any).kot_printer_name;
     if (fromSettings) return fromSettings;
   }
   return '';
@@ -100,15 +137,13 @@ export function resolveKotPrinterName(settings?: RestaurantSettings | null, rest
  */
 export function resolveBillPrinterName(settings?: RestaurantSettings | null, restaurantId?: string | null): string {
   const restId = restaurantId || settings?.restaurant_id || (settings as any)?.id;
-  const local = getLocalKotPrinter(restId);
+  const local = getLocalBillPrinter(restId);
   if (local) return local;
 
   if (!settings) return '';
   return (
     (settings as any).bill_printer_name ||
     (settings as any).receipt_printer_name ||
-    (settings as any).kot_printer_name ||
-    (settings as any).thermal_printer_name ||
     ''
   );
 }

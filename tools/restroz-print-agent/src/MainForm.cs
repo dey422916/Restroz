@@ -11,6 +11,8 @@ namespace RestroZPrintAgent
 
         private Label _lblTitle;
         private Label _lblStatus;
+        private Label _lblEnvBadge;
+        private Button _btnSwitchBackend;
         private Panel _pnlPairing;
         private Label _lblPairingHeader;
         private Label _lblPairingCode;
@@ -61,6 +63,52 @@ namespace RestroZPrintAgent
                 AutoSize = true
             };
             this.Controls.Add(_lblTitle);
+
+            // Cloud Environment Badge
+            _lblEnvBadge = new Label
+            {
+                Text = _config.IsProduction ? "☁ PROD" : "🛠 DEV",
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+                ForeColor = _config.IsProduction ? Color.FromArgb(34, 197, 94) : Color.FromArgb(234, 179, 8),
+                BackColor = Color.FromArgb(39, 39, 42),
+                Padding = new Padding(4, 2, 4, 2),
+                Location = new Point(330, 19),
+                AutoSize = true
+            };
+            this.Controls.Add(_lblEnvBadge);
+
+            // Switch Backend Button
+            _btnSwitchBackend = new Button
+            {
+                Text = _config.IsProduction ? "Switch to DEV" : "Switch to PROD",
+                Location = new Point(416, 16),
+                Size = new Size(128, 26),
+                BackColor = Color.FromArgb(39, 39, 42),
+                ForeColor = Color.FromArgb(212, 212, 216),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8f, FontStyle.Regular),
+                Cursor = Cursors.Hand
+            };
+            _btnSwitchBackend.FlatAppearance.BorderSize = 1;
+            _btnSwitchBackend.FlatAppearance.BorderColor = Color.FromArgb(63, 63, 70);
+            _btnSwitchBackend.Click += (s, e) =>
+            {
+                var targetEnv = _config.IsProduction ? "DEVELOPMENT (Test Env)" : "PRODUCTION (restroz.shop)";
+                var res = MessageBox.Show(
+                    this,
+                    string.Format("Switch Print Agent backend to {0}?\n\nThis will re-register this Print Agent with that environment.", targetEnv),
+                    "Switch Cloud Environment",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question
+                );
+                if (res == DialogResult.Yes)
+                {
+                    _config.SwitchEnvironment(!_config.IsProduction);
+                    _engine.ReinitializeBackend();
+                    UpdateUiState();
+                }
+            };
+            this.Controls.Add(_btnSwitchBackend);
 
             // Status Label
             _lblStatus = new Label
@@ -334,15 +382,42 @@ namespace RestroZPrintAgent
                 return;
             }
             string printerName = _lstPrinters.SelectedItem.ToString();
-            string error;
-            bool ok = _engine.SendTestPrint(printerName, "80mm", out error);
+
+            var menu = new ContextMenuStrip();
+            menu.Items.Add("1. Standard Receipt Test (80mm / 58mm)", null, (s, a) => ExecuteTestPrint(printerName, "STANDARD"));
+            menu.Items.Add("2. Minimal ESC/POS Test (Plain Text + Cut)", null, (s, a) => ExecuteTestPrint(printerName, "MINIMAL_ESCPOS"));
+            menu.Items.Add("3. Plain Text RAW Test (1234567890)", null, (s, a) => ExecuteTestPrint(printerName, "PLAIN_TEXT"));
+            menu.Show(Cursor.Position);
+        }
+
+        private void ExecuteTestPrint(string printerName, string testType)
+        {
+            string error = null;
+            bool ok = false;
+
+            if (testType == "STANDARD")
+            {
+                string paperWidth = (printerName.IndexOf("58", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                     printerName.IndexOf("seznik", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                     printerName.IndexOf("mini", StringComparison.OrdinalIgnoreCase) >= 0) ? "58mm" : "80mm";
+                ok = _engine.SendTestPrint(printerName, paperWidth, out error);
+            }
+            else if (testType == "MINIMAL_ESCPOS")
+            {
+                ok = _engine.SendMinimalEscPosTest(printerName, out error);
+            }
+            else if (testType == "PLAIN_TEXT")
+            {
+                ok = _engine.SendPlainTextTest(printerName, out error);
+            }
+
             if (ok)
             {
-                MessageBox.Show(string.Format("Test print successfully sent to '{0}'!", printerName), "Test Print", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(string.Format("Test [{0}] successfully submitted to Windows queue '{1}'!\n\nCheck printer hardware output.", testType, printerName), "Test Print", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             else
             {
-                MessageBox.Show(string.Format("Test print failed: {0}", error), "Test Print Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(string.Format("Test [{0}] failed for '{1}':\n\n{2}", testType, printerName, error), "Test Print Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -384,6 +459,16 @@ namespace RestroZPrintAgent
             {
                 this.BeginInvoke(new Action(UpdateUiState));
                 return;
+            }
+
+            if (_lblEnvBadge != null)
+            {
+                _lblEnvBadge.Text = _config.IsProduction ? "☁ PROD" : "🛠 DEV";
+                _lblEnvBadge.ForeColor = _config.IsProduction ? Color.FromArgb(34, 197, 94) : Color.FromArgb(234, 179, 8);
+            }
+            if (_btnSwitchBackend != null)
+            {
+                _btnSwitchBackend.Text = _config.IsProduction ? "Switch to DEV" : "Switch to PROD";
             }
 
             if (_config.IsPaired)

@@ -72,7 +72,10 @@ namespace RestroZPrintAgent
             }
             string printerName = printers[0];
             string error;
-            bool ok = _engine.SendTestPrint(printerName, "80mm", out error);
+            string paperWidth = (printerName.IndexOf("58", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 printerName.IndexOf("seznik", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                 printerName.IndexOf("mini", StringComparison.OrdinalIgnoreCase) >= 0) ? "58mm" : "80mm";
+            bool ok = _engine.SendTestPrint(printerName, paperWidth, out error);
             if (ok)
             {
                 _trayIcon.ShowBalloonTip(3000, "RestroZ Print Agent", string.Format("Test print sent to '{0}'", printerName), ToolTipIcon.Info);

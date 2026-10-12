@@ -138,7 +138,11 @@ namespace RestroZPrintAgent
                 restaurantId = ExtractString(res, "restaurant_id");
                 string agentId = ExtractString(res, "agent_id");
                 string agentToken = ExtractString(res, "agent_token");
-                DateTime? expiresAt = ExtractDateTime(res, "pairing_code_expires_at");
+                DateTime? expiresAt = ExtractDateTime(res, "pairing_expires_at");
+                if (!expiresAt.HasValue)
+                {
+                    expiresAt = ExtractDateTime(res, "pairing_code_expires_at");
+                }
                 if (!string.IsNullOrEmpty(agentId))
                 {
                     _config.AgentId = agentId;

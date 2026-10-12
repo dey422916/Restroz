@@ -28,6 +28,7 @@ namespace RestroZPrintAgent
                 return;
             }
 
+            var config = Security.LoadConfig();
             bool startMinimized = false;
             foreach (var arg in args)
             {
@@ -35,9 +36,18 @@ namespace RestroZPrintAgent
                 {
                     startMinimized = true;
                 }
+                else if (arg.Equals("--dev", StringComparison.OrdinalIgnoreCase))
+                {
+                    config.SwitchEnvironment(false);
+                    Security.SaveConfig(config);
+                }
+                else if (arg.Equals("--prod", StringComparison.OrdinalIgnoreCase))
+                {
+                    config.SwitchEnvironment(true);
+                    Security.SaveConfig(config);
+                }
             }
 
-            var config = Security.LoadConfig();
             var client = new SupabaseClient(config);
             var engine = new PrintEngine(config, client);
 

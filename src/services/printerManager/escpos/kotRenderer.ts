@@ -157,7 +157,7 @@ export function renderKotToEscPos(
   builder.addDivider('-');
 
   // 13. Paper Feed & Partial Cut
-  builder.addFeedAndCut(3);
+  builder.addFeedAndCut(is58mm ? 2 : 3);
 
   return builder.build();
 }

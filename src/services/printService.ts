@@ -550,7 +550,7 @@ export const printService = {
     kot?: KOT,
     isReprint: boolean = false,
     options?: { forceBrowser?: boolean; isManual?: boolean }
-  ): Promise<{ direct: boolean; printerName?: string }> {
+  ): Promise<{ direct: boolean; printerName?: string; skipped?: boolean }> {
     const html = this.generateKotHtml(order, settings, kot, isReprint);
     const paperSize = settings.kot_paper_size || '80mm';
 
@@ -583,6 +583,12 @@ export const printService = {
           }
           return { direct: true, printerName: directResult.printerName };
         }
+        if (directResult && directResult.skipped) {
+          if (__DEV__) {
+            console.log('[KOT ROUTING] No eligible KOT printer configured — printing skipped.');
+          }
+          return { direct: false, skipped: true };
+        }
         if (directResult && !directResult.success) {
           const err: any = new Error(directResult.message || 'Printer could not print the KOT.');
           err.code = directResult.code || 'BLE_PRINT_FAILED';
@@ -613,6 +619,11 @@ export const printService = {
             console.log('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinters: ' + printerNames);
           }
           return { direct: true, printerName: printerNames };
+        } else if ((routerResult as any).skipped) {
+          if (__DEV__) {
+            console.log('[KOT ROUTING] No eligible KOT printer configured — printing skipped.');
+          }
+          return { direct: false, skipped: true };
         } else {
           if (__DEV__) {
             console.warn('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
@@ -635,12 +646,19 @@ export const printService = {
       }
     }
 
-    // 3. Fallback: Browser / Native Isolated Print Dialog
-    if (__DEV__) {
-      console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: ' + autoPrintEnabled + '\nRoute: BROWSER_MANUAL');
+    // 3. Fallback: Browser / Native Isolated Print Dialog ONLY when explicitly requested (forceBrowser)
+    if (options?.forceBrowser) {
+      if (__DEV__) {
+        console.log('[THERMAL PRINT]\nDocument: KOT\nAuto Print: ' + autoPrintEnabled + '\nRoute: BROWSER_MANUAL');
+      }
+      await executeIsolatedPrint(html);
+      return { direct: false };
     }
-    await executeIsolatedPrint(html);
-    return { direct: false };
+
+    if (__DEV__) {
+      console.log('[KOT ROUTING] No eligible KOT printer configured — browser fallback skipped.');
+    }
+    return { direct: false, skipped: true };
   },
 
   /**
@@ -652,7 +670,7 @@ export const printService = {
     settings: RestaurantSettings,
     billedBy?: string,
     options?: { forceBrowser?: boolean; isReprint?: boolean; isManual?: boolean }
-  ): Promise<{ direct: boolean; printerName?: string }> {
+  ): Promise<{ direct: boolean; printerName?: string; skipped?: boolean }> {
     return this.printFinalReceiptThermal(order, settings, billedBy, options);
   },
 
@@ -1121,7 +1139,7 @@ export const printService = {
     settings: RestaurantSettings,
     billedBy?: string,
     options?: { forceBrowser?: boolean; isReprint?: boolean; isManual?: boolean }
-  ): Promise<{ direct: boolean; printerName?: string }> {
+  ): Promise<{ direct: boolean; printerName?: string; skipped?: boolean }> {
     const identity = resolveReceiptIdentity(settings, undefined, billedBy);
     const resolvedBilledBy = identity.billedBy;
     const html = this.generateFinalReceiptHtml(order, settings, resolvedBilledBy);
@@ -1156,6 +1174,12 @@ export const printService = {
           }
           return { direct: true, printerName: directResult.printerName };
         }
+        if (directResult && directResult.skipped) {
+          if (__DEV__) {
+            console.log('[BILL ROUTING] No eligible Bill printer configured — printing skipped.');
+          }
+          return { direct: false, skipped: true };
+        }
         if (directResult && !directResult.success) {
           const err: any = new Error(directResult.message || 'Printer could not print the Bill.');
           err.code = directResult.code || 'BLE_PRINT_FAILED';
@@ -1185,6 +1209,11 @@ export const printService = {
             console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinter: ' + printerNames);
           }
           return { direct: true, printerName: printerNames };
+        } else if ((routerResult as any).skipped) {
+          if (__DEV__) {
+            console.log('[BILL ROUTING] No eligible Bill printer configured — printing skipped.');
+          }
+          return { direct: false, skipped: true };
         } else {
           if (__DEV__) {
             console.warn('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
@@ -1206,12 +1235,19 @@ export const printService = {
       }
     }
 
-    // 3. Fallback: Browser / Native Isolated Print Dialog
-    if (__DEV__) {
-      console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nAuto Print: ' + autoPrintEnabled + '\nRoute: BROWSER_MANUAL');
+    // 3. Fallback: Browser / Native Isolated Print Dialog ONLY when explicitly requested (forceBrowser)
+    if (options?.forceBrowser) {
+      if (__DEV__) {
+        console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nAuto Print: ' + autoPrintEnabled + '\nRoute: BROWSER_MANUAL');
+      }
+      await executeIsolatedPrint(html);
+      return { direct: false };
     }
-    await executeIsolatedPrint(html);
-    return { direct: false };
+
+    if (__DEV__) {
+      console.log('[BILL ROUTING] No eligible Bill printer configured — browser fallback skipped.');
+    }
+    return { direct: false, skipped: true };
   },
 
   /**

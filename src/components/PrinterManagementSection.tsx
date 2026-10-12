@@ -445,22 +445,31 @@ export const PrinterManagementSection: React.FC<Props> = ({
       await devicePrinterBindingService.setDevicePrintMode('DIRECT_DEVICE');
       setDevicePrintMode('DIRECT_DEVICE');
 
-      // Ensure local defaults bind to this printer
+      // Ensure local defaults bind to this printer strictly matching its role
       const currentDefaults = await printerManager.getDeviceDefaults();
-      let newKotDef = currentDefaults.default_kot_printer_id || deviceKotPrinterId;
-      let newBillDef = currentDefaults.default_bill_printer_id || deviceBillPrinterId;
-      if (!newKotDef || isPrimary || (printerRole === 'kot' || printerRole === 'both')) {
-        if ((printerRole === 'kot' || printerRole === 'both') && savedPrinterId) {
-          newKotDef = savedPrinterId;
-          setDeviceKotPrinterId(savedPrinterId);
+      let newKotDef: string | null = currentDefaults.default_kot_printer_id || deviceKotPrinterId || null;
+      let newBillDef: string | null = currentDefaults.default_bill_printer_id || deviceBillPrinterId || null;
+
+      if (printerRole === 'kot' || printerRole === 'both') {
+        if (!newKotDef || isPrimary) {
+          newKotDef = savedPrinterId || null;
+          setDeviceKotPrinterId(savedPrinterId || '');
         }
+      } else if (newKotDef === savedPrinterId) {
+        newKotDef = null;
+        setDeviceKotPrinterId('');
       }
-      if (!newBillDef || isPrimary || (printerRole === 'bill' || printerRole === 'both')) {
-        if ((printerRole === 'bill' || printerRole === 'both') && savedPrinterId) {
-          newBillDef = savedPrinterId;
-          setDeviceBillPrinterId(savedPrinterId);
+
+      if (printerRole === 'bill' || printerRole === 'both') {
+        if (!newBillDef || isPrimary) {
+          newBillDef = savedPrinterId || null;
+          setDeviceBillPrinterId(savedPrinterId || '');
         }
+      } else if (newBillDef === savedPrinterId) {
+        newBillDef = null;
+        setDeviceBillPrinterId('');
       }
+
       await printerManager.saveDeviceDefaults({
         default_kot_printer_id: newKotDef,
         default_bill_printer_id: newBillDef,

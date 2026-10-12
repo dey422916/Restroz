@@ -382,15 +382,39 @@ namespace RestroZPrintAgent
                 return;
             }
             string printerName = _lstPrinters.SelectedItem.ToString();
-            string error;
-            bool ok = _engine.SendTestPrint(printerName, "80mm", out error);
+
+            var menu = new ContextMenuStrip();
+            menu.Items.Add("1. Standard Receipt Test (80mm / 58mm)", null, (s, a) => ExecuteTestPrint(printerName, "STANDARD"));
+            menu.Items.Add("2. Minimal ESC/POS Test (Plain Text + Cut)", null, (s, a) => ExecuteTestPrint(printerName, "MINIMAL_ESCPOS"));
+            menu.Items.Add("3. Plain Text RAW Test (1234567890)", null, (s, a) => ExecuteTestPrint(printerName, "PLAIN_TEXT"));
+            menu.Show(Cursor.Position);
+        }
+
+        private void ExecuteTestPrint(string printerName, string testType)
+        {
+            string error = null;
+            bool ok = false;
+
+            if (testType == "STANDARD")
+            {
+                ok = _engine.SendTestPrint(printerName, "80mm", out error);
+            }
+            else if (testType == "MINIMAL_ESCPOS")
+            {
+                ok = _engine.SendMinimalEscPosTest(printerName, out error);
+            }
+            else if (testType == "PLAIN_TEXT")
+            {
+                ok = _engine.SendPlainTextTest(printerName, out error);
+            }
+
             if (ok)
             {
-                MessageBox.Show(string.Format("Test print successfully sent to '{0}'!", printerName), "Test Print", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(string.Format("Test [{0}] successfully submitted to Windows queue '{1}'!\n\nCheck printer hardware output.", testType, printerName), "Test Print", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             else
             {
-                MessageBox.Show(string.Format("Test print failed: {0}", error), "Test Print Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(string.Format("Test [{0}] failed for '{1}':\n\n{2}", testType, printerName, error), "Test Print Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 

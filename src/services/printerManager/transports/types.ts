@@ -27,6 +27,7 @@ export type TransportStatus =
   | 'device_not_connected'
   | 'unsupported_usb_interface'
   | 'usb_host_unsupported'
+  | 'unsupported'
   | 'connection_failed';
 
 export interface TcpConnectionConfig {

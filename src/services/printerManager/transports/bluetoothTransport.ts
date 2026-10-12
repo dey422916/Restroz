@@ -5,7 +5,8 @@
  * timeout handling, conservative chunking, and partial write tracking.
  */
 
-import { Platform, PermissionsAndroid } from 'react-native';
+import { Platform, PermissionsAndroid, NativeModules } from 'react-native';
+import { isExpoGo } from './bleGattTransport';
 import {
   BluetoothDeviceInfo,
   BluetoothConnectionConfig,
@@ -23,11 +24,16 @@ const ACTIVE_BT_PRINTER_LOCKS = new Map<string, boolean>();
  */
 async function getBluetoothClassicModule(): Promise<any> {
   if (Platform.OS === 'android' || Platform.OS === 'ios') {
+    if (isExpoGo() || !NativeModules.RNBluetoothClassic) {
+      return null;
+    }
     try {
       const mod = await import('react-native-bluetooth-classic');
       return mod.default || mod;
     } catch (err) {
-      console.warn('[Bluetooth Transport] Native Bluetooth module not available:', err);
+      if (!isExpoGo()) {
+        console.warn('[Bluetooth Transport] Native Bluetooth module not available:', err);
+      }
       return null;
     }
   }
@@ -35,6 +41,15 @@ async function getBluetoothClassicModule(): Promise<any> {
 }
 
 export const bluetoothTransport = {
+  /**
+   * Checks whether the native Bluetooth Classic SPP module is available.
+   */
+  isAvailable(): boolean {
+    if (Platform.OS !== 'android') return false;
+    if (isExpoGo()) return false;
+    return !!NativeModules.RNBluetoothClassic;
+  },
+
   /**
    * Checks whether Bluetooth permissions are granted.
    * On Android 12+ (API 31+), requests BLUETOOTH_CONNECT and BLUETOOTH_SCAN.
@@ -45,6 +60,12 @@ export const bluetoothTransport = {
     try {
       const apiLevel = Number(Platform.Version);
       if (apiLevel >= 31) {
+        const connectCheck = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT);
+        const scanCheck = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN);
+        if (connectCheck && scanCheck) {
+          return true;
+        }
+
         const granted = await PermissionsAndroid.requestMultiple([
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,

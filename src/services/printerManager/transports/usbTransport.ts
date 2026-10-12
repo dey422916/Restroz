@@ -5,7 +5,8 @@
  * per-printer mutex locking, and partial write safety tracking.
  */
 
-import { Platform } from 'react-native';
+import { Platform, NativeModules } from 'react-native';
+import { isExpoGo } from './bleGattTransport';
 import {
   UsbDeviceInfo,
   UsbConnectionConfig,
@@ -23,11 +24,16 @@ const ACTIVE_USB_PRINTER_LOCKS = new Map<string, boolean>();
  */
 async function getUsbModule(): Promise<any> {
   if (Platform.OS === 'android') {
+    if (isExpoGo() || (!NativeModules.UsbSerialManager && !NativeModules.UsbSerialportForAndroid)) {
+      return null;
+    }
     try {
       const mod = await import('react-native-usb-serialport-for-android');
       return mod.UsbSerialManager || mod.default || mod;
     } catch (err) {
-      console.warn('[USB Transport] Native USB module not available:', err);
+      if (!isExpoGo()) {
+        console.warn('[USB Transport] Native USB module not available:', err);
+      }
       return null;
     }
   }
@@ -58,6 +64,15 @@ export function sliceBinaryChunks(data: Uint8Array, chunkSize: number = DEFAULT_
 }
 
 export const usbTransport = {
+  /**
+   * Checks whether the native USB module is available.
+   */
+  isAvailable(): boolean {
+    if (Platform.OS !== 'android') return false;
+    if (isExpoGo()) return false;
+    return !!(NativeModules.UsbSerialManager || NativeModules.UsbSerialportForAndroid);
+  },
+
   /**
    * Checks if USB Host is supported on this Android device.
    */

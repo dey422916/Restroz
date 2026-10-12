@@ -32,8 +32,10 @@ import {
   RoutingPreviewReport,
   PrinterSystemCheckReport,
 } from '../services/printerManager/diagnostics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { isAutoPrintEnabled } from '../services/directPrintService';
 import { devicePrinterBindingService, DevicePrintMode } from '../services/printerManager/devicePrinterBindings';
+import { isExpoGo } from '../services/printerManager/transports/bleGattTransport';
 
 interface Props {
   restaurantId: string;
@@ -61,6 +63,9 @@ export const PrinterManagementSection: React.FC<Props> = ({
   showToast,
   showAutoPrintBanner = false,
 }) => {
+  const insets = useSafeAreaInsets();
+  const isExpo = isExpoGo();
+
   const [printers, setPrinters] = useState<RestaurantPrinter[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -135,6 +140,38 @@ export const PrinterManagementSection: React.FC<Props> = ({
 
   const autoPrintActive = isAutoPrintEnabled(settings);
 
+  const isSaveValid = (() => {
+    if (!name.trim()) return false;
+    if (['lan', 'wifi'].includes(connectionType)) {
+      if (!ipAddress.trim()) return false;
+      const p = Number(port);
+      if (isNaN(p) || p < 1 || p > 65535) return false;
+    }
+    if (connectionType === 'bluetooth') {
+      if (!selectedBluetoothMac) return false;
+    }
+    if (connectionType === 'usb') {
+      if (!usbVendorId.trim() || !usbProductId.trim()) return false;
+    }
+    return true;
+  })();
+
+  const isTestPrintEligible = (() => {
+    if (isExpo && (connectionType === 'bluetooth' || connectionType === 'usb')) {
+      return false;
+    }
+    if (['lan', 'wifi'].includes(connectionType)) {
+      return !!ipAddress.trim();
+    }
+    if (connectionType === 'bluetooth') {
+      return !!selectedBluetoothMac;
+    }
+    if (connectionType === 'usb') {
+      return !!usbVendorId.trim() && !!usbProductId.trim();
+    }
+    return false;
+  })();
+
   const loadPrinters = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -168,6 +205,11 @@ export const PrinterManagementSection: React.FC<Props> = ({
   }, [restaurantId, showToast]);
 
   const handleScanBluetoothDevices = async () => {
+    if (isExpo) {
+      setBtScanComplete(true);
+      showToast('info', 'Expo Go Environment', 'Native Bluetooth scanning requires the RestroZ Android APK.');
+      return;
+    }
     setIsScanningBt(true);
     setBtScanError(null);
     setBtScanErrorType(null);
@@ -214,6 +256,10 @@ export const PrinterManagementSection: React.FC<Props> = ({
   };
 
   const handleDetectUsbPrinters = async () => {
+    if (isExpo) {
+      showToast('info', 'Expo Go Environment', 'Native USB detection requires the RestroZ Android APK.');
+      return;
+    }
     setIsScanningUsb(true);
     try {
       const devices = await printerManager.getAttachedUsbDevices();
@@ -262,7 +308,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
     resetCalibrationForm();
     setModalVisible(true);
 
-    if (Platform.OS !== 'web') {
+    if (Platform.OS !== 'web' && !isExpo) {
       setTimeout(() => {
         handleScanBluetoothDevices();
       }, 150);
@@ -568,6 +614,10 @@ export const PrinterManagementSection: React.FC<Props> = ({
   };
 
   const handleTestPrint = async (p: RestaurantPrinter) => {
+    if (isExpo && (p.connection_type === 'bluetooth' || p.connection_type === 'usb')) {
+      showToast('info', 'Expo Go Environment', 'Native printing requires the RestroZ Android APK.');
+      return;
+    }
     setTestingPrinterId(p.id);
     try {
       const result = await printerManager.printTestReceipt(p);
@@ -588,6 +638,10 @@ export const PrinterManagementSection: React.FC<Props> = ({
   };
 
   const handleModalTestPrint = async () => {
+    if (isExpo && (connectionType === 'bluetooth' || connectionType === 'usb')) {
+      showToast('info', 'Expo Go Environment', 'Native printing requires the RestroZ Android APK.');
+      return;
+    }
     setIsModalTesting(true);
     try {
       const candidate: RestaurantPrinter = {
@@ -1668,16 +1722,36 @@ export const PrinterManagementSection: React.FC<Props> = ({
                     Supports BLE GATT (e.g. Seznik-Veer 925C) and Classic RFCOMM SPP. Tap scan below to detect nearby or paired thermal printers.
                   </Text>
 
+                  {isExpo && (
+                    <View
+                      style={{
+                        marginTop: 10,
+                        padding: 12,
+                        backgroundColor: '#eff6ff',
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: '#bfdbfe',
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e40af', marginBottom: 4 }}>
+                        📱 Running in Expo Go
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#1d4ed8', lineHeight: 16 }}>
+                        Native Bluetooth/USB printing requires the RestroZ Android app. Install a RestroZ development or production APK to scan and print.
+                      </Text>
+                    </View>
+                  )}
+
                   {/* Scan Action Button */}
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }}>
                     <TouchableOpacity
                       style={[
                         styles.addBtn,
                         { alignSelf: 'flex-start', backgroundColor: '#0284c7' },
-                        isScanningBt && { opacity: 0.7 },
+                        (isScanningBt || isExpo) && { opacity: 0.7 },
                       ]}
                       onPress={handleScanBluetoothDevices}
-                      disabled={isScanningBt}
+                      disabled={isScanningBt || isExpo}
                     >
                       {isScanningBt ? (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -2006,10 +2080,34 @@ export const PrinterManagementSection: React.FC<Props> = ({
                     Connect the thermal printer using USB OTG or the tablet's USB Host port.
                   </Text>
 
+                  {isExpo && (
+                    <View
+                      style={{
+                        marginTop: 10,
+                        padding: 12,
+                        backgroundColor: '#eff6ff',
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: '#bfdbfe',
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e40af', marginBottom: 4 }}>
+                        📱 Running in Expo Go
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#1d4ed8', lineHeight: 16 }}>
+                        Native Bluetooth/USB printing requires the RestroZ Android app. Install a RestroZ development or production APK to scan and print.
+                      </Text>
+                    </View>
+                  )}
+
                   <TouchableOpacity
-                    style={[styles.addBtn, { marginTop: 10, alignSelf: 'flex-start', backgroundColor: '#0284c7' }]}
+                    style={[
+                      styles.addBtn,
+                      { marginTop: 10, alignSelf: 'flex-start', backgroundColor: '#0284c7' },
+                      (isScanningUsb || isExpo) && { opacity: 0.7 },
+                    ]}
                     onPress={handleDetectUsbPrinters}
-                    disabled={isScanningUsb}
+                    disabled={isScanningUsb || isExpo}
                   >
                     {isScanningUsb ? (
                       <ActivityIndicator size="small" color="#fff" />
@@ -2235,7 +2333,12 @@ export const PrinterManagementSection: React.FC<Props> = ({
               </View>
             </ScrollView>
 
-            <View style={styles.modalFooter}>
+            <View
+              style={[
+                styles.modalFooter,
+                { paddingBottom: Math.max(12, insets.bottom + 8) },
+              ]}
+            >
               <TouchableOpacity
                 style={styles.cancelBtn}
                 onPress={() => setModalVisible(false)}
@@ -2244,21 +2347,35 @@ export const PrinterManagementSection: React.FC<Props> = ({
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.calTestBtn, { paddingHorizontal: 12, paddingVertical: 10 }]}
+                style={[
+                  styles.calTestBtn,
+                  { paddingHorizontal: 12, paddingVertical: 10 },
+                  (!isTestPrintEligible || isModalTesting) && { opacity: 0.5, backgroundColor: '#f1f5f9' },
+                ]}
                 onPress={handleModalTestPrint}
-                disabled={isModalTesting}
+                disabled={!isTestPrintEligible || isModalTesting}
               >
                 {isModalTesting ? (
                   <ActivityIndicator size="small" color="#2563eb" />
                 ) : (
-                  <Text style={styles.calTestBtnText}>🖨️ Test Print</Text>
+                  <Text
+                    style={[
+                      styles.calTestBtnText,
+                      !isTestPrintEligible && { color: '#94a3b8' },
+                    ]}
+                  >
+                    🖨️ Test Print
+                  </Text>
                 )}
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.saveModalBtn}
+                style={[
+                  styles.saveModalBtn,
+                  (!isSaveValid || isSaving) && { opacity: 0.5, backgroundColor: '#94a3b8' },
+                ]}
                 onPress={handleSavePrinter}
-                disabled={isSaving}
+                disabled={!isSaveValid || isSaving}
               >
                 {isSaving ? (
                   <ActivityIndicator size="small" color="#fff" />
@@ -2632,17 +2749,20 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
     alignItems: 'center',
-    padding: 16,
+    padding: Platform.OS === 'web' ? 16 : 0,
   },
   modalContainer: {
     backgroundColor: '#ffffff',
-    borderRadius: 12,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderBottomLeftRadius: Platform.OS === 'web' ? 16 : 0,
+    borderBottomRightRadius: Platform.OS === 'web' ? 16 : 0,
     width: '100%',
     maxWidth: 640,
-    maxHeight: '90%',
+    maxHeight: Platform.OS === 'web' ? '90%' : '94%',
     overflow: 'hidden',
   },
   modalHeader: {
@@ -2674,11 +2794,13 @@ const styles = StyleSheet.create({
   },
   connTypeRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 6,
     marginBottom: 12,
   },
   connTypeBtn: {
     flex: 1,
+    minWidth: 70,
     paddingVertical: 8,
     alignItems: 'center',
     backgroundColor: '#f8fafc',
@@ -2917,17 +3039,22 @@ const styles = StyleSheet.create({
   },
   modalFooter: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 10,
-    padding: 16,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
   },
   cancelBtn: {
-    paddingHorizontal: 16,
+    flex: 1,
     paddingVertical: 10,
     borderRadius: 8,
     backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cancelBtnText: {
     fontSize: 13,
@@ -2935,10 +3062,12 @@ const styles = StyleSheet.create({
     color: '#475569',
   },
   saveModalBtn: {
-    paddingHorizontal: 18,
+    flex: 1.2,
     paddingVertical: 10,
     borderRadius: 8,
     backgroundColor: '#2563eb',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   saveModalBtnText: {
     fontSize: 13,

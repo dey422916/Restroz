@@ -247,12 +247,23 @@ export const printerManager = {
         };
       }
 
-      const isSeznik =
+      const isBle =
+        (binding as any)?.bluetooth_transport_type === 'ble_gatt' ||
+        (printer as any).bluetooth_transport_type === 'ble_gatt' ||
         /seznik|925/i.test(printer.name) ||
-        /seznik|925/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '') ||
-        (binding as any)?.bluetooth_transport_type === 'ble_gatt';
+        /seznik|925/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '');
 
-      if (isSeznik && bleGattTransport.isAvailable()) {
+      if (isBle) {
+        if (!bleGattTransport.isAvailable()) {
+          return {
+            success: false,
+            status: 'unsupported',
+            bytesSent: 0,
+            totalBytes: doc.bytes.length,
+            message: 'Native BLE GATT transport is not available in this environment. Install a RestroZ development or production APK to test print.',
+            durationMs: 0,
+          };
+        }
         return bleGattTransport.sendPayload(
           {
             address,
@@ -262,6 +273,17 @@ export const printerManager = {
           doc.bytes,
           printer.id
         );
+      }
+
+      if (!bluetoothTransport.isAvailable()) {
+        return {
+          success: false,
+          status: 'unsupported',
+          bytesSent: 0,
+          totalBytes: doc.bytes.length,
+          message: 'Native Bluetooth Classic SPP transport is not available in this environment. Install a RestroZ development or production APK to test print.',
+          durationMs: 0,
+        };
       }
 
       return bluetoothTransport.sendPayload(
@@ -282,6 +304,17 @@ export const printerManager = {
           bytesSent: 0,
           totalBytes: doc.bytes.length,
           message: 'USB printer not bound on this tablet. Please connect and select device in Settings.',
+          durationMs: 0,
+        };
+      }
+
+      if (!usbTransport.isAvailable()) {
+        return {
+          success: false,
+          status: 'unsupported',
+          bytesSent: 0,
+          totalBytes: doc.bytes.length,
+          message: 'Native USB OTG transport is not available in this environment. Install a RestroZ development or production APK to test print.',
           durationMs: 0,
         };
       }

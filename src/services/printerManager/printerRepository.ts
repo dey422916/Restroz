@@ -68,7 +68,7 @@ export const printerRepository = {
     const localMatch = localPrinters.find((p) => p.id === id);
     if (localMatch) return localMatch;
 
-    const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
+    const isDirect = Platform.OS !== 'web' && (await devicePrinterBindingService.isDirectDeviceMode());
     if (isDirect || !hasPrintersTable) {
       return null;
     }
@@ -95,7 +95,7 @@ export const printerRepository = {
   async createPrinter(
     printer: Omit<RestaurantPrinter, 'id' | 'created_at' | 'updated_at'>
   ): Promise<RestaurantPrinter> {
-    const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
+    const isDirect = Platform.OS !== 'web' && (await devicePrinterBindingService.isDirectDeviceMode());
 
     // 1. Basic Field Validation
     if (!printer.restaurant_id && !isDirect) throw new Error('Restaurant ID is required.');
@@ -237,7 +237,7 @@ export const printerRepository = {
     const updatedMerged = { ...existing, ...payload };
     await devicePrinterBindingService.saveDevicePrinter(updatedMerged);
 
-    const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
+    const isDirect = Platform.OS !== 'web' && (await devicePrinterBindingService.isDirectDeviceMode());
     if (isDirect || !hasPrintersTable) {
       // In DIRECT_DEVICE mode or when cloud table is not present, return updated record immediately
       return updatedMerged;
@@ -273,7 +273,7 @@ export const printerRepository = {
     if (!id) return;
     await devicePrinterBindingService.removeDevicePrinter(id);
 
-    const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
+    const isDirect = Platform.OS !== 'web' && (await devicePrinterBindingService.isDirectDeviceMode());
     if (isDirect || !hasPrintersTable) {
       return;
     }
@@ -314,7 +314,7 @@ export const printerRepository = {
       }
     }
 
-    const isDirect = Platform.OS !== 'web' || (await devicePrinterBindingService.isDirectDeviceMode());
+    const isDirect = Platform.OS !== 'web' && (await devicePrinterBindingService.isDirectDeviceMode());
     if (isDirect || !hasPrintersTable) {
       return;
     }

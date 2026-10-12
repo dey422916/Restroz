@@ -176,31 +176,53 @@ export const androidPrintRouter = {
           durationMs: 0,
         };
       } else {
-        const isSeznik =
-          /seznik|925/i.test(printer.name) ||
-          /seznik|925/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '') ||
+        const isBle =
           (binding as any)?.bluetooth_transport_type === 'ble_gatt' ||
-          (printer as any).bluetooth_transport_type === 'ble_gatt';
+          (printer as any).bluetooth_transport_type === 'ble_gatt' ||
+          /seznik|925/i.test(printer.name) ||
+          /seznik|925/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '');
 
-        if (isSeznik && bleGattTransport.isAvailable()) {
-          transportRes = await bleGattTransport.sendPayload(
-            {
-              address,
-              name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
-              transportType: 'ble_gatt',
-            },
-            bytes,
-            printer.id
-          );
+        if (isBle) {
+          if (!bleGattTransport.isAvailable()) {
+            transportRes = {
+              success: false,
+              status: 'failed_before_write',
+              bytesSent: 0,
+              totalBytes: bytes.length,
+              message: `Native BLE GATT transport is not available in this environment. Install a RestroZ development or production APK to print.`,
+              durationMs: 0,
+            };
+          } else {
+            transportRes = await bleGattTransport.sendPayload(
+              {
+                address,
+                name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+                transportType: 'ble_gatt',
+              },
+              bytes,
+              printer.id
+            );
+          }
         } else {
-          transportRes = await bluetoothTransport.sendPayload(
-            {
-              address,
-              name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
-            },
-            bytes,
-            printer.id
-          );
+          if (!bluetoothTransport.isAvailable()) {
+            transportRes = {
+              success: false,
+              status: 'failed_before_write',
+              bytesSent: 0,
+              totalBytes: bytes.length,
+              message: `Native Bluetooth Classic SPP transport is not available in this environment. Install a RestroZ development or production APK to print.`,
+              durationMs: 0,
+            };
+          } else {
+            transportRes = await bluetoothTransport.sendPayload(
+              {
+                address,
+                name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+              },
+              bytes,
+              printer.id
+            );
+          }
         }
       }
     } else if (printer.connection_type === 'usb') {
@@ -214,6 +236,15 @@ export const androidPrintRouter = {
           bytesSent: 0,
           totalBytes: bytes.length,
           message: `USB printer "${printer.name}" is not bound on this device. Select USB device in Settings.`,
+          durationMs: 0,
+        };
+      } else if (!usbTransport.isAvailable()) {
+        transportRes = {
+          success: false,
+          status: 'failed_before_write',
+          bytesSent: 0,
+          totalBytes: bytes.length,
+          message: `Native USB OTG transport is not available in this environment. Install a RestroZ development or production APK to print.`,
           durationMs: 0,
         };
       } else {

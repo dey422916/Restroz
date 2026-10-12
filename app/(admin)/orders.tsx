@@ -22,6 +22,7 @@ import { productService } from '../../src/services/api/productService';
 import { tableService } from '../../src/services/api/tableService';
 import { kotService, clearKotsCache } from '../../src/services/api/kotService';
 import { printService, formatLogoDataUri, handleThermalPrintFallback } from '../../src/services/printService';
+import { isAutoPrintEnabled } from '../../src/services/directPrintService';
 import { Order, OrderItem, OrderStatus, PaymentStatus, OrderSource, Product, DiningTable, RestaurantSettings, PaymentMethod } from '../../src/types';
 import { formatCurrency, numberToWords, roundToTwoDecimals } from '../../src/utils/currency';
 import { calculateSplitAutoFill } from '../../src/utils/splitPayment';
@@ -1256,6 +1257,16 @@ export default function OrdersScreen() {
       setPayOrderModal(null);
       setViewOrderModal(completed);
       await loadData();
+
+      // Auto print Bill upon settlement if auto print is enabled
+      if (isAutoPrintEnabled(settings)) {
+        try {
+          const billedBy = getCurrentLoggedInUserDisplayName(user);
+          await printService.printBillThermal(completed, settings, billedBy);
+        } catch (printErr) {
+          console.warn('[orders.tsx] Auto print bill after settlement skipped/failed safely:', printErr);
+        }
+      }
     } catch (err: any) {
       Alert.alert('Settlement Failed', err.message);
     } finally {

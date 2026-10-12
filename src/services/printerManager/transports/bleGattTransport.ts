@@ -11,7 +11,8 @@
  * Seamlessly coexists with Classic SPP (bluetoothTransport).
  */
 
-import { Platform, PermissionsAndroid } from 'react-native';
+import { Platform, PermissionsAndroid, NativeModules } from 'react-native';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import {
   BluetoothDeviceInfo,
   BluetoothConnectionConfig,
@@ -25,19 +26,32 @@ import {
 } from './types';
 import { bluetoothTransport } from './bluetoothTransport';
 
+export function isExpoGo(): boolean {
+  return (
+    Constants.appOwnership === 'expo' ||
+    Constants.executionEnvironment === ExecutionEnvironment.StoreClient
+  );
+}
+
 const ACTIVE_BLE_LOCKS = new Map<string, boolean>();
 
 let bleManagerInstance: any = null;
 
 function getBleManager(): any {
   if (Platform.OS !== 'android' && Platform.OS !== 'ios') return null;
+  // In Expo Go or when native BleClientManager is absent, do not call new BleManager()
+  if (isExpoGo() || !NativeModules.BleClientManager) {
+    return null;
+  }
   if (!bleManagerInstance) {
     try {
       // Dynamic require to prevent crash if native module is not linked in existing APK
       const { BleManager } = require('react-native-ble-plx');
       bleManagerInstance = new BleManager();
     } catch (err) {
-      console.warn('[BLE GATT Transport] react-native-ble-plx native module not available:', err);
+      if (!isExpoGo()) {
+        console.warn('[BLE GATT Transport] react-native-ble-plx native module not available:', err);
+      }
     }
   }
   return bleManagerInstance;
@@ -94,6 +108,13 @@ export const bleGattTransport = {
     try {
       const apiLevel = Number(Platform.Version);
       if (apiLevel >= 31) {
+        // First check if permissions are already granted
+        const connectCheck = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT);
+        const scanCheck = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN);
+        if (connectCheck && scanCheck) {
+          return { granted: true };
+        }
+
         const permissions = [
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
@@ -220,8 +241,7 @@ export const bleGattTransport = {
 
     const manager = getBleManager();
     if (!manager) {
-      // Fallback to Classic Bluetooth discovery if BLE native module is not linked
-      return bluetoothTransport.getPairedDevices();
+      return [];
     }
 
     // 1. Verify runtime permissions
@@ -319,8 +339,14 @@ export const bleGattTransport = {
   async testConnection(config: BluetoothConnectionConfig): Promise<TestConnectionResult> {
     const manager = getBleManager();
     if (!manager) {
-      // If BLE manager is not linked, attempt connection via Classic SPP
-      return bluetoothTransport.testConnection(config);
+      return {
+        reachable: false,
+        status: 'unreachable',
+        message: isExpoGo()
+          ? 'Native BLE printing requires the RestroZ Android APK (not supported in Expo Go).'
+          : 'BLE native module is not available on this device.',
+        latencyMs: 0,
+      };
     }
 
     if (!config.address || !config.address.trim()) {
@@ -357,13 +383,7 @@ export const bleGattTransport = {
       };
     } catch (err: any) {
       const latencyMs = Date.now() - startTime;
-      console.warn('[BLE GATT Transport] testConnection failed, testing SPP fallback:', err?.message || err);
-
-      // Attempt fallback to Classic SPP
-      const sppResult = await bluetoothTransport.testConnection(config);
-      if (sppResult.reachable) {
-        return sppResult;
-      }
+      console.warn('[BLE GATT Transport] testConnection failed:', err?.message || err);
 
       return {
         reachable: false,
@@ -386,8 +406,16 @@ export const bleGattTransport = {
   ): Promise<PrintTransportResult> {
     const manager = getBleManager();
     if (!manager) {
-      console.log('[BLE GATT Transport] Native BLE manager not linked in APK. Falling back to Classic SPP.');
-      return bluetoothTransport.sendPayload(config, bytes, printerId);
+      return {
+        success: false,
+        status: 'connection_failed',
+        bytesSent: 0,
+        totalBytes: bytes.length,
+        message: isExpoGo()
+          ? 'Native BLE printing requires the RestroZ Android APK (not supported in Expo Go).'
+          : 'BLE native module is not available.',
+        durationMs: 0,
+      };
     }
 
     if (!config.address || !config.address.trim()) {
@@ -466,17 +494,6 @@ export const bleGattTransport = {
       };
     } catch (bleErr: any) {
       console.warn('[BLE GATT Transport] BLE write error:', bleErr?.message || bleErr);
-
-      // If failed before any bytes were sent, attempt fallback to Classic SPP
-      if (bytesSent === 0) {
-        console.log('[BLE GATT Transport] Attempting Classic SPP fallback for printer:', config.name || deviceId);
-        try {
-          const sppRes = await bluetoothTransport.sendPayload(config, bytes, printerId);
-          if (sppRes.success) {
-            return sppRes;
-          }
-        } catch (_) {}
-      }
 
       const durationMs = Date.now() - startTime;
       return {

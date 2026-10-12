@@ -20,6 +20,8 @@ import { useNotification } from './NotificationContext';
 import { Platform } from 'react-native';
 import { useAuth } from './AuthContext';
 import { printService, handleThermalPrintFallback } from '../services/printService';
+import { isAutoPrintEnabled } from '../services/directPrintService';
+import { getCurrentLoggedInUserDisplayName } from '../utils/receiptIdentity';
 import { supabase, isSupabaseConfigured } from '../services/supabase';
 import { printedKotTracker } from '../utils/printedKotTracker';
 
@@ -828,6 +830,17 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     clearCart();
     await refreshOrders();
+
+    // Auto print Bill upon settlement if auto print is enabled
+    if (isAutoPrintEnabled(settings)) {
+      try {
+        const billedBy = getCurrentLoggedInUserDisplayName(user);
+        await printService.printBillThermal(updatedOrder, settings, billedBy);
+      } catch (printErr) {
+        console.warn('[PosContext] Auto print bill after payment settlement skipped/failed safely:', printErr);
+      }
+    }
+
     return updatedOrder;
   };
 

@@ -454,57 +454,63 @@ export default function StaffManagementScreen() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.headerTitleBox}>
-          <Text style={styles.title} numberOfLines={1}>👥 Staff & Role Permissions</Text>
-          <Text style={styles.subtitle} numberOfLines={1}>
-            {activeRestaurant?.name || 'Restaurant'} • {staffList.length} Team Members
-          </Text>
-        </View>
+        <View style={styles.headerInner}>
+          <View style={styles.headerTitleBox}>
+            <Text style={styles.title} numberOfLines={1}>👥 Staff & Role Permissions</Text>
+            <Text style={styles.subtitle} numberOfLines={1}>
+              {activeRestaurant?.name || 'Restaurant'} • {staffList.length} Team Members
+            </Text>
+          </View>
 
-        <TouchableOpacity
-          style={styles.addBtn}
-          onPress={handleOpenAddStaff}
-        >
-          <Text style={styles.addBtnText}>+ Add Staff</Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.addBtn}
+            onPress={handleOpenAddStaff}
+          >
+            <Text style={styles.addBtnText}>+ Add Staff</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Plan Usage Indicator Banner */}
       {planUsage && (
         <View style={styles.usageBanner}>
-          <View style={styles.usageInfo}>
-            <Text style={styles.usageTitle}>
-              Plan Staff Limit: {planUsage.staff.current} /{' '}
-              {planUsage.staff.is_unlimited ? 'Unlimited' : planUsage.staff.max}
-            </Text>
-            <Text style={styles.usageSub}>
-              {planUsage.plan.name} • {planUsage.staff.is_unlimited ? 'No limits' : `${planUsage.staff.percentage}% used`}
-            </Text>
+          <View style={styles.usageBannerInner}>
+            <View style={styles.usageInfo}>
+              <Text style={styles.usageTitle}>
+                Plan Staff Limit: {planUsage.staff.current} /{' '}
+                {planUsage.staff.is_unlimited ? 'Unlimited' : planUsage.staff.max}
+              </Text>
+              <Text style={styles.usageSub}>
+                {planUsage.plan.name} • {planUsage.staff.is_unlimited ? 'No limits' : `${planUsage.staff.percentage}% used`}
+              </Text>
+            </View>
+            {planUsage.staff.percentage >= 80 && !planUsage.staff.is_unlimited && (
+              <TouchableOpacity
+                style={styles.upgradeBtnSmall}
+                onPress={() => router.push('/(admin)/my-plan' as any)}
+              >
+                <Text style={styles.upgradeBtnText}>Upgrade</Text>
+              </TouchableOpacity>
+            )}
           </View>
-          {planUsage.staff.percentage >= 80 && !planUsage.staff.is_unlimited && (
-            <TouchableOpacity
-              style={styles.upgradeBtnSmall}
-              onPress={() => router.push('/(admin)/my-plan' as any)}
-            >
-              <Text style={styles.upgradeBtnText}>Upgrade</Text>
-            </TouchableOpacity>
-          )}
         </View>
       )}
 
       {/* Filter Tabs */}
       <View style={styles.filterRow}>
-        {(['ALL', 'ACTIVE', 'INACTIVE'] as const).map((tab) => (
-          <TouchableOpacity
-            key={tab}
-            style={[styles.filterChip, filterRole === tab && styles.filterChipActive]}
-            onPress={() => setFilterRole(tab)}
-          >
-            <Text style={[styles.filterChipText, filterRole === tab && styles.filterChipTextActive]}>
-              {tab}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        <View style={styles.filterRowInner}>
+          {(['ALL', 'ACTIVE', 'INACTIVE'] as const).map((tab) => (
+            <TouchableOpacity
+              key={tab}
+              style={[styles.filterChip, filterRole === tab && styles.filterChipActive]}
+              onPress={() => setFilterRole(tab)}
+            >
+              <Text style={[styles.filterChipText, filterRole === tab && styles.filterChipTextActive]}>
+                {tab}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
 
       {/* Staff List */}
@@ -625,82 +631,43 @@ export default function StaffManagementScreen() {
                 )}
               </View>
 
-              {/* Actions Grid (2 columns on mobile) */}
-              <View style={styles.cardActionsGrid}>
-                {item.role !== 'ADMIN' ? (
-                  <>
-                    <View style={styles.actionRow}>
-                      <TouchableOpacity
-                        style={[styles.actionBtn, styles.actionBtnPerms]}
-                        onPress={() => openPermissionEditor(item)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.actionBtnPermsText} numberOfLines={1}>🛡️ Permissions</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={[styles.actionBtn, styles.actionBtnPwd]}
-                        onPress={() => openStaffPasswordModal(item)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.actionBtnPwdText} numberOfLines={1}>🔑 Password</Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    <View style={styles.actionRow}>
-                      <TouchableOpacity
-                        style={[styles.actionBtn, item.is_active ? styles.btnDeact : styles.btnAct]}
-                        onPress={() => handleToggleActive(item)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={item.is_active ? styles.btnDeactText : styles.btnActText} numberOfLines={1}>
-                          {item.is_active ? '⏸️ Deactivate' : '▶️ Activate'}
-                        </Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={[styles.actionBtn, styles.actionBtnRemove]}
-                        onPress={() => handleRemoveMember(item)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.actionBtnRemoveText} numberOfLines={1}>🗑️ Remove</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </>
-                ) : (
-                  <>
-                    <View style={styles.actionRow}>
-                      <TouchableOpacity
-                        style={[styles.actionBtn, styles.actionBtnPwd]}
-                        onPress={() => openStaffPasswordModal(item)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.actionBtnPwdText} numberOfLines={1}>🔑 Password</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={[styles.actionBtn, item.is_active ? styles.btnDeact : styles.btnAct]}
-                        onPress={() => handleToggleActive(item)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={item.is_active ? styles.btnDeactText : styles.btnActText} numberOfLines={1}>
-                          {item.is_active ? '⏸️ Deactivate' : '▶️ Activate'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    <View style={styles.actionRow}>
-                      <TouchableOpacity
-                        style={[styles.actionBtn, styles.actionBtnRemove]}
-                        onPress={() => handleRemoveMember(item)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.actionBtnRemoveText} numberOfLines={1}>🗑️ Remove</Text>
-                      </TouchableOpacity>
-                      <View style={styles.actionBtnPlaceholder} />
-                    </View>
-                  </>
+              {/* Card Actions */}
+              <View style={styles.cardActionsRow}>
+                {item.role !== 'ADMIN' && (
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.actionBtnPerms]}
+                    onPress={() => openPermissionEditor(item)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.actionBtnPermsText} numberOfLines={1}>🛡️ Permissions</Text>
+                  </TouchableOpacity>
                 )}
+
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.actionBtnPwd]}
+                  onPress={() => openStaffPasswordModal(item)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.actionBtnPwdText} numberOfLines={1}>🔑 Password</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.actionBtn, item.is_active ? styles.btnDeact : styles.btnAct]}
+                  onPress={() => handleToggleActive(item)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={item.is_active ? styles.btnDeactText : styles.btnActText} numberOfLines={1}>
+                    {item.is_active ? '⏸️ Deactivate' : '▶️ Activate'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.actionBtnRemove]}
+                  onPress={() => handleRemoveMember(item)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.actionBtnRemoveText} numberOfLines={1}>🗑️ Remove</Text>
+                </TouchableOpacity>
               </View>
             </View>
           )}
@@ -1075,15 +1042,20 @@ export default function StaffManagementScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 12,
     backgroundColor: '#ffffff',
     borderBottomWidth: 1,
     borderColor: '#e2e8f0',
+  },
+  headerInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    maxWidth: 1100,
+    width: '100%',
+    alignSelf: 'center',
     gap: 10,
   },
   headerTitleBox: { flex: 1, minWidth: 0 },
@@ -1098,14 +1070,19 @@ const styles = StyleSheet.create({
   },
   addBtnText: { color: '#ffffff', fontWeight: '800', fontSize: 13 },
   usageBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     backgroundColor: '#fff7ed',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingVertical: 10,
     borderBottomWidth: 1,
     borderColor: '#fed7aa',
+  },
+  usageBannerInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    maxWidth: 1100,
+    width: '100%',
+    alignSelf: 'center',
   },
   usageInfo: { flex: 1 },
   usageTitle: { fontSize: 13, fontWeight: '700', color: '#9a3412' },
@@ -1118,10 +1095,17 @@ const styles = StyleSheet.create({
   },
   upgradeBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   filterRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingVertical: 10,
+    backgroundColor: '#f8fafc',
+  },
+  filterRowInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
+    maxWidth: 1100,
+    width: '100%',
+    alignSelf: 'center',
   },
   filterChip: {
     paddingHorizontal: 14,
@@ -1132,11 +1116,17 @@ const styles = StyleSheet.create({
   filterChipActive: { backgroundColor: '#ea580c' },
   filterChipText: { fontSize: 12, fontWeight: '600', color: '#475569' },
   filterChipTextActive: { color: '#ffffff' },
-  listContent: { padding: 16, gap: 12 },
+  listContent: {
+    padding: 16,
+    gap: 12,
+    maxWidth: 1100,
+    width: '100%',
+    alignSelf: 'center',
+  },
   staffCard: {
     backgroundColor: '#ffffff',
     borderRadius: 12,
-    padding: 14,
+    padding: 16,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     overflow: 'hidden',
@@ -1213,31 +1203,23 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
     fontStyle: 'italic',
   },
-  cardActionsGrid: {
+  cardActionsRow: {
     marginTop: 12,
     paddingTop: 10,
     borderTopWidth: 1,
     borderColor: '#f1f5f9',
-    gap: 8,
-  },
-  actionRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: 8,
-    width: '100%',
   },
   actionBtn: {
-    flex: 1,
-    minHeight: 36,
-    paddingVertical: 7,
-    paddingHorizontal: 8,
-    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 7,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
-  },
-  actionBtnPlaceholder: {
-    flex: 1,
   },
   actionBtnPerms: {
     borderWidth: 1,

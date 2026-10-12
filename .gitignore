@@ -11,6 +11,7 @@ scripts/
 !scripts/test-bulk-products-dev.js
 !scripts/test-split-payment-autofill.js
 !scripts/test-printer-role-routing.js
+!scripts/test-settle-split-payment.js
 android/
 ios/
 

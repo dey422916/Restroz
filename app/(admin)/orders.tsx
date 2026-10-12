@@ -23,7 +23,7 @@ import { tableService } from '../../src/services/api/tableService';
 import { kotService, clearKotsCache } from '../../src/services/api/kotService';
 import { printService, formatLogoDataUri, handleThermalPrintFallback } from '../../src/services/printService';
 import { Order, OrderItem, OrderStatus, PaymentStatus, OrderSource, Product, DiningTable, RestaurantSettings, PaymentMethod } from '../../src/types';
-import { formatCurrency, numberToWords } from '../../src/utils/currency';
+import { formatCurrency, numberToWords, roundToTwoDecimals } from '../../src/utils/currency';
 import { calculateSplitAutoFill } from '../../src/utils/splitPayment';
 import { getOrderSubtotal, calculateOrderTotals, getOrderTaxableBreakdown, getOrderInvoiceTotals, getOrderTaxRate, isOrderGstApplicable } from '../../src/utils/gst';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
@@ -91,6 +91,11 @@ export default function OrdersScreen() {
   const [payMethod, setPayMethod] = useState<PaymentMethod>('cash');
   const [payReceived, setPayReceived] = useState<boolean>(true);
   const [payTxnRef, setPayTxnRef] = useState<string>('');
+  const [payNotes, setPayNotes] = useState<string>('');
+  const [paySplits, setPaySplits] = useState<Array<{ id: string; method: PaymentMethod; amount: string; ref: string }>>([
+    { id: '1', method: 'cash', amount: '', ref: '' },
+    { id: '2', method: 'upi', amount: '', ref: '' },
+  ]);
   const [payCustomerGstin, setPayCustomerGstin] = useState<string>('');
   const [payDiscountType, setPayDiscountType] = useState<'none' | 'fixed' | 'percentage'>('none');
   const [payDiscountValue, setPayDiscountValue] = useState<string>('');
@@ -1112,6 +1117,11 @@ export default function OrdersScreen() {
     setPayMethod(defaultMethod);
     setPayReceived(true);
     setPayTxnRef('');
+    setPayNotes('');
+    setPaySplits([
+      { id: '1', method: 'cash', amount: '', ref: '' },
+      { id: '2', method: 'upi', amount: '', ref: '' },
+    ]);
     setPayCustomerGstin(order.customer_gstin || '');
     const resolvedPayDisc = resolveOrderDiscounts(order);
     setPayDiscountType(resolvedPayDisc.discount_type);
@@ -1161,18 +1171,56 @@ export default function OrdersScreen() {
       return;
     }
 
+    const finalPayable = payTotals?.payableAmount ?? payOrderModal.payable_amount ?? 0;
+    const alreadyPaid = Number(payOrderModal.paid_amount || 0);
+    const remainingBalance = roundToTwoDecimals(Math.max(0, finalPayable - alreadyPaid));
+
+    let splitArray: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }> | undefined = undefined;
+
+    if (remainingBalance > 0 && payMethod === 'split') {
+      const validSplits = paySplits.filter((s) => parseFloat(s.amount) > 0);
+      if (validSplits.length === 0) {
+        Alert.alert('Invalid Split Payment', 'Please enter at least one split payment amount.');
+        return;
+      }
+
+      const splitTotal = roundToTwoDecimals(validSplits.reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0));
+
+      if (splitTotal < remainingBalance) {
+        const diff = roundToTwoDecimals(remainingBalance - splitTotal);
+        Alert.alert(
+          'Incomplete Settlement',
+          `Split payment total (${formatCurrency(splitTotal)}) does not match remaining balance (${formatCurrency(remainingBalance)}). Remaining ₹${diff} is unpaid.`
+        );
+        return;
+      }
+
+      if (splitTotal > remainingBalance) {
+        const excess = roundToTwoDecimals(splitTotal - remainingBalance);
+        Alert.alert(
+          'Overpayment Blocked',
+          `Split payment total (${formatCurrency(splitTotal)}) exceeds remaining balance (${formatCurrency(remainingBalance)}) by ₹${excess}.`
+        );
+        return;
+      }
+
+      splitArray = validSplits.map((s) => ({
+        payment_method: s.method,
+        amount: roundToTwoDecimals(parseFloat(s.amount) || 0),
+        reference_number: s.ref.trim() || undefined,
+      }));
+    }
+
     setClosingOrder(true);
     try {
-      const finalPayable = payTotals?.payableAmount ?? payOrderModal.payable_amount ?? 0;
-      const alreadyPaid = Number(payOrderModal.paid_amount || 0);
-      const remainingBalance = Math.max(0, finalPayable - alreadyPaid);
-
       const completed = await orderService.closeAndPayOrder({
         orderId: payOrderModal.id,
         paymentMethod: payMethod,
         paymentReceived: payReceived,
         amountPaid: remainingBalance > 0 ? remainingBalance : 0,
         transactionReference: payTxnRef.trim() || undefined,
+        notes: payNotes.trim() || undefined,
+        splitPayments: splitArray,
         discountType: payDiscountType,
         discountValue: validatedPayDiscount,
         discountAmount: payTotals?.discountAmount,
@@ -3160,6 +3208,75 @@ export default function OrdersScreen() {
                           </TouchableOpacity>
                         ))}
                       </View>
+
+                      {/* Split Breakdown when SPLIT mode is selected */}
+                      {payMethod === 'split' && (
+                        <View style={{ marginVertical: 6 }}>
+                          <Text style={styles.fieldLabel}>Split Breakdown:</Text>
+                          {paySplits.map((sp, idx) => (
+                            <View key={sp.id} style={{ backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 8, marginBottom: 6 }}>
+                              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                                <Text style={{ fontSize: 11, fontWeight: '800', color: '#334155' }}>Split #{idx + 1}</Text>
+                                {paySplits.length > 1 && (
+                                  <TouchableOpacity
+                                    onPress={() => setPaySplits(paySplits.filter((item) => item.id !== sp.id))}
+                                    style={{ paddingHorizontal: 6, paddingVertical: 2 }}
+                                  >
+                                    <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700' }}>✕ Remove</Text>
+                                  </TouchableOpacity>
+                                )}
+                              </View>
+                              <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4 }}>
+                                {(['cash', 'upi', 'card'] as PaymentMethod[]).map((sm) => (
+                                  <TouchableOpacity
+                                    key={sm}
+                                    style={[
+                                      { flex: 1, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#cbd5e1', alignItems: 'center', backgroundColor: '#ffffff' },
+                                      sp.method === sm && { backgroundColor: '#0f172a', borderColor: '#0f172a' },
+                                    ]}
+                                    onPress={() => {
+                                      setPaySplits(paySplits.map((item) => (item.id === sp.id ? { ...item, method: sm } : item)));
+                                    }}
+                                  >
+                                    <Text style={[{ fontSize: 10, fontWeight: '700', color: '#334155' }, sp.method === sm && { color: '#ffffff' }]}>
+                                      {sm.toUpperCase()}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ))}
+                              </View>
+                              <View style={{ flexDirection: 'row', gap: 6 }}>
+                                <TextInput
+                                  style={[styles.fieldInput, { flex: 1 }]}
+                                  placeholder="Amount (₹)"
+                                  placeholderTextColor="#64748b"
+                                  keyboardType="numeric"
+                                  value={sp.amount}
+                                  onChangeText={(val) => {
+                                    setPaySplits(calculateSplitAutoFill(paySplits, sp.id, val, remainingBalance));
+                                  }}
+                                />
+                                <TextInput
+                                  style={[styles.fieldInput, { flex: 1.2 }]}
+                                  placeholder="Ref # (optional)"
+                                  placeholderTextColor="#64748b"
+                                  value={sp.ref}
+                                  onChangeText={(val) => {
+                                    setPaySplits(paySplits.map((item) => (item.id === sp.id ? { ...item, ref: val } : item)));
+                                  }}
+                                />
+                              </View>
+                            </View>
+                          ))}
+                          <TouchableOpacity
+                            style={{ paddingVertical: 6, alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1' }}
+                            onPress={() => {
+                              setPaySplits([...paySplits, { id: String(Date.now()), method: 'upi', amount: '', ref: '' }]);
+                            }}
+                          >
+                            <Text style={{ fontSize: 11, fontWeight: '800', color: '#2563eb' }}>+ Add Another Split Method</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
                     </>
                   );
                 })()}
@@ -3186,14 +3303,28 @@ export default function OrdersScreen() {
                   </TouchableOpacity>
                 </View>
 
-                {/* Transaction Reference */}
-                <Text style={styles.fieldLabel}>Transaction Reference # (Optional):</Text>
+                {/* Transaction Reference (Single mode) */}
+                {payMethod !== 'split' && (
+                  <>
+                    <Text style={styles.fieldLabel}>Transaction Reference # (Optional):</Text>
+                    <TextInput
+                      style={styles.fieldInput}
+                      placeholder="e.g. UPI-998811 or Card Auth #4411"
+                      placeholderTextColor="#64748b"
+                      value={payTxnRef}
+                      onChangeText={setPayTxnRef}
+                    />
+                  </>
+                )}
+
+                {/* Payment Notes / Remarks */}
+                <Text style={styles.fieldLabel}>Payment Notes / Remarks (Optional):</Text>
                 <TextInput
                   style={styles.fieldInput}
-                  placeholder="e.g. UPI-998811 or Card Auth #4411"
+                  placeholder="e.g. Settled via counter split"
                   placeholderTextColor="#64748b"
-                  value={payTxnRef}
-                  onChangeText={setPayTxnRef}
+                  value={payNotes}
+                  onChangeText={setPayNotes}
                 />
 
                 {/* Customer GSTIN for B2B Billing (Optional) */}

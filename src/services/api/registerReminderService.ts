@@ -251,14 +251,13 @@ export const registerReminderService = {
         return false;
       }
 
-      // Configure high-importance channel on Android
+      // Configure high-importance channel on Android (omitting sound uses system default sound)
       if (Platform.OS === 'android') {
         await Notifications.setNotificationChannelAsync('register-reminders', {
           name: 'Register Reminders',
           importance: Notifications.AndroidImportance.HIGH,
           vibrationPattern: [0, 250, 250, 250],
           lightColor: '#EF4444',
-          sound: 'default',
         });
       }
 

@@ -9,7 +9,8 @@
     "web": "expo start --web",
     "export:web": "node scripts/build-production-web.js",
     "deploy:worker": "npx wrangler deploy",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "postinstall": "node scripts/patch-usb-serialport.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",

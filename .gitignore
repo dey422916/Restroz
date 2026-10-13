@@ -12,7 +12,6 @@ scripts/
 !scripts/test-split-payment-autofill.js
 !scripts/test-printer-role-routing.js
 !scripts/test-settle-split-payment.js
-!scripts/patch-usb-serialport.js
 android/
 ios/
 

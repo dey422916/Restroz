@@ -10,7 +10,7 @@
     "export:web": "node scripts/build-production-web.js",
     "deploy:worker": "npx wrangler deploy",
     "lint": "tsc --noEmit",
-    "postinstall": "node scripts/patch-usb-serialport.js"
+    "postinstall": "node -e \"const fs=require('fs'),p=require('path'),f=p.join('node_modules','react-native-usb-serialport-for-android','android','build.gradle');if(fs.existsSync(f)){const c=fs.readFileSync(f,'utf8');if(c.includes('jcenter()')){fs.writeFileSync(f,c.replace(/jcenter\\(\\)/g,'// jcenter()'));console.log('Patched usb-serialport');}}\""
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",

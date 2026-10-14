@@ -26,6 +26,7 @@ interface PaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
   order: Order;
+  initialRedeemLoyalty?: boolean;
   onProcessPayment: (
     paymentMethod: PaymentMethod,
     amount: number,
@@ -51,6 +52,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   isOpen,
   onClose,
   order,
+  initialRedeemLoyalty,
   onProcessPayment,
 }) => {
   const insets = useSafeAreaInsets();
@@ -101,7 +103,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   // Customer Phone & Loyalty Wallet State
   const [customerPhoneInput, setCustomerPhoneInput] = useState<string>(order.customer_phone || '');
   const [walletInfo, setWalletInfo] = useState<CustomerWalletInfo | null>(null);
-  const [isRedeemWallet, setIsRedeemWallet] = useState<boolean>(false);
+  const [isRedeemWallet, setIsRedeemWallet] = useState<boolean>(initialRedeemLoyalty || false);
 
   useEffect(() => {
     if (order) {
@@ -116,13 +118,16 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       );
       setCustomerGstinInput(order.customer_gstin || '');
       setCustomerPhoneInput(order.customer_phone || '');
+      if (initialRedeemLoyalty !== undefined) {
+        setIsRedeemWallet(initialRedeemLoyalty);
+      }
       const resolvedModalDiscounts = resolveOrderDiscounts(order);
       setDiscountType(resolvedModalDiscounts.discount_type);
       setDiscountInput(
         resolvedModalDiscounts.discount_value > 0 ? String(resolvedModalDiscounts.discount_value) : ''
       );
     }
-  }, [order?.id, order?.restaurant_id, order?.customer_phone]);
+  }, [order?.id, order?.restaurant_id, order?.customer_phone, initialRedeemLoyalty]);
 
   // Reactive wallet fetch on phone input
   useEffect(() => {

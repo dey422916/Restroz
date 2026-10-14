@@ -70,6 +70,12 @@ export default function PosScreen() {
     applyCouponCode,
     removeCoupon,
     totals,
+    walletInfo,
+    isLoadingWallet,
+    isRedeemLoyalty,
+    setIsRedeemLoyalty,
+    walletRedeemAmount,
+    netPayable,
     heldOrders,
     holdOrder,
     resumeHeldOrder,
@@ -1144,19 +1150,27 @@ export default function PosScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Customer Details Input (for Takeaway & Delivery) */}
-        {orderType !== 'dine_in' && (
-          <View style={styles.customerBox}>
+        {/* Customer Details Input (for Dine-In, Takeaway & Delivery) */}
+        <View style={styles.customerBox}>
+          <View style={styles.customerInputRow}>
             <TextInput
-              style={styles.custInput}
-              placeholder="Customer Name *"
+              style={[styles.custInput, { flex: 1 }]}
+              placeholder={
+                orderType === 'dine_in'
+                  ? 'Customer Name (Optional)'
+                  : 'Customer Name *'
+              }
               placeholderTextColor="#64748b"
               value={customerInfo.name}
               onChangeText={(v) => setCustomerInfo({ name: v })}
             />
             <TextInput
-              style={styles.custInput}
-              placeholder={orderType === 'delivery' ? 'Phone Number *' : 'Phone Number (Optional)'}
+              style={[styles.custInput, { flex: 1 }]}
+              placeholder={
+                orderType === 'delivery'
+                  ? 'Phone Number *'
+                  : 'Phone Number (Optional)'
+              }
               placeholderTextColor="#64748b"
               value={customerInfo.phone}
               keyboardType="phone-pad"
@@ -1166,22 +1180,58 @@ export default function PosScreen() {
                 setCustomerInfo({ phone: cleaned });
               }}
             />
-            {Boolean(customerInfo.phone && !isValidIndianPhone(customerInfo.phone)) && (
-              <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700', marginTop: -2, marginBottom: 2 }}>
-                ⚠️ Enter a valid 10-digit Indian mobile number
-              </Text>
-            )}
-            {orderType === 'delivery' && (
-              <TextInput
-                style={[styles.custInput, { minHeight: 44 }]}
-                placeholder="Delivery Address *"
-                placeholderTextColor="#64748b"
-                value={customerInfo.address || ''}
-                onChangeText={(v) => setCustomerInfo({ address: v })}
-              />
-            )}
           </View>
-        )}
+
+          {/* Validation Warning if entered phone is invalid */}
+          {Boolean(customerInfo.phone && !isValidIndianPhone(customerInfo.phone)) && (
+            <Text style={styles.custPhoneErrorText}>
+              ⚠️ Enter a valid 10-digit Indian mobile number
+            </Text>
+          )}
+
+          {/* Live Customer Loyalty Balance & Status Banner */}
+          {Boolean(customerInfo.phone && isValidIndianPhone(customerInfo.phone)) && (
+            <View style={styles.customerLoyaltyBanner}>
+              {isLoadingWallet ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <ActivityIndicator size="small" color="#2563eb" />
+                  <Text style={styles.loyaltyStatusText}>Looking up customer loyalty...</Text>
+                </View>
+              ) : walletInfo?.is_enabled ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={{ fontSize: 13 }}>⭐</Text>
+                    <Text style={styles.loyaltyStatusTextBold}>
+                      Balance: {formatCurrency(walletInfo.balance)} ({walletInfo.balance} pts)
+                    </Text>
+                  </View>
+                  <View style={[styles.loyaltyEligibilityPill, walletInfo.can_redeem ? styles.loyaltyPillEligible : styles.loyaltyPillIneligible]}>
+                    <Text style={[styles.loyaltyEligibilityText, walletInfo.can_redeem ? styles.loyaltyTextEligible : styles.loyaltyTextIneligible]}>
+                      {walletInfo.can_redeem
+                        ? 'Eligible to Redeem'
+                        : `Min ${formatCurrency(walletInfo.min_redeem_balance)} to Redeem`}
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                <Text style={styles.loyaltyStatusText}>
+                  ℹ️ Customer registered. (Loyalty program inactive in settings)
+                </Text>
+              )}
+            </View>
+          )}
+
+          {/* Delivery Address if Home Delivery */}
+          {orderType === 'delivery' && (
+            <TextInput
+              style={[styles.custInput, { minHeight: 44 }]}
+              placeholder="Delivery Address *"
+              placeholderTextColor="#64748b"
+              value={customerInfo.address || ''}
+              onChangeText={(v) => setCustomerInfo({ address: v })}
+            />
+          )}
+        </View>
 
         {/* Cart Item Rows */}
         {cartItems.length === 0 ? (
@@ -1370,6 +1420,63 @@ export default function PosScreen() {
           </View>
         )}
 
+        {/* Loyalty Rewards Section */}
+        {cartItems.length > 0 && (
+          <View style={styles.posLoyaltySection}>
+            <View style={styles.posLoyaltyHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={{ fontSize: 15 }}>🎁</Text>
+                <Text style={styles.posLoyaltyTitle}>Loyalty Rewards</Text>
+              </View>
+              {walletInfo && Boolean(customerInfo.phone && isValidIndianPhone(customerInfo.phone)) && (
+                <View style={styles.posLoyaltyBalBadge}>
+                  <Text style={styles.posLoyaltyBalText}>
+                    Bal: {formatCurrency(walletInfo.balance)}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {(!customerInfo.phone || !isValidIndianPhone(customerInfo.phone)) ? (
+              <Text style={styles.posLoyaltyHintText}>
+                💡 Enter 10-digit customer phone above to check or redeem loyalty points.
+              </Text>
+            ) : walletInfo?.is_enabled ? (
+              walletInfo.can_redeem ? (
+                <TouchableOpacity
+                  style={[styles.posLoyaltyCheckRow, isRedeemLoyalty && styles.posLoyaltyCheckRowActive]}
+                  onPress={() => setIsRedeemLoyalty(!isRedeemLoyalty)}
+                  activeOpacity={0.8}
+                >
+                  <View style={[styles.posLoyaltyBox, isRedeemLoyalty && styles.posLoyaltyBoxChecked]}>
+                    {isRedeemLoyalty && <Text style={styles.posLoyaltyCheckmark}>✓</Text>}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.posLoyaltyCheckLabel, isRedeemLoyalty && styles.posLoyaltyCheckLabelActive]}>
+                      Redeem Loyalty Points ({formatCurrency(walletRedeemAmount || Math.min(walletInfo.balance, totals.payableAmount))})
+                    </Text>
+                    <Text style={styles.posLoyaltySubText}>
+                      Available: {formatCurrency(walletInfo.balance)} • 1 Point = ₹1.00
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.posLoyaltyIneligibleBox}>
+                  <Text style={styles.posLoyaltyIneligibleText}>
+                    {walletInfo.balance > 0
+                      ? `⚠️ Minimum balance of ${formatCurrency(walletInfo.min_redeem_balance)} required to redeem (Current: ${formatCurrency(walletInfo.balance)}).`
+                      : 'ℹ️ Customer has 0 loyalty points.'}
+                  </Text>
+                </View>
+              )
+            ) : (
+              <Text style={styles.posLoyaltyHintText}>
+                Loyalty rewards program is inactive for this restaurant.
+              </Text>
+            )}
+          </View>
+        )}
+
         {/* Totals & Action Buttons */}
         {cartItems.length > 0 && (
           <View style={styles.cartFooter}>
@@ -1459,6 +1566,25 @@ export default function PosScreen() {
               <Text style={styles.totalVal}>{formatCurrency(totals.payableAmount)}</Text>
             </View>
 
+            {/* Loyalty Redemption line in bill totals if active */}
+            {walletRedeemAmount > 0 && (
+              <>
+                <View style={[styles.summaryRow, { marginTop: 4 }]}>
+                  <Text style={[styles.summaryLabel, { color: '#059669', fontWeight: '800' }]}>
+                    ⭐ Loyalty Redemption
+                  </Text>
+                  <Text style={[styles.summaryVal, { color: '#059669', fontWeight: '900' }]}>
+                    -{formatCurrency(walletRedeemAmount)}
+                  </Text>
+                </View>
+
+                <View style={[styles.totalRow, styles.netPayableTotalRow]}>
+                  <Text style={styles.netPayableLabel}>Net Payable</Text>
+                  <Text style={styles.netPayableVal}>{formatCurrency(netPayable)}</Text>
+                </View>
+              </>
+            )}
+
             {/* Primary Action 1: KOT Print Button */}
             <TouchableOpacity
               testID="pos-send-kot-btn"
@@ -1482,8 +1608,8 @@ export default function PosScreen() {
                   {isKotDispatched && !hasUnsentItems
                     ? '✓ KOT Printed'
                     : hasUnsentItems && isKotDispatched
-                    ? `🖨️ KOT Print (Updated • ${formatCurrency(totals.payableAmount)})`
-                    : `🖨️ KOT Print (${formatCurrency(totals.payableAmount)})`}
+                    ? `🖨️ KOT Print (Updated • ${formatCurrency(walletRedeemAmount > 0 ? netPayable : totals.payableAmount)})`
+                    : `🖨️ KOT Print (${formatCurrency(walletRedeemAmount > 0 ? netPayable : totals.payableAmount)})`}
                 </Text>
               )}
             </TouchableOpacity>
@@ -2430,6 +2556,7 @@ export default function PosScreen() {
           isOpen={showPaymentModal}
           onClose={() => setShowPaymentModal(false)}
           order={createdOrder}
+          initialRedeemLoyalty={isRedeemLoyalty}
           onProcessPayment={async (method, amt, ref, discountData) => {
             await processPayment(createdOrder.id, method, amt, ref, discountData);
             clearCart();
@@ -3512,6 +3639,173 @@ const styles = StyleSheet.create({
   customerBox: {
     gap: 8,
     marginBottom: 10,
+  },
+  customerInputRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  custPhoneErrorText: {
+    fontSize: 11,
+    color: '#dc2626',
+    fontWeight: '700',
+    marginTop: -2,
+    marginBottom: 2,
+  },
+  customerLoyaltyBanner: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: -2,
+  },
+  loyaltyStatusText: {
+    fontSize: 11,
+    color: '#166534',
+    fontWeight: '500',
+  },
+  loyaltyStatusTextBold: {
+    fontSize: 12,
+    color: '#166534',
+    fontWeight: '800',
+  },
+  loyaltyEligibilityPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  loyaltyPillEligible: {
+    backgroundColor: '#dcfce7',
+  },
+  loyaltyPillIneligible: {
+    backgroundColor: '#fef3c7',
+  },
+  loyaltyEligibilityText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  loyaltyTextEligible: {
+    color: '#15803d',
+  },
+  loyaltyTextIneligible: {
+    color: '#b45309',
+  },
+  posLoyaltySection: {
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 10,
+    marginTop: 8,
+  },
+  posLoyaltyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  posLoyaltyTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  posLoyaltyBalBadge: {
+    backgroundColor: '#ecfdf5',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+  },
+  posLoyaltyBalText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  posLoyaltyHintText: {
+    fontSize: 11,
+    color: '#64748b',
+    fontStyle: 'italic',
+  },
+  posLoyaltyCheckRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  posLoyaltyCheckRowActive: {
+    backgroundColor: '#ecfdf5',
+    borderColor: '#10b981',
+  },
+  posLoyaltyBox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: '#94a3b8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  posLoyaltyBoxChecked: {
+    backgroundColor: '#10b981',
+    borderColor: '#10b981',
+  },
+  posLoyaltyCheckmark: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  posLoyaltyCheckLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  posLoyaltyCheckLabelActive: {
+    color: '#047857',
+    fontWeight: '800',
+  },
+  posLoyaltySubText: {
+    fontSize: 10,
+    color: '#64748b',
+    marginTop: 1,
+  },
+  posLoyaltyIneligibleBox: {
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    borderRadius: 6,
+    padding: 6,
+  },
+  posLoyaltyIneligibleText: {
+    fontSize: 11,
+    color: '#92400e',
+    fontWeight: '600',
+  },
+  netPayableTotalRow: {
+    borderTopWidth: 1.5,
+    borderColor: '#059669',
+    paddingTop: 6,
+    marginTop: 4,
+    backgroundColor: '#f0fdf4',
+    paddingHorizontal: 8,
+    borderRadius: 6,
+  },
+  netPayableLabel: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#065f46',
+  },
+  netPayableVal: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#065f46',
   },
   custInput: {
     backgroundColor: '#ffffff',

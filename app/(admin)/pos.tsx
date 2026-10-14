@@ -30,6 +30,7 @@ import { RegisterClosedError } from '../../src/context/PosContext';
 import { formatCurrency, numberToWords } from '../../src/utils/currency';
 import { getOrderSubtotal, getOrderTaxRate, getOrderInvoiceTotals } from '../../src/utils/gst';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
+import { consolidateOrderItems } from '../../src/utils/orderItemIdentity';
 import { printService, handleThermalPrintFallback } from '../../src/services/printService';
 import { dayRegisterService } from '../../src/services/api/dayRegisterService';
 import { subscriptionGuardService } from '../../src/services/api/subscriptionGuardService';
@@ -2252,7 +2253,7 @@ export default function PosScreen() {
                     {/* Items List */}
                     <Text style={styles.modalItemsSectionTitle}>Ordered Items</Text>
                     <View style={styles.modalItemsListBox}>
-                      {(viewTableModalData.order.items || []).map((itm, idx) => (
+                      {consolidateOrderItems(viewTableModalData.order.items || []).map((itm, idx) => (
                         <View key={itm.id || idx} style={styles.modalItemRow}>
                           <View style={{ flex: 1 }}>
                             <Text style={styles.modalItemName}>{itm.product_name}</Text>

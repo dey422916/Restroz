@@ -28,6 +28,7 @@ import { Order, OrderItem, OrderStatus, PaymentStatus, OrderSource, Product, Din
 import { formatCurrency, numberToWords, roundToTwoDecimals } from '../../src/utils/currency';
 import { calculateSplitAutoFill } from '../../src/utils/splitPayment';
 import { getOrderSubtotal, calculateOrderTotals, getOrderTaxableBreakdown, getOrderInvoiceTotals, getOrderTaxRate, isOrderGstApplicable } from '../../src/utils/gst';
+import { areOrderItemsIdentical, consolidateOrderItems } from '../../src/utils/orderItemIdentity';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { useAuth } from '../../src/context/AuthContext';
 import { useSettings } from '../../src/context/SettingsContext';
@@ -430,8 +431,9 @@ export default function OrdersScreen() {
       return;
     }
     setEditOrderModal(ord);
+    const consolidated = consolidateOrderItems(ord.items || []);
     setEditItems(
-      (ord.items || []).map((i, idx) => {
+      consolidated.map((i, idx) => {
         const qty = Number(i.quantity) || 1;
         const unitPrice = Number(i.unit_price) || (Number(i.subtotal) && qty ? Number(i.subtotal) / qty : (Number(i.total) && qty ? Number(i.total) / qty : 0));
         const subtotal = qty * unitPrice;
@@ -467,17 +469,34 @@ export default function OrdersScreen() {
       );
       return;
     }
-    const existingIdx = editItems.findIndex((i) => Boolean(i.product_id && i.product_id === prod.id));
     const prodPrice = Number(prod.price) || 0;
+    const taxRate = (prod.tax_rate !== undefined && prod.tax_rate !== null && !isNaN(Number(prod.tax_rate)))
+      ? Number(prod.tax_rate)
+      : getOrderTaxRate(editOrderModal || {}, Number(settings?.default_tax_rate) || 5);
+
+    const candidateItem: Partial<OrderItem> = {
+      product_id: prod.id,
+      product_name: prod.name,
+      unit_price: prodPrice,
+      tax_rate: taxRate,
+      item_notes: '',
+    };
+
+    const existingIdx = editItems.findIndex((i) => areOrderItemsIdentical(i, candidateItem));
+
     if (existingIdx !== -1) {
       const updated = [...editItems];
       const newQty = (Number(updated[existingIdx].quantity) || 0) + 1;
       const unitPrice = Number(updated[existingIdx].unit_price) || prodPrice;
-      const subtotal = newQty * unitPrice;
+      const subtotal = Number((newQty * unitPrice).toFixed(2));
+      const taxAmount = Number(((subtotal * taxRate) / 100).toFixed(2));
       updated[existingIdx] = {
         ...updated[existingIdx],
+        product_id: updated[existingIdx].product_id || prod.id,
         quantity: newQty,
         unit_price: unitPrice,
+        tax_rate: taxRate,
+        tax_amount: taxAmount,
         subtotal,
         total: subtotal,
       };
@@ -492,12 +511,8 @@ export default function OrdersScreen() {
         unit_price: prodPrice,
         total_price: prodPrice,
         quantity: 1,
-        tax_rate: (prod.tax_rate !== undefined && prod.tax_rate !== null && !isNaN(Number(prod.tax_rate)))
-          ? Number(prod.tax_rate)
-          : getOrderTaxRate(editOrderModal || {}, Number(settings?.default_tax_rate) || 5),
-        tax_amount: (prodPrice * ((prod.tax_rate !== undefined && prod.tax_rate !== null && !isNaN(Number(prod.tax_rate)))
-          ? Number(prod.tax_rate)
-          : getOrderTaxRate(editOrderModal || {}, Number(settings?.default_tax_rate) || 5))) / 100,
+        tax_rate: taxRate,
+        tax_amount: (prodPrice * taxRate) / 100,
         subtotal: prodPrice,
         total: prodPrice,
       };

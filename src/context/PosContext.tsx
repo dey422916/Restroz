@@ -14,6 +14,7 @@ import { loyaltyService } from '../services/api/loyaltyService';
 import { calculateOrderTotals, CalculationResult, getOrderTaxRate, isOrderGstApplicable } from '../utils/gst';
 import { validateCoupon } from '../utils/validators';
 import { orderService, clearOrdersCache, resolveOrderDiscounts } from '../services/api/orderService';
+import { areOrderItemsIdentical, consolidateOrderItems } from '../utils/orderItemIdentity';
 import { kotService } from '../services/api/kotService';
 import { dayRegisterService } from '../services/api/dayRegisterService';
 import { mockStorage } from '../services/mockStorage';
@@ -288,7 +289,6 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setCartItems((prev) => {
-      const existingIdx = prev.findIndex((item) => item.product_id === product.id);
       const isLoadedOrderTaxPresent = loadedOrder ? (
         (loadedOrder.cgst_amount !== undefined && Number(loadedOrder.cgst_amount) > 0) ||
         (loadedOrder.sgst_amount !== undefined && Number(loadedOrder.sgst_amount) > 0) ||
@@ -311,28 +311,40 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             : defaultTax)
         : 0;
 
+      const unitPrice = product.discounted_price || product.price;
+
+      const candidateItem: Partial<OrderItem> = {
+        product_id: product.id,
+        product_name: product.name,
+        unit_price: unitPrice,
+        tax_rate: taxRate,
+        item_notes: notes,
+      };
+
+      const existingIdx = prev.findIndex((item) => areOrderItemsIdentical(item, candidateItem));
+
       if (existingIdx !== -1) {
         const updated = [...prev];
         const newQty = updated[existingIdx].quantity + quantity;
-        const unitPrice = product.discounted_price || product.price;
-        const subtotal = newQty * unitPrice;
-        const taxAmount = (subtotal * taxRate) / 100;
+        const subtotal = Number((newQty * unitPrice).toFixed(2));
+        const taxAmount = Number(((subtotal * taxRate) / 100).toFixed(2));
 
         updated[existingIdx] = {
           ...updated[existingIdx],
+          product_id: updated[existingIdx].product_id || product.id,
           quantity: newQty,
           subtotal,
           tax_amount: taxAmount,
           total: subtotal,
           total_price: subtotal,
           item_notes: notes || updated[existingIdx].item_notes,
+          product: updated[existingIdx].product || product,
         };
         return updated;
       }
 
-      const unitPrice = product.discounted_price || product.price;
-      const subtotal = quantity * unitPrice;
-      const taxAmount = (subtotal * taxRate) / 100;
+      const subtotal = Number((quantity * unitPrice).toFixed(2));
+      const taxAmount = Number(((subtotal * taxRate) / 100).toFixed(2));
 
       const newItem: OrderItem = {
         id: 'item-' + Date.now() + Math.random().toString(36).substr(2, 4),
@@ -348,6 +360,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         subtotal,
         total: subtotal,
         image_url: product.image_url,
+        product,
       };
 
       return [...prev, newItem];
@@ -422,7 +435,28 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       },
     };
 
-    setCartItems((prev) => [...prev, newItem]);
+    setCartItems((prev) => {
+      const existingIdx = prev.findIndex((item) => areOrderItemsIdentical(item, newItem));
+      if (existingIdx !== -1) {
+        const updated = [...prev];
+        const newQty = updated[existingIdx].quantity + quantity;
+        const subtotal = Number((newQty * baseUnitPrice).toFixed(2));
+        const taxAmount = Number(((subtotal * taxRate) / 100).toFixed(2));
+        updated[existingIdx] = {
+          ...updated[existingIdx],
+          product_id: updated[existingIdx].product_id || productId,
+          quantity: newQty,
+          subtotal,
+          tax_amount: taxAmount,
+          total: subtotal,
+          total_price: subtotal,
+          item_notes: notes || updated[existingIdx].item_notes,
+          product: updated[existingIdx].product || newItem.product,
+        };
+        return updated;
+      }
+      return [...prev, newItem];
+    });
   };
 
   const updateQuantity = (lineIdOrProductId: string, quantity: number) => {
@@ -739,8 +773,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const loadOrderIntoCart = (order: Order) => {
     if (!order) return;
     setLoadedOrder(order);
+    const consolidated = consolidateOrderItems(order.items || []);
     setCartItems(
-      (order.items || []).map((i, idx) => ({
+      consolidated.map((i, idx) => ({
         ...i,
         id: i.id || (i as any).order_item_id || `line-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
       }))

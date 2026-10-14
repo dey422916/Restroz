@@ -7,6 +7,7 @@
 import { Order, RestaurantSettings, RestaurantPrinter, PrinterCalibration, PrinterPaperWidth } from '../../../types';
 import { formatOrderDateTime, formatOrderDate, formatOrderTime } from '../../../utils/dateUtils';
 import { getOrderInvoiceTotals } from '../../../utils/gst';
+import { consolidateOrderItems } from '../../../utils/orderItemIdentity';
 import { EscPosDocument } from './encoder';
 import { EscPosTextBuilder } from './escposBuilder';
 
@@ -113,7 +114,7 @@ export function renderBillToEscPos(
   builder.addDivider('-');
 
   // 4. Line Items
-  const activeItems = (order.items || []).filter((i) => i.quantity > 0);
+  const activeItems = consolidateOrderItems(order.items || []).filter((i) => i.quantity > 0);
   for (const item of activeItems) {
     const qty = Number(item.quantity) || 1;
     const rateNum = Number(item.unit_price) || (item.subtotal ? Number(item.subtotal) / qty : 0);

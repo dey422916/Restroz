@@ -11,6 +11,7 @@ import { getOrderSubtotal, calculateOrderTotals, getOrderTaxRate, isOrderGstAppl
 import { isValidPhoneNumber, validatePhoneNumberOrThrow } from '../../utils/phone';
 import { restaurantService } from './restaurantService';
 import { attachDiscountToNotes, extractDiscountFromNotes, attachGstinToNotes, extractGstinFromNotes } from '../../utils/orderNotes';
+import { areOrderItemsIdentical, consolidateOrderItems, getOrderItemCanonicalKey } from '../../utils/orderItemIdentity';
 
 export const resolveOrderSource = (ord: Partial<Order>): OrderSource => {
   // 1. ONLINE DELIVERY (Customer app / Web delivery):
@@ -231,6 +232,7 @@ export const orderService = {
               restaurant_id: ord.restaurant_id || restaurantId,
               order_source: resolveOrderSource(ord),
               status: normalizeOrderStatus(ord),
+              items: consolidateOrderItems(ord.items || []),
               kots: resolvedKots,
               subtotal: getOrderSubtotal(ord),
               discount_type: resolveOrderDiscounts(ord).discount_type,
@@ -265,10 +267,11 @@ export const orderService = {
           restaurant_id: ord.restaurant_id || restaurantId,
           order_source: resolveOrderSource(ord),
           status: normalizeOrderStatus(ord),
+          items: consolidateOrderItems(ord.items || []),
           kots: resolvedKots,
           subtotal: getOrderSubtotal(ord),
           discount_type: resolveOrderDiscounts(ord).discount_type,
-              discount_value: resolveOrderDiscounts(ord).discount_value,
+          discount_value: resolveOrderDiscounts(ord).discount_value,
           customer_gstin: ord.customer_gstin || gstin || undefined,
           invoice_number: ord.invoice_number || ord.order_number,
         };
@@ -377,6 +380,7 @@ export const orderService = {
               restaurant_id: ord.restaurant_id || restaurantId || '',
               order_source: resolveOrderSource(ord),
               status: normalizeOrderStatus(ord),
+              items: consolidateOrderItems(ord.items || []),
               kots: resolvedKots,
               subtotal: getOrderSubtotal(ord),
               discount_type: resolveOrderDiscounts(ord).discount_type,
@@ -626,11 +630,12 @@ export const orderService = {
           const gstin = extractGstinFromNotes(ord.notes);
           return {
             ...ord,
+            items: consolidateOrderItems(ord.items || []),
             order_source: resolveOrderSource(ord),
             status: normalizeOrderStatus(ord),
             subtotal: getOrderSubtotal(ord),
             discount_type: resolveOrderDiscounts(ord).discount_type,
-              discount_value: resolveOrderDiscounts(ord).discount_value,
+            discount_value: resolveOrderDiscounts(ord).discount_value,
             customer_gstin: ord.customer_gstin || gstin || undefined,
             invoice_number: ord.invoice_number || ord.order_number,
           };
@@ -650,11 +655,12 @@ export const orderService = {
       const gstin = extractGstinFromNotes(found.notes);
       return {
         ...found,
+        items: consolidateOrderItems(found.items || []),
         order_source: resolveOrderSource(found),
         status: normalizeOrderStatus(found),
         subtotal: getOrderSubtotal(found),
         discount_type: resolveOrderDiscounts(found).discount_type,
-              discount_value: resolveOrderDiscounts(found).discount_value,
+        discount_value: resolveOrderDiscounts(found).discount_value,
         customer_gstin: found.customer_gstin || gstin || undefined,
         invoice_number: found.invoice_number || found.order_number,
       };
@@ -914,7 +920,7 @@ export const orderService = {
       payment_status: isPaid ? 'paid' : 'unpaid',
       is_supplementary: orderData.is_supplementary ?? false,
       notes: finalNotesWithDiscAndGstin,
-      items: orderData.items || [],
+      items: consolidateOrderItems(orderData.items || []),
       payments: orderData.payments || [],
       kots: orderData.kots || [],
       created_by: validCreatedBy || undefined,
@@ -1057,15 +1063,17 @@ export const orderService = {
                 ? Number((cgst + sgst).toFixed(2))
                 : 0;
 
-              const isValidUuid = (val?: string | null) => {
-                if (!val) return false;
-                return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+              const sanitizeProductId = (val?: string | null) => {
+                if (!val) return null;
+                const trimmed = val.trim();
+                if (!trimmed || trimmed.startsWith('quick-')) return null;
+                return trimmed;
               };
 
               return {
                 id: i.id || (i as any).order_item_id || `item-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
                 order_id: createdDbOrder.id,
-                product_id: isValidUuid(i.product_id) ? i.product_id : null,
+                product_id: sanitizeProductId(i.product_id),
                 product_name: i.product_name,
                 unit_price: unitPrice,
                 quantity: quantity,
@@ -1108,12 +1116,8 @@ export const orderService = {
 
           // Deduct product stock quantities
           if (items && items.length > 0) {
-            const isValidUuid = (val?: string | null) => {
-              if (!val) return false;
-              return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
-            };
             for (const itm of items) {
-              if (itm.product_id && isValidUuid(itm.product_id) && itm.quantity > 0) {
+              if (itm.product_id && !itm.product_id.startsWith('quick-') && itm.quantity > 0) {
                 try {
                   const { data: curP } = await supabase
                     .from('products')
@@ -1282,26 +1286,26 @@ export const orderService = {
       throw new Error('An order must contain at least one item.');
     }
 
+    const consolidatedUpdated = consolidateOrderItems(updatedItems);
+
     const oldItems = existingOrder.items || [];
 
     // Calculate item differences for KOT supplementary generation
+    // Sum existing order item quantities matching identical configuration
     const addedItems: OrderItem[] = [];
-    const oldItemMap = new Map<string, OrderItem>();
-    oldItems.forEach((i, idx) => {
-      const key = i.id || (i as any).order_item_id || (i.product_id ? `prod-${i.product_id}` : `item-${i.product_name}-${idx}`);
-      oldItemMap.set(key, i);
-    });
+    for (const newItem of consolidatedUpdated) {
+      const matchingOldItems = oldItems.filter((old) => areOrderItemsIdentical(old, newItem));
+      const oldQty = matchingOldItems.reduce((sum, old) => sum + (Number(old.quantity) || 0), 0);
+      const newQty = Number(newItem.quantity) || 0;
 
-    for (const newItem of updatedItems) {
-      const key = newItem.id || (newItem as any).order_item_id || (newItem.product_id ? `prod-${newItem.product_id}` : `item-${newItem.product_name}`);
-      const oldItem = oldItemMap.get(key);
-      if (!oldItem) {
-        addedItems.push(newItem);
-      } else if (Number(newItem.quantity || 0) > Number(oldItem.quantity || 0)) {
-        const diffQty = Number(newItem.quantity || 0) - Number(oldItem.quantity || 0);
+      if (newQty > oldQty) {
+        const diffQty = newQty - oldQty;
         addedItems.push({
           ...newItem,
           quantity: diffQty,
+          subtotal: Number((diffQty * Number(newItem.unit_price || 0)).toFixed(2)),
+          total: Number((diffQty * Number(newItem.unit_price || 0)).toFixed(2)),
+          total_price: Number((diffQty * Number(newItem.unit_price || 0)).toFixed(2)),
         });
       }
     }
@@ -1320,7 +1324,7 @@ export const orderService = {
     }
 
     // Recalculate totals using unified calculateOrderTotals
-    const normalizedItems = updatedItems.map((i, idx) => {
+    const normalizedItems = consolidatedUpdated.map((i, idx) => {
       const qty = Number(i.quantity) || 1;
       const unitPrice = Number(i.unit_price) || (i.subtotal && qty ? Number(i.subtotal) / qty : (i.total && qty ? Number(i.total) / qty : 0));
       const taxRate = (i.tax_rate !== null && i.tax_rate !== undefined && !isNaN(Number(i.tax_rate)))

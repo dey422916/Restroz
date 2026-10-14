@@ -2035,7 +2035,9 @@ export default function PosScreen() {
             <Text style={styles.floatingCartQty}>
               {cartItems.reduce((sum, i) => sum + i.quantity, 0)} ITEMS IN CART
             </Text>
-            <Text style={styles.floatingCartTotal}>{formatCurrency(totals.payableAmount)}</Text>
+            <Text style={styles.floatingCartTotal}>
+              {formatCurrency(walletRedeemAmount > 0 ? netPayable : totals.payableAmount)}
+            </Text>
           </View>
           <View style={styles.floatingCartAction}>
             <Text style={styles.floatingCartActionText}>

@@ -1874,6 +1874,8 @@ export const orderService = {
     payableAmount?: number;
     customerGstin?: string;
     customer_gstin?: string;
+    customerPhone?: string;
+    customer_phone?: string;
     splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;
     walletRedeemAmount?: number;
   }): Promise<Order & { reward_earned?: number; new_wallet_balance?: number; wallet_redeemed?: number }> {
@@ -1895,15 +1897,30 @@ export const orderService = {
       payableAmount,
       customerGstin,
       customer_gstin,
+      customerPhone,
+      customer_phone,
       splitPayments,
       walletRedeemAmount = 0,
     } = params;
     const effectiveCustomerGstin = (customer_gstin || customerGstin)?.trim().toUpperCase();
+    const effectiveCustomerPhone = (customer_phone || customerPhone)?.trim();
 
     if (isSupabaseConfigured) {
       const { data: { session }, error: sessionErr } = await supabase.auth.getSession();
       if (sessionErr || !session) {
         throw new Error('Your session has expired. Please login again.');
+      }
+
+      // If customer phone is provided and non-empty, sync it to orders table so settle_order RPC can resolve normalized customer mobile
+      if (effectiveCustomerPhone) {
+        try {
+          await supabase
+            .from('orders')
+            .update({ customer_phone: effectiveCustomerPhone })
+            .eq('id', orderId);
+        } catch (phoneSyncErr) {
+          console.warn('[orderService] Customer phone sync before settlement skipped/failed:', phoneSyncErr);
+        }
       }
 
       const normalizedPaymentMethod: PaymentMethod =
@@ -2263,6 +2280,8 @@ export const orderService = {
       round_off?: number;
       payable_amount?: number;
       customer_gstin?: string;
+      customer_phone?: string;
+      customerPhone?: string;
       splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;
       wallet_redeem_amount?: number;
       walletRedeemAmount?: number;
@@ -2284,6 +2303,7 @@ export const orderService = {
       roundOff: params.round_off,
       payableAmount: params.payable_amount,
       customer_gstin: params.customer_gstin,
+      customer_phone: params.customer_phone ?? params.customerPhone,
       splitPayments: params.splitPayments,
       walletRedeemAmount: params.wallet_redeem_amount ?? params.walletRedeemAmount ?? 0,
     });

@@ -117,7 +117,8 @@ BEGIN
     v_txn_type,
     ABS(p_amount),
     v_new_balance,
-    v_trimmed_notes
+    v_trimmed_notes,
+    NOW()
   )
   RETURNING id INTO v_txn_id;
 

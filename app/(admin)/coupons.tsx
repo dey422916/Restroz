@@ -54,6 +54,7 @@ export default function CouponsScreen() {
     id: string;
     transaction_type: string;
     amount: number;
+    balance_after?: number;
     order_id?: string;
     notes?: string;
     created_at: string;
@@ -196,11 +197,17 @@ export default function CouponsScreen() {
     const signedAmount = adjustType === 'credit' ? val : -val;
     setAdjusting(true);
     try {
+      const reasonTrimmed = adjustReason.trim();
+      const prefix = adjustType === 'credit' ? 'Credit: ' : 'Debit: ';
+      const formattedNote = reasonTrimmed.toLowerCase().startsWith('credit') || reasonTrimmed.toLowerCase().startsWith('debit')
+        ? reasonTrimmed
+        : `${prefix}${reasonTrimmed}`;
+
       const res = await loyaltyService.adjustCustomerWallet({
         restaurant_id: activeRestaurantId,
         customer_mobile: cleanMobile,
         amount: signedAmount,
-        notes: adjustReason.trim(),
+        notes: formattedNote,
         type: 'adjustment',
       });
 
@@ -445,6 +452,7 @@ export default function CouponsScreen() {
           <TouchableOpacity
             style={[
               styles.tabNavItem,
+              isMobile && styles.tabNavItemMobile,
               activeTab === 'coupons' && styles.tabNavItemActive,
             ]}
             onPress={() => setActiveTab('coupons')}
@@ -464,6 +472,7 @@ export default function CouponsScreen() {
           <TouchableOpacity
             style={[
               styles.tabNavItem,
+              isMobile && styles.tabNavItemMobile,
               activeTab === 'rewards' && styles.tabNavItemActive,
             ]}
             onPress={() => setActiveTab('rewards')}
@@ -852,7 +861,7 @@ export default function CouponsScreen() {
                       <Text style={styles.lookupLoadingText}>Fetching customer wallet data...</Text>
                     </View>
                   ) : lookupWallet ? (
-                    <View style={styles.walletDetailCard}>
+                    <View style={[styles.walletDetailCard, isMobile && { padding: 12 }]}>
                       <View style={styles.walletDetailHeader}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                           <View style={styles.phoneBadge}>
@@ -908,9 +917,9 @@ export default function CouponsScreen() {
 
                       {/* Manual Adjustment Action Button */}
                       {isAdmin && (
-                        <View style={{ marginTop: 12, marginBottom: 8, flexDirection: 'row', justifyContent: 'flex-end' }}>
+                        <View style={{ marginTop: 12, marginBottom: 8, flexDirection: 'row', justifyContent: isMobile ? 'center' : 'flex-end', width: '100%' }}>
                           <TouchableOpacity
-                            style={styles.adjustCreditBtn}
+                            style={[styles.adjustCreditBtn, isMobile && { width: '100%', alignItems: 'center', paddingVertical: 10 }]}
                             onPress={() => handleOpenAdjustModal(lookupWallet.customer_mobile || lookupPhone)}
                             activeOpacity={0.8}
                           >
@@ -934,42 +943,97 @@ export default function CouponsScreen() {
                         </View>
                       ) : (
                         <View style={styles.ledgerList}>
-                          {lookupTransactions.map((tx) => {
-                            const isEarn = tx.transaction_type === 'earn';
+                          {lookupTransactions.map((tx, idx) => {
+                            const type = tx.transaction_type;
+                            let badgeLabel = 'ADJUSTMENT';
+                            let badgeStyle = styles.txTypeCredit;
+                            let textStyle = styles.txTypeTextCredit;
+                            let amountStyle = styles.txAmountCredit;
+                            let sign = '+';
+                            let defaultNote = '';
+
+                            if (type === 'earn') {
+                              badgeLabel = 'EARNED';
+                              badgeStyle = styles.txTypeEarn;
+                              textStyle = styles.txTypeTextEarn;
+                              amountStyle = styles.txAmountEarn;
+                              sign = '+';
+                              defaultNote = 'Reward earned from settled order';
+                            } else if (type === 'redeem') {
+                              badgeLabel = 'REDEEMED';
+                              badgeStyle = styles.txTypeRedeem;
+                              textStyle = styles.txTypeTextRedeem;
+                              amountStyle = styles.txAmountRedeem;
+                              sign = '-';
+                              defaultNote = 'Redeemed on bill payment';
+                            } else if (type === 'refund') {
+                              badgeLabel = 'REFUND';
+                              badgeStyle = styles.txTypeRefund;
+                              textStyle = styles.txTypeTextRefund;
+                              amountStyle = styles.txAmountRefund;
+                              sign = '+';
+                              defaultNote = 'Store credit restored from cancellation / refund';
+                            } else {
+                              // adjustment: check note or delta from adjacent transaction
+                              const noteLower = (tx.notes || '').toLowerCase();
+                              let isCredit = true;
+                              if (noteLower.startsWith('credit') || noteLower.includes('[credit]') || noteLower.includes('deposit') || noteLower.includes('add')) {
+                                isCredit = true;
+                              } else if (noteLower.startsWith('debit') || noteLower.includes('[debit]') || noteLower.includes('deduct') || noteLower.includes('remove')) {
+                                isCredit = false;
+                              } else {
+                                const txBal = typeof tx.balance_after === 'number' ? tx.balance_after : tx.amount;
+                                const olderTx = lookupTransactions[idx + 1];
+                                if (olderTx && typeof olderTx.balance_after === 'number') {
+                                  isCredit = txBal >= olderTx.balance_after;
+                                } else {
+                                  isCredit = txBal >= tx.amount;
+                                }
+                              }
+
+                              if (isCredit) {
+                                badgeLabel = 'CREDITED';
+                                badgeStyle = styles.txTypeCredit;
+                                textStyle = styles.txTypeTextCredit;
+                                amountStyle = styles.txAmountCredit;
+                                sign = '+';
+                                defaultNote = 'Admin wallet credit adjustment';
+                              } else {
+                                badgeLabel = 'DEBITED';
+                                badgeStyle = styles.txTypeDebit;
+                                textStyle = styles.txTypeTextDebit;
+                                amountStyle = styles.txAmountDebit;
+                                sign = '-';
+                                defaultNote = 'Admin wallet debit adjustment';
+                              }
+                            }
+
+                            const displayNote = tx.notes || defaultNote;
+
                             return (
                               <View key={tx.id} style={styles.ledgerItem}>
-                                <View style={styles.ledgerLeft}>
-                                  <View
-                                    style={[
-                                      styles.txTypeBadge,
-                                      isEarn ? styles.txTypeEarn : styles.txTypeRedeem,
-                                    ]}
-                                  >
-                                    <Text
-                                      style={[
-                                        styles.txTypeText,
-                                        isEarn ? styles.txTypeTextEarn : styles.txTypeTextRedeem,
-                                      ]}
-                                    >
-                                      {isEarn ? 'EARNED' : 'REDEEMED'}
+                                <View style={styles.ledgerTopRow}>
+                                  <View style={[styles.txTypeBadge, badgeStyle]}>
+                                    <Text style={[styles.txTypeText, textStyle]}>
+                                      {badgeLabel}
                                     </Text>
                                   </View>
-                                  <View style={{ marginLeft: 8 }}>
-                                    <Text style={styles.txNotes}>
-                                      {tx.notes || (isEarn ? 'Cashback from settled order' : 'Redeemed on bill payment')}
-                                    </Text>
-                                    <Text style={styles.txDate}>
-                                      {new Date(tx.created_at).toLocaleString()}
-                                    </Text>
-                                  </View>
+                                  <Text style={[styles.txAmount, amountStyle]}>
+                                    {sign}{formatCurrency(tx.amount)}
+                                  </Text>
                                 </View>
-                                <Text
-                                  style={[
-                                    styles.txAmount,
-                                    isEarn ? styles.txAmountEarn : styles.txAmountRedeem,
-                                  ]}
-                                >
-                                  {isEarn ? '+' : '-'}{formatCurrency(tx.amount)}
+                                <View style={styles.ledgerBody}>
+                                  <Text style={styles.txNotes}>
+                                    {displayNote}
+                                  </Text>
+                                  {tx.order_id ? (
+                                    <Text style={styles.txOrderId}>
+                                      #{tx.order_id}
+                                    </Text>
+                                  ) : null}
+                                </View>
+                                <Text style={styles.txDate}>
+                                  {new Date(tx.created_at).toLocaleString()}
                                 </Text>
                               </View>
                             );
@@ -1546,7 +1610,8 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    width: Platform.OS === 'web' ? 340 : '100%',
+    width: '100%',
+    maxWidth: Platform.OS === 'web' ? 360 : undefined,
     shadowColor: '#000',
     shadowOpacity: 0.03,
     shadowRadius: 4,
@@ -2152,48 +2217,81 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   ledgerList: {
-    gap: 8,
+    gap: 10,
   },
   ledgerItem: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  ledgerLeft: {
+  ledgerTopRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    flex: 1,
+    marginBottom: 6,
+  },
+  ledgerBody: {
+    marginBottom: 6,
   },
   txTypeBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
   },
   txTypeEarn: {
     backgroundColor: '#DCFCE7',
+    borderColor: '#BBF7D0',
+  },
+  txTypeCredit: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#BBF7D0',
+  },
+  txTypeDebit: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
   },
   txTypeRedeem: {
-    backgroundColor: '#DBEAFE',
+    backgroundColor: '#FEE2E2',
+    borderColor: '#FECACA',
+  },
+  txTypeRefund: {
+    backgroundColor: '#E0F2FE',
+    borderColor: '#BAE6FD',
   },
   txTypeText: {
     fontSize: 10,
     fontWeight: '800',
+    letterSpacing: 0.5,
   },
   txTypeTextEarn: {
     color: '#15803D',
   },
+  txTypeTextCredit: {
+    color: '#15803D',
+  },
+  txTypeTextDebit: {
+    color: '#B45309',
+  },
   txTypeTextRedeem: {
-    color: '#1D4ED8',
+    color: '#DC2626',
+  },
+  txTypeTextRefund: {
+    color: '#0284C7',
   },
   txNotes: {
     fontSize: 12,
     fontWeight: '700',
     color: '#0F172A',
+    lineHeight: 17,
+  },
+  txOrderId: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 2,
   },
   txDate: {
     fontSize: 10,
@@ -2201,14 +2299,23 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   txAmount: {
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 14,
+    fontWeight: '900',
   },
   txAmountEarn: {
     color: '#15803D',
   },
+  txAmountCredit: {
+    color: '#15803D',
+  },
+  txAmountDebit: {
+    color: '#B45309',
+  },
   txAmountRedeem: {
-    color: '#2563EB',
+    color: '#DC2626',
+  },
+  txAmountRefund: {
+    color: '#0284C7',
   },
   lookupNotFoundBox: {
     padding: 20,

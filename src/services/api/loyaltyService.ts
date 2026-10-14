@@ -267,8 +267,9 @@ export const loyaltyService = {
    */
   async getCustomerWalletTransactions(restaurantId: string, customerMobile: string, limit = 20): Promise<Array<{
     id: string;
-    transaction_type: 'earn' | 'redeem' | 'expire' | 'adjustment';
+    transaction_type: 'earn' | 'redeem' | 'expire' | 'adjustment' | 'refund';
     amount: number;
+    balance_after: number;
     order_id?: string;
     notes?: string;
     created_at: string;
@@ -280,7 +281,7 @@ export const loyaltyService = {
 
     const { data, error } = await supabase
       .from('customer_wallet_transactions')
-      .select('id, transaction_type, amount, order_id, notes, created_at')
+      .select('id, transaction_type, amount, balance_after, order_id, notes, created_at')
       .eq('restaurant_id', restaurantId)
       .eq('customer_mobile', cleanMobile)
       .order('created_at', { ascending: false })
@@ -295,6 +296,7 @@ export const loyaltyService = {
       id: t.id,
       transaction_type: t.transaction_type,
       amount: Number(t.amount) || 0,
+      balance_after: Number(t.balance_after) || 0,
       order_id: t.order_id,
       notes: t.notes,
       created_at: t.created_at,

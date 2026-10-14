@@ -24,6 +24,7 @@ import {
   SEZNIK_BLE_INTER_CHUNK_DELAY_MS,
   SEZNIK_BLE_POST_DOCUMENT_DELAY_MS,
 } from './types';
+import { bluetoothTransport } from './bluetoothTransport';
 
 export function isExpoGo(): boolean {
   return (

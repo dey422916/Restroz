@@ -468,7 +468,50 @@ export const printerManager = {
         };
       }
 
-      return bluetoothTransport.sendPayload({ address }, doc.bytes, printer.id);
+      const isBle =
+        (binding as any)?.bluetooth_transport_type === 'ble_gatt' ||
+        (printer as any).bluetooth_transport_type === 'ble_gatt' ||
+        /seznik|925/i.test(printer.name) ||
+        /seznik|925/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '');
+
+      if (isBle) {
+        if (!bleGattTransport.isAvailable()) {
+          return {
+            success: false,
+            status: 'unsupported',
+            bytesSent: 0,
+            totalBytes: doc.bytes.length,
+            message: 'Native BLE GATT transport is not available in this environment.',
+            durationMs: 0,
+          };
+        }
+        return bleGattTransport.sendPayload(
+          {
+            address,
+            name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+            transportType: 'ble_gatt',
+          },
+          doc.bytes,
+          printer.id
+        );
+      }
+
+      if (!bluetoothTransport.isAvailable()) {
+        return {
+          success: false,
+          status: 'unsupported',
+          bytesSent: 0,
+          totalBytes: doc.bytes.length,
+          message: 'Native Bluetooth Classic SPP transport is not available in this environment.',
+          durationMs: 0,
+        };
+      }
+
+      return bluetoothTransport.sendPayload(
+        { address, name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined },
+        doc.bytes,
+        printer.id
+      );
     }
 
     if (printer.connection_type === 'usb') {
@@ -537,7 +580,50 @@ export const printerManager = {
         };
       }
 
-      return bluetoothTransport.sendPayload({ address }, doc.bytes, printer.id);
+      const isBle =
+        (binding as any)?.bluetooth_transport_type === 'ble_gatt' ||
+        (printer as any).bluetooth_transport_type === 'ble_gatt' ||
+        /seznik|925/i.test(printer.name) ||
+        /seznik|925/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '');
+
+      if (isBle) {
+        if (!bleGattTransport.isAvailable()) {
+          return {
+            success: false,
+            status: 'unsupported',
+            bytesSent: 0,
+            totalBytes: doc.bytes.length,
+            message: 'Native BLE GATT transport is not available in this environment.',
+            durationMs: 0,
+          };
+        }
+        return bleGattTransport.sendPayload(
+          {
+            address,
+            name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+            transportType: 'ble_gatt',
+          },
+          doc.bytes,
+          printer.id
+        );
+      }
+
+      if (!bluetoothTransport.isAvailable()) {
+        return {
+          success: false,
+          status: 'unsupported',
+          bytesSent: 0,
+          totalBytes: doc.bytes.length,
+          message: 'Native Bluetooth Classic SPP transport is not available in this environment.',
+          durationMs: 0,
+        };
+      }
+
+      return bluetoothTransport.sendPayload(
+        { address, name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined },
+        doc.bytes,
+        printer.id
+      );
     }
 
     if (printer.connection_type === 'usb') {

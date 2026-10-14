@@ -46,6 +46,7 @@ export interface DestinationPrintResult {
   attemptedFallback?: boolean;
   fallbackPrinterId?: string;
   jobId?: string;
+  errorCode?: string;
 }
 
 export interface MultiDestinationPrintResult {
@@ -77,6 +78,46 @@ async function ensureDedupInitialized(): Promise<void> {
   } finally {
     isDedupInitialized = true;
   }
+}
+
+interface AndroidPrintDiagnosticParams {
+  job: 'KOT' | 'BILL';
+  source: string;
+  printerName: string;
+  transport: string;
+  deviceId: string;
+  roleEligible: boolean;
+  bindingFound: boolean;
+  payloadBytes: number;
+  connection: string;
+  serviceDiscovery: string;
+  characteristic: string;
+  chunksSent: number;
+  result: 'SUCCESS' | 'FAILURE';
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+function logAndroidPrintDiagnostic(params: AndroidPrintDiagnosticParams) {
+  console.log(
+`[ANDROID_PRINT]
+Job: ${params.job}
+Source: ${params.source}
+Mode: DIRECT_DEVICE
+Printer: ${params.printerName}
+Transport: ${params.transport}
+Device ID: ${params.deviceId}
+Role Eligible: ${params.roleEligible ? 'YES' : 'NO'}
+Binding Found: ${params.bindingFound ? 'YES' : 'NO'}
+Payload Bytes: ${params.payloadBytes}
+Connection: ${params.connection}
+Service Discovery: ${params.serviceDiscovery}
+Characteristic: ${params.characteristic}
+Chunks Sent: ${params.chunksSent}
+Result: ${params.result}
+Error Code: ${params.errorCode || 'NONE'}
+Error Message: ${params.errorMessage || 'NONE'}`
+  );
 }
 
 export const androidPrintRouter = {
@@ -125,7 +166,8 @@ export const androidPrintRouter = {
     role: 'kot' | 'bill',
     allPrinters: RestaurantPrinter[],
     visitedPrinterIds: Set<string> = new Set(),
-    depth: number = 0
+    depth: number = 0,
+    source: string = 'DIRECT_PRINT'
   ): Promise<DestinationPrintResult> {
     // 1. Fallback loop protection
     if (depth >= 5 || visitedPrinterIds.has(printer.id)) {
@@ -139,6 +181,7 @@ export const androidPrintRouter = {
         totalBytes: bytes.length,
         message: `Fallback loop detected or max depth exceeded for printer ${printer.name}.`,
         durationMs: 0,
+        errorCode: 'FALLBACK_LOOP_EXCEEDED',
       };
     }
 
@@ -152,9 +195,17 @@ export const androidPrintRouter = {
       totalBytes: number;
       message: string;
       durationMs: number;
+      errorCode?: string;
     };
 
+    let resolvedTransport = (printer.connection_type || 'unknown').toUpperCase();
+    let resolvedDeviceId = 'NONE';
+    let bindingFound = false;
+
     if (printer.connection_type === 'lan' || printer.connection_type === 'wifi') {
+      resolvedTransport = 'TCP';
+      resolvedDeviceId = `${printer.ip_address || ''}:${printer.port || 9100}`;
+      bindingFound = Boolean(printer.ip_address);
       transportRes = await tcpTransport.sendPayload(
         {
           host: printer.ip_address || '',
@@ -166,6 +217,17 @@ export const androidPrintRouter = {
     } else if (printer.connection_type === 'bluetooth') {
       const binding = await devicePrinterBindingService.getDeviceBinding(printer.id);
       const address = binding?.bluetooth_mac_address || (printer as any).bluetooth_mac_address;
+      resolvedDeviceId = address || 'NOT_BOUND';
+      bindingFound = Boolean(address);
+
+      const isBle =
+        (binding as any)?.bluetooth_transport_type === 'ble_gatt' ||
+        (printer as any).bluetooth_transport_type === 'ble_gatt' ||
+        /seznik|925/i.test(printer.name) ||
+        /seznik|925/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '');
+
+      resolvedTransport = isBle ? 'BLE_GATT' : 'BLUETOOTH_SPP';
+
       if (!address) {
         transportRes = {
           success: false,
@@ -174,14 +236,9 @@ export const androidPrintRouter = {
           totalBytes: bytes.length,
           message: `Bluetooth printer "${printer.name}" is not bound on this device. Select Bluetooth device in Settings.`,
           durationMs: 0,
+          errorCode: 'DEVICE_BINDING_MISSING',
         };
       } else {
-        const isBle =
-          (binding as any)?.bluetooth_transport_type === 'ble_gatt' ||
-          (printer as any).bluetooth_transport_type === 'ble_gatt' ||
-          /seznik|925/i.test(printer.name) ||
-          /seznik|925/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '');
-
         if (isBle) {
           if (!bleGattTransport.isAvailable()) {
             transportRes = {
@@ -191,6 +248,7 @@ export const androidPrintRouter = {
               totalBytes: bytes.length,
               message: `Native BLE GATT transport is not available in this environment. Install a RestroZ development or production APK to print.`,
               durationMs: 0,
+              errorCode: 'BLE_CONNECTION_FAILED',
             };
           } else {
             transportRes = await bleGattTransport.sendPayload(
@@ -212,6 +270,7 @@ export const androidPrintRouter = {
               totalBytes: bytes.length,
               message: `Native Bluetooth Classic SPP transport is not available in this environment. Install a RestroZ development or production APK to print.`,
               durationMs: 0,
+              errorCode: 'BLE_CONNECTION_FAILED',
             };
           } else {
             transportRes = await bluetoothTransport.sendPayload(
@@ -229,7 +288,11 @@ export const androidPrintRouter = {
       const binding = await devicePrinterBindingService.getDeviceBinding(printer.id);
       const vendorId = binding?.usb_vendor_id ?? (printer as any).usb_vendor_id;
       const productId = binding?.usb_product_id ?? (printer as any).usb_product_id;
-      if (vendorId === undefined || vendorId === null || productId === undefined || productId === null) {
+      resolvedTransport = 'USB';
+      resolvedDeviceId = `${vendorId}:${productId}`;
+      bindingFound = vendorId !== undefined && vendorId !== null && productId !== undefined && productId !== null;
+
+      if (!bindingFound) {
         transportRes = {
           success: false,
           status: 'not_bound',
@@ -237,6 +300,7 @@ export const androidPrintRouter = {
           totalBytes: bytes.length,
           message: `USB printer "${printer.name}" is not bound on this device. Select USB device in Settings.`,
           durationMs: 0,
+          errorCode: 'DEVICE_BINDING_MISSING',
         };
       } else if (!usbTransport.isAvailable()) {
         transportRes = {
@@ -246,6 +310,7 @@ export const androidPrintRouter = {
           totalBytes: bytes.length,
           message: `Native USB OTG transport is not available in this environment. Install a RestroZ development or production APK to print.`,
           durationMs: 0,
+          errorCode: 'BLE_CONNECTION_FAILED',
         };
       } else {
         transportRes = await usbTransport.sendPayload(
@@ -266,8 +331,53 @@ export const androidPrintRouter = {
         totalBytes: bytes.length,
         message: `Unsupported connection type ${(printer.connection_type as string).toUpperCase()}`,
         durationMs: 0,
+        errorCode: 'PRINTER_NOT_CONFIGURED',
       };
     }
+
+    // Map error code if not already set on failure
+    let finalErrorCode = transportRes.errorCode;
+    if (!transportRes.success && !finalErrorCode) {
+      const msg = (transportRes.message || '').toLowerCase();
+      if (transportRes.status === 'permission_denied' || msg.includes('permission')) {
+        finalErrorCode = 'BLUETOOTH_PERMISSION_DENIED';
+      } else if (transportRes.status === 'not_bound') {
+        finalErrorCode = 'DEVICE_BINDING_MISSING';
+      } else if (transportRes.status === 'timeout' || msg.includes('timeout')) {
+        finalErrorCode = 'PRINT_TIMEOUT';
+      } else if (transportRes.bytesSent > 0 || transportRes.status === 'partial_or_unknown') {
+        finalErrorCode = 'BLE_WRITE_FAILED';
+      } else if (msg.includes('service')) {
+        finalErrorCode = 'BLE_SERVICE_NOT_FOUND';
+      } else if (msg.includes('characteristic')) {
+        finalErrorCode = 'BLE_CHARACTERISTIC_NOT_FOUND';
+      } else if (msg.includes('write')) {
+        finalErrorCode = 'BLE_WRITE_FAILED';
+      } else {
+        finalErrorCode = 'BLE_CONNECTION_FAILED';
+      }
+    }
+
+    const chunksSent = Math.floor(transportRes.bytesSent / 20);
+
+    // Structured diagnostic logging for DEV / diagnosis
+    logAndroidPrintDiagnostic({
+      job: role.toUpperCase() as 'KOT' | 'BILL',
+      source,
+      printerName: printer.name,
+      transport: resolvedTransport,
+      deviceId: resolvedDeviceId,
+      roleEligible: true,
+      bindingFound,
+      payloadBytes: bytes.length,
+      connection: transportRes.success ? 'CONNECTED' : (transportRes.bytesSent > 0 ? 'CONNECTED' : 'FAILED'),
+      serviceDiscovery: transportRes.success ? 'DISCOVERED (0000ff00)' : (transportRes.bytesSent > 0 ? 'DISCOVERED' : 'SKIPPED'),
+      characteristic: transportRes.success ? 'RESOLVED (0000ff02)' : (transportRes.bytesSent > 0 ? 'RESOLVED' : 'SKIPPED'),
+      chunksSent: transportRes.success ? Math.ceil(bytes.length / 20) : chunksSent,
+      result: transportRes.success ? 'SUCCESS' : 'FAILURE',
+      errorCode: transportRes.success ? undefined : finalErrorCode,
+      errorMessage: transportRes.success ? undefined : transportRes.message,
+    });
 
     // 3. Evaluate Result
     if (transportRes.success) {
@@ -312,7 +422,8 @@ export const androidPrintRouter = {
             role,
             allPrinters,
             visitedPrinterIds,
-            depth + 1
+            depth + 1,
+            source
           );
           fallbackRes.attemptedFallback = true;
           fallbackRes.fallbackPrinterId = fallbackTarget.id;
@@ -330,6 +441,7 @@ export const androidPrintRouter = {
         totalBytes: transportRes.totalBytes,
         message: transportRes.message,
         durationMs: transportRes.durationMs,
+        errorCode: finalErrorCode,
       };
     }
 
@@ -348,6 +460,7 @@ export const androidPrintRouter = {
       totalBytes: transportRes.totalBytes,
       message: `Printer connection interrupted after ${transportRes.bytesSent} bytes were sent. Receipt may have partially printed. Check physical printer before reprinting.`,
       durationMs: transportRes.durationMs,
+      errorCode: finalErrorCode || 'BLE_WRITE_FAILED',
     };
   },
 
@@ -365,6 +478,7 @@ export const androidPrintRouter = {
       isManual?: boolean;
       retryPrinterIds?: string[];
       customPrinters?: RestaurantPrinter[];
+      source?: string;
     } = {}
   ): Promise<MultiDestinationPrintResult> {
     // 1. MASTER AUTO PRINT GATE (Absolute First Step)
@@ -400,6 +514,23 @@ export const androidPrintRouter = {
 
     if (activeKotPrinters.length === 0) {
       const err = 'No eligible KOT printer is configured on this device.';
+      logAndroidPrintDiagnostic({
+        job: 'KOT',
+        source: options.source || 'POS_AUTO',
+        printerName: 'NONE',
+        transport: 'NONE',
+        deviceId: 'NONE',
+        roleEligible: false,
+        bindingFound: false,
+        payloadBytes: 0,
+        connection: 'SKIPPED',
+        serviceDiscovery: 'SKIPPED',
+        characteristic: 'SKIPPED',
+        chunksSent: 0,
+        result: 'FAILURE',
+        errorCode: 'PRINTER_NOT_CONFIGURED',
+        errorMessage: err,
+      });
       return {
         success: false,
         skipped: true,
@@ -544,16 +675,66 @@ export const androidPrintRouter = {
         })),
       };
 
-      const doc = renderKotToEscPos(order, settings, targetedKot, {
-        printer: targetPrinter,
-        isReprint: options.isReprint,
-      });
+      let doc;
+      try {
+        const isBleTarget =
+          (targetPrinter as any).bluetooth_transport_type === 'ble_gatt' ||
+          targetPrinter.connection_type === 'bluetooth' ||
+          /seznik|925/i.test(targetPrinter.name) ||
+          /seznik|925/i.test((targetPrinter as any).bluetooth_device_name || '');
+
+        doc = renderKotToEscPos(order, settings, targetedKot, {
+          printer: {
+            ...targetPrinter,
+            transport: targetPrinter.connection_type === 'bluetooth' ? 'bluetooth' : targetPrinter.connection_type,
+            isBle: isBleTarget,
+          },
+          isBle: isBleTarget,
+          isReprint: options.isReprint,
+        });
+      } catch (renderErr: any) {
+        const errMsg = renderErr?.message || 'Failed to render KOT ESC/POS payload';
+        logAndroidPrintDiagnostic({
+          job: 'KOT',
+          source: options.source || (options.isReprint ? 'ORDERS_REPRINT' : options.isManual ? 'MANUAL_TRIGGER' : 'POS_AUTO'),
+          printerName: targetPrinter.name,
+          transport: targetPrinter.connection_type === 'bluetooth' ? 'BLE_GATT' : targetPrinter.connection_type.toUpperCase(),
+          deviceId: (targetPrinter as any).bluetooth_mac_address || 'UNKNOWN',
+          roleEligible: true,
+          bindingFound: true,
+          payloadBytes: 0,
+          connection: 'SKIPPED',
+          serviceDiscovery: 'SKIPPED',
+          characteristic: 'SKIPPED',
+          chunksSent: 0,
+          result: 'FAILURE',
+          errorCode: 'PAYLOAD_BUILD_FAILED',
+          errorMessage: errMsg,
+        });
+        const failRes: DestinationPrintResult = {
+          printerId: targetPrinter.id,
+          printerName: targetPrinter.name,
+          role: 'kot',
+          connectionType: targetPrinter.connection_type,
+          status: 'failed_before_write',
+          bytesSent: 0,
+          totalBytes: 0,
+          message: errMsg,
+          errorCode: 'PAYLOAD_BUILD_FAILED',
+        };
+        destinationResults.push(failRes);
+        errors.push(`${targetPrinter.name}: ${errMsg}`);
+        continue;
+      }
 
       const res = await this.sendPayloadToPrinter(
         targetPrinter,
         doc.bytes,
         'kot',
-        activePrinters
+        activePrinters,
+        new Set(),
+        0,
+        options.source || (options.isReprint ? 'ORDERS_REPRINT' : options.isManual ? 'MANUAL_TRIGGER' : 'POS_AUTO')
       );
 
       res.itemCount = targetItems.length;
@@ -607,6 +788,7 @@ export const androidPrintRouter = {
       isReprint?: boolean;
       isManual?: boolean;
       customPrinters?: RestaurantPrinter[];
+      source?: string;
     } = {}
   ): Promise<MultiDestinationPrintResult> {
     // 1. MASTER AUTO PRINT GATE
@@ -642,6 +824,23 @@ export const androidPrintRouter = {
 
     if (activeBillPrinters.length === 0) {
       const err = 'No eligible Bill printer is configured on this device.';
+      logAndroidPrintDiagnostic({
+        job: 'BILL',
+        source: options.source || 'SETTLEMENT_AUTO',
+        printerName: 'NONE',
+        transport: 'NONE',
+        deviceId: 'NONE',
+        roleEligible: false,
+        bindingFound: false,
+        payloadBytes: 0,
+        connection: 'SKIPPED',
+        serviceDiscovery: 'SKIPPED',
+        characteristic: 'SKIPPED',
+        chunksSent: 0,
+        result: 'FAILURE',
+        errorCode: 'PRINTER_NOT_CONFIGURED',
+        errorMessage: err,
+      });
       return {
         success: false,
         skipped: true,
@@ -726,18 +925,74 @@ export const androidPrintRouter = {
       }
     }
 
-    const doc = renderBillToEscPos(order, settings, billedBy || 'Staff', {
-      printer: targetPrinter,
-      logoRasterBytes,
-      paymentQrRasterBytes,
-    });
+    let doc;
+    try {
+      const isBleTarget =
+        (targetPrinter as any).bluetooth_transport_type === 'ble_gatt' ||
+        targetPrinter.connection_type === 'bluetooth' ||
+        /seznik|925/i.test(targetPrinter.name) ||
+        /seznik|925/i.test((targetPrinter as any).bluetooth_device_name || '');
+
+      doc = renderBillToEscPos(order, settings, billedBy || 'Staff', {
+        printer: {
+          ...targetPrinter,
+          transport: targetPrinter.connection_type === 'bluetooth' ? 'bluetooth' : targetPrinter.connection_type,
+          isBle: isBleTarget,
+        },
+        isBle: isBleTarget,
+        logoRasterBytes,
+        paymentQrRasterBytes,
+      });
+    } catch (renderErr: any) {
+      const errMsg = renderErr?.message || 'Failed to render Bill ESC/POS payload';
+      logAndroidPrintDiagnostic({
+        job: 'BILL',
+        source: options.source || (options.isReprint ? 'BILL_REPRINT' : options.isManual ? 'MANUAL_TRIGGER' : 'SETTLEMENT_AUTO'),
+        printerName: targetPrinter.name,
+        transport: targetPrinter.connection_type === 'bluetooth' ? 'BLE_GATT' : targetPrinter.connection_type.toUpperCase(),
+        deviceId: (targetPrinter as any).bluetooth_mac_address || 'UNKNOWN',
+        roleEligible: true,
+        bindingFound: true,
+        payloadBytes: 0,
+        connection: 'SKIPPED',
+        serviceDiscovery: 'SKIPPED',
+        characteristic: 'SKIPPED',
+        chunksSent: 0,
+        result: 'FAILURE',
+        errorCode: 'PAYLOAD_BUILD_FAILED',
+        errorMessage: errMsg,
+      });
+      const failRes: DestinationPrintResult = {
+        printerId: targetPrinter.id,
+        printerName: targetPrinter.name,
+        role: 'bill',
+        connectionType: targetPrinter.connection_type,
+        status: 'failed_before_write',
+        bytesSent: 0,
+        totalBytes: 0,
+        message: errMsg,
+        errorCode: 'PAYLOAD_BUILD_FAILED',
+      };
+      return {
+        success: false,
+        allSucceeded: false,
+        hasFailures: true,
+        hasPartialOrUnknown: false,
+        destinations: [failRes],
+        errors: [errMsg],
+        summary: `Bill print failed: ${errMsg}`,
+      };
+    }
 
     // 7. Dispatch to Transport with Fallback
     const res = await this.sendPayloadToPrinter(
       targetPrinter,
       doc.bytes,
       'bill',
-      activePrinters
+      activePrinters,
+      new Set(),
+      0,
+      options.source || (options.isReprint ? 'BILL_REPRINT' : options.isManual ? 'MANUAL_TRIGGER' : 'SETTLEMENT_AUTO')
     );
 
     res.jobId = jobId;

@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import {
   RestaurantPrinter,
@@ -137,6 +138,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
   const [systemCheckReport, setSystemCheckReport] = useState<PrinterSystemCheckReport | null>(null);
 
   const [harnessModalVisible, setHarnessModalVisible] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   const autoPrintActive = isAutoPrintEnabled(settings);
 
@@ -996,23 +998,41 @@ export const PrinterManagementSection: React.FC<Props> = ({
         </TouchableOpacity>
       </View>
 
-      {/* Diagnostic Action Buttons */}
-      <View style={styles.diagnosticsRow}>
-        <TouchableOpacity style={styles.diagBtn} onPress={handleCheckAutoPrintSetup}>
-          <Text style={styles.diagBtnText}>🔍 Check Auto Print Setup</Text>
+      {/* Advanced Diagnostics (Collapsible Accordion) */}
+      <View style={styles.diagnosticsAccordionContainer}>
+        <TouchableOpacity
+          style={styles.diagnosticsAccordionHeader}
+          onPress={() => setShowDiagnostics((prev) => !prev)}
+          activeOpacity={0.7}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={{ fontSize: 13 }}>🛠️</Text>
+            <Text style={styles.diagnosticsAccordionTitle}>Advanced Diagnostics & System Check</Text>
+          </View>
+          <Text style={styles.diagnosticsAccordionToggleText}>
+            {showDiagnostics ? '▲ Hide' : '▼ Show'}
+          </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.diagBtn} onPress={handlePreviewRouting}>
-          <Text style={styles.diagBtnText}>📋 Preview Routing</Text>
-        </TouchableOpacity>
+        {showDiagnostics && (
+          <View style={styles.diagnosticsRow}>
+            <TouchableOpacity style={styles.diagBtn} onPress={handleCheckAutoPrintSetup}>
+              <Text style={styles.diagBtnText}>🔍 Check Auto Print Setup</Text>
+            </TouchableOpacity>
 
-        <TouchableOpacity style={styles.diagBtn} onPress={handleRunSystemCheck}>
-          <Text style={styles.diagBtnText}>⚡ Run System Check</Text>
-        </TouchableOpacity>
+            <TouchableOpacity style={styles.diagBtn} onPress={handlePreviewRouting}>
+              <Text style={styles.diagBtnText}>📋 Preview Routing</Text>
+            </TouchableOpacity>
 
-        <TouchableOpacity style={[styles.diagBtn, styles.diagBtnHarness]} onPress={() => setHarnessModalVisible(true)}>
-          <Text style={[styles.diagBtnText, { color: '#7c3aed' }]}>🧪 Physical Test Harness</Text>
-        </TouchableOpacity>
+            <TouchableOpacity style={styles.diagBtn} onPress={handleRunSystemCheck}>
+              <Text style={styles.diagBtnText}>⚡ Run System Check</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.diagBtn, styles.diagBtnHarness]} onPress={() => setHarnessModalVisible(true)}>
+              <Text style={[styles.diagBtnText, { color: '#7c3aed' }]}>🧪 Physical Test Harness</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       {/* 3. Printer Cards List */}
@@ -1592,18 +1612,29 @@ export const PrinterManagementSection: React.FC<Props> = ({
       {/* 9. ADD / EDIT PRINTER MODAL                                               */}
       {/* ========================================================================= */}
       <Modal visible={modalVisible} animationType="slide" transparent={true}>
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
+              <Text style={styles.modalTitle} numberOfLines={1}>
                 {editingPrinter ? `Edit ${editingPrinter.name}` : 'Add New Thermal Printer'}
               </Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
+              <TouchableOpacity
+                onPress={() => setModalVisible(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
                 <Text style={styles.modalCloseText}>✕</Text>
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalBody}>
+            <ScrollView
+              style={styles.modalBody}
+              contentContainerStyle={styles.modalBodyContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={true}
+            >
               {/* 1. Connection Type Selector */}
               <Text style={styles.sectionHeader}>1. Connection Type</Text>
               <View style={styles.connTypeRow}>
@@ -2219,48 +2250,63 @@ export const PrinterManagementSection: React.FC<Props> = ({
                 </TouchableOpacity>
               </View>
 
-              {/* 4. KOT Routing (Categories & Sections) */}
+              {/* 4. Station Routing Rules (Categories & Sections) */}
               {(printerRole === 'kot' || printerRole === 'both') && (
                 <View style={styles.routingSection}>
-                  <Text style={styles.sectionHeader}>4. KOT Menu Categories & Dining Sections</Text>
-                  <Text style={styles.helperText}>
-                    Route specific menu categories to this printer (e.g. Kitchen, Bar, Bakery).
-                  </Text>
-                  <View style={styles.tagWrap}>
-                    {categories.map((cat) => {
-                      const selected = selectedCategoryIds.includes(cat.id);
-                      return (
-                        <TouchableOpacity
-                          key={cat.id}
-                          style={[styles.tag, selected && styles.tagActive]}
-                          onPress={() => toggleCategorySelection(cat.id)}
-                        >
-                          <Text style={[styles.tagText, selected && styles.tagTextActive]}>
-                            {cat.name} {selected ? '✓' : ''}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
+                  <Text style={styles.sectionHeader}>4. Station Routing Rules</Text>
+
+                  {/* Subsection A: KOT Menu Categories */}
+                  <View style={styles.routingSubSection}>
+                    <Text style={styles.subSectionTitle}>KOT Menu Categories</Text>
+                    <Text style={styles.helperText}>
+                      Route specific food & drink categories to this kitchen printer (e.g. Kitchen, Bar, Bakery). If none selected, prints all non-routed items.
+                    </Text>
+                    {categories.length === 0 ? (
+                      <Text style={styles.emptyRoutingText}>No menu categories found.</Text>
+                    ) : (
+                      <View style={styles.tagWrap}>
+                        {categories.map((cat) => {
+                          const selected = selectedCategoryIds.includes(cat.id);
+                          return (
+                            <TouchableOpacity
+                              key={cat.id}
+                              style={[styles.tag, selected ? styles.tagActive : styles.tagInactive]}
+                              onPress={() => toggleCategorySelection(cat.id)}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={[styles.tagText, selected ? styles.tagTextActive : styles.tagTextInactive]}>
+                                {selected ? '✓ ' : '+ '}{cat.name}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    )}
                   </View>
 
-                  <Text style={styles.helperText}>
-                    Route specific dining room sections or floors to this printer (e.g. Rooftop).
-                  </Text>
-                  <View style={styles.tagWrap}>
-                    {TABLE_SECTIONS.map((sec) => {
-                      const selected = selectedSections.includes(sec);
-                      return (
-                        <TouchableOpacity
-                          key={sec}
-                          style={[styles.tag, selected && styles.tagActive]}
-                          onPress={() => toggleSectionSelection(sec)}
-                        >
-                          <Text style={[styles.tagText, selected && styles.tagTextActive]}>
-                            {sec} {selected ? '✓' : ''}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
+                  {/* Subsection B: Dining Sections */}
+                  <View style={[styles.routingSubSection, { marginTop: 10 }]}>
+                    <Text style={styles.subSectionTitle}>Dining Sections</Text>
+                    <Text style={styles.helperText}>
+                      Route orders from specific seating areas or floors to this printer (e.g. Ground Floor, Outdoor).
+                    </Text>
+                    <View style={styles.tagWrap}>
+                      {TABLE_SECTIONS.map((sec) => {
+                        const selected = selectedSections.includes(sec);
+                        return (
+                          <TouchableOpacity
+                            key={sec}
+                            style={[styles.tag, selected ? styles.tagActive : styles.tagInactive]}
+                            onPress={() => toggleSectionSelection(sec)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={[styles.tagText, selected ? styles.tagTextActive : styles.tagTextInactive]}>
+                              {selected ? '✓ ' : '+ '}{sec}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
                   </View>
                 </View>
               )}
@@ -2336,7 +2382,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
             <View
               style={[
                 styles.modalFooter,
-                { paddingBottom: Math.max(12, insets.bottom + 8) },
+                { paddingBottom: Math.max(14, insets.bottom + 8) },
               ]}
             >
               <TouchableOpacity
@@ -2387,7 +2433,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -2431,6 +2477,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
     marginBottom: 12,
   },
   title: {
@@ -2443,11 +2491,41 @@ const styles = StyleSheet.create({
     color: '#64748b',
     marginTop: 2,
   },
+  diagnosticsAccordionContainer: {
+    marginBottom: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+    overflow: 'hidden',
+  },
+  diagnosticsAccordionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  diagnosticsAccordionTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  diagnosticsAccordionToggleText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#2563eb',
+  },
   diagnosticsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 14,
+    paddingHorizontal: 12,
+    paddingBottom: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
   },
   diagBtn: {
     paddingHorizontal: 12,
@@ -2521,9 +2599,6 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   printerCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
     marginBottom: 6,
   },
   nameRow: {
@@ -2602,7 +2677,10 @@ const styles = StyleSheet.create({
   },
   badgesRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 4,
+    marginTop: 4,
   },
   connBadge: {
     backgroundColor: '#ffffff',
@@ -2663,17 +2741,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
-    marginTop: 6,
+    marginTop: 8,
   },
   actionBtnSecondary: {
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 7,
     backgroundColor: '#f1f5f9',
     borderRadius: 6,
     borderWidth: 1,
     borderColor: '#cbd5e1',
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: 32,
   },
   actionBtnTextSecondary: {
     fontSize: 11.5,
@@ -2682,11 +2761,14 @@ const styles = StyleSheet.create({
   },
   actionBtnDanger: {
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 7,
     backgroundColor: '#fee2e2',
     borderRadius: 6,
     borderWidth: 1,
     borderColor: '#fecaca',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 32,
   },
   actionBtnTextDanger: {
     fontSize: 11.5,
@@ -2762,29 +2844,41 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: Platform.OS === 'web' ? 16 : 0,
     width: '100%',
     maxWidth: 640,
-    maxHeight: Platform.OS === 'web' ? '90%' : '94%',
+    height: Platform.OS === 'web' ? '90%' : '92%',
+    maxHeight: Platform.OS === 'web' ? '90%' : '92%',
+    display: 'flex',
+    flexDirection: 'column',
     overflow: 'hidden',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
   },
   modalTitle: {
     fontSize: 16,
     fontWeight: '800',
     color: '#0f172a',
+    flex: 1,
+    marginRight: 12,
   },
   modalCloseText: {
     fontSize: 18,
     color: '#64748b',
     fontWeight: '700',
+    paddingHorizontal: 4,
   },
   modalBody: {
+    flex: 1,
+  },
+  modalBodyContent: {
     padding: 16,
+    paddingBottom: 56,
   },
   sectionHeader: {
     fontSize: 13.5,
@@ -2931,9 +3025,24 @@ const styles = StyleSheet.create({
   routingSection: {
     marginTop: 6,
   },
+  routingSubSection: {
+    marginTop: 6,
+  },
+  subSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1e293b',
+    marginBottom: 4,
+  },
   helperText: {
     fontSize: 12,
     color: '#64748b',
+    marginBottom: 8,
+  },
+  emptyRoutingText: {
+    fontSize: 12,
+    color: '#94a3b8',
+    fontStyle: 'italic',
     marginBottom: 8,
   },
   tagWrap: {
@@ -2943,25 +3052,43 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   tag: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#f8fafc',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#cbd5e1',
+  },
+  tagInactive: {
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
   },
   tagActive: {
-    backgroundColor: '#eff6ff',
-    borderColor: '#2563eb',
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#2563eb',
+    borderWidth: 1,
+    borderColor: '#1d4ed8',
   },
   tagText: {
     fontSize: 12,
-    color: '#475569',
+    color: '#334155',
+    fontWeight: '600',
+  },
+  tagTextInactive: {
+    fontSize: 12,
+    color: '#334155',
     fontWeight: '600',
   },
   tagTextActive: {
-    color: '#1d4ed8',
-    fontWeight: '700',
+    fontSize: 12,
+    color: '#ffffff',
+    fontWeight: '800',
   },
   calibrationSection: {
     marginTop: 8,

@@ -24,7 +24,6 @@ import {
   SEZNIK_BLE_INTER_CHUNK_DELAY_MS,
   SEZNIK_BLE_POST_DOCUMENT_DELAY_MS,
 } from './types';
-import { bluetoothTransport } from './bluetoothTransport';
 
 export function isExpoGo(): boolean {
   return (
@@ -429,6 +428,32 @@ export const bleGattTransport = {
       };
     }
 
+    // 1. Verify Bluetooth permissions
+    const permStatus = await this.requestPermissions();
+    if (!permStatus.granted) {
+      return {
+        success: false,
+        status: 'permission_denied',
+        bytesSent: 0,
+        totalBytes: bytes.length,
+        message: permStatus.error || 'BLUETOOTH_PERMISSION_DENIED',
+        durationMs: 0,
+      };
+    }
+
+    // 2. Verify Bluetooth adapter power state
+    const powerStatus = await this.ensurePoweredOn();
+    if (!powerStatus.poweredOn) {
+      return {
+        success: false,
+        status: 'bluetooth_disabled',
+        bytesSent: 0,
+        totalBytes: bytes.length,
+        message: 'Bluetooth is powered off on this device. Please turn Bluetooth ON.',
+        durationMs: 0,
+      };
+    }
+
     const deviceId = config.address.trim();
     const startTime = Date.now();
 
@@ -448,12 +473,76 @@ export const bleGattTransport = {
     let bytesSent = 0;
 
     try {
-      device = await manager.connectToDevice(deviceId, { autoConnect: false, timeout: 6000 });
+      // 3. Connect or reuse existing active connection
+      let isConnected = false;
+      try {
+        isConnected = await manager.isDeviceConnected(deviceId);
+      } catch (_) {}
+
+      if (isConnected) {
+        try {
+          const knownDevices = await manager.devices([deviceId]);
+          if (knownDevices && knownDevices.length > 0) {
+            device = knownDevices[0];
+          }
+        } catch (_) {}
+      }
+
+      if (!device) {
+        try {
+          device = await manager.connectToDevice(deviceId, { autoConnect: false, timeout: 8000 });
+        } catch (connErr: any) {
+          const errMsg = (connErr?.message || '').toLowerCase();
+          if (errMsg.includes('already connected') || connErr?.errorCode === 201) {
+            try {
+              const knownDevices = await manager.devices([deviceId]);
+              if (knownDevices && knownDevices.length > 0) {
+                device = knownDevices[0];
+              }
+            } catch (_) {}
+          }
+
+          if (!device) {
+            // Short backoff in case of Android BLE status 133 (transitional disconnect)
+            await delay(300);
+            try {
+              device = await manager.connectToDevice(deviceId, { autoConnect: false, timeout: 8000 });
+            } catch (retryErr: any) {
+              throw retryErr;
+            }
+          }
+        }
+      }
+
       await device.discoverAllServicesAndCharacteristics();
 
-      // Resolve Service & Characteristic
-      const serviceUuid = config.serviceUuid || SEZNIK_BLE_SERVICE_UUID;
-      const charUuid = config.characteristicUuid || SEZNIK_BLE_WRITE_CHAR_UUID;
+      // Resolve Service & Characteristic with casing/discovery fallback
+      const reqServiceUuid = (config.serviceUuid || SEZNIK_BLE_SERVICE_UUID).toLowerCase();
+      const reqCharUuid = (config.characteristicUuid || SEZNIK_BLE_WRITE_CHAR_UUID).toLowerCase();
+
+      let serviceUuid = config.serviceUuid || SEZNIK_BLE_SERVICE_UUID;
+      let charUuid = config.characteristicUuid || SEZNIK_BLE_WRITE_CHAR_UUID;
+
+      try {
+        const services = await device.services();
+        const matchedSvc = services.find((s: any) =>
+          s.uuid?.toLowerCase() === reqServiceUuid ||
+          s.uuid?.toLowerCase().includes('ff00')
+        );
+        if (matchedSvc) {
+          serviceUuid = matchedSvc.uuid;
+          const chars = await matchedSvc.characteristics();
+          const matchedChar = chars.find((c: any) =>
+            c.uuid?.toLowerCase() === reqCharUuid ||
+            c.uuid?.toLowerCase().includes('ff02')
+          );
+          if (matchedChar) {
+            charUuid = matchedChar.uuid;
+          }
+        }
+      } catch (discErr) {
+        // Retain fallback UUIDs if dynamic discovery fails
+      }
 
       // Slice payload into 20-byte chunks
       const chunkSize = SEZNIK_BLE_CHUNK_SIZE;

@@ -10,6 +10,7 @@ import { androidPrintRouter } from './printerManager/androidPrintRouter';
 import { devicePrinterBindingService } from './printerManager/devicePrinterBindings';
 import { supabase } from './supabase';
 import { resolveReceiptIdentity } from '../utils/receiptIdentity';
+import { consolidateOrderItems } from '../utils/orderItemIdentity';
 
 /**
  * Handles thermal print errors with explicit user confirmation before opening browser/system print preview.
@@ -717,7 +718,7 @@ export const printService = {
         : undefined;
 
     // Filter out cancelled items so they never appear on the final bill
-    const activeItems = (order.items || []).filter((i) => i.quantity > 0);
+    const activeItems = consolidateOrderItems(order.items || []).filter((i) => i.quantity > 0);
     const totalItemCount = activeItems.length;
     const totalQty = activeItems.reduce((sum, i) => sum + i.quantity, 0);
 
@@ -1406,7 +1407,7 @@ export const printService = {
       ? order.payments.map((p) => p.payment_method.toUpperCase()).join(', ')
       : isPaid ? 'CASH' : 'PENDING';
 
-    const itemsHtml = (order.items || [])
+    const itemsHtml = consolidateOrderItems(order.items || [])
       .filter((i) => i.quantity > 0)
       .map((i, idx) => {
         const qty = Number(i.quantity) || 1;

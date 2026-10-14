@@ -2991,7 +2991,7 @@ export default function OrdersScreen() {
                 showsVerticalScrollIndicator={true}
                 keyboardShouldPersistTaps="handled"
                 style={{ flexShrink: 1 }}
-                contentContainerStyle={{ paddingBottom: 24 }}
+                contentContainerStyle={{ paddingBottom: 32 }}
               >
                 {/* 1. DISCOUNT SELECTION */}
                 <View style={styles.sectionBox}>
@@ -3296,7 +3296,11 @@ export default function OrdersScreen() {
                 <Text style={styles.fieldLabel}>Payment Status *</Text>
                 <View style={[{ flexDirection: isMobile ? 'column' : 'row', gap: 8, marginBottom: 10 }]}>
                   <TouchableOpacity
-                    style={[styles.recBtn, isMobile && { width: '100%', flex: 0 }, payReceived && styles.recBtnActive]}
+                    style={[
+                      styles.recBtn,
+                      isMobile ? { width: '100%' } : { flex: 1 },
+                      payReceived && styles.recBtnActive,
+                    ]}
                     onPress={() => setPayReceived(true)}
                   >
                     <Text style={[styles.recBtnText, payReceived && styles.recBtnTextActive]}>
@@ -3305,7 +3309,11 @@ export default function OrdersScreen() {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[styles.recBtn, isMobile && { width: '100%', flex: 0 }, !payReceived && styles.recBtnUnpaidActive]}
+                    style={[
+                      styles.recBtn,
+                      isMobile ? { width: '100%' } : { flex: 1 },
+                      !payReceived && styles.recBtnUnpaidActive,
+                    ]}
                     onPress={() => setPayReceived(false)}
                   >
                     <Text style={[styles.recBtnText, !payReceived && styles.recBtnTextActive]}>
@@ -4563,6 +4571,8 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
     marginTop: 14,
     marginBottom: 8,
   },
@@ -4626,6 +4636,8 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#cbd5e1',
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 38,
   },
   discTypeBtnActive: {
     backgroundColor: '#2563eb',
@@ -4682,6 +4694,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 40,
     borderWidth: 1,
     borderColor: '#cbd5e1',
   },
@@ -4689,17 +4703,25 @@ const styles = StyleSheet.create({
   payMethodText: { fontSize: 11, fontWeight: '800', color: '#334155' },
   payMethodTextActive: { color: '#ffffff' },
   recBtn: {
-    flex: 1,
+    minHeight: 46,
     backgroundColor: '#f1f5f9',
-    paddingVertical: 9,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#cbd5e1',
   },
   recBtnActive: { backgroundColor: '#16a34a', borderColor: '#16a34a' },
   recBtnUnpaidActive: { backgroundColor: '#dc2626', borderColor: '#dc2626' },
-  recBtnText: { fontSize: 11, fontWeight: '800', color: '#334155' },
+  recBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#334155',
+    textAlign: 'center',
+    includeFontPadding: false,
+  },
   recBtnTextActive: { color: '#ffffff' },
   printBtnSmall: {
     flex: 1,

@@ -8,7 +8,9 @@ import {
   Order,
   KOT,
   PaymentMethod,
+  CustomerWalletInfo,
 } from '../types';
+import { loyaltyService } from '../services/api/loyaltyService';
 import { calculateOrderTotals, CalculationResult, getOrderTaxRate, isOrderGstApplicable } from '../utils/gst';
 import { validateCoupon } from '../utils/validators';
 import { orderService, clearOrdersCache, resolveOrderDiscounts } from '../services/api/orderService';
@@ -53,6 +55,14 @@ interface PosContextType {
   discountValue: number;
   appliedCoupon: Coupon | null;
   totals: CalculationResult;
+
+  walletInfo: CustomerWalletInfo | null;
+  isLoadingWallet: boolean;
+  isRedeemLoyalty: boolean;
+  setIsRedeemLoyalty: (redeem: boolean) => void;
+  walletRedeemAmount: number;
+  netPayable: number;
+  lookupCustomerWallet: (phone?: string) => Promise<CustomerWalletInfo | null>;
 
   isSupplementary: boolean;
   setIsSupplementary: (isSup: boolean) => void;
@@ -135,6 +145,10 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
   const [loadedOrder, setLoadedOrder] = useState<Order | null>(null);
 
+  const [walletInfo, setWalletInfo] = useState<CustomerWalletInfo | null>(null);
+  const [isLoadingWallet, setIsLoadingWallet] = useState<boolean>(false);
+  const [isRedeemLoyalty, setIsRedeemLoyalty] = useState<boolean>(false);
+
   const [activeOrders, setActiveOrders] = useState<Order[]>([]);
   const [heldOrders, setHeldOrders] = useState<Order[]>([]);
   const [pendingCustomerOrders, setPendingCustomerOrders] = useState<Order[]>([]);
@@ -202,6 +216,60 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setOrderTypeState(type);
     if (type !== 'dine_in') {
       setSelectedTable(null);
+    }
+  };
+
+  // Debounced Customer Wallet Lookup when phone number is entered or changed
+  useEffect(() => {
+    const targetRestId = activeRestaurantId || settings.restaurant_id;
+    if (!targetRestId) return;
+
+    const cleanPhone = (customerInfo.phone || '').trim().replace(/[^\d]/g, '');
+    if (cleanPhone.length >= 10) {
+      let isMounted = true;
+      setIsLoadingWallet(true);
+      const timer = setTimeout(() => {
+        loyaltyService
+          .getCustomerWallet(targetRestId, cleanPhone)
+          .then((info) => {
+            if (isMounted) {
+              setWalletInfo(info);
+              setIsLoadingWallet(false);
+            }
+          })
+          .catch((e) => {
+            console.warn('[PosContext] Error loading customer wallet:', e);
+            if (isMounted) setIsLoadingWallet(false);
+          });
+      }, 350);
+
+      return () => {
+        isMounted = false;
+        clearTimeout(timer);
+      };
+    } else {
+      setWalletInfo(null);
+      setIsRedeemLoyalty(false);
+      setIsLoadingWallet(false);
+    }
+  }, [customerInfo.phone, activeRestaurantId, settings.restaurant_id]);
+
+  const lookupCustomerWallet = async (phone?: string): Promise<CustomerWalletInfo | null> => {
+    const targetRestId = activeRestaurantId || settings.restaurant_id;
+    if (!targetRestId) return null;
+    const phoneToLookup = phone || customerInfo.phone;
+    const cleanPhone = (phoneToLookup || '').trim().replace(/[^\d]/g, '');
+    if (cleanPhone.length < 10) return null;
+    try {
+      setIsLoadingWallet(true);
+      const info = await loyaltyService.getCustomerWallet(targetRestId, cleanPhone);
+      setWalletInfo(info);
+      return info;
+    } catch (e) {
+      console.warn('[PosContext] lookupCustomerWallet error:', e);
+      return null;
+    } finally {
+      setIsLoadingWallet(false);
     }
   };
 
@@ -448,6 +516,8 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setOrderNotes('');
     setDiscountValue(0);
     setAppliedCoupon(null);
+    setIsRedeemLoyalty(false);
+    setWalletInfo(null);
   };
 
   const isLoadedOrderTaxPresent = loadedOrder ? (
@@ -476,6 +546,18 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     isGstEnabled,
     taxRate: effectiveTaxRate,
   });
+
+  const walletBalance = Number(walletInfo?.balance || 0);
+  const minRequired = Number(walletInfo?.min_redeem_balance || 50);
+  const isRewardsEnabled = Boolean(walletInfo?.is_enabled);
+  const canRedeemLoyalty = Boolean(isRewardsEnabled && walletBalance >= minRequired && walletBalance > 0);
+
+  // Loyalty point redemption (capped at available balance and totals.payableAmount)
+  const walletRedeemAmount = (isRedeemLoyalty && canRedeemLoyalty)
+    ? Math.min(walletBalance, totals.payableAmount)
+    : 0;
+
+  const netPayable = Math.max(0, totals.payableAmount - walletRedeemAmount);
 
   const holdCurrentOrder = async (): Promise<Order | null> => {
     if (cartItems.length === 0) return null;
@@ -567,6 +649,11 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (orderType === 'dine_in') {
       if (!selectedTable) {
         throw new Error('Please select a dining table for Dine In orders.');
+      }
+      if (customerInfo.phone && customerInfo.phone.trim()) {
+        if (!isValidPhoneNumber(customerInfo.phone)) {
+          throw new Error('Please enter a valid 10-digit mobile number for the guest.');
+        }
       }
     } else if (orderType === 'takeaway') {
       if (!customerInfo.name?.trim()) {
@@ -807,12 +894,16 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       wallet_redeem_amount?: number;
     }
   ): Promise<Order> => {
+    const effectiveWalletRedeem = discountData?.wallet_redeem_amount !== undefined
+      ? discountData.wallet_redeem_amount
+      : (isRedeemLoyalty ? walletRedeemAmount : 0);
+
     const updatedOrder = await orderService.closeAndSettleOrder(orderId, {
       payment_method: paymentMethod,
       amount,
       reference_number: ref,
       ...discountData,
-      wallet_redeem_amount: discountData?.wallet_redeem_amount || 0,
+      wallet_redeem_amount: effectiveWalletRedeem,
     });
 
     const rewardEarned = Number((updatedOrder as any).reward_earned) || 0;
@@ -868,6 +959,14 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         discountValue,
         appliedCoupon,
         totals,
+
+        walletInfo,
+        isLoadingWallet,
+        isRedeemLoyalty,
+        setIsRedeemLoyalty,
+        walletRedeemAmount,
+        netPayable,
+        lookupCustomerWallet,
 
         isSupplementary,
         setIsSupplementary,

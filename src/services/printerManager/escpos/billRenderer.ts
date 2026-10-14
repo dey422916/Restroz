@@ -36,8 +36,8 @@ export function renderBillToEscPos(
     /58|seznik|925|rpp|mpt|mini/i.test(printerName);
   const paperSize: PrinterPaperWidth = is58mm ? '58mm' : '80mm';
   const effectivePrinterName = printerName || (paperSize === '58mm' ? 'POS58 Printer' : 'POS80 Printer');
-  const transport = (options.printer as any)?.transport || (options.isBle ? 'bluetooth' : 'agent');
-  const isBle = Boolean(options.isBle || transport === 'bluetooth' || (options.printer as any)?.isBle || paperSize === '58mm');
+  const transport = (options.printer as any)?.transport || ((options.printer as any)?.connection_type === 'bluetooth' || options.isBle ? 'bluetooth' : 'agent');
+  const isBle = Boolean(options.isBle || transport === 'bluetooth' || (options.printer as any)?.isBle || (options.printer as any)?.connection_type === 'bluetooth' || paperSize === '58mm');
 
   const builder = new EscPosTextBuilder(paperSize, effectivePrinterName, { isBle, transport });
 

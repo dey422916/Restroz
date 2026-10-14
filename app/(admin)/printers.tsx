@@ -36,11 +36,15 @@ export default function PrintersScreen() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoadingCategories, setIsLoadingCategories] = useState(false);
 
+  // Sub-Tab Navigation State: 'printers' | 'invoice'
+  const [activeTab, setActiveTab] = useState<'printers' | 'invoice'>('printers');
+
   // Authoritative Printer Settings State
   const [kotPaperSize, setKotPaperSize] = useState<PaperSize>(settings.kot_paper_size || '80mm');
   const [billPaperSize, setBillPaperSize] = useState<PaperSize>(settings.bill_paper_size || '80mm');
   const [autoPrintKot, setAutoPrintKot] = useState<boolean>(Boolean(settings.auto_print_kot));
   const [isSavingPrinter, setIsSavingPrinter] = useState(false);
+  const [isSavingInvoice, setIsSavingInvoice] = useState(false);
 
   // Bill Branding (Logo & Payment QR) State
   const [billLogoUrl, setBillLogoUrl] = useState<string>(settings.bill_logo_url || '');
@@ -265,7 +269,7 @@ export default function PrintersScreen() {
     }
   };
 
-  const handleSavePrinterSettings = async () => {
+  const handleSaveHardwareSettings = async () => {
     if (!canManage) {
       showToast('error', 'Permission Denied', 'Only ADMIN users can update printer settings.');
       Alert.alert('Permission Denied', 'Only ADMIN users can update printer settings.');
@@ -275,27 +279,55 @@ export default function PrintersScreen() {
       setIsSavingPrinter(true);
       await updateSettings({
         kot_paper_size: kotPaperSize,
-        bill_paper_size: billPaperSize,
         auto_print_kot: autoPrintKot,
+      });
+      await refreshSettings();
+      const summary = `KOT Paper: ${kotPaperSize} • Auto Print: ${autoPrintKot ? 'ON' : 'OFF'}`;
+      showToast('success', 'Hardware Settings Saved', summary);
+      Alert.alert(
+        'Hardware Settings Saved',
+        `KOT Paper: ${kotPaperSize}\nAuto Print: ${autoPrintKot ? 'ON' : 'OFF'}`
+      );
+    } catch (e: any) {
+      showToast('error', 'Save Failed', e.message || 'Failed to save hardware settings.');
+      Alert.alert('Save Failed', e.message || 'Failed to save hardware settings.');
+    } finally {
+      setIsSavingPrinter(false);
+    }
+  };
+
+  const handleSaveInvoiceSettings = async () => {
+    if (!canManage) {
+      showToast('error', 'Permission Denied', 'Only ADMIN users can update printer settings.');
+      Alert.alert('Permission Denied', 'Only ADMIN users can update printer settings.');
+      return;
+    }
+    try {
+      setIsSavingInvoice(true);
+      await updateSettings({
+        bill_paper_size: billPaperSize,
         bill_logo_url: billLogoUrl,
         print_bill_logo: printBillLogo,
         bill_payment_qr_url: billPaymentQrUrl,
         print_bill_payment_qr: printBillPaymentQr,
       });
       await refreshSettings();
-      const summary = `KOT Paper: ${kotPaperSize} • Bill Paper: ${billPaperSize} • Auto Print: ${autoPrintKot ? 'ON' : 'OFF'} • Bill Logo: ${printBillLogo ? 'ON' : 'OFF'} • Bill QR: ${printBillPaymentQr ? 'ON' : 'OFF'}`;
-      showToast('success', 'Printer Settings Saved', summary);
+      const summary = `Bill Paper: ${billPaperSize} • Logo: ${printBillLogo ? 'ON' : 'OFF'} • Payment QR: ${printBillPaymentQr ? 'ON' : 'OFF'}`;
+      showToast('success', 'Invoice Settings Saved', summary);
       Alert.alert(
-        'Printer Settings Saved',
-        `KOT Paper: ${kotPaperSize}\nBill Paper: ${billPaperSize}\nAuto Print: ${autoPrintKot ? 'ON' : 'OFF'}\nBill Logo: ${printBillLogo ? 'ON' : 'OFF'}\nPayment QR: ${printBillPaymentQr ? 'ON' : 'OFF'}`
+        'Invoice Settings Saved',
+        `Bill Paper: ${billPaperSize}\nBill Logo: ${printBillLogo ? 'ON' : 'OFF'}\nPayment QR: ${printBillPaymentQr ? 'ON' : 'OFF'}`
       );
     } catch (e: any) {
-      showToast('error', 'Save Failed', e.message || 'Failed to save printer settings.');
-      Alert.alert('Save Failed', e.message || 'Failed to save printer settings.');
+      showToast('error', 'Save Failed', e.message || 'Failed to save invoice settings.');
+      Alert.alert('Save Failed', e.message || 'Failed to save invoice settings.');
     } finally {
-      setIsSavingPrinter(false);
+      setIsSavingInvoice(false);
     }
   };
+
+  // Backwards compatibility alias
+  const handleSavePrinterSettings = handleSaveHardwareSettings;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
@@ -319,126 +351,161 @@ export default function PrintersScreen() {
         </View>
       )}
 
-      {/* Screen Header */}
-      <View style={styles.headerRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.pageTitle}>🖨️ Thermal Printers & Hardware Management</Text>
-          <Text style={styles.pageSubtitle}>
-            Configure direct physical thermal printers (Bluetooth BLE/SPP, USB OTG, LAN/Wi-Fi), auto-printing rules, receipt dimensions, and bill branding.
+      {/* Sub-Tab Navigation Bar */}
+      <View style={styles.tabContainer}>
+        <TouchableOpacity
+          testID="tab-printers"
+          style={[styles.tabButton, activeTab === 'printers' && styles.tabButtonActive]}
+          onPress={() => setActiveTab('printers')}
+          activeOpacity={0.8}
+        >
+          <Text style={[styles.tabButtonText, activeTab === 'printers' && styles.tabButtonTextActive]}>
+            🖨️ Printers
           </Text>
-        </View>
-      </View>
-
-      {/* Section 1: Authoritative Global Auto Print & Receipt Dimensions Card */}
-      <View style={styles.card}>
-        <View style={{ marginBottom: 14 }}>
-          <Text style={styles.cardHeader}>⚙️ Receipt Dimensions & Master Auto Print</Text>
-          <Text style={styles.cardSubHeader}>
-            Master configuration for kitchen ticket (KOT) paper width, customer bill paper width, and automated print triggering.
-          </Text>
-        </View>
-
-        <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
-          {/* KOT Paper Size */}
-          <View style={styles.formCol}>
-            <Text style={styles.fieldLabel}>KOT Paper Size</Text>
-            <View style={styles.segmentedRow}>
-              {(['58mm', '80mm', 'A4'] as PaperSize[]).map((size) => (
-                <TouchableOpacity
-                  key={`kot-${size}`}
-                  testID={`kot-paper-${size}`}
-                  style={[styles.segmentBtn, kotPaperSize === size && styles.segmentBtnActive]}
-                  onPress={() => setKotPaperSize(size)}
-                >
-                  <Text style={[styles.segmentBtnText, kotPaperSize === size && styles.segmentBtnTextActive]}>
-                    {size}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {/* Bill Paper Size */}
-          <View style={styles.formCol}>
-            <Text style={styles.fieldLabel}>Bill Paper Size</Text>
-            <View style={styles.segmentedRow}>
-              {(['58mm', '80mm', 'A4'] as PaperSize[]).map((size) => (
-                <TouchableOpacity
-                  key={`bill-${size}`}
-                  testID={`bill-paper-${size}`}
-                  style={[styles.segmentBtn, billPaperSize === size && styles.segmentBtnActive]}
-                  onPress={() => setBillPaperSize(size)}
-                >
-                  <Text style={[styles.segmentBtnText, billPaperSize === size && styles.segmentBtnTextActive]}>
-                    {size}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        </View>
-
-        {/* Master Authoritative Auto Print Toggle Card */}
-        <View style={styles.toggleCard}>
-          <View style={styles.toggleHeaderRow}>
-            <View style={{ flex: 1, paddingRight: 12 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={{ fontSize: 16 }}>{autoPrintKot ? '🟢' : '⚪'}</Text>
-                <Text style={styles.toggleTitle}>Master Auto Print</Text>
-              </View>
-              <Text style={styles.toggleDesc}>
-                {autoPrintKot
-                  ? 'ON — Orders punch directly to Kitchen KOT printers and Settlement bills print immediately without system dialogs.'
-                  : 'OFF — Automatic dispatching suspended. Use manual Print/Reprint buttons on orders.'}
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              testID="toggle-auto-print-kot"
-              style={[styles.toggleBadge, autoPrintKot ? styles.toggleBadgeOn : styles.toggleBadgeOff]}
-              onPress={() => handleToggleAutoPrint(!autoPrintKot)}
-            >
-              <Text style={[styles.toggleBadgeText, !autoPrintKot && styles.toggleBadgeTextOff]}>
-                {autoPrintKot ? '● ON' : '○ OFF'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        </TouchableOpacity>
 
         <TouchableOpacity
-          testID="save-printer-settings-btn"
-          style={[styles.saveBtn, (isSavingPrinter || !canManage) && { opacity: 0.6 }]}
-          onPress={handleSavePrinterSettings}
-          disabled={isSavingPrinter || !canManage}
+          testID="tab-invoice"
+          style={[styles.tabButton, activeTab === 'invoice' && styles.tabButtonActive]}
+          onPress={() => setActiveTab('invoice')}
+          activeOpacity={0.8}
         >
-          {isSavingPrinter ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <ActivityIndicator color="#ffffff" size="small" />
-              <Text style={styles.saveBtnText}>Saving...</Text>
-            </View>
-          ) : (
-            <Text style={styles.saveBtnText}>Save Paper & Auto Print Settings</Text>
-          )}
+          <Text style={[styles.tabButtonText, activeTab === 'invoice' && styles.tabButtonTextActive]}>
+            🧾 Invoice
+          </Text>
         </TouchableOpacity>
       </View>
 
-      {/* Section 2: Dedicated Thermal Bill Logo & Payment QR */}
-      <View style={styles.card}>
-        <View style={{ marginBottom: 14 }}>
-          <Text style={styles.cardHeader}>🧾 Thermal Bill Logo & Payment QR Code</Text>
-          <Text style={styles.cardSubHeader}>
-            Configure the visual branding printed directly on physical customer thermal bills. Note: General logo and QR uploaded in Settings will NOT be printed on bills.
-          </Text>
-        </View>
+      {/* ========================================================================= */}
+      {/* TAB 1: PRINTERS SUB-TAB                                                    */}
+      {/* ========================================================================= */}
+      {activeTab === 'printers' ? (
+        <>
+          {/* Header */}
+          <View style={styles.headerRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.pageTitle}>Printer Management</Text>
+              <Text style={styles.pageSubtitle}>
+                Configure and route thermal printers for this device.
+              </Text>
+            </View>
+          </View>
 
-        <View style={[styles.brandingGrid, isDesktop ? styles.brandingGridDesktop : styles.brandingGridMobile]}>
-          {/* Bill Logo Card */}
-          <View style={styles.brandingBox}>
+          {/* KOT Hardware & Master Auto Print Card */}
+          <View style={styles.card}>
+            <View style={{ marginBottom: 14 }}>
+              <Text style={styles.cardHeader}>⚙️ KOT Hardware & Master Auto Print</Text>
+              <Text style={styles.cardSubHeader}>
+                Master configuration for kitchen ticket (KOT) paper width and automated print triggering.
+              </Text>
+            </View>
+
+            <View style={[styles.formRow, isDesktop ? styles.formRowDesktop : styles.formRowMobile]}>
+              {/* KOT Paper Size */}
+              <View style={styles.formCol}>
+                <Text style={styles.fieldLabel}>KOT Paper Size</Text>
+                <View style={styles.segmentedRow}>
+                  {(['58mm', '80mm', 'A4'] as PaperSize[]).map((size) => (
+                    <TouchableOpacity
+                      key={`kot-${size}`}
+                      testID={`kot-paper-${size}`}
+                      style={[styles.segmentBtn, kotPaperSize === size && styles.segmentBtnActive]}
+                      onPress={() => setKotPaperSize(size)}
+                    >
+                      <Text style={[styles.segmentBtnText, kotPaperSize === size && styles.segmentBtnTextActive]}>
+                        {size}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </View>
+
+            {/* Master Authoritative Auto Print Toggle Card */}
+            <View style={styles.toggleCard}>
+              <View style={styles.toggleHeaderRow}>
+                <View style={{ flex: 1, paddingRight: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={{ fontSize: 16 }}>{autoPrintKot ? '🟢' : '⚪'}</Text>
+                    <Text style={styles.toggleTitle}>Master Auto Print</Text>
+                  </View>
+                  <Text style={styles.toggleDesc}>
+                    {autoPrintKot
+                      ? 'ON — Orders punch directly to Kitchen KOT printers and Settlement bills print immediately without system dialogs.'
+                      : 'OFF — Automatic dispatching suspended. Use manual Print/Reprint buttons on orders.'}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  testID="toggle-auto-print-kot"
+                  style={[styles.toggleBadge, autoPrintKot ? styles.toggleBadgeOn : styles.toggleBadgeOff]}
+                  onPress={() => handleToggleAutoPrint(!autoPrintKot)}
+                >
+                  <Text style={[styles.toggleBadgeText, !autoPrintKot && styles.toggleBadgeTextOff]}>
+                    {autoPrintKot ? '● ON' : '○ OFF'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              testID="save-printer-settings-btn"
+              style={[styles.saveBtn, (isSavingPrinter || !canManage) && { opacity: 0.6 }]}
+              onPress={handleSaveHardwareSettings}
+              disabled={isSavingPrinter || !canManage}
+            >
+              {isSavingPrinter ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <ActivityIndicator color="#ffffff" size="small" />
+                  <Text style={styles.saveBtnText}>Saving...</Text>
+                </View>
+              ) : (
+                <Text style={styles.saveBtnText}>Save Hardware & Auto Print Settings</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* Web-Only Seznik Chrome/Edge Web Bluetooth & WebUSB */}
+          {Platform.OS === 'web' && effectiveRestaurantId ? (
+            <SeznikPrinterManagementSection
+              restaurantId={effectiveRestaurantId}
+              canManage={canManage}
+              settings={settings}
+              showToast={showToast}
+            />
+          ) : null}
+
+          {/* Native Android Direct Multi-Printer Management & Physical Binding */}
+          <PrinterManagementSection
+            restaurantId={effectiveRestaurantId || ''}
+            categories={categories}
+            canManage={canManage}
+            settings={settings}
+            showToast={showToast}
+          />
+        </>
+      ) : (
+        /* ========================================================================= */
+        /* TAB 2: INVOICE SUB-TAB                                                    */
+        /* ========================================================================= */
+        <>
+          {/* Header */}
+          <View style={styles.headerRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.pageTitle}>Invoice Settings</Text>
+              <Text style={styles.pageSubtitle}>
+                Customize the branding and payment information printed on customer bills.
+              </Text>
+            </View>
+          </View>
+
+          {/* CARD A — Invoice Header Logo */}
+          <View style={styles.card}>
             <View style={styles.brandingHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.brandingTitle}>🖼️ Bill Header Logo</Text>
-                <Text style={styles.brandingDesc}>
-                  Monochrome logo printed at the top of customer bills.
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text style={styles.cardHeader}>🖼️ Invoice Header Logo</Text>
+                <Text style={styles.cardSubHeader}>
+                  Logo printed at the top of customer thermal bills.
                 </Text>
               </View>
               {billLogoUrl ? (
@@ -522,13 +589,13 @@ export default function PrintersScreen() {
             )}
           </View>
 
-          {/* Bill Payment QR Card */}
-          <View style={styles.brandingBox}>
+          {/* CARD B — Payment QR Code */}
+          <View style={styles.card}>
             <View style={styles.brandingHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.brandingTitle}>📱 Bill Payment QR Code</Text>
-                <Text style={styles.brandingDesc}>
-                  UPI / Payment QR printed at the bottom for instant scan & pay.
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text style={styles.cardHeader}>📱 Payment QR Code</Text>
+                <Text style={styles.cardSubHeader}>
+                  UPI / payment QR code printed at the bottom of customer bills.
                 </Text>
               </View>
               {billPaymentQrUrl ? (
@@ -611,33 +678,60 @@ export default function PrintersScreen() {
               </TouchableOpacity>
             )}
           </View>
-        </View>
 
-        <View style={styles.brandingNoteBox}>
-          <Text style={styles.brandingNoteText}>
-            💡 <Text style={{ fontWeight: '700' }}>Strict Privacy & Blank Space Rule:</Text> If a toggle is OFF or no image is uploaded, no blank space will be consumed on thermal bills. Logo and payment QR uploaded in general restaurant Settings will never be printed on bills.
-          </Text>
-        </View>
-      </View>
+          {/* CARD C — Customer Bill Paper Dimensions */}
+          <View style={styles.card}>
+            <View style={{ marginBottom: 14 }}>
+              <Text style={styles.cardHeader}>📐 Customer Bill Paper Dimensions</Text>
+              <Text style={styles.cardSubHeader}>
+                Select thermal paper roll width used for customer thermal receipts and invoices.
+              </Text>
+            </View>
 
-      {/* Section 3: Web-Only Seznik Chrome/Edge Web Bluetooth & WebUSB */}
-      {Platform.OS === 'web' && effectiveRestaurantId ? (
-        <SeznikPrinterManagementSection
-          restaurantId={effectiveRestaurantId}
-          canManage={canManage}
-          settings={settings}
-          showToast={showToast}
-        />
-      ) : null}
+            <View style={styles.formCol}>
+              <Text style={styles.fieldLabel}>Bill Paper Size</Text>
+              <View style={styles.segmentedRow}>
+                {(['58mm', '80mm', 'A4'] as PaperSize[]).map((size) => (
+                  <TouchableOpacity
+                    key={`bill-${size}`}
+                    testID={`bill-paper-${size}`}
+                    style={[styles.segmentBtn, billPaperSize === size && styles.segmentBtnActive]}
+                    onPress={() => setBillPaperSize(size)}
+                  >
+                    <Text style={[styles.segmentBtnText, billPaperSize === size && styles.segmentBtnTextActive]}>
+                      {size}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </View>
 
-      {/* Section 4: Native Android Direct Multi-Printer Management & Physical Binding */}
-      <PrinterManagementSection
-        restaurantId={effectiveRestaurantId || ''}
-        categories={categories}
-        canManage={canManage}
-        settings={settings}
-        showToast={showToast}
-      />
+          {/* Strict Rule Info Note */}
+          <View style={styles.brandingNoteBox}>
+            <Text style={styles.brandingNoteText}>
+              💡 <Text style={{ fontWeight: '700' }}>Strict Privacy & Blank Space Rule:</Text> If a toggle is OFF or no image is uploaded, no blank space will be consumed on thermal bills. Logo and payment QR uploaded in general restaurant Settings will never be printed on bills.
+            </Text>
+          </View>
+
+          {/* Save Action for Invoice Tab */}
+          <TouchableOpacity
+            testID="save-invoice-settings-btn"
+            style={[styles.saveBtn, (isSavingInvoice || !canManage) && { opacity: 0.6 }]}
+            onPress={handleSaveInvoiceSettings}
+            disabled={isSavingInvoice || !canManage}
+          >
+            {isSavingInvoice ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <ActivityIndicator color="#ffffff" size="small" />
+                <Text style={styles.saveBtnText}>Saving Invoice Settings...</Text>
+              </View>
+            ) : (
+              <Text style={styles.saveBtnText}>Save Invoice Settings</Text>
+            )}
+          </TouchableOpacity>
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -653,6 +747,37 @@ const styles = StyleSheet.create({
     maxWidth: 1200,
     width: '100%',
     alignSelf: 'center',
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#e2e8f0',
+    borderRadius: 10,
+    padding: 3,
+    marginBottom: 16,
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+  },
+  tabButtonActive: {
+    backgroundColor: '#ffffff',
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  tabButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  tabButtonTextActive: {
+    color: '#0f172a',
+    fontWeight: '800',
   },
   headerRow: {
     marginBottom: 16,
@@ -920,6 +1045,7 @@ const styles = StyleSheet.create({
   },
   brandingBtnRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     marginTop: 6,
   },

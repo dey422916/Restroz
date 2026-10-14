@@ -32,9 +32,13 @@ export async function handleThermalPrintFallback(
   if (Platform.OS !== 'web') {
     const isDirectDevice = error?.isDirectDevice || (await devicePrinterBindingService.isDirectDeviceMode());
     if (isDirectDevice) {
+      const detailedMessage =
+        error?.message ||
+        error?.summary ||
+        'Direct print failed. Check printer connection.';
       Alert.alert(
         'Direct Print Failed',
-        'Direct print failed. Check printer connection.',
+        detailedMessage,
         [{ text: 'OK', style: 'default' }]
       );
       return false;
@@ -572,9 +576,11 @@ export const printService = {
     if (isDirectDevice) {
       if (!options?.forceBrowser) {
         try {
+          const resolvedSource = (options as any)?.source || (isReprint ? 'ORDERS_REPRINT' : options?.isManual ? 'MANUAL_TRIGGER' : 'POS_AUTO');
           const routerResult = await androidPrintRouter.printKot(order, settings, kot, {
             isReprint,
             isManual: options?.isManual,
+            source: resolvedSource,
           });
 
           if (routerResult.success || routerResult.allSucceeded) {
@@ -596,6 +602,7 @@ export const printService = {
             const errObj: any = new Error(firstErr?.message || routerResult.summary || 'Direct print failed. Check printer connection.');
             errObj.isDirectDevice = true;
             errObj.status = firstErr?.status || 'failed_before_write';
+            errObj.errorCode = (firstErr as any)?.errorCode || 'PRINT_FAILED';
             errObj.destinationResults = routerResult.destinations;
             throw errObj;
           }
@@ -1169,9 +1176,11 @@ export const printService = {
     if (isDirectDevice) {
       if (!options?.forceBrowser) {
         try {
+          const resolvedSource = (options as any)?.source || (options?.isReprint ? 'BILL_REPRINT' : options?.isManual ? 'MANUAL_TRIGGER' : 'SETTLEMENT_AUTO');
           const routerResult = await androidPrintRouter.printBill(order, settings, resolvedBilledBy, {
             isReprint: options?.isReprint,
             isManual: options?.isManual,
+            source: resolvedSource,
           });
 
           if (routerResult.success || routerResult.allSucceeded) {
@@ -1190,8 +1199,10 @@ export const printService = {
               console.warn('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
             }
             const firstErr = routerResult.destinations.find((d) => d.status !== 'success' && d.status !== 'skipped_dedup');
-            const errObj: any = new Error(routerResult.summary || 'Android direct Bill print failed');
+            const errObj: any = new Error(firstErr?.message || routerResult.summary || 'Direct print failed. Check printer connection.');
+            errObj.isDirectDevice = true;
             errObj.status = firstErr?.status || 'failed_before_write';
+            errObj.errorCode = (firstErr as any)?.errorCode || 'PRINT_FAILED';
             errObj.destinationResults = routerResult.destinations;
             throw errObj;
           }

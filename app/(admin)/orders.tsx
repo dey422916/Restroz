@@ -3761,7 +3761,7 @@ export default function OrdersScreen() {
                       style={[styles.invoiceActionBtn, styles.invoiceBtnKot]}
                       onPress={async () => {
                         try {
-                          const res = await printService.printKotThermal(viewOrderModal, settings);
+                          const res = await printService.printKotThermal(viewOrderModal, settings, undefined, false, { isManual: true });
                           if (res && res.direct) {
                             showAlert('🖨️ KOT Printed', `Kitchen slip printed for Order #${viewOrderModal.order_number}.`);
                           }

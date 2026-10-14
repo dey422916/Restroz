@@ -123,6 +123,10 @@ interface PosContextType {
       grand_total?: number;
       round_off?: number;
       payable_amount?: number;
+      customer_gstin?: string;
+      customer_phone?: string;
+      wallet_redeem_amount?: number;
+      splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;
     }
   ) => Promise<Order>;
 }
@@ -891,7 +895,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       round_off?: number;
       payable_amount?: number;
       customer_gstin?: string;
+      customer_phone?: string;
       wallet_redeem_amount?: number;
+      splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;
     }
   ): Promise<Order> => {
     const effectiveWalletRedeem = discountData?.wallet_redeem_amount !== undefined

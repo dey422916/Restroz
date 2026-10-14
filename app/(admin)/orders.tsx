@@ -39,6 +39,7 @@ import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
 import { useNotification } from '../../src/context/NotificationContext';
 import { useNewOrderTracker } from '../../src/hooks/useNewOrderTracker';
 import { getCurrentLoggedInUserDisplayName } from '../../src/utils/receiptIdentity';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function OrdersScreen() {
   const router = useRouter();
@@ -115,10 +116,15 @@ export default function OrdersScreen() {
     { id: '2', method: 'upi', amount: '', ref: '' },
   ]);
   const [recordingPartialPayment, setRecordingPartialPayment] = useState<boolean>(false);
+  const insets = useSafeAreaInsets();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isMobile = windowWidth < 768;
   const isDesktopWide = (Platform.OS === 'web' && windowWidth >= 1200) || windowWidth >= 1200;
   const isTwoColumn = (Platform.OS === 'web' && windowWidth >= 680) || windowWidth >= 768;
+
+  const safeModalTop = Math.max(insets.top, Platform.OS === 'web' ? 16 : 24);
+  const safeModalBottom = Math.max(insets.bottom, Platform.OS === 'web' ? 16 : 24);
+  const availableModalHeight = Math.max(300, windowHeight - safeModalTop - safeModalBottom - (isMobile ? 12 : 24));
 
   const formatTableLabel = (rawName?: string | null): string => {
     if (!rawName) return '';
@@ -2193,7 +2199,11 @@ export default function OrdersScreen() {
         <View
           style={[
             styles.modalOverlay,
-            isMobile && { paddingHorizontal: 10, paddingVertical: 10 },
+            {
+              paddingTop: safeModalTop,
+              paddingBottom: safeModalBottom,
+              paddingHorizontal: isMobile ? 10 : 16,
+            },
           ]}
         >
           <KeyboardAvoidingView
@@ -2201,7 +2211,7 @@ export default function OrdersScreen() {
             style={{
               width: '100%',
               maxWidth: 580,
-              maxHeight: windowHeight * (isMobile ? 0.95 : 0.9),
+              maxHeight: availableModalHeight,
               flexShrink: 1,
             }}
           >
@@ -2541,8 +2551,17 @@ export default function OrdersScreen() {
       {/* 2. CANCEL ORDER MODAL                                        */}
       {/* ============================================================ */}
       <Modal visible={Boolean(cancelOrderModal)} transparent animationType="fade">
-        <View style={[styles.modalOverlay, isMobile && { paddingHorizontal: 10 }]}>
-          <View style={[styles.cancelModalContent, isMobile && { padding: 14, borderRadius: 16 }]}>
+        <View
+          style={[
+            styles.modalOverlay,
+            {
+              paddingTop: safeModalTop,
+              paddingBottom: safeModalBottom,
+              paddingHorizontal: isMobile ? 10 : 16,
+            },
+          ]}
+        >
+          <View style={[styles.cancelModalContent, isMobile && { padding: 14, borderRadius: 16 }, { maxHeight: availableModalHeight }]}>
             <Text style={styles.cancelModalTitle}>Cancel Order #{cancelOrderModal?.order_number}</Text>
             <Text style={{ fontSize: 11.5, color: '#64748B', fontWeight: '600', marginBottom: 4 }}>
               🕒 Placed on: {formatOrderDateTime(cancelOrderModal?.created_at)}
@@ -2666,7 +2685,11 @@ export default function OrdersScreen() {
         <View
           style={[
             styles.modalOverlay,
-            isMobile && { paddingHorizontal: 10, paddingVertical: 10 },
+            {
+              paddingTop: safeModalTop,
+              paddingBottom: safeModalBottom,
+              paddingHorizontal: isMobile ? 10 : 16,
+            },
           ]}
         >
           <KeyboardAvoidingView
@@ -2674,7 +2697,7 @@ export default function OrdersScreen() {
             style={{
               width: '100%',
               maxWidth: 540,
-              maxHeight: windowHeight * (isMobile ? 0.95 : 0.9),
+              maxHeight: availableModalHeight,
               flexShrink: 1,
             }}
           >
@@ -2956,7 +2979,11 @@ export default function OrdersScreen() {
         <View
           style={[
             styles.modalOverlay,
-            isMobile && { paddingHorizontal: 10, paddingVertical: 10 },
+            {
+              paddingTop: safeModalTop,
+              paddingBottom: safeModalBottom,
+              paddingHorizontal: isMobile ? 10 : 16,
+            },
           ]}
         >
           <KeyboardAvoidingView
@@ -2964,7 +2991,7 @@ export default function OrdersScreen() {
             style={{
               width: '100%',
               maxWidth: 580,
-              maxHeight: windowHeight * (isMobile ? 0.95 : 0.9),
+              maxHeight: availableModalHeight,
               flexShrink: 1,
             }}
           >
@@ -3419,13 +3446,22 @@ export default function OrdersScreen() {
 
         return (
           <Modal visible={Boolean(viewOrderModal)} transparent animationType="slide">
-            <View style={[styles.modalOverlay, isMobile && { paddingHorizontal: 8, paddingVertical: 12 }]}>
+            <View
+              style={[
+                styles.modalOverlay,
+                {
+                  paddingTop: safeModalTop,
+                  paddingBottom: safeModalBottom,
+                  paddingHorizontal: isMobile ? 10 : 16,
+                },
+              ]}
+            >
               <View
                 style={[
                   styles.modalContent,
                   isMobile && { padding: 12, borderRadius: 16 },
                   {
-                    maxHeight: windowHeight * (isMobile ? 0.95 : 0.9),
+                    maxHeight: availableModalHeight,
                     maxWidth: 540,
                     width: '100%',
                     display: 'flex',
@@ -3464,7 +3500,7 @@ export default function OrdersScreen() {
                 <ScrollView
                   showsVerticalScrollIndicator={true}
                   style={{ flexShrink: 1 }}
-                  contentContainerStyle={{ paddingBottom: 16 }}
+                  contentContainerStyle={{ paddingBottom: 32 }}
                 >
                   {/* Order Metadata Card */}
                   <View style={styles.invoiceMetaCard}>

@@ -18,12 +18,13 @@ import {
 } from 'react-native';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { orderService, resolveOrderSource, clearOrdersCache, resolveOrderDiscounts } from '../../src/services/api/orderService';
+import { loyaltyService } from '../../src/services/api/loyaltyService';
 import { productService } from '../../src/services/api/productService';
 import { tableService } from '../../src/services/api/tableService';
 import { kotService, clearKotsCache } from '../../src/services/api/kotService';
 import { printService, formatLogoDataUri, handleThermalPrintFallback } from '../../src/services/printService';
 import { isAutoPrintEnabled } from '../../src/services/directPrintService';
-import { Order, OrderItem, OrderStatus, PaymentStatus, OrderSource, Product, DiningTable, RestaurantSettings, PaymentMethod } from '../../src/types';
+import { Order, OrderItem, OrderStatus, PaymentStatus, OrderSource, Product, DiningTable, RestaurantSettings, PaymentMethod, CustomerWalletInfo } from '../../src/types';
 import { formatCurrency, numberToWords, roundToTwoDecimals } from '../../src/utils/currency';
 import { calculateSplitAutoFill } from '../../src/utils/splitPayment';
 import { getOrderSubtotal, calculateOrderTotals, getOrderTaxableBreakdown, getOrderInvoiceTotals, getOrderTaxRate, isOrderGstApplicable } from '../../src/utils/gst';
@@ -101,6 +102,9 @@ export default function OrdersScreen() {
   const [payCustomerGstin, setPayCustomerGstin] = useState<string>('');
   const [payDiscountType, setPayDiscountType] = useState<'none' | 'fixed' | 'percentage'>('none');
   const [payDiscountValue, setPayDiscountValue] = useState<string>('');
+  const [payCustomerPhone, setPayCustomerPhone] = useState<string>('');
+  const [payWalletInfo, setPayWalletInfo] = useState<CustomerWalletInfo | null>(null);
+  const [isRedeemPayWallet, setIsRedeemPayWallet] = useState<boolean>(false);
   const [closingOrder, setClosingOrder] = useState<boolean>(false);
   const [verifyingPaymentOrderId, setVerifyingPaymentOrderId] = useState<string | null>(null);
   const [fullScreenProofOrder, setFullScreenProofOrder] = useState<Order | null>(null);
@@ -1130,10 +1134,37 @@ export default function OrdersScreen() {
       { id: '2', method: 'upi', amount: '', ref: '' },
     ]);
     setPayCustomerGstin(order.customer_gstin || '');
+    setPayCustomerPhone(order.customer_phone || '');
+    setIsRedeemPayWallet(false);
+    setPayWalletInfo(null);
     const resolvedPayDisc = resolveOrderDiscounts(order);
     setPayDiscountType(resolvedPayDisc.discount_type);
     setPayDiscountValue(resolvedPayDisc.discount_value > 0 ? String(resolvedPayDisc.discount_value) : '');
   };
+
+  // Reactive wallet fetch on phone input for orders.tsx settlement modal
+  useEffect(() => {
+    if (!payOrderModal?.restaurant_id) {
+      setPayWalletInfo(null);
+      setIsRedeemPayWallet(false);
+      return;
+    }
+    const cleanPhone = (payCustomerPhone || '').trim().replace(/[^\d]/g, '');
+    if (cleanPhone.length >= 10) {
+      loyaltyService
+        .getCustomerWallet(payOrderModal.restaurant_id, cleanPhone)
+        .then((info) => setPayWalletInfo(info))
+        .catch((e) => console.warn('[orders.tsx] Error loading wallet info:', e));
+    } else {
+      loyaltyService
+        .getCustomerWallet(payOrderModal.restaurant_id)
+        .then((info) => {
+          setPayWalletInfo(info);
+          setIsRedeemPayWallet(false);
+        })
+        .catch((e) => console.warn('[orders.tsx] Error loading default loyalty settings:', e));
+    }
+  }, [payOrderModal?.restaurant_id, payCustomerPhone]);
 
   const paySubtotal = payOrderModal ? getOrderSubtotal(payOrderModal) : 0;
   const numPayDiscount = parseFloat(payDiscountValue) || 0;
@@ -1169,6 +1200,23 @@ export default function OrdersScreen() {
     });
   }, [payOrderModal, payDiscountType, validatedPayDiscount, paySubtotal, settings]);
 
+  // Wallet redemption calculations in orders.tsx settlement modal
+  const payWalletBalance = Number(payWalletInfo?.balance || 0);
+  const payMinRequired = Number(payWalletInfo?.min_redeem_balance || 50);
+  const isPayRewardsEnabled = Boolean(payWalletInfo?.is_enabled);
+  const canRedeemPayWallet = Boolean(isPayRewardsEnabled && payWalletBalance >= payMinRequired && payWalletBalance > 0);
+
+  const finalPayableBeforeLoyalty = payTotals?.payableAmount ?? payOrderModal?.payable_amount ?? 0;
+  const alreadyPaidAmount = Number(payOrderModal?.paid_amount || 0);
+  const remainingDueBeforeLoyalty = roundToTwoDecimals(Math.max(0, finalPayableBeforeLoyalty - alreadyPaidAmount));
+
+  const payWalletRedeemAmount = useMemo(() => {
+    if (!isRedeemPayWallet || !canRedeemPayWallet) return 0;
+    return Math.min(payWalletBalance, remainingDueBeforeLoyalty);
+  }, [isRedeemPayWallet, canRedeemPayWallet, payWalletBalance, remainingDueBeforeLoyalty]);
+
+  const netPayableDue = roundToTwoDecimals(Math.max(0, remainingDueBeforeLoyalty - payWalletRedeemAmount));
+
   // Close & Pay Order confirmation
   const handleConfirmCloseAndPay = async () => {
     if (!payOrderModal) return;
@@ -1178,13 +1226,9 @@ export default function OrdersScreen() {
       return;
     }
 
-    const finalPayable = payTotals?.payableAmount ?? payOrderModal.payable_amount ?? 0;
-    const alreadyPaid = Number(payOrderModal.paid_amount || 0);
-    const remainingBalance = roundToTwoDecimals(Math.max(0, finalPayable - alreadyPaid));
-
     let splitArray: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }> | undefined = undefined;
 
-    if (remainingBalance > 0 && payMethod === 'split') {
+    if (netPayableDue > 0 && payMethod === 'split') {
       const validSplits = paySplits.filter((s) => parseFloat(s.amount) > 0);
       if (validSplits.length === 0) {
         Alert.alert('Invalid Split Payment', 'Please enter at least one split payment amount.');
@@ -1193,20 +1237,20 @@ export default function OrdersScreen() {
 
       const splitTotal = roundToTwoDecimals(validSplits.reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0));
 
-      if (splitTotal < remainingBalance) {
-        const diff = roundToTwoDecimals(remainingBalance - splitTotal);
+      if (splitTotal < netPayableDue) {
+        const diff = roundToTwoDecimals(netPayableDue - splitTotal);
         Alert.alert(
           'Incomplete Settlement',
-          `Split payment total (${formatCurrency(splitTotal)}) does not match remaining balance (${formatCurrency(remainingBalance)}). Remaining ₹${diff} is unpaid.`
+          `Split payment total (${formatCurrency(splitTotal)}) does not match remaining balance (${formatCurrency(netPayableDue)}). Remaining ₹${diff} is unpaid.`
         );
         return;
       }
 
-      if (splitTotal > remainingBalance) {
-        const excess = roundToTwoDecimals(splitTotal - remainingBalance);
+      if (splitTotal > netPayableDue) {
+        const excess = roundToTwoDecimals(splitTotal - netPayableDue);
         Alert.alert(
           'Overpayment Blocked',
-          `Split payment total (${formatCurrency(splitTotal)}) exceeds remaining balance (${formatCurrency(remainingBalance)}) by ₹${excess}.`
+          `Split payment total (${formatCurrency(splitTotal)}) exceeds remaining balance (${formatCurrency(netPayableDue)}) by ₹${excess}.`
         );
         return;
       }
@@ -1224,7 +1268,7 @@ export default function OrdersScreen() {
         orderId: payOrderModal.id,
         paymentMethod: payMethod,
         paymentReceived: payReceived,
-        amountPaid: remainingBalance > 0 ? remainingBalance : 0,
+        amountPaid: netPayableDue > 0 ? (payMethod === 'split' ? netPayableDue : netPayableDue) : 0,
         transactionReference: payTxnRef.trim() || undefined,
         notes: payNotes.trim() || undefined,
         splitPayments: splitArray,
@@ -1238,6 +1282,8 @@ export default function OrdersScreen() {
         roundOff: payTotals?.roundOff,
         payableAmount: payTotals?.payableAmount,
         customer_gstin: payCustomerGstin.trim().toUpperCase() || undefined,
+        customer_phone: payCustomerPhone.trim() || undefined,
+        walletRedeemAmount: payWalletRedeemAmount,
       });
 
       // Instantly synchronize local orders state without waiting for slow network roundtrip
@@ -1256,9 +1302,12 @@ export default function OrdersScreen() {
       const rewardMsg = completed.reward_earned && completed.reward_earned > 0
         ? `\n🎁 ₹${completed.reward_earned.toFixed(2)} reward credited to Customer Wallet (Balance: ₹${Number(completed.new_wallet_balance).toFixed(2)}).`
         : '';
+      const walletRedeemMsg = completed.wallet_redeemed && completed.wallet_redeemed > 0
+        ? `\n⭐ ₹${completed.wallet_redeemed.toFixed(2)} redeemed from Customer Wallet.`
+        : '';
       Alert.alert(
         'Order Settled & Closed',
-        `Order #${completed.order_number} marked as ${payReceived ? 'PAID & COMPLETED' : 'UNPAID (DELIVERY COD)'}.\nTable released.${rewardMsg}`
+        `Order #${completed.order_number} marked as ${payReceived ? 'PAID & COMPLETED' : 'UNPAID (DELIVERY COD)'}.\nTable released.${walletRedeemMsg}${rewardMsg}`
       );
       setPayOrderModal(null);
       setViewOrderModal(completed);
@@ -3174,6 +3223,24 @@ export default function OrdersScreen() {
                     ({numberToWords(payTotals?.payableAmount || 0)})
                   </Text>
 
+                  {/* Loyalty Redemption line in bill totals if active */}
+                  {payWalletRedeemAmount > 0 && (
+                    <>
+                      <View style={[styles.billRow, { marginTop: 4 }]}>
+                        <Text style={[styles.billLabel, { color: '#059669', fontWeight: '800' }]}>
+                          ⭐ Loyalty Redemption:
+                        </Text>
+                        <Text style={[styles.billVal, { color: '#059669', fontWeight: '900' }]}>
+                          -{formatCurrency(payWalletRedeemAmount)}
+                        </Text>
+                      </View>
+                      <View style={[styles.billRow, styles.billTotalRow, { backgroundColor: '#f0fdf4', padding: 6, borderRadius: 6, marginTop: 4 }]}>
+                        <Text style={[styles.billTotalLabel, { color: '#065f46' }]}>Net Payable Amount:</Text>
+                        <Text style={[styles.billTotalVal, { color: '#047857' }]}>{formatCurrency(netPayableDue)}</Text>
+                      </View>
+                    </>
+                  )}
+
                   {/* Partial Payments Accounting in Settlement Modal */}
                   {(() => {
                     const finalPayable = payTotals?.payableAmount ?? payOrderModal?.payable_amount ?? 0;
@@ -3207,17 +3274,105 @@ export default function OrdersScreen() {
                   })()}
                 </View>
 
+                {/* Customer Loyalty Wallet Section */}
+                {isPayRewardsEnabled && (
+                  <View style={{ marginVertical: 8, padding: 12, backgroundColor: '#f8fafc', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={{ fontSize: 16 }}>🎁</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#0f172a' }}>Customer Loyalty Wallet</Text>
+                      </View>
+                      {Boolean(payCustomerPhone && payCustomerPhone.length >= 10) && (
+                        <View style={{ backgroundColor: '#dcfce7', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: '#86efac' }}>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: '#15803d' }}>
+                            Balance: {formatCurrency(payWalletBalance)}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {/* Customer Phone Input for Loyalty Lookup */}
+                    <View style={{ marginBottom: 8 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#475569', marginBottom: 4 }}>
+                        Customer Mobile Number (Optional):
+                      </Text>
+                      <TextInput
+                        style={[styles.fieldInput, { backgroundColor: '#ffffff' }]}
+                        placeholder="Enter 10-digit mobile to check wallet balance"
+                        placeholderTextColor="#94a3b8"
+                        value={payCustomerPhone}
+                        onChangeText={(val) => setPayCustomerPhone(val.replace(/[^\d]/g, ''))}
+                        keyboardType="phone-pad"
+                        maxLength={10}
+                      />
+                    </View>
+
+                    {Boolean(payCustomerPhone && payCustomerPhone.length >= 10) && (
+                      <>
+                        <TouchableOpacity
+                          style={[
+                            { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8, borderRadius: 8, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#cbd5e1' },
+                            !canRedeemPayWallet && { opacity: 0.6, backgroundColor: '#f1f5f9' },
+                          ]}
+                          disabled={!canRedeemPayWallet}
+                          onPress={() => setIsRedeemPayWallet(!isRedeemPayWallet)}
+                          activeOpacity={0.8}
+                        >
+                          <View
+                            style={[
+                              { width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: '#64748b', alignItems: 'center', justifyContent: 'center' },
+                              isRedeemPayWallet && { backgroundColor: '#059669', borderColor: '#059669' },
+                              !canRedeemPayWallet && { backgroundColor: '#e2e8f0', borderColor: '#cbd5e1' },
+                            ]}
+                          >
+                            {isRedeemPayWallet && <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '900' }}>✓</Text>}
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[{ fontSize: 12, fontWeight: '800', color: '#1e293b' }, !canRedeemPayWallet && { color: '#64748b' }]}>
+                              Redeem Wallet Balance ({formatCurrency(payWalletBalance)})
+                            </Text>
+                            {!canRedeemPayWallet && (
+                              <Text style={{ fontSize: 10, color: '#dc2626', fontWeight: '600' }}>
+                                {payWalletBalance > 0
+                                  ? `Minimum ${formatCurrency(payMinRequired)} wallet balance required for redemption.`
+                                  : 'Customer has ₹0.00 wallet balance.'}
+                              </Text>
+                            )}
+                          </View>
+                        </TouchableOpacity>
+
+                        {isRedeemPayWallet && canRedeemPayWallet && (
+                          <View style={{ marginTop: 8, padding: 8, backgroundColor: '#ffffff', borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1' }}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                              <Text style={{ fontSize: 11, color: '#64748b', fontWeight: '700' }}>Wallet Available:</Text>
+                              <Text style={{ fontSize: 11, fontWeight: '800', color: '#0f172a' }}>{formatCurrency(payWalletBalance)}</Text>
+                            </View>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                              <Text style={{ fontSize: 11, color: '#64748b', fontWeight: '700' }}>Order Due:</Text>
+                              <Text style={{ fontSize: 11, fontWeight: '800', color: '#0f172a' }}>{formatCurrency(remainingDueBeforeLoyalty)}</Text>
+                            </View>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                              <Text style={{ fontSize: 11, color: '#059669', fontWeight: '800' }}>Wallet Used:</Text>
+                              <Text style={{ fontSize: 11, fontWeight: '900', color: '#059669' }}>- {formatCurrency(payWalletRedeemAmount)}</Text>
+                            </View>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderColor: '#e2e8f0', paddingTop: 4, marginTop: 2 }}>
+                              <Text style={{ fontSize: 12, fontWeight: '900', color: '#0f172a' }}>Remaining to Pay:</Text>
+                              <Text style={{ fontSize: 13, fontWeight: '900', color: '#2563eb' }}>{formatCurrency(netPayableDue)}</Text>
+                            </View>
+                          </View>
+                        )}
+                      </>
+                    )}
+                  </View>
+                )}
+
                 {/* Payment Method Selector (For any remaining balance) */}
                 {(() => {
-                  const finalPayable = payTotals?.payableAmount ?? payOrderModal?.payable_amount ?? 0;
-                  const alreadyPaid = Number(payOrderModal?.paid_amount || 0);
-                  const remainingBalance = Math.max(0, finalPayable - alreadyPaid);
-
-                  if (remainingBalance <= 0) return null;
+                  if (netPayableDue <= 0) return null;
 
                   return (
                     <>
-                      <Text style={styles.fieldLabel}>Payment Mode for Remaining Balance ({formatCurrency(remainingBalance)}) *</Text>
+                      <Text style={styles.fieldLabel}>Payment Mode for Remaining Balance ({formatCurrency(netPayableDue)}) *</Text>
                       <View style={[styles.payMethodsGrid, isMobile && { flexWrap: 'wrap', gap: 6 }]}>
                         {[
                           { id: 'cash', label: '💵 CASH' },
@@ -3256,12 +3411,12 @@ export default function OrdersScreen() {
                               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                                 <Text style={{ fontSize: 11, fontWeight: '800', color: '#334155' }}>Split #{idx + 1}</Text>
                                 {paySplits.length > 1 && (
-                                  <TouchableOpacity
-                                    onPress={() => setPaySplits(paySplits.filter((item) => item.id !== sp.id))}
-                                    style={{ paddingHorizontal: 6, paddingVertical: 2 }}
-                                  >
-                                    <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700' }}>✕ Remove</Text>
-                                  </TouchableOpacity>
+                                   <TouchableOpacity
+                                     onPress={() => setPaySplits(paySplits.filter((item) => item.id !== sp.id))}
+                                     style={{ paddingHorizontal: 6, paddingVertical: 2 }}
+                                   >
+                                     <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700' }}>✕ Remove</Text>
+                                   </TouchableOpacity>
                                 )}
                               </View>
                               <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4 }}>
@@ -3290,7 +3445,7 @@ export default function OrdersScreen() {
                                   keyboardType="numeric"
                                   value={sp.amount}
                                   onChangeText={(val) => {
-                                    setPaySplits(calculateSplitAutoFill(paySplits, sp.id, val, remainingBalance));
+                                    setPaySplits(calculateSplitAutoFill(paySplits, sp.id, val, netPayableDue));
                                   }}
                                 />
                                 <TextInput
@@ -3399,9 +3554,7 @@ export default function OrdersScreen() {
 
                 {/* Confirm Close Button */}
                 {(() => {
-                  const finalPayable = payTotals?.payableAmount ?? payOrderModal?.payable_amount ?? 0;
-                  const alreadyPaid = Number(payOrderModal?.paid_amount || 0);
-                  const remainingBalance = Math.max(0, finalPayable - alreadyPaid);
+                  const isZeroDue = remainingDueBeforeLoyalty <= 0 || (payWalletRedeemAmount > 0 && netPayableDue <= 0);
 
                   return (
                     <TouchableOpacity
@@ -3413,9 +3566,13 @@ export default function OrdersScreen() {
                         <ActivityIndicator color="#ffffff" />
                       ) : (
                         <Text style={styles.saveModalBtnText}>
-                          {remainingBalance <= 0
-                            ? 'SETTLE ORDER & RELEASE TABLE (₹0 DUE)'
-                            : `COLLECT ${formatCurrency(remainingBalance)} & SETTLE BILL`}
+                          {isZeroDue
+                            ? payWalletRedeemAmount > 0
+                              ? `SETTLE ORDER WITH WALLET (${formatCurrency(payWalletRedeemAmount)})`
+                              : 'SETTLE ORDER & RELEASE TABLE (₹0 DUE)'
+                            : payWalletRedeemAmount > 0
+                            ? `REDEEM ${formatCurrency(payWalletRedeemAmount)} + COLLECT ${formatCurrency(netPayableDue)}`
+                            : `COLLECT ${formatCurrency(remainingDueBeforeLoyalty)} & SETTLE BILL`}
                         </Text>
                       )}
                     </TouchableOpacity>

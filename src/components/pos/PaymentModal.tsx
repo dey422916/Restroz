@@ -142,7 +142,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     if (cleanPhone.length >= 10) {
       loyaltyService
         .getCustomerWallet(order.restaurant_id, cleanPhone)
-        .then((info) => setWalletInfo(info))
+        .then((info) => {
+          setWalletInfo(info);
+          if (initialRedeemLoyalty && info.can_redeem) {
+            setIsRedeemWallet(true);
+          }
+        })
         .catch((e) => console.warn('[PaymentModal] Error loading wallet info:', e));
     } else {
       loyaltyService
@@ -153,7 +158,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         })
         .catch((e) => console.warn('[PaymentModal] Error loading default loyalty settings:', e));
     }
-  }, [order?.restaurant_id, customerPhoneInput]);
+  }, [order?.restaurant_id, customerPhoneInput, initialRedeemLoyalty]);
 
   // Centralized real-time calculation
   const subtotal = useMemo(() => getOrderSubtotal(order), [order]);
@@ -534,21 +539,19 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                     )}
                   </View>
 
-                  {/* Customer Phone Input if missing or editable */}
-                  {!order.customer_phone ? (
-                    <View style={styles.walletPhoneInputRow}>
-                      <Text style={styles.walletPhoneInputLabel}>Customer Mobile Number:</Text>
-                      <TextInput
-                        style={styles.walletPhoneInput}
-                        placeholder="Enter 10-digit mobile to check wallet balance"
-                        placeholderTextColor="#94A3B8"
-                        value={customerPhoneInput}
-                        onChangeText={(val) => setCustomerPhoneInput(val.replace(/[^\d]/g, ''))}
-                        keyboardType="phone-pad"
-                        maxLength={10}
-                      />
-                    </View>
-                  ) : null}
+                  {/* Customer Phone Input for Loyalty Lookup */}
+                  <View style={styles.walletPhoneInputRow}>
+                    <Text style={styles.walletPhoneInputLabel}>Customer Mobile Number (Optional):</Text>
+                    <TextInput
+                      style={styles.walletPhoneInput}
+                      placeholder="Enter 10-digit mobile to check wallet balance"
+                      placeholderTextColor="#94A3B8"
+                      value={customerPhoneInput}
+                      onChangeText={(val) => setCustomerPhoneInput(val.replace(/[^\d]/g, ''))}
+                      keyboardType="phone-pad"
+                      maxLength={10}
+                    />
+                  </View>
 
                   {Boolean(customerPhoneInput && customerPhoneInput.length >= 10) ? (
                     <>

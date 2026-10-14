@@ -43,6 +43,7 @@ import { isValidPhoneNumber, normalizePhoneNumber } from '../../src/utils/phone'
 import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError } from '../../src/utils/validation';
 import { naturalTableCompare } from '../../src/utils/sortUtils';
 import { getCurrentLoggedInUserDisplayName } from '../../src/utils/receiptIdentity';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function PosScreen() {
   const router = useRouter();
@@ -134,17 +135,23 @@ export default function PosScreen() {
   const [hasUnsentItems, setHasUnsentItems] = useState<boolean>(false);
   const [isSendingKot, setIsSendingKot] = useState<boolean>(false);
 
+  const insets = useSafeAreaInsets();
   const [windowWidth, setWindowWidth] = useState<number>(Dimensions.get('window').width);
+  const [windowHeight, setWindowHeight] = useState<number>(Dimensions.get('window').height);
 
   useEffect(() => {
     const subscription = Dimensions.addEventListener('change', ({ window }) => {
       setWindowWidth(window.width);
+      setWindowHeight(window.height);
     });
     return () => subscription?.remove();
   }, []);
 
   const isWideDesktop = windowWidth >= 1200;
   const isTablet = windowWidth >= 768;
+  const safeModalTop = Math.max(insets.top, Platform.OS === 'web' ? 16 : 24);
+  const safeModalBottom = Math.max(insets.bottom, Platform.OS === 'web' ? 16 : 24);
+  const availableModalHeight = Math.max(300, windowHeight - safeModalTop - safeModalBottom - 20);
 
   // Load products, categories, and dining tables
   const loadInitialData = async (isRefresh: boolean = false) => {
@@ -1152,9 +1159,13 @@ export default function PosScreen() {
 
         {/* Customer Details Input (for Dine-In, Takeaway & Delivery) */}
         <View style={styles.customerBox}>
-          <View style={styles.customerInputRow}>
+          <View style={[styles.customerInputRow, windowWidth < 600 && { flexDirection: 'column' }]}>
             <TextInput
-              style={[styles.custInput, { flex: 1 }]}
+              style={[
+                styles.custInput,
+                windowWidth < 600 ? { width: '100%' } : { flex: 1 },
+                { minHeight: 42 },
+              ]}
               placeholder={
                 orderType === 'dine_in'
                   ? 'Customer Name (Optional)'
@@ -1165,7 +1176,11 @@ export default function PosScreen() {
               onChangeText={(v) => setCustomerInfo({ name: v })}
             />
             <TextInput
-              style={[styles.custInput, { flex: 1 }]}
+              style={[
+                styles.custInput,
+                windowWidth < 600 ? { width: '100%' } : { flex: 1 },
+                { minHeight: 42 },
+              ]}
               placeholder={
                 orderType === 'delivery'
                   ? 'Phone Number *'
@@ -1198,8 +1213,8 @@ export default function PosScreen() {
                   <Text style={styles.loyaltyStatusText}>Looking up customer loyalty...</Text>
                 </View>
               ) : walletInfo?.is_enabled ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6, width: '100%' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
                     <Text style={{ fontSize: 13 }}>⭐</Text>
                     <Text style={styles.loyaltyStatusTextBold}>
                       Balance: {formatCurrency(walletInfo.balance)} ({walletInfo.balance} pts)
@@ -1388,16 +1403,20 @@ export default function PosScreen() {
         {/* Coupon Section */}
         {cartItems.length > 0 && (
           <View style={styles.couponSection}>
-            <View style={styles.couponInputRow}>
+            <View style={[styles.couponInputRow, { alignItems: 'stretch' }]}>
               <TextInput
-                style={[styles.custInput, { flex: 1, textTransform: 'uppercase' } as any]}
+                style={[
+                  styles.custInput,
+                  { flex: 1, minWidth: 0, minHeight: 40, textTransform: 'uppercase' } as any,
+                ]}
                 placeholder="Coupon Code"
                 placeholderTextColor="#64748b"
+                autoCapitalize="characters"
                 value={couponCodeInput}
                 onChangeText={setCouponCodeInput}
               />
               <TouchableOpacity
-                style={styles.applyCouponBtn}
+                style={[styles.applyCouponBtn, { minHeight: 40, paddingHorizontal: 16 }]}
                 onPress={async () => {
                   if (couponCodeInput) {
                     await applyCouponCode(couponCodeInput);
@@ -2427,8 +2446,17 @@ export default function PosScreen() {
 
       {/* Register Closed Warning & Quick Open Modal */}
       <Modal visible={showRegisterClosedModal} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.viewOrderModalContent, { maxWidth: 440 }]}>
+        <View
+          style={[
+            styles.modalOverlay,
+            {
+              paddingTop: safeModalTop,
+              paddingBottom: safeModalBottom,
+              paddingHorizontal: 12,
+            },
+          ]}
+        >
+          <View style={[styles.viewOrderModalContent, { maxWidth: 440, maxHeight: availableModalHeight }]}>
             <View style={{ alignItems: 'center', marginBottom: 12 }}>
               <View
                 style={{

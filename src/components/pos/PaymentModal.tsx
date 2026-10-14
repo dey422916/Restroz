@@ -21,6 +21,8 @@ import { validateGSTIN } from '../../utils/validators';
 import { useSettings } from '../../context/SettingsContext';
 import { resolveOrderDiscounts } from '../../services/api/orderService';
 import { loyaltyService } from '../../services/api/loyaltyService';
+import { calculateSplitAutoFill, SplitPaymentEntry } from '../../utils/splitPayment';
+import { roundToTwoDecimals } from '../../utils/currency';
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -44,6 +46,7 @@ interface PaymentModalProps {
       customer_gstin?: string;
       customer_phone?: string;
       wallet_redeem_amount?: number;
+      splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;
     }
   ) => Promise<void>;
 }
@@ -100,10 +103,13 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [refNo, setRefNo] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
-  // Customer Phone & Loyalty Wallet State
   const [customerPhoneInput, setCustomerPhoneInput] = useState<string>(order.customer_phone || '');
   const [walletInfo, setWalletInfo] = useState<CustomerWalletInfo | null>(null);
   const [isRedeemWallet, setIsRedeemWallet] = useState<boolean>(initialRedeemLoyalty || false);
+  const [paySplits, setPaySplits] = useState<SplitPaymentEntry[]>([
+    { id: '1', method: 'cash', amount: '', ref: '' },
+    { id: '2', method: 'upi', amount: '', ref: '' },
+  ]);
 
   useEffect(() => {
     if (order) {
@@ -217,13 +223,65 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const isEnough = netPayable <= 0 || numTendered >= netPayable;
   const isGstinValid = gstinValidation.isValid;
 
+  const isRoomApplicable = Boolean(
+    order?.payment_method === 'room' ||
+    (order?.table_number && /room/i.test(order.table_number.trim()))
+  );
+
+  const methods: { method: PaymentMethod; label: string }[] = [
+    { method: 'cash', label: '💵 Cash' },
+    { method: 'upi', label: '📱 UPI / QR' },
+    { method: 'card', label: '💳 Card' },
+    { method: 'split', label: '✂️ Split' },
+    ...(isRoomApplicable ? [{ method: 'room' as PaymentMethod, label: '🏨 Room' }] : []),
+  ];
+
   const handleSubmit = async () => {
-    if (!isEnough || isProcessing || !isGstinValid) return;
+    if (isProcessing || !isGstinValid) return;
+
+    let splitArray: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }> | undefined = undefined;
+
+    if (netPayable > 0 && paymentMethod === 'split') {
+      const validSplits = paySplits.filter((s) => parseFloat(s.amount) > 0);
+      if (validSplits.length === 0) {
+        Alert.alert('Invalid Split Payment', 'Please enter at least one split payment amount.');
+        return;
+      }
+
+      const splitTotal = roundToTwoDecimals(validSplits.reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0));
+
+      if (splitTotal < netPayable) {
+        const diff = roundToTwoDecimals(netPayable - splitTotal);
+        Alert.alert(
+          'Incomplete Settlement',
+          `Split payment total (${formatCurrency(splitTotal)}) does not match remaining balance (${formatCurrency(netPayable)}). Remaining ₹${diff} is unpaid.`
+        );
+        return;
+      }
+
+      if (splitTotal > netPayable) {
+        const excess = roundToTwoDecimals(splitTotal - netPayable);
+        Alert.alert(
+          'Overpayment Blocked',
+          `Split payment total (${formatCurrency(splitTotal)}) exceeds remaining balance (${formatCurrency(netPayable)}) by ₹${excess}.`
+        );
+        return;
+      }
+
+      splitArray = validSplits.map((s) => ({
+        payment_method: s.method,
+        amount: roundToTwoDecimals(parseFloat(s.amount) || 0),
+        reference_number: s.ref.trim() || undefined,
+      }));
+    } else {
+      if (!isEnough) return;
+    }
+
     try {
       setIsProcessing(true);
       await onProcessPayment(
         netPayable > 0 ? paymentMethod : 'cash',
-        netPayable > 0 ? Math.min(numTendered, netPayable) : 0,
+        netPayable > 0 ? (paymentMethod === 'split' ? netPayable : Math.min(numTendered, netPayable)) : 0,
         refNo,
         {
           discount_type: discountType,
@@ -238,6 +296,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           customer_gstin: customerGstinInput.trim().toUpperCase() || undefined,
           customer_phone: customerPhoneInput.trim() || undefined,
           wallet_redeem_amount: walletRedeemAmount,
+          splitPayments: splitArray,
         }
       );
       onClose();
@@ -248,12 +307,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     }
   };
 
-  const methods: { method: PaymentMethod; label: string }[] = [
-    { method: 'cash', label: '💵 Cash' },
-    { method: 'upi', label: '📱 UPI / QR' },
-    { method: 'card', label: '💳 Card' },
-    { method: 'room', label: '🏨 Room' },
-  ];
+  const safeModalTop = Math.max(insets.top, Platform.OS === 'web' ? 16 : 24);
+  const safeModalBottom = Math.max(insets.bottom, Platform.OS === 'web' ? 16 : 24);
+  const availableModalHeight = windowHeight - safeModalTop - safeModalBottom - 20;
 
   return (
     <Modal visible={isOpen} animationType="slide" transparent>
@@ -261,14 +317,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         style={[
           styles.overlay,
           {
-            paddingTop: Platform.OS === 'web' ? 16 : insets.top + 8,
-            paddingBottom: Platform.OS === 'web' ? 16 : insets.bottom + 8,
+            paddingTop: safeModalTop,
+            paddingBottom: safeModalBottom,
+            paddingHorizontal: 12,
           },
         ]}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ width: '100%', maxWidth: 520, maxHeight: windowHeight * 0.9 }}
+          style={{ width: '100%', maxWidth: 520, maxHeight: Math.max(320, availableModalHeight) }}
         >
           <View style={styles.content}>
             {/* Header */}
@@ -284,7 +341,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={true} keyboardShouldPersistTaps="handled">
+            <ScrollView showsVerticalScrollIndicator={true} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 28 }}>
               {/* 1. DISCOUNT SELECTION */}
               <View style={styles.sectionBox}>
                 <Text style={styles.sectionLabel}>Apply Bill Discount</Text>
@@ -607,26 +664,97 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                     ))}
                   </View>
 
-                  {/* 5. TENDERED / REFERENCE AMOUNT */}
-                  <Text style={styles.fieldLabel}>Tendered Amount (₹)</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={tendered}
-                    onChangeText={setTendered}
-                    placeholderTextColor="#64748b"
-                    keyboardType="numeric"
-                  />
-
-                  {paymentMethod !== 'cash' && (
+                  {/* Split Breakdown when SPLIT mode is selected */}
+                  {paymentMethod === 'split' ? (
+                    <View style={{ marginVertical: 8 }}>
+                      <Text style={styles.fieldLabel}>Split Breakdown:</Text>
+                      {paySplits.map((sp, idx) => (
+                        <View key={sp.id} style={{ backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 8, marginBottom: 6 }}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '800', color: '#334155' }}>Split #{idx + 1}</Text>
+                            {paySplits.length > 1 && (
+                              <TouchableOpacity
+                                onPress={() => setPaySplits(paySplits.filter((item) => item.id !== sp.id))}
+                                style={{ paddingHorizontal: 6, paddingVertical: 2 }}
+                              >
+                                <Text style={{ fontSize: 11, color: '#dc2626', fontWeight: '700' }}>✕ Remove</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                          <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4 }}>
+                            {(['cash', 'upi', 'card'] as PaymentMethod[]).map((sm) => (
+                              <TouchableOpacity
+                                key={sm}
+                                style={[
+                                  { flex: 1, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: '#cbd5e1', alignItems: 'center', backgroundColor: '#ffffff' },
+                                  sp.method === sm && { backgroundColor: '#0f172a', borderColor: '#0f172a' },
+                                ]}
+                                onPress={() => {
+                                  setPaySplits(paySplits.map((item) => (item.id === sp.id ? { ...item, method: sm } : item)));
+                                }}
+                              >
+                                <Text style={[{ fontSize: 10, fontWeight: '700', color: '#334155' }, sp.method === sm && { color: '#ffffff' }]}>
+                                  {sm.toUpperCase()}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                          <View style={{ flexDirection: 'row', gap: 6 }}>
+                            <TextInput
+                              style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                              placeholder="Amount (₹)"
+                              placeholderTextColor="#64748b"
+                              keyboardType="numeric"
+                              value={sp.amount}
+                              onChangeText={(val) => {
+                                setPaySplits(calculateSplitAutoFill(paySplits, sp.id, val, netPayable));
+                              }}
+                            />
+                            <TextInput
+                              style={[styles.input, { flex: 1.2, marginBottom: 0 }]}
+                              placeholder="Ref # (optional)"
+                              placeholderTextColor="#64748b"
+                              value={sp.ref}
+                              onChangeText={(val) => {
+                                setPaySplits(paySplits.map((item) => (item.id === sp.id ? { ...item, ref: val } : item)));
+                              }}
+                            />
+                          </View>
+                        </View>
+                      ))}
+                      <TouchableOpacity
+                        style={{ paddingVertical: 8, alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1' }}
+                        onPress={() => {
+                          setPaySplits([...paySplits, { id: String(Date.now()), method: 'upi', amount: '', ref: '' }]);
+                        }}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '800', color: '#2563eb' }}>+ Add Another Split Method</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
                     <>
-                      <Text style={styles.fieldLabel}>Transaction / Reference # (Optional)</Text>
+                      {/* 5. TENDERED / REFERENCE AMOUNT */}
+                      <Text style={styles.fieldLabel}>Tendered Amount (₹)</Text>
                       <TextInput
                         style={styles.input}
-                        value={refNo}
-                        onChangeText={setRefNo}
-                        placeholder="e.g. UPI-998811 or Card Auth #4411"
+                        value={tendered}
+                        onChangeText={setTendered}
                         placeholderTextColor="#64748b"
+                        keyboardType="numeric"
                       />
+
+                      {paymentMethod !== 'cash' && (
+                        <>
+                          <Text style={styles.fieldLabel}>Transaction / Reference # (Optional)</Text>
+                          <TextInput
+                            style={styles.input}
+                            value={refNo}
+                            onChangeText={setRefNo}
+                            placeholder="e.g. UPI-998811 or Card Auth #4411"
+                            placeholderTextColor="#64748b"
+                          />
+                        </>
+                      )}
                     </>
                   )}
                 </>
@@ -980,18 +1108,22 @@ const styles = StyleSheet.create({
   },
   methodRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 6,
     marginBottom: 12,
   },
   mBtn: {
     flex: 1,
-    paddingVertical: 9,
+    minWidth: 72,
+    minHeight: 42,
+    paddingVertical: 8,
     paddingHorizontal: 4,
     borderRadius: 10,
     backgroundColor: '#f8fafc',
     borderWidth: 1,
     borderColor: '#e2e8f0',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   mBtnActive: {
     backgroundColor: '#eff6ff',

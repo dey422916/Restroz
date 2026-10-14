@@ -13,6 +13,7 @@ import {
   Platform,
   useWindowDimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { couponService } from '../../src/services/api/couponService';
 import { loyaltyService } from '../../src/services/api/loyaltyService';
@@ -22,7 +23,11 @@ import { formatCurrency } from '../../src/utils/currency';
 import { isValidIndianPhone, normalizeIndianPhone } from '../../src/utils/validation';
 
 export default function CouponsScreen() {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const safeModalTop = insets.top > 0 ? insets.top + 8 : 16;
+  const safeModalBottom = insets.bottom > 0 ? insets.bottom + 12 : 16;
+  const availableModalHeight = Math.max(300, height - safeModalTop - safeModalBottom);
   const isMobile = width < 768;
   const { user, role, isAdmin: authIsAdmin, isSuperAdmin, activeRestaurantId } = useAuth();
 
@@ -431,50 +436,50 @@ export default function CouponsScreen() {
       </View>
 
       {/* Segmented Tab Navigation */}
-      <View style={[styles.tabNavRow, isMobile && styles.tabNavRowMobile]}>
-        <TouchableOpacity
-          style={[
-            styles.tabNavItem,
-            isMobile && styles.tabNavItemMobile,
-            activeTab === 'coupons' && styles.tabNavItemActive,
-          ]}
-          onPress={() => setActiveTab('coupons')}
-          activeOpacity={0.8}
+      <View style={{ backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' }}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={[styles.tabNavRow, isMobile && styles.tabNavRowMobile]}
         >
-          <Text
+          <TouchableOpacity
             style={[
-              styles.tabNavText,
-              isMobile && styles.tabNavTextMobile,
-              activeTab === 'coupons' && styles.tabNavTextActive,
+              styles.tabNavItem,
+              activeTab === 'coupons' && styles.tabNavItemActive,
             ]}
-            numberOfLines={1}
-            ellipsizeMode="tail"
+            onPress={() => setActiveTab('coupons')}
+            activeOpacity={0.8}
           >
-            🎟️ Coupons ({coupons.length})
-          </Text>
-        </TouchableOpacity>
+            <Text
+              style={[
+                styles.tabNavText,
+                isMobile && styles.tabNavTextMobile,
+                activeTab === 'coupons' && styles.tabNavTextActive,
+              ]}
+            >
+              🎟️ Coupons ({coupons.length})
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[
-            styles.tabNavItem,
-            isMobile && styles.tabNavItemMobile,
-            activeTab === 'rewards' && styles.tabNavItemActive,
-          ]}
-          onPress={() => setActiveTab('rewards')}
-          activeOpacity={0.8}
-        >
-          <Text
+          <TouchableOpacity
             style={[
-              styles.tabNavText,
-              isMobile && styles.tabNavTextMobile,
-              activeTab === 'rewards' && styles.tabNavTextActive,
+              styles.tabNavItem,
+              activeTab === 'rewards' && styles.tabNavItemActive,
             ]}
-            numberOfLines={1}
-            ellipsizeMode="tail"
+            onPress={() => setActiveTab('rewards')}
+            activeOpacity={0.8}
           >
-            🎁 Loyalty Rewards & Wallet {rewardsEnabled ? '• ON' : ''}
-          </Text>
-        </TouchableOpacity>
+            <Text
+              style={[
+                styles.tabNavText,
+                isMobile && styles.tabNavTextMobile,
+                activeTab === 'rewards' && styles.tabNavTextActive,
+              ]}
+            >
+              🎁 Loyalty Rewards & Wallet {rewardsEnabled ? '• ON' : ''}
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
       </View>
 
       {/* TAB CONTENT: COUPONS */}
@@ -606,7 +611,7 @@ export default function CouponsScreen() {
 
       {/* TAB CONTENT: REWARDS SETTINGS */}
       {activeTab === 'rewards' && (
-        <ScrollView contentContainerStyle={[styles.rewardsContainer, { paddingBottom: 60 }]}>
+        <ScrollView contentContainerStyle={[styles.rewardsContainer, isMobile && { padding: 12 }, { paddingBottom: 60 }]}>
           {loadingRewards ? (
             <View style={styles.center}>
               <ActivityIndicator size="large" color="#2563EB" />
@@ -615,7 +620,7 @@ export default function CouponsScreen() {
           ) : (
             <View style={styles.rewardsContentWrap}>
               {/* Card 1: Configuration */}
-              <View style={styles.rewardsCard}>
+              <View style={[styles.rewardsCard, isMobile && { padding: 14 }]}>
                 {/* 1. Header Card */}
                 <View style={[styles.rewardsCardHeader, isMobile && styles.rewardsCardHeaderMobile]}>
                   <View style={styles.rewardsHeaderLeft}>
@@ -783,7 +788,7 @@ export default function CouponsScreen() {
               </View>
 
               {/* CUSTOMER WALLET BALANCE LOOKUP TOOL */}
-              <View style={styles.walletLookupCard}>
+              <View style={[styles.walletLookupCard, isMobile && { padding: 14 }]}>
                 <View style={styles.walletLookupHeader}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.walletLookupTitle}>🔍 Customer Wallet Balance Lookup</Text>
@@ -986,7 +991,7 @@ export default function CouponsScreen() {
             </View>
 
             {/* CUSTOMER WALLETS DIRECTORY TABLE */}
-            <View style={styles.walletDirectoryCard}>
+            <View style={[styles.walletDirectoryCard, isMobile && { padding: 14 }]}>
               <View style={styles.walletDirectoryHeader}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.walletDirectoryTitle}>
@@ -1045,6 +1050,67 @@ export default function CouponsScreen() {
                   <Text style={styles.emptyWalletsSub}>
                     When orders are settled at POS with customer mobile numbers, cashbacks will automatically accrue and appear here.
                   </Text>
+                </View>
+              ) : isMobile ? (
+                <View style={styles.walletsCardListMobile}>
+                  {customerWallets.map((w) => (
+                    <View key={w.id} style={styles.walletCardMobile}>
+                      <View style={styles.walletCardMobileTop}>
+                        <View style={styles.walletCardMobilePhoneRow}>
+                          <Text style={styles.walletCardMobilePhone}>📱 {w.customer_mobile}</Text>
+                          <View style={styles.walletCardMobileStatusBadge}>
+                            <Text style={styles.walletCardMobileStatusText}>Active</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.walletCardMobileDate}>
+                          Updated: {new Date(w.updated_at).toLocaleDateString()}
+                        </Text>
+                      </View>
+
+                      <View style={styles.walletCardMobileRows}>
+                        <View style={styles.walletCardMobileRow}>
+                          <Text style={styles.walletCardMobileRowLabel}>Balance</Text>
+                          <View style={styles.tableBalanceBadge}>
+                            <Text style={styles.tableBalanceText}>{formatCurrency(w.balance)}</Text>
+                          </View>
+                        </View>
+                        <View style={styles.walletCardMobileRow}>
+                          <Text style={styles.walletCardMobileRowLabel}>Earned</Text>
+                          <Text style={styles.tdEarnedText}>+{formatCurrency(w.total_earned)}</Text>
+                        </View>
+                        <View style={styles.walletCardMobileRow}>
+                          <Text style={styles.walletCardMobileRowLabel}>Redeemed</Text>
+                          <Text style={styles.tdRedeemedText}>-{formatCurrency(w.total_redeemed)}</Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.walletCardMobileActions}>
+                        <TouchableOpacity
+                          style={[styles.inspectBtn, styles.walletCardMobileBtn]}
+                          onPress={() => {
+                            setLookupPhone(w.customer_mobile);
+                            handleLookupCustomer(w.customer_mobile);
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={styles.inspectBtnText}>Inspect</Text>
+                        </TouchableOpacity>
+                        {isAdmin && (
+                          <TouchableOpacity
+                            style={[
+                              styles.inspectBtn,
+                              styles.walletCardMobileBtn,
+                              { backgroundColor: '#f0fdf4', borderColor: '#86efac' },
+                            ]}
+                            onPress={() => handleOpenAdjustModal(w.customer_mobile)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={[styles.inspectBtnText, { color: '#16a34a' }]}>Adjust</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </View>
+                  ))}
                 </View>
               ) : (
                 <View style={styles.walletsTable}>
@@ -1108,8 +1174,8 @@ export default function CouponsScreen() {
 
       {/* MANUAL WALLET ADJUSTMENT MODAL */}
       <Modal visible={adjustModalVisible} transparent animationType="fade" onRequestClose={() => setAdjustModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { maxWidth: 440 }]}>
+        <View style={[styles.modalOverlay, { paddingTop: safeModalTop, paddingBottom: safeModalBottom }]}>
+          <View style={[styles.modalContent, { maxWidth: 440, maxHeight: availableModalHeight }]}>
             <View style={styles.modalHeader}>
               <View>
                 <Text style={styles.modalTitle}>Adjust Customer Wallet</Text>
@@ -1122,7 +1188,7 @@ export default function CouponsScreen() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={styles.modalForm}>
+            <ScrollView contentContainerStyle={[styles.modalForm, { paddingBottom: 32 }]}>
               <Text style={styles.label}>Adjustment Type *</Text>
               <View style={styles.typeSelectorRow}>
                 <TouchableOpacity
@@ -1187,8 +1253,8 @@ export default function CouponsScreen() {
 
       {/* CREATE / EDIT COUPON MODAL */}
       <Modal visible={modalVisible} transparent animationType="fade" onRequestClose={() => setModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+        <View style={[styles.modalOverlay, { paddingTop: safeModalTop, paddingBottom: safeModalBottom }]}>
+          <View style={[styles.modalContent, { maxHeight: availableModalHeight }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {editingCoupon ? `Edit Coupon: ${editingCoupon.code}` : 'Create New Coupon'}
@@ -1198,7 +1264,7 @@ export default function CouponsScreen() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={styles.modalForm}>
+            <ScrollView contentContainerStyle={[styles.modalForm, { paddingBottom: 32 }]}>
               <Text style={styles.label}>Coupon Code *</Text>
               <TextInput
                 style={styles.input}
@@ -2326,6 +2392,84 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#0F172A',
+  },
+  walletsCardListMobile: {
+    gap: 12,
+  },
+  walletCardMobile: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 14,
+    shadowColor: '#000',
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+  },
+  walletCardMobileTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  walletCardMobilePhoneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  walletCardMobilePhone: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  walletCardMobileStatusBadge: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  walletCardMobileStatusText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  walletCardMobileDate: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '500',
+  },
+  walletCardMobileRows: {
+    gap: 6,
+    marginBottom: 12,
+  },
+  walletCardMobileRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 2,
+  },
+  walletCardMobileRowLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  walletCardMobileActions: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  walletCardMobileBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
   },
 });
 

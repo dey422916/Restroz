@@ -10,7 +10,8 @@ import { couponService } from './couponService';
 import { getOrderSubtotal, calculateOrderTotals, getOrderTaxRate, isOrderGstApplicable } from '../../utils/gst';
 import { isValidPhoneNumber, validatePhoneNumberOrThrow } from '../../utils/phone';
 import { restaurantService } from './restaurantService';
-import { attachDiscountToNotes, extractDiscountFromNotes, attachGstinToNotes, extractGstinFromNotes } from '../../utils/orderNotes';
+import { attachDiscountToNotes, extractDiscountFromNotes, attachGstinToNotes, extractGstinFromNotes, attachRewardToNotes, extractRewardFromNotes } from '../../utils/orderNotes';
+import { resolveOrderFinancials } from '../../utils/orderFinancials';
 import { areOrderItemsIdentical, consolidateOrderItems, getOrderItemCanonicalKey } from '../../utils/orderItemIdentity';
 
 export const resolveOrderSource = (ord: Partial<Order>): OrderSource => {
@@ -227,6 +228,7 @@ export const orderService = {
               ? ord.kots
               : (orderDirectKots.length > 0 ? orderDirectKots : orderLocalKots);
             const gstin = extractGstinFromNotes(ord.notes);
+            const fin = resolveOrderFinancials(ord);
             return {
               ...ord,
               restaurant_id: ord.restaurant_id || restaurantId,
@@ -239,6 +241,7 @@ export const orderService = {
               discount_value: resolveOrderDiscounts(ord).discount_value,
               customer_gstin: ord.customer_gstin || gstin || undefined,
               invoice_number: ord.invoice_number || ord.order_number,
+              wallet_redeemed: fin.walletRedeemed > 0 ? fin.walletRedeemed : undefined,
             };
           });
 
@@ -262,6 +265,7 @@ export const orderService = {
         const resolvedKots = (ord.kots && ord.kots.length > 0) ? ord.kots : orderLocalKots;
         const disc = extractDiscountFromNotes(ord.notes);
         const gstin = extractGstinFromNotes(ord.notes);
+        const fin = resolveOrderFinancials(ord);
         return {
           ...ord,
           restaurant_id: ord.restaurant_id || restaurantId,
@@ -274,6 +278,7 @@ export const orderService = {
           discount_value: resolveOrderDiscounts(ord).discount_value,
           customer_gstin: ord.customer_gstin || gstin || undefined,
           invoice_number: ord.invoice_number || ord.order_number,
+          wallet_redeemed: fin.walletRedeemed > 0 ? fin.walletRedeemed : undefined,
         };
       });
 
@@ -375,6 +380,7 @@ export const orderService = {
               : (orderDirectKots.length > 0 ? orderDirectKots : orderLocalKots);
 
             const gstin = extractGstinFromNotes(ord.notes);
+            const fin = resolveOrderFinancials(ord);
             return {
               ...ord,
               restaurant_id: ord.restaurant_id || restaurantId || '',
@@ -387,6 +393,7 @@ export const orderService = {
               discount_value: resolveOrderDiscounts(ord).discount_value,
               customer_gstin: ord.customer_gstin || gstin || undefined,
               invoice_number: ord.invoice_number || ord.order_number,
+              wallet_redeemed: fin.walletRedeemed > 0 ? fin.walletRedeemed : undefined,
             };
           });
 
@@ -500,6 +507,7 @@ export const orderService = {
     const pageItems = filtered.slice(from, to).map((ord) => {
       const disc = extractDiscountFromNotes(ord.notes);
       const gstin = extractGstinFromNotes(ord.notes);
+      const fin = resolveOrderFinancials(ord);
       return {
         ...ord,
         restaurant_id: ord.restaurant_id || restaurantId || '',
@@ -507,9 +515,10 @@ export const orderService = {
         status: normalizeOrderStatus(ord),
         subtotal: getOrderSubtotal(ord),
         discount_type: resolveOrderDiscounts(ord).discount_type,
-              discount_value: resolveOrderDiscounts(ord).discount_value,
+        discount_value: resolveOrderDiscounts(ord).discount_value,
         customer_gstin: ord.customer_gstin || gstin || undefined,
         invoice_number: ord.invoice_number || ord.order_number,
+        wallet_redeemed: fin.walletRedeemed > 0 ? fin.walletRedeemed : undefined,
       };
     });
 
@@ -880,6 +889,11 @@ export const orderService = {
       finalNotesWithDisc,
       orderData.customer_gstin
     );
+    const initialRewardAmount = (orderData as any).wallet_redeem_amount ?? (orderData as any).wallet_redeemed ?? extractRewardFromNotes(finalNotesWithDiscAndGstin);
+    const finalNotesWithAll = attachRewardToNotes(
+      finalNotesWithDiscAndGstin,
+      initialRewardAmount
+    );
 
     const newOrder: Order = {
       id: 'ord-' + Date.now() + Math.random().toString(36).substr(2, 4),
@@ -915,11 +929,12 @@ export const orderService = {
       round_off: orderData.round_off || 0,
       payable_amount: orderData.payable_amount || 0,
       paid_amount: isPaid ? (orderData.payable_amount || 0) : 0,
+      wallet_redeemed: initialRewardAmount > 0 ? initialRewardAmount : undefined,
       payment_method: (orderData.payment_method as any) || paymentMethod || 'cash',
       payment_proof_url: orderData.payment_proof_url || undefined,
       payment_status: isPaid ? 'paid' : 'unpaid',
       is_supplementary: orderData.is_supplementary ?? false,
-      notes: finalNotesWithDiscAndGstin,
+      notes: finalNotesWithAll,
       items: consolidateOrderItems(orderData.items || []),
       payments: orderData.payments || [],
       kots: orderData.kots || [],
@@ -992,6 +1007,7 @@ export const orderService = {
           customer_gstin,
           invoice_number,
           final_amount,
+          wallet_redeemed,
           ...orderRecord
         } = newOrder;
         let dbPayload: any = {
@@ -2029,7 +2045,8 @@ export const orderService = {
         payable_amount: payableAmount !== undefined ? payableAmount : settledOrder.payable_amount,
         reward_earned: Number(rpcRes?.reward_earned) || 0,
         new_wallet_balance: Number(rpcRes?.new_wallet_balance) || 0,
-        wallet_redeemed: Number(rpcRes?.wallet_redeemed) || 0,
+        wallet_redeemed: Number(rpcRes?.wallet_redeemed) || walletRedeemAmount || 0,
+        notes: attachRewardToNotes(settledOrder.notes, Number(rpcRes?.wallet_redeemed) || walletRedeemAmount || 0),
       };
       if (orderIndex !== -1) {
         localOrders[orderIndex] = fullSettledOrder;

@@ -12,6 +12,7 @@ scripts/
 !scripts/test-split-payment-autofill.js
 !scripts/test-printer-role-routing.js
 !scripts/test-settle-split-payment.js
+!scripts/test-reward-redemption-order-financial-display.js
 android/
 ios/
 

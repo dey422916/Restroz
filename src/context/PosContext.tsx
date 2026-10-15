@@ -37,6 +37,7 @@ export class RegisterClosedError extends Error {
   }
 }
 import { isValidPhoneNumber, validatePhoneNumberOrThrow } from '../utils/phone';
+import { attachRewardToNotes, extractRewardFromNotes } from '../utils/orderNotes';
 
 interface CustomerInfo {
   name: string;
@@ -637,7 +638,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       payable_amount: totals.payableAmount,
       items: cartItems,
       notes: orderNotes ? `[POS] ${orderNotes}` : '[POS]',
-    });
+      wallet_redeem_amount: walletRedeemAmount > 0 ? walletRedeemAmount : undefined,
+      wallet_redeemed: walletRedeemAmount > 0 ? walletRedeemAmount : undefined,
+    } as any);
 
     showToast('info', 'Order Held', `Order #${heldOrder.order_number} put on hold.`);
     clearCart();
@@ -741,7 +744,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       notes: isSupplementary
         ? (orderNotes ? `[POS] [SUPPLEMENTARY ORDER] ${orderNotes}` : '[POS] [SUPPLEMENTARY ORDER]')
         : (orderNotes ? `[POS] ${orderNotes}` : '[POS]'),
-    });
+      wallet_redeem_amount: walletRedeemAmount > 0 ? walletRedeemAmount : undefined,
+      wallet_redeemed: walletRedeemAmount > 0 ? walletRedeemAmount : undefined,
+    } as any);
 
     // Use the initial KOT generated with the order, or generate if missing
     const initialKot = (newOrder.kots && newOrder.kots.length > 0)
@@ -783,6 +788,11 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setOrderTypeState(order.order_type);
     setIsSupplementary(Boolean(order.is_supplementary));
     setOrderNotes(order.notes?.replace('[POS]', '').replace('[SUPPLEMENTARY ORDER]', '').trim() || '');
+    const fromNotesReward = extractRewardFromNotes(order.notes);
+    const ordReward = (order as any).wallet_redeemed || fromNotesReward;
+    if (ordReward > 0) {
+      setIsRedeemLoyalty(true);
+    }
     if (order.table_id) {
       const tables = mockStorage.getTables();
       setSelectedTable(tables.find((t) => t.id === order.table_id) || {

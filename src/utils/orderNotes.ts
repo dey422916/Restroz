@@ -10,6 +10,8 @@ export function cleanCustomerOrderNotes(notes?: string | null): string {
   const cleaned = notes
     .replace(/\[IDEM:[^\]]+\]/gi, '')
     .replace(/\[DISC:[^\]]+\]/gi, '')
+    .replace(/\[REWARD:[^\]]+\]/gi, '')
+    .replace(/\[WALLET:[^\]]+\]/gi, '')
     .replace(/\[GSTIN:[^\]]+\]/gi, '')
     .replace(/\[ONLINE_DELIVERY\]/gi, '')
     .replace(/\[ONLINE_APP\]/gi, '')
@@ -84,4 +86,37 @@ export function extractGstinFromNotes(notes?: string | null): string | null {
   }
   return null;
 }
+
+/**
+ * Attaches customer loyalty reward / wallet redemption amount safely to notes string.
+ */
+export function attachRewardToNotes(
+  notes: string | undefined | null,
+  rewardAmount?: number
+): string {
+  const baseNotes = (notes || '')
+    .replace(/\[REWARD:[^\]]+\]/gi, '')
+    .replace(/\[WALLET:[^\]]+\]/gi, '')
+    .trim();
+  const amt = Number(rewardAmount) || 0;
+  if (amt <= 0) {
+    return baseNotes;
+  }
+  const tag = `[REWARD:${amt.toFixed(2)}]`;
+  return baseNotes ? `${baseNotes} ${tag}` : tag;
+}
+
+/**
+ * Extracts redeemed loyalty reward / wallet amount from order notes if present.
+ */
+export function extractRewardFromNotes(notes?: string | null): number {
+  if (!notes || typeof notes !== 'string') return 0;
+  const match = notes.match(/\[(?:REWARD|WALLET):([0-9.]+)\]/i);
+  if (match) {
+    const val = parseFloat(match[1]);
+    return !isNaN(val) && val > 0 ? val : 0;
+  }
+  return 0;
+}
+
 

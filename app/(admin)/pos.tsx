@@ -150,6 +150,8 @@ export default function PosScreen() {
 
   const isWideDesktop = windowWidth >= 1200;
   const isTablet = windowWidth >= 768;
+  const [customerBoxWidth, setCustomerBoxWidth] = useState<number>(0);
+  const isCustomerRowStacked = customerBoxWidth > 0 ? customerBoxWidth < 420 : true;
   const safeModalTop = Math.max(insets.top, Platform.OS === 'web' ? 16 : 24);
   const safeModalBottom = Math.max(insets.bottom, Platform.OS === 'web' ? 16 : 24);
   const availableModalHeight = Math.max(300, windowHeight - safeModalTop - safeModalBottom - 20);
@@ -1159,12 +1161,25 @@ export default function PosScreen() {
         </View>
 
         {/* Customer Details Input (for Dine-In, Takeaway & Delivery) */}
-        <View style={styles.customerBox}>
-          <View style={[styles.customerInputRow, windowWidth < 600 && { flexDirection: 'column' }]}>
+        <View
+          style={styles.customerBox}
+          onLayout={(e) => {
+            const w = e.nativeEvent.layout.width;
+            if (w > 0 && Math.abs(w - customerBoxWidth) > 4) {
+              setCustomerBoxWidth(w);
+            }
+          }}
+        >
+          <View
+            style={[
+              styles.customerInputRow,
+              isCustomerRowStacked && styles.customerInputRowStacked,
+            ]}
+          >
             <TextInput
               style={[
                 styles.custInput,
-                windowWidth < 600 ? { width: '100%' } : { flex: 1 },
+                isCustomerRowStacked ? { width: '100%' } : { flex: 1, minWidth: 180 },
                 { minHeight: 42 },
               ]}
               placeholder={
@@ -1179,7 +1194,7 @@ export default function PosScreen() {
             <TextInput
               style={[
                 styles.custInput,
-                windowWidth < 600 ? { width: '100%' } : { flex: 1 },
+                isCustomerRowStacked ? { width: '100%' } : { flex: 1, minWidth: 180 },
                 { minHeight: 42 },
               ]}
               placeholder={
@@ -2364,14 +2379,20 @@ export default function PosScreen() {
                           const currentOrder = viewTableModalData.order;
                           if (currentOrder) {
                             try {
-                              const res = await printService.printKotThermal(currentOrder, settings, undefined, true);
+                              const latestKot = currentOrder.kots && currentOrder.kots.length > 0
+                                ? currentOrder.kots[currentOrder.kots.length - 1]
+                                : undefined;
+                              const res = await printService.printKotThermal(currentOrder, settings, latestKot, true);
                               if (res && res.direct) {
                                 showToast('success', 'KOT Slip', 'KOT reprint sent to printer.');
                               }
                             } catch (printErr: any) {
                               console.warn('[pos.tsx] Reprint KOT failed:', printErr);
                               await handleThermalPrintFallback(printErr, 'KOT', async () => {
-                                await printService.printKotThermalBrowser(currentOrder, settings, undefined, true);
+                                const latestKot = currentOrder.kots && currentOrder.kots.length > 0
+                                  ? currentOrder.kots[currentOrder.kots.length - 1]
+                                  : undefined;
+                                await printService.printKotThermalBrowser(currentOrder, settings, latestKot, true);
                               });
                             }
                           }
@@ -3609,6 +3630,7 @@ const styles = StyleSheet.create({
   },
   cartItemsScroll: {
     flex: 1,
+    ...(Platform.OS === 'web' ? { overflowX: 'hidden' as any } : {}),
   },
   cartHeader: {
     flexDirection: 'row',
@@ -3670,10 +3692,20 @@ const styles = StyleSheet.create({
   customerBox: {
     gap: 8,
     marginBottom: 10,
+    width: '100%',
+    ...(Platform.OS === 'web' ? { boxSizing: 'border-box' as any } : {}),
   },
   customerInputRow: {
     flexDirection: 'row',
     gap: 8,
+    width: '100%',
+    alignItems: 'stretch',
+    ...(Platform.OS === 'web' ? { boxSizing: 'border-box' as any } : {}),
+  },
+  customerInputRowStacked: {
+    flexDirection: 'column',
+    gap: 8,
+    width: '100%',
   },
   custPhoneErrorText: {
     fontSize: 11,
@@ -3848,6 +3880,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#0f172a',
     fontWeight: '500',
+    minWidth: 0,
+    maxWidth: '100%',
+    ...(Platform.OS === 'web' ? { boxSizing: 'border-box' as any, outlineStyle: 'none' as any } : {}),
   },
   emptyCartBox: {
     alignItems: 'center',

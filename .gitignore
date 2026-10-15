@@ -43,6 +43,11 @@ qz-restroz-certificate.pem
 ACCOUNTS_LOCAL*.md
 
 *.apk
+*.aab
 *.zip
+*.jks
+*.keystore
+local.properties
+*signing*.properties
 
 supabase/.temp/

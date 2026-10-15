@@ -16,7 +16,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import * as Location from 'expo-location';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
 import { superAdminService } from '../../src/services/api/superAdminService';
 import { storageService } from '../../src/services/api/storageService';
@@ -42,6 +42,7 @@ import {
 
 export default function SuperAdminRestaurantsScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ filter?: string; status?: string }>();
   const { user, setActiveRestaurantId } = useAuth();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
@@ -52,7 +53,23 @@ export default function SuperAdminRestaurantsScreen() {
   const [saving, setSaving] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'SUSPENDED' | 'ACTIVE_SUB' | 'EXPIRED_SUB'>('ALL');
+  const initialFilter = (() => {
+    const raw = (params.filter || params.status || '').toUpperCase();
+    if (raw === 'ACTIVE' || raw === 'SUSPENDED' || raw === 'ACTIVE_SUB' || raw === 'EXPIRED_SUB') {
+      return raw as 'ACTIVE' | 'SUSPENDED' | 'ACTIVE_SUB' | 'EXPIRED_SUB';
+    }
+    return 'ALL';
+  })();
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'SUSPENDED' | 'ACTIVE_SUB' | 'EXPIRED_SUB'>(initialFilter);
+
+  useEffect(() => {
+    const raw = (params.filter || params.status || '').toUpperCase();
+    if (raw === 'ACTIVE' || raw === 'SUSPENDED' || raw === 'ACTIVE_SUB' || raw === 'EXPIRED_SUB') {
+      setStatusFilter(raw as any);
+    } else if (raw === 'ALL') {
+      setStatusFilter('ALL');
+    }
+  }, [params.filter, params.status]);
 
   // New Restaurant Form State
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);

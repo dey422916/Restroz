@@ -98,6 +98,17 @@ export default function SuperAdminRestaurantsScreen() {
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [fetchingLocation, setFetchingLocation] = useState(false);
 
+  // Permanent Delete Modal State
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [targetRestaurantForDelete, setTargetRestaurantForDelete] = useState<Restaurant | null>(null);
+  const [confirmRestaurantName, setConfirmRestaurantName] = useState('');
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [previewData, setPreviewData] = useState<any>(null);
+  const [storagePreview, setStoragePreview] = useState<any>(null);
+  const [deletingRestaurant, setDeletingRestaurant] = useState(false);
+  const [storageCleanupFailed, setStorageCleanupFailed] = useState(false);
+  const [lastDeletedId, setLastDeletedId] = useState<string | null>(null);
+
   const loadData = async () => {
     try {
       const [rests, subs] = await Promise.all([
@@ -402,6 +413,88 @@ export default function SuperAdminRestaurantsScreen() {
     }
   };
 
+  const handleOpenDeleteModal = async (restaurant: Restaurant) => {
+    setTargetRestaurantForDelete(restaurant);
+    setConfirmRestaurantName('');
+    setDeleteModalVisible(true);
+    setLoadingPreview(true);
+    setStorageCleanupFailed(false);
+    try {
+      const [dbCounts, stCounts] = await Promise.all([
+        superAdminService.previewRestaurantDeletion(restaurant.id),
+        superAdminService.previewRestaurantStorage(restaurant.id),
+      ]);
+      setPreviewData(dbCounts);
+      setStoragePreview(stCounts);
+    } catch (err: any) {
+      console.warn('Failed to load deletion preview:', err);
+      Alert.alert('Preview Error', err?.message || 'Failed to fetch preview counts.');
+    } finally {
+      setLoadingPreview(false);
+    }
+  };
+
+  const handleConfirmPermanentDelete = async () => {
+    if (!targetRestaurantForDelete) return;
+    if (confirmRestaurantName.trim().toLowerCase() !== targetRestaurantForDelete.name.trim().toLowerCase()) {
+      Alert.alert('Name Mismatch', 'Please enter the exact restaurant name to confirm deletion.');
+      return;
+    }
+
+    setDeletingRestaurant(true);
+    try {
+      // Re-verify target restaurant by immutable ID immediately before deletion
+      const freshTarget = await superAdminService.getRestaurantById(targetRestaurantForDelete.id);
+      if (!freshTarget || freshTarget.id !== targetRestaurantForDelete.id) {
+        Alert.alert('Validation Error', 'Target restaurant could not be validated or has already been removed.');
+        return;
+      }
+      if (freshTarget.name.trim().toLowerCase() !== confirmRestaurantName.trim().toLowerCase()) {
+        Alert.alert('Validation Error', 'Target restaurant name mismatch during pre-flight revalidation.');
+        return;
+      }
+
+      const result = await superAdminService.deleteRestaurantCompletely(targetRestaurantForDelete.id, confirmRestaurantName);
+
+      if (result.storageCleanup && !result.storageCleanup.success) {
+        setStorageCleanupFailed(true);
+        setLastDeletedId(targetRestaurantForDelete.id);
+        Alert.alert(
+          'Partial Purge Complete',
+          'Database records were deleted, but some cloud storage files could not be removed. You can click "Retry Storage Cleanup" below.'
+        );
+      } else {
+        setDeleteModalVisible(false);
+        Alert.alert(
+          'Restaurant Permanently Deleted',
+          `"${targetRestaurantForDelete.name}" and all associated database records and storage files have been permanently erased.`
+        );
+        loadData();
+      }
+    } catch (err: any) {
+      Alert.alert('Deletion Failed', err?.message || 'Failed to permanently delete restaurant.');
+    } finally {
+      setDeletingRestaurant(false);
+    }
+  };
+
+  const handleRetryStorageCleanup = async () => {
+    const targetId = lastDeletedId || targetRestaurantForDelete?.id;
+    if (!targetId) return;
+    try {
+      const res = await superAdminService.retryRestaurantStorageCleanup(targetId);
+      if (res.success) {
+        Alert.alert('Success', 'Storage files cleaned up successfully.');
+        setDeleteModalVisible(false);
+        loadData();
+      } else {
+        Alert.alert('Warning', `Cleanup finished with ${res.remainingCount} files remaining.`);
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to clean storage.');
+    }
+  };
+
   const filteredRestaurants = restaurants.filter((r) => {
     const matchesSearch =
       r.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -644,6 +737,14 @@ export default function SuperAdminRestaurantsScreen() {
                             {r.status === 'ACTIVE' ? '🚫 Suspend' : '✅ Activate'}
                           </Text>
                         </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.mobileDeleteBtn}
+                          onPress={() => handleOpenDeleteModal(r)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={styles.mobileDeleteBtnText}>🗑️ Delete</Text>
+                        </TouchableOpacity>
                       </View>
                     </View>
                   </View>
@@ -784,6 +885,14 @@ export default function SuperAdminRestaurantsScreen() {
                         onPress={() => handleToggleStatus(r)}
                       >
                         <Text style={{ fontSize: 14 }}>{r.status === 'ACTIVE' ? '🚫' : '✅'}</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.actionBtn, styles.actionBtnDanger]}
+                        onPress={() => handleOpenDeleteModal(r)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={{ fontSize: 14 }}>🗑️</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -1221,6 +1330,152 @@ export default function SuperAdminRestaurantsScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Permanent Delete Confirmation Modal */}
+      <Modal visible={deleteModalVisible} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { width: isMobile ? '94%' : 540, maxHeight: '90%', padding: 0, overflow: 'hidden' }]}>
+            <View style={{ backgroundColor: '#FEF2F2', borderBottomWidth: 1, borderBottomColor: '#FEE2E2', padding: 20 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Text style={{ fontSize: 24 }}>🚨</Text>
+                  <Text style={{ fontSize: 18, fontWeight: '800', color: '#991B1B' }}>Permanently Delete Restaurant</Text>
+                </View>
+                {!deletingRestaurant && (
+                  <TouchableOpacity onPress={() => setDeleteModalVisible(false)}>
+                    <Text style={{ fontSize: 18, color: '#991B1B', fontWeight: '700' }}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <Text style={{ fontSize: 13, color: '#B91C1C', marginTop: 8, lineHeight: 18 }}>
+                This action <Text style={{ fontWeight: '800' }}>CANNOT</Text> be undone. It will permanently delete{' '}
+                <Text style={{ fontWeight: '800', textDecorationLine: 'underline' }}>{targetRestaurantForDelete?.name}</Text> and all its related database records and cloud storage assets.
+              </Text>
+            </View>
+
+            <ScrollView style={{ padding: 20, maxHeight: 400 }}>
+              {loadingPreview ? (
+                <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color="#DC2626" />
+                  <Text style={{ fontSize: 13, color: '#64748B', marginTop: 10 }}>Calculating affected database and storage records...</Text>
+                </View>
+              ) : (
+                <View style={{ gap: 14 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#1E293B' }}>
+                    📊 Records to be permanently erased:
+                  </Text>
+                  <View style={styles.previewGrid}>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{previewData?.orders || 0}</Text>
+                      <Text style={styles.previewLabel}>Orders</Text>
+                    </View>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{previewData?.products || 0}</Text>
+                      <Text style={styles.previewLabel}>Products</Text>
+                    </View>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{previewData?.categories || 0}</Text>
+                      <Text style={styles.previewLabel}>Categories</Text>
+                    </View>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{previewData?.tables || 0}</Text>
+                      <Text style={styles.previewLabel}>Tables</Text>
+                    </View>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{previewData?.kots || 0}</Text>
+                      <Text style={styles.previewLabel}>KOTs</Text>
+                    </View>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{previewData?.payments || 0}</Text>
+                      <Text style={styles.previewLabel}>Payments</Text>
+                    </View>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{previewData?.members || 0}</Text>
+                      <Text style={styles.previewLabel}>Members</Text>
+                    </View>
+                    <View style={styles.previewItem}>
+                      <Text style={styles.previewCount}>{storagePreview?.totalCount || 0}</Text>
+                      <Text style={styles.previewLabel}>Files</Text>
+                    </View>
+                  </View>
+
+                  <View style={{ backgroundColor: '#F8FAFC', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                    <Text style={{ fontSize: 12, color: '#475569', lineHeight: 16 }}>
+                      ℹ️ <Text style={{ fontWeight: '700' }}>Safety Guarantee:</Text> Global User Accounts in Auth and Profiles will remain intact. Only restaurant-specific memberships and data are deleted.
+                    </Text>
+                  </View>
+
+                  {storageCleanupFailed && (
+                    <View style={{ backgroundColor: '#FEF3C7', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#FDE68A' }}>
+                      <Text style={{ fontSize: 12, color: '#92400E', fontWeight: '700' }}>
+                        ⚠️ Database records deleted, but some storage files remained.
+                      </Text>
+                      <TouchableOpacity
+                        style={{ backgroundColor: '#D97706', padding: 8, borderRadius: 6, alignItems: 'center', marginTop: 8 }}
+                        onPress={handleRetryStorageCleanup}
+                      >
+                        <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 12 }}>🔄 Retry Storage Cleanup</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {!storageCleanupFailed && (
+                    <View style={{ marginTop: 6 }}>
+                      <Text style={{ fontSize: 13, color: '#334155', fontWeight: '600', marginBottom: 6 }}>
+                        To confirm, type <Text style={{ fontWeight: '800', color: '#991B1B' }}>{targetRestaurantForDelete?.name}</Text> below:
+                      </Text>
+                      <TextInput
+                        style={[
+                          styles.input,
+                          {
+                            borderColor: confirmRestaurantName.trim().toLowerCase() === targetRestaurantForDelete?.name?.trim().toLowerCase() ? '#DC2626' : '#CBD5E1',
+                            backgroundColor: '#FFFFFF',
+                          }
+                        ]}
+                        placeholder={`Type "${targetRestaurantForDelete?.name}" here`}
+                        value={confirmRestaurantName}
+                        onChangeText={setConfirmRestaurantName}
+                        autoCapitalize="none"
+                        editable={!deletingRestaurant}
+                      />
+                    </View>
+                  )}
+                </View>
+              )}
+            </ScrollView>
+
+            <View style={{ padding: 16, backgroundColor: '#F8FAFC', borderTopWidth: 1, borderTopColor: '#E2E8F0', flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+              <TouchableOpacity
+                style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, backgroundColor: '#E2E8F0' }}
+                onPress={() => setDeleteModalVisible(false)}
+                disabled={deletingRestaurant}
+              >
+                <Text style={{ color: '#475569', fontWeight: '700' }}>Cancel</Text>
+              </TouchableOpacity>
+
+              {!storageCleanupFailed && (
+                <TouchableOpacity
+                  style={[
+                    styles.btnConfirmPurge,
+                    (confirmRestaurantName.trim().toLowerCase() !== targetRestaurantForDelete?.name?.trim().toLowerCase() || deletingRestaurant || loadingPreview) && styles.btnConfirmPurgeDisabled,
+                  ]}
+                  onPress={handleConfirmPermanentDelete}
+                  disabled={confirmRestaurantName.trim().toLowerCase() !== targetRestaurantForDelete?.name?.trim().toLowerCase() || deletingRestaurant || loadingPreview}
+                >
+                  {deletingRestaurant ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                      <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>Purging...</Text>
+                    </View>
+                  ) : (
+                    <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>I Understand, Permanently Delete</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
       </Modal>
     </View>
   );
@@ -1865,5 +2120,65 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 3,
     marginBottom: 4,
+  },
+  actionBtnDanger: {
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  mobileDeleteBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mobileDeleteBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  previewGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginVertical: 4,
+  },
+  previewItem: {
+    flex: 1,
+    minWidth: '22%',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+  },
+  previewCount: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  previewLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 2,
+  },
+  btnConfirmPurge: {
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnConfirmPurgeDisabled: {
+    backgroundColor: '#FCA5A5',
+    opacity: 0.6,
   },
 });

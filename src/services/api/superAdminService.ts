@@ -1340,6 +1340,21 @@ export const superAdminService = {
       };
     }
 
+    // 0. Pre-validation: Verify target restaurant exists by ID and name matches
+    const { data: targetCheck, error: checkErr } = await supabase
+      .from('restaurants')
+      .select('id, name')
+      .eq('id', restaurantId)
+      .maybeSingle();
+
+    if (checkErr || !targetCheck) {
+      throw new Error(`Target restaurant with ID ${restaurantId} does not exist or could not be verified.`);
+    }
+
+    if (targetCheck.name.trim().toLowerCase() !== confirmationName.trim().toLowerCase()) {
+      throw new Error(`Confirmation name mismatch. Expected: "${targetCheck.name}", received: "${confirmationName}".`);
+    }
+
     // 1. Atomic PostgreSQL Database Purge via RPC
     const { data: dbResult, error: dbError } = await supabase.rpc('delete_restaurant_completely', {
       p_restaurant_id: restaurantId,

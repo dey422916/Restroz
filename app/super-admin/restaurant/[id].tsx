@@ -334,6 +334,17 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
 
     setDeletingRestaurant(true);
     try {
+      // Re-verify target restaurant by immutable ID immediately before deletion
+      const freshTarget = await superAdminService.getRestaurantById(restaurant.id);
+      if (!freshTarget || freshTarget.id !== restaurant.id) {
+        Alert.alert('Validation Error', 'Target restaurant could not be validated or has already been removed.');
+        return;
+      }
+      if (freshTarget.name.trim().toLowerCase() !== confirmRestaurantName.trim().toLowerCase()) {
+        Alert.alert('Validation Error', 'Target restaurant name mismatch during pre-flight revalidation.');
+        return;
+      }
+
       const result = await superAdminService.deleteRestaurantCompletely(restaurant.id, confirmRestaurantName);
 
       if (result.storageCleanup && !result.storageCleanup.success) {

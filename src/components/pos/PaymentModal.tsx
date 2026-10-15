@@ -23,6 +23,7 @@ import { resolveOrderDiscounts } from '../../services/api/orderService';
 import { loyaltyService } from '../../services/api/loyaltyService';
 import { calculateSplitAutoFill, SplitPaymentEntry } from '../../utils/splitPayment';
 import { roundToTwoDecimals } from '../../utils/currency';
+import { resolveOrderFinancials } from '../../utils/orderFinancials';
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -201,8 +202,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     });
   }, [order, discountType, validatedDiscount, isGstEnabled, taxRate]);
 
+  const fin = useMemo(() => resolveOrderFinancials(order), [order]);
+  const existingWalletRedeemed = fin.walletRedeemed;
   const alreadyPaid = Number(order?.paid_amount || 0);
-  const remainingBalance = Math.max(0, totals.payableAmount - alreadyPaid);
+  const remainingBalance = Math.max(0, totals.payableAmount - alreadyPaid - existingWalletRedeemed);
 
   // Wallet redemption calculation
   const walletBalance = walletInfo?.balance || 0;
@@ -300,7 +303,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           payable_amount: totals.payableAmount,
           customer_gstin: customerGstinInput.trim().toUpperCase() || undefined,
           customer_phone: customerPhoneInput.trim() || undefined,
-          wallet_redeem_amount: walletRedeemAmount,
+          wallet_redeem_amount: existingWalletRedeemed + walletRedeemAmount,
           splitPayments: splitArray,
         }
       );
@@ -499,6 +502,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   <Text style={styles.billTotalLabel}>Grand Total:</Text>
                   <Text style={styles.billTotalVal}>{formatCurrency(totals.payableAmount)}</Text>
                 </View>
+
+                {existingWalletRedeemed > 0 && (
+                  <View style={[styles.billRow, { marginTop: 4 }]}>
+                    <Text style={[styles.billLabel, { color: '#059669', fontWeight: '800' }]}>🎁 Rewards Redeemed:</Text>
+                    <Text style={[styles.billVal, { color: '#059669', fontWeight: '900' }]}>
+                      -{formatCurrency(existingWalletRedeemed)}
+                    </Text>
+                  </View>
+                )}
 
                 <Text style={styles.wordsText}>
                   ({numberToWords(totals.payableAmount)})

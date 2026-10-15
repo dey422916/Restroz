@@ -3,6 +3,7 @@ import { Order, KOT, RestaurantSettings, OrderItem, DayRegister } from '../types
 import { formatCurrency, numberToWords } from '../utils/currency';
 import { getOrderSubtotal, getOrderTaxableBreakdown, getOrderInvoiceTotals } from '../utils/gst';
 import { cleanCustomerOrderNotes } from '../utils/orderNotes';
+import { resolveOrderFinancials } from '../utils/orderFinancials';
 import { formatOrderDateTime } from '../utils/dateUtils';
 import { directPrintService, resolveKotPrinterName, resolveBillPrinterName, isAutoPrintEnabled, DirectPrintError } from './directPrintService';
 import { webDirectPrintService } from './webDirectPrintService';
@@ -755,6 +756,7 @@ export const printService = {
       .join('');
 
     const calculatedTotals = getOrderInvoiceTotals(order, settings);
+    const fin = resolveOrderFinancials(order);
 
     const dynamicTaxRate =
       (order as any).tax_rate !== undefined && (order as any).tax_rate !== null && !isNaN(Number((order as any).tax_rate))
@@ -1085,16 +1087,45 @@ export const printService = {
 
             <div class="dashed"></div>
 
+            ${
+              fin.walletRedeemed > 0
+                ? `
+            <div class="flex-between bold" style="font-size: ${is58 ? '11px' : isA4 ? '14px' : '12px'};">
+              <span>Total:</span>
+              <span>INR ${fin.grossTotal.toFixed(2)}</span>
+            </div>
+            <div class="flex-between bold">
+              <span>Rewards Used:</span>
+              <span>-INR ${fin.walletRedeemed.toFixed(2)}</span>
+            </div>
+            <div class="flex-between bold" style="font-size: ${is58 ? '12px' : isA4 ? '15px' : '13px'};">
+              <span>Net Payable:</span>
+              <span>INR ${fin.netPayableAfterRewards.toFixed(2)}</span>
+            </div>
+            ${
+              fin.externalPaid > 0 && isPaid
+                ? `
+            <div class="flex-between">
+              <span>${fin.paymentBreakdown.cash > 0 ? 'Cash:' : 'Paid:'}</span>
+              <span>INR ${fin.externalPaid.toFixed(2)}</span>
+            </div>
+                `
+                : ''
+            }
+                `
+                : `
             <div class="flex-between bold" style="font-size: ${is58 ? '12px' : isA4 ? '15px' : '13px'};">
               <span>Grand Total:</span>
               <span>${payableAmountStr}</span>
             </div>
+                `
+            }
 
             <div class="dashed"></div>
 
             <div class="flex-between bold">
               <span>Payment Method:</span>
-              <span>${paymentMethodStr}</span>
+              <span>${fin.walletRedeemed > 0 ? fin.paymentMethodLabel : paymentMethodStr}</span>
             </div>
 
             <div class="flex-between">
@@ -1373,6 +1404,7 @@ export const printService = {
     const stateCode = settings.state_code || '19';
 
     const calculatedTotals = getOrderInvoiceTotals(order, settings);
+    const fin = resolveOrderFinancials(order);
 
     const dynamicTaxRate =
       (order as any).tax_rate !== undefined && (order as any).tax_rate !== null && !isNaN(Number((order as any).tax_rate))
@@ -1745,7 +1777,7 @@ export const printService = {
               <div class="detail-card">
                 <div class="card-title">Payment & Settlement Details</div>
                 <div class="card-item">Payment Status: <span class="${isPaid ? 'badge-paid' : 'badge-unpaid'}">${isPaid ? 'PAID' : 'UNPAID / PENDING'}</span></div>
-                <div class="card-item">Payment Method: <b>${paymentMethodStr}</b></div>
+                <div class="card-item">Payment Method: <b>${fin.walletRedeemed > 0 ? fin.paymentMethodLabel : paymentMethodStr}</b></div>
                 ${order.payments && order.payments[0]?.transaction_reference ? `<div class="card-item">Transaction Ref: <b>${order.payments[0].transaction_reference}</b></div>` : ''}
               </div>
             </div>
@@ -1844,10 +1876,24 @@ export const printService = {
                   ${order.service_charge ? `<div class="total-row"><span>Service Charge:</span><b>${formatCurrency(order.service_charge)}</b></div>` : ''}
                   ${roundOffNum !== 0 ? `<div class="total-row"><span>Round Off:</span><b>${roundOffNum > 0 ? '+' : ''}${formatCurrency(roundOffNum)}</b></div>` : ''}
 
+                  ${
+                    fin.walletRedeemed > 0
+                      ? `
+                  <div class="total-row"><span>Bill Total:</span><b>${formatCurrency(fin.grossTotal)}</b></div>
+                  <div class="total-row" style="color: #15803d;"><span>Rewards Used:</span><b>-${formatCurrency(fin.walletRedeemed)}</b></div>
+                  <div class="grand-total-row">
+                    <span>Net Payable:</span>
+                    <span class="grand-total-val">${formatCurrency(fin.netPayableAfterRewards)}</span>
+                  </div>
+                  ${fin.externalPaid > 0 && isPaid ? `<div class="total-row"><span>Cash/Paid:</span><b>${formatCurrency(fin.externalPaid)}</b></div>` : ''}
+                      `
+                      : `
                   <div class="grand-total-row">
                     <span>Grand Total:</span>
                     <span class="grand-total-val">${formatCurrency(payableAmount)}</span>
                   </div>
+                      `
+                  }
                 </div>
               </div>
             </div>

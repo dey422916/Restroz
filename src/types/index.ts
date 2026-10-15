@@ -233,6 +233,7 @@ export interface Order {
   payable_amount: number;
   final_amount?: number;
   paid_amount?: number;
+  wallet_redeemed?: number;
   payment_method?: string;
   payment_proof_url?: string;
   payment_verified_at?: string;

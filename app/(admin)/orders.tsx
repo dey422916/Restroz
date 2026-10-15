@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { orderService, resolveOrderSource, clearOrdersCache, resolveOrderDiscounts } from '../../src/services/api/orderService';
+import { resolveOrderFinancials } from '../../src/utils/orderFinancials';
 import { loyaltyService } from '../../src/services/api/loyaltyService';
 import { productService } from '../../src/services/api/productService';
 import { tableService } from '../../src/services/api/tableService';
@@ -706,9 +707,8 @@ export default function OrdersScreen() {
     }
     markAsSeen(order.id);
     setPartialPayModal(order);
-    const payable = Number(order.payable_amount ?? order.grand_total ?? 0);
-    const paid = Number(order.paid_amount ?? 0);
-    const balance = Math.max(0, payable - paid);
+    const fin = resolveOrderFinancials(order);
+    const balance = fin.remainingBalance;
     setPartialPayAmount(balance > 0 ? String(balance) : '');
     setPartialPayMethod('cash');
     setPartialPayRef('');
@@ -722,9 +722,8 @@ export default function OrdersScreen() {
   // Confirm Partial Payment
   const handleConfirmPartialPayment = async () => {
     if (!partialPayModal) return;
-    const payable = Number(partialPayModal.payable_amount ?? partialPayModal.grand_total ?? 0);
-    const paid = Number(partialPayModal.paid_amount ?? 0);
-    const balance = Math.max(0, payable - paid);
+    const fin = resolveOrderFinancials(partialPayModal);
+    const balance = fin.remainingBalance;
 
     if (balance <= 0) {
       showAlert('Fully Paid', 'This order is already fully paid. Click Settle to complete the order.');
@@ -1150,7 +1149,8 @@ export default function OrdersScreen() {
     ]);
     setPayCustomerGstin(order.customer_gstin || '');
     setPayCustomerPhone(order.customer_phone || '');
-    setIsRedeemPayWallet(false);
+    const initialFin = resolveOrderFinancials(order);
+    setIsRedeemPayWallet(initialFin.walletRedeemed > 0);
     setPayWalletInfo(null);
     const resolvedPayDisc = resolveOrderDiscounts(order);
     setPayDiscountType(resolvedPayDisc.discount_type);
@@ -1221,9 +1221,12 @@ export default function OrdersScreen() {
   const isPayRewardsEnabled = Boolean(payWalletInfo?.is_enabled);
   const canRedeemPayWallet = Boolean(isPayRewardsEnabled && payWalletBalance >= payMinRequired && payWalletBalance > 0);
 
+  const payModalFin = useMemo(() => payOrderModal ? resolveOrderFinancials(payOrderModal) : null, [payOrderModal]);
+  const orderExistingWallet = payModalFin?.walletRedeemed || 0;
+
   const finalPayableBeforeLoyalty = payTotals?.payableAmount ?? payOrderModal?.payable_amount ?? 0;
   const alreadyPaidAmount = Number(payOrderModal?.paid_amount || 0);
-  const remainingDueBeforeLoyalty = roundToTwoDecimals(Math.max(0, finalPayableBeforeLoyalty - alreadyPaidAmount));
+  const remainingDueBeforeLoyalty = roundToTwoDecimals(Math.max(0, finalPayableBeforeLoyalty - alreadyPaidAmount - orderExistingWallet));
 
   const payWalletRedeemAmount = useMemo(() => {
     if (!isRedeemPayWallet || !canRedeemPayWallet) return 0;
@@ -1298,7 +1301,7 @@ export default function OrdersScreen() {
         payableAmount: payTotals?.payableAmount,
         customer_gstin: payCustomerGstin.trim().toUpperCase() || undefined,
         customer_phone: payCustomerPhone.trim() || undefined,
-        walletRedeemAmount: payWalletRedeemAmount,
+        walletRedeemAmount: orderExistingWallet + payWalletRedeemAmount,
       });
 
       // Instantly synchronize local orders state without waiting for slow network roundtrip
@@ -1851,18 +1854,14 @@ export default function OrdersScreen() {
                   </View>
                 )}
 
-                {/* Financial Breakdown: Total, Paid, Balance */}
+                {/* Financial Breakdown: Total, Rewards, Paid, Balance */}
                 {(() => {
-                  const payableVal =
-                    order.payable_amount !== undefined && order.payable_amount !== null
-                      ? Number(order.payable_amount)
-                      : (order.grand_total !== undefined && order.grand_total !== null
-                          ? Number(order.grand_total)
-                          : (order.items && order.items.length > 0
-                              ? order.items.reduce((sum, item) => sum + ((Number(item.unit_price) * Number(item.quantity)) || Number(item.subtotal) || Number(item.total) || 0), 0)
-                              : 0));
-                  const paidVal = Number(order.paid_amount || 0);
-                  const balanceVal = Math.max(0, payableVal - paidVal);
+                  const fin = resolveOrderFinancials(order);
+                  const grossTotalVal = fin.grossTotal;
+                  const walletRedeemedVal = fin.walletRedeemed;
+                  const externalPaidVal = fin.externalPaid;
+                  const balanceVal = fin.remainingBalance;
+                  const isOrderFullyPaid = isPaid || fin.isFullyPaid;
 
                   const isOnlineDelivery = isCustomerApp || order.order_type === 'delivery' || isOnlineDeliveryOrder(order);
                   const isQr = isCustomerQr || isQrDigitalMenuOrder(order);
@@ -1881,10 +1880,16 @@ export default function OrdersScreen() {
                   let badgeTextStyle = styles.payStatusTextUnpaid;
                   let badgeLabel = '⚠️ UNPAID';
 
-                  if (isPaid) {
+                  if (isOrderFullyPaid) {
                     badgeContainerStyle = styles.payStatusPaid;
                     badgeTextStyle = styles.payStatusTextPaid;
-                    if (isCardPay) badgeLabel = '✓ PAID (CARD)';
+                    if (walletRedeemedVal > 0) {
+                      if (externalPaidVal > 0) {
+                        badgeLabel = `✓ PAID (${fin.paymentMethodLabel})`;
+                      } else {
+                        badgeLabel = '✓ PAID (REWARDS)';
+                      }
+                    } else if (isCardPay) badgeLabel = '✓ PAID (CARD)';
                     else if (isUpiPay) badgeLabel = '✓ PAID (UPI)';
                     else if (isOnlinePay) badgeLabel = '✓ PAID (ONLINE)';
                     else if (isCashPay || isCodPay) badgeLabel = '✓ PAID (CASH)';
@@ -1900,7 +1905,7 @@ export default function OrdersScreen() {
                       badgeContainerStyle = { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#86efac' } as any;
                       badgeTextStyle = { color: '#15803d' } as any;
                       badgeLabel = '📱 ONLINE • PAYMENT VERIFIED • READY TO SETTLE';
-                    } else if (isPartialPaymentEligible && paidVal > 0) {
+                    } else if (isPartialPaymentEligible && externalPaidVal > 0) {
                       badgeContainerStyle = { backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe' } as any;
                       badgeTextStyle = { color: '#1d4ed8' } as any;
                       badgeLabel = `💳 PARTIALLY PAID (BAL: ${formatCurrency(balanceVal)})`;
@@ -1927,18 +1932,29 @@ export default function OrdersScreen() {
 
                   return (
                     <>
-                      {/* Total, Paid, Balance summary for Dine-In & Takeaway, or single Total for Online/QR */}
+                      {/* Total, Rewards, Paid, Balance summary for Dine-In & Takeaway, or single Total for Online/QR */}
                       {isPartialPaymentEligible ? (
                         <View style={styles.orderFinanceBox}>
                           <View style={styles.orderFinanceCol}>
                             <Text style={styles.orderFinanceLabel}>Total</Text>
-                            <Text style={styles.orderFinanceVal}>{formatCurrency(payableVal)}</Text>
+                            <Text style={styles.orderFinanceVal}>{formatCurrency(grossTotalVal)}</Text>
                           </View>
+                          {walletRedeemedVal > 0 && (
+                            <>
+                              <View style={styles.orderFinanceDivider} />
+                              <View style={styles.orderFinanceCol}>
+                                <Text style={[styles.orderFinanceLabel, { color: '#059669' }]}>Rewards</Text>
+                                <Text style={[styles.orderFinanceVal, { color: '#059669', fontWeight: '800' }]}>
+                                  -{formatCurrency(walletRedeemedVal)}
+                                </Text>
+                              </View>
+                            </>
+                          )}
                           <View style={styles.orderFinanceDivider} />
                           <View style={styles.orderFinanceCol}>
-                            <Text style={styles.orderFinanceLabel}>Paid</Text>
-                            <Text style={[styles.orderFinanceVal, { color: paidVal > 0 ? '#15803d' : '#64748b' }]}>
-                              {formatCurrency(paidVal)}
+                            <Text style={styles.orderFinanceLabel}>{externalPaidVal > 0 && !isOrderFullyPaid ? 'Paid' : 'Paid'}</Text>
+                            <Text style={[styles.orderFinanceVal, { color: externalPaidVal > 0 ? '#15803d' : '#64748b' }]}>
+                              {formatCurrency(externalPaidVal)}
                             </Text>
                           </View>
                           <View style={styles.orderFinanceDivider} />
@@ -1953,17 +1969,48 @@ export default function OrdersScreen() {
                         <View style={[styles.orderFinanceBox, { paddingVertical: 5 }]}>
                           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', paddingHorizontal: 6 }}>
                             <Text style={styles.orderFinanceLabel}>Total Amount</Text>
-                            <Text style={[styles.orderFinanceVal, { fontWeight: '800' }]}>{formatCurrency(payableVal)}</Text>
+                            <Text style={[styles.orderFinanceVal, { fontWeight: '800' }]}>{formatCurrency(grossTotalVal)}</Text>
                           </View>
+                          {walletRedeemedVal > 0 && (
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', paddingHorizontal: 6, marginTop: 2 }}>
+                              <Text style={[styles.orderFinanceLabel, { color: '#059669' }]}>Rewards Used</Text>
+                              <Text style={[styles.orderFinanceVal, { color: '#059669', fontWeight: '800' }]}>-{formatCurrency(walletRedeemedVal)}</Text>
+                            </View>
+                          )}
+                          {walletRedeemedVal > 0 && (
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', paddingHorizontal: 6, marginTop: 2 }}>
+                              <Text style={[styles.orderFinanceLabel, { fontWeight: '900' }]}>Net Payable</Text>
+                              <Text style={[styles.orderFinanceVal, { fontWeight: '900', color: '#0f172a' }]}>{formatCurrency(fin.netPayableAfterRewards)}</Text>
+                            </View>
+                          )}
                         </View>
                       )}
 
                       {/* Payment Status Badge */}
-                      <View style={[styles.payStatusBadge, badgeContainerStyle, { marginBottom: 4 }]}>
+                      <View style={[styles.payStatusBadge, badgeContainerStyle, { marginBottom: walletRedeemedVal > 0 ? 3 : 4 }]}>
                         <Text style={[styles.payStatusText, badgeTextStyle]}>
                           {badgeLabel}
                         </Text>
                       </View>
+
+                      {/* Compact rewards indicator if loyalty was redeemed */}
+                      {walletRedeemedVal > 0 && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 5, paddingVertical: 2.5, paddingHorizontal: 8, backgroundColor: '#ecfdf5', borderRadius: 4, borderWidth: 1, borderColor: '#a7f3d0' }}>
+                          <Text style={{ fontSize: 10.5, fontWeight: '800', color: '#065f46' }}>
+                            🎁 Rewards Used: {formatCurrency(walletRedeemedVal)}
+                          </Text>
+                          {externalPaidVal > 0 && (
+                            <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#047857' }}>
+                              • 💵 {fin.paymentBreakdown.cash > 0 ? 'Cash' : fin.paymentBreakdown.upi > 0 ? 'UPI' : 'Paid'}: {formatCurrency(externalPaidVal)}
+                            </Text>
+                          )}
+                          {!isOrderFullyPaid && (
+                            <Text style={{ fontSize: 10.5, fontWeight: '700', color: '#b45309' }}>
+                              • Net Due: {formatCurrency(fin.netPayableAfterRewards)}
+                            </Text>
+                          )}
+                        </View>
+                      )}
                     </>
                   );
                 })()}
@@ -3256,19 +3303,28 @@ export default function OrdersScreen() {
                     </>
                   )}
 
-                  {/* Partial Payments Accounting in Settlement Modal */}
+                  {/* Partial Payments & Rewards Accounting in Settlement Modal */}
                   {(() => {
                     const finalPayable = payTotals?.payableAmount ?? payOrderModal?.payable_amount ?? 0;
                     const alreadyPaid = Number(payOrderModal?.paid_amount || 0);
-                    const remainingBalance = Math.max(0, finalPayable - alreadyPaid);
+                    const alreadyRedeemed = orderExistingWallet;
+                    const remainingBalance = Math.max(0, finalPayable - alreadyPaid - alreadyRedeemed);
 
-                    if (alreadyPaid > 0) {
+                    if (alreadyPaid > 0 || alreadyRedeemed > 0) {
                       return (
                         <View style={{ marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderColor: '#cbd5e1', backgroundColor: '#f0fdf4', padding: 8, borderRadius: 8 }}>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
-                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#166534' }}>Already Collected (Paid):</Text>
-                            <Text style={{ fontSize: 11, fontWeight: '900', color: '#15803d' }}>{formatCurrency(alreadyPaid)}</Text>
-                          </View>
+                          {alreadyRedeemed > 0 && (
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: '#166534' }}>🎁 Rewards Redeemed on Order:</Text>
+                              <Text style={{ fontSize: 11, fontWeight: '900', color: '#15803d' }}>-{formatCurrency(alreadyRedeemed)}</Text>
+                            </View>
+                          )}
+                          {alreadyPaid > 0 && (
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: '#166534' }}>Already Collected (Paid):</Text>
+                              <Text style={{ fontSize: 11, fontWeight: '900', color: '#15803d' }}>{formatCurrency(alreadyPaid)}</Text>
+                            </View>
+                          )}
                           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                             <Text style={{ fontSize: 12, fontWeight: '900', color: remainingBalance > 0 ? '#b45309' : '#15803d' }}>
                               Remaining Balance to Settle:
@@ -3936,15 +3992,82 @@ export default function OrdersScreen() {
                           )}
 
                           {/* Grand Total Banner */}
-                          <View style={styles.invoiceGrandTotalBanner}>
-                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <Text style={styles.invoiceGrandTotalLabel}>Grand Total</Text>
-                              <Text style={styles.invoiceGrandTotalVal}>{formatCurrency(invoiceTotals.payableAmount)}</Text>
-                            </View>
-                            <Text style={styles.invoiceWordsText}>
-                              ({numberToWords(invoiceTotals.payableAmount || 0)})
-                            </Text>
-                          </View>
+                          {(() => {
+                            const modalFin = resolveOrderFinancials(viewOrderModal);
+                            return (
+                              <>
+                                <View style={styles.invoiceGrandTotalBanner}>
+                                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Text style={styles.invoiceGrandTotalLabel}>
+                                      {modalFin.walletRedeemed > 0 ? 'Bill Total' : 'Grand Total'}
+                                    </Text>
+                                    <Text style={styles.invoiceGrandTotalVal}>
+                                      {formatCurrency(modalFin.grossTotal || invoiceTotals.payableAmount)}
+                                    </Text>
+                                  </View>
+                                  <Text style={styles.invoiceWordsText}>
+                                    ({numberToWords(modalFin.grossTotal || invoiceTotals.payableAmount || 0)})
+                                  </Text>
+                                </View>
+
+                                {/* Loyalty Rewards Used line if redeemed */}
+                                {modalFin.walletRedeemed > 0 && (
+                                  <>
+                                    <View style={[styles.invoiceRow, { marginTop: 6 }]}>
+                                      <Text style={[styles.invoiceLabel, { color: '#059669', fontWeight: '800' }]}>
+                                        ⭐ Rewards Used
+                                      </Text>
+                                      <Text style={[styles.invoiceVal, { color: '#059669', fontWeight: '900' }]}>
+                                        -{formatCurrency(modalFin.walletRedeemed)}
+                                      </Text>
+                                    </View>
+                                    <View style={[styles.invoiceGrandTotalBanner, { marginTop: 6, backgroundColor: '#f0fdf4', borderColor: '#86efac' }]}>
+                                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <Text style={[styles.invoiceGrandTotalLabel, { color: '#166534' }]}>Net Payable</Text>
+                                        <Text style={[styles.invoiceGrandTotalVal, { color: '#166534' }]}>
+                                          {formatCurrency(modalFin.netPayableAfterRewards)}
+                                        </Text>
+                                      </View>
+                                      <Text style={[styles.invoiceWordsText, { color: '#15803d' }]}>
+                                        ({numberToWords(modalFin.netPayableAfterRewards || 0)})
+                                      </Text>
+                                    </View>
+                                  </>
+                                )}
+
+                                {/* Payment Settlement Breakdown */}
+                                {(modalFin.externalPaid > 0 || modalFin.walletRedeemed > 0) && (
+                                  <View style={{ marginTop: 8, padding: 8, backgroundColor: '#f8fafc', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#475569', marginBottom: 4 }}>
+                                      PAYMENT SETTLEMENT BREAKDOWN
+                                    </Text>
+                                    {modalFin.walletRedeemed > 0 && (
+                                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                                        <Text style={{ fontSize: 12, color: '#059669', fontWeight: '700' }}>🎁 Rewards Redeemed:</Text>
+                                        <Text style={{ fontSize: 12, color: '#059669', fontWeight: '800' }}>{formatCurrency(modalFin.walletRedeemed)}</Text>
+                                      </View>
+                                    )}
+                                    {modalFin.externalPaid > 0 && (
+                                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                                        <Text style={{ fontSize: 12, color: '#1e293b', fontWeight: '700' }}>
+                                          💵 {viewOrderModal.payment_method ? viewOrderModal.payment_method.toUpperCase() : 'Cash'} Paid:
+                                        </Text>
+                                        <Text style={{ fontSize: 12, color: '#1e293b', fontWeight: '800' }}>{formatCurrency(modalFin.externalPaid)}</Text>
+                                      </View>
+                                    )}
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderColor: '#cbd5e1', paddingTop: 4, marginTop: 4 }}>
+                                      <Text style={{ fontSize: 12, fontWeight: '900', color: modalFin.remainingBalance > 0 ? '#b45309' : '#15803d' }}>
+                                        {modalFin.remainingBalance > 0 ? 'Remaining Balance:' : 'Balance Due:'}
+                                      </Text>
+                                      <Text style={{ fontSize: 12, fontWeight: '900', color: modalFin.remainingBalance > 0 ? '#b45309' : '#15803d' }}>
+                                        {formatCurrency(modalFin.remainingBalance)}
+                                      </Text>
+                                    </View>
+                                  </View>
+                                )}
+                              </>
+                            );
+                          })()}
                         </>
                       );
                     })()}

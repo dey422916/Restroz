@@ -8,6 +8,7 @@ import { Order, RestaurantSettings, RestaurantPrinter, PrinterCalibration, Print
 import { formatOrderDateTime, formatOrderDate, formatOrderTime } from '../../../utils/dateUtils';
 import { getOrderInvoiceTotals } from '../../../utils/gst';
 import { consolidateOrderItems } from '../../../utils/orderItemIdentity';
+import { resolveOrderFinancials } from '../../../utils/orderFinancials';
 import { EscPosDocument } from './encoder';
 import { EscPosTextBuilder } from './escposBuilder';
 
@@ -194,19 +195,32 @@ export function renderBillToEscPos(
 
   builder.addDivider('=');
 
-  // GRAND TOTAL / PAYABLE AMOUNT (Using INR to prevent corruption)
-  builder.addKeyValue('TOTAL PAYABLE:', `INR ${calculatedTotals.payableAmount.toFixed(2)}`, {
-    bold: true,
-  });
+  const fin = resolveOrderFinancials(order);
+  const isPaid = order.payment_status === 'paid' || order.status === 'completed';
+
+  if (fin.walletRedeemed > 0) {
+    builder.addKeyValue('Total Bill:', `INR ${fin.grossTotal.toFixed(2)}`, { bold: true });
+    builder.addKeyValue('Rewards Used:', `-INR ${fin.walletRedeemed.toFixed(2)}`, { bold: true });
+    builder.addKeyValue('Net Payable:', `INR ${fin.netPayableAfterRewards.toFixed(2)}`, { bold: true });
+    if (fin.externalPaid > 0 && isPaid) {
+      builder.addKeyValue('Paid Amount:', `INR ${fin.externalPaid.toFixed(2)}`);
+    }
+  } else {
+    // GRAND TOTAL / PAYABLE AMOUNT (Using INR to prevent corruption)
+    builder.addKeyValue('TOTAL PAYABLE:', `INR ${calculatedTotals.payableAmount.toFixed(2)}`, {
+      bold: true,
+    });
+  }
 
   builder.addDivider('=');
 
   // 6. Payment Information
-  const isPaid = order.payment_status === 'paid';
   const paymentMethod =
-    order.payments && order.payments.length > 0
-      ? String(order.payments[0].payment_method).toUpperCase()
-      : 'CASH';
+    fin.walletRedeemed > 0
+      ? fin.paymentMethodLabel
+      : (order.payments && order.payments.length > 0
+          ? String(order.payments[0].payment_method).toUpperCase()
+          : 'CASH');
 
   builder.addKeyValue('Payment Mode:', paymentMethod, { bold: true });
   builder.addKeyValue('Payment Status:', isPaid ? 'PAID' : 'PENDING', { bold: true });

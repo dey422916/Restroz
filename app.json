@@ -12,7 +12,7 @@
     },
     "android": {
       "package": "com.restroz.pos",
-      "versionCode": 9,
+      "versionCode": 10,
       "permissions": [
         "CAMERA",
         "READ_EXTERNAL_STORAGE",

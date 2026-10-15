@@ -43,7 +43,7 @@ export const devicePrinterBindingService = {
     } catch (err) {
       console.warn('[devicePrinterBindings] Error checking print mode:', err);
     }
-    return 'DIRECT_DEVICE';
+    return 'CENTRAL_PRINT_STATION';
   },
 
   /**

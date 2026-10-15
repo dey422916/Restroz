@@ -321,60 +321,129 @@ export const printService = {
     const is58 = paperSize === '58mm';
     const isA4 = paperSize === 'A4';
 
-    const itemsHtml = itemsToPrint
-      .map((item) => {
-        if (isA4) {
-          return `
-            <tr style="border-bottom: 1px solid #cbd5e1;">
-              <td style="padding: 8px; font-size: 15px; font-weight: bold; line-height: 1.3;">
-                ${item.name}
-                ${
-                  item.notes
-                    ? `<div style="font-size: 13px; font-weight: normal; font-style: italic; margin-top: 3px; color: #475569;">• ${item.notes}</div>`
-                    : ''
-                }
-              </td>
-              <td style="padding: 8px; text-align: right; font-size: 16px; font-weight: 900; vertical-align: top; width: 80px;">
-                ${item.quantity}
-              </td>
-            </tr>
-          `;
-        }
-        if (is58) {
-          return `
-            <tr style="border-bottom: 1px dashed #666;">
-              <td style="padding: 3px 0; font-size: 12px; font-weight: bold; line-height: 1.2; word-break: break-word;">
-                ${item.name}
-                ${
-                  item.notes
-                    ? `<div style="font-size: 10px; font-weight: normal; font-style: italic; margin-top: 1px; padding-left: 4px;">• ${item.notes}</div>`
-                    : ''
-                }
-              </td>
-              <td style="padding: 3px 0; text-align: right; font-size: 14px; font-weight: 900; vertical-align: top; width: 32px;">
-                ${item.quantity}
-              </td>
-            </tr>
-          `;
-        }
-        // Default 80mm
+    const cancelledItems = itemsToPrint.filter(
+      (i) => i.quantity < 0 || (i.notes && i.notes.includes('[CANCELLED]')) || i.name.includes('[CANCELLED]')
+    );
+    const addedItems = itemsToPrint.filter(
+      (i) => i.quantity > 0 && !(i.notes && i.notes.includes('[CANCELLED]')) && !i.name.includes('[CANCELLED]')
+    );
+    const hasCancellation = cancelledItems.length > 0;
+
+    const renderRow = (item: { name: string; quantity: number; notes?: string }, isCancel: boolean) => {
+      const cleanName = item.name.replace('[CANCELLED]', '').trim();
+      const cleanNotes = item.notes?.replace('[CANCELLED]', '').trim();
+      const displayQty = Math.abs(item.quantity);
+      const textStyle = isCancel ? 'color: #991b1b;' : 'color: #000;';
+
+      if (isA4) {
         return `
-          <tr style="border-bottom: 1px dashed #444;">
-            <td style="padding: 3.5px 0; font-size: 13px; font-weight: bold; line-height: 1.25; word-break: break-word;">
-              ${item.name}
+          <tr style="border-bottom: 1px solid #cbd5e1; ${textStyle}">
+            <td style="padding: 8px; font-size: 15px; font-weight: bold; line-height: 1.3;">
+              ${isCancel ? `<span style="background-color: #fee2e2; color: #b91c1c; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-right: 6px;">CANCEL</span>` : ''}
+              ${cleanName}
               ${
-                item.notes
-                  ? `<div style="font-size: 11px; font-weight: normal; font-style: italic; margin-top: 2px; padding-left: 6px;">• ${item.notes}</div>`
+                cleanNotes
+                  ? `<div style="font-size: 13px; font-weight: normal; font-style: italic; margin-top: 3px; color: #475569;">• ${cleanNotes}</div>`
                   : ''
               }
             </td>
-            <td style="padding: 3.5px 0; text-align: right; font-size: 14.5px; font-weight: 900; vertical-align: top; width: 45px;">
-              ${item.quantity}
+            <td style="padding: 8px; text-align: right; font-size: 16px; font-weight: 900; vertical-align: top; width: 80px;">
+              ${displayQty}
             </td>
           </tr>
         `;
-      })
-      .join('');
+      }
+      if (is58) {
+        return `
+          <tr style="border-bottom: 1px dashed #666; ${textStyle}">
+            <td style="padding: 3px 0; font-size: 12px; font-weight: bold; line-height: 1.2; word-break: break-word;">
+              ${isCancel ? `<span style="font-size: 9px; font-weight: 900; color: #b91c1c;">[CANCEL] </span>` : ''}
+              ${cleanName}
+              ${
+                cleanNotes
+                  ? `<div style="font-size: 10px; font-weight: normal; font-style: italic; margin-top: 1px; padding-left: 4px;">• ${cleanNotes}</div>`
+                  : ''
+              }
+            </td>
+            <td style="padding: 3px 0; text-align: right; font-size: 14px; font-weight: 900; vertical-align: top; width: 32px;">
+              ${displayQty}
+            </td>
+          </tr>
+        `;
+      }
+      // Default 80mm
+      return `
+        <tr style="border-bottom: 1px dashed #444; ${textStyle}">
+          <td style="padding: 3.5px 0; font-size: 13px; font-weight: bold; line-height: 1.25; word-break: break-word;">
+            ${isCancel ? `<span style="font-size: 10px; font-weight: 900; color: #b91c1c;">[CANCEL] </span>` : ''}
+            ${cleanName}
+            ${
+              cleanNotes
+                ? `<div style="font-size: 11px; font-weight: normal; font-style: italic; margin-top: 2px; padding-left: 6px;">• ${cleanNotes}</div>`
+                : ''
+            }
+          </td>
+          <td style="padding: 3.5px 0; text-align: right; font-size: 14.5px; font-weight: 900; vertical-align: top; width: 45px;">
+            ${displayQty}
+          </td>
+        </tr>
+      `;
+    };
+
+    const tableBodyHtml = hasCancellation
+      ? `
+        ${cancelledItems.length > 0 ? `
+          <div style="text-align: center; font-weight: 900; font-size: ${is58 ? '10px' : '11.5px'}; background: #fee2e2; color: #991b1b; padding: 2px 0; margin: 4px 0 2px 0; border: 1px dashed #f87171;">
+            CANCELLED / REMOVE
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: ${isA4 ? '85%' : '80%'};">Description</th>
+                <th style="text-align: right; width: ${isA4 ? '15%' : '20%'};">Qty</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${cancelledItems.map((i) => renderRow(i, true)).join('')}
+            </tbody>
+          </table>
+        ` : ''}
+
+        ${addedItems.length > 0 ? `
+          <div style="text-align: center; font-weight: 900; font-size: ${is58 ? '10px' : '11.5px'}; background: #dcfce7; color: #166534; padding: 2px 0; margin: 6px 0 2px 0; border: 1px dashed #4ade80;">
+            ADDED
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: ${isA4 ? '85%' : '80%'};">Description</th>
+                <th style="text-align: right; width: ${isA4 ? '15%' : '20%'};">Qty</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${addedItems.map((i) => renderRow(i, false)).join('')}
+            </tbody>
+          </table>
+        ` : ''}
+      `
+      : `
+        ${isSupplementary && addedItems.length > 0 ? `
+          <div style="text-align: center; font-weight: 900; font-size: ${is58 ? '10px' : '11.5px'}; background: #dcfce7; color: #166534; padding: 2px 0; margin: 4px 0 2px 0; border: 1px dashed #4ade80;">
+            ADDED
+          </div>
+        ` : ''}
+        <table>
+          <thead>
+            <tr>
+              <th style="width: ${isA4 ? '85%' : '80%'};">Description</th>
+              <th style="text-align: right; width: ${isA4 ? '15%' : '20%'};">Qty</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemsToPrint.map((i) => renderRow(i, false)).join('')}
+          </tbody>
+        </table>
+      `;
 
     const orderTypeLabel =
       order.order_type === 'dine_in'
@@ -481,8 +550,8 @@ export const printService = {
         <body>
           <div class="receipt-container">
             ${showReprintBanner ? `<div class="center reprint-banner">*** REPRINT ***</div>` : ''}
-            ${isSupplementary ? `<div class="center sup-banner">*** SUPPLEMENTARY KOT (SUP) ***</div>` : ''}
-            <div class="center kot-title">${kotNum.startsWith('KOT') ? kotNum : `KOT #${kotNum}`}${isSupplementary && !kotNum.toUpperCase().includes('SUP') ? ' (SUP)' : ''}</div>
+            ${hasCancellation ? `<div class="center" style="font-size: ${is58 ? '11px' : '13px'}; font-weight: 900; letter-spacing: 1.5px; color: #b91c1c; margin-bottom: 3px;">*** KOT UPDATE ***</div>` : isSupplementary ? `<div class="center sup-banner">*** SUPPLEMENTARY KOT (SUP) ***</div>` : ''}
+            <div class="center kot-title">${kotNum.startsWith('KOT') ? kotNum : `KOT #${kotNum}`}${(isSupplementary || hasCancellation) && !kotNum.toUpperCase().includes('SUP') ? ' (SUP)' : ''}</div>
 
             <div class="dashed"></div>
             
@@ -502,17 +571,7 @@ export const printService = {
 
             <div class="dashed"></div>
 
-            <table>
-              <thead>
-                <tr>
-                  <th style="width: ${isA4 ? '85%' : '80%'};">Description</th>
-                  <th style="text-align: right; width: ${isA4 ? '15%' : '20%'};">Qty</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${itemsHtml}
-              </tbody>
-            </table>
+            ${tableBodyHtml}
 
             ${
               cleanCustomerOrderNotes(order.notes)

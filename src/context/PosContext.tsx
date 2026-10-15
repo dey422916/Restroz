@@ -884,7 +884,14 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         });
       }
-      showToast('success', 'New Item KOT Saved', `Sent KOT #${deltaKot.kot_number} for new items.`);
+      const hasCancellations = deltaKot.items?.some((i: any) => i.quantity < 0 || (i.notes && i.notes.includes('[CANCELLED]')));
+      showToast(
+        'success',
+        hasCancellations ? 'KOT Amendment Saved' : 'New Item KOT Saved',
+        hasCancellations
+          ? `Sent KOT #${deltaKot.kot_number} amendment to kitchen.`
+          : `Sent KOT #${deltaKot.kot_number} for new items.`
+      );
     } else {
       showToast('success', 'Order Updated', `Order #${updated.order_number} successfully updated.`);
     }

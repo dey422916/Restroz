@@ -470,13 +470,35 @@ export default function OrdersScreen() {
       );
       return;
     }
-    const prodPrice = Number(prod.price) || 0;
-    const taxRate = (prod.tax_rate !== undefined && prod.tax_rate !== null && !isNaN(Number(prod.tax_rate)))
-      ? Number(prod.tax_rate)
-      : getOrderTaxRate(editOrderModal || {}, Number(settings?.default_tax_rate) || 5);
+
+    // 1. Check if the existing cart already has a line for this product
+    // Matches by product_id or (if either product_id is null/missing) normalized product_name
+    const existingSameProd = editItems.find((i) => {
+      const aId = (i.product_id || '').trim();
+      const bId = (prod.id || '').trim();
+      if (aId && bId && aId === bId) return true;
+      const aName = (i.product_name || (i as any).name || '').trim().toLowerCase();
+      const bName = (prod.name || '').trim().toLowerCase();
+      return aName === bName;
+    });
+
+    const defaultUnitPrice = Number(prod.discounted_price || prod.price) || 0;
+    const prodPrice = existingSameProd ? (Number(existingSameProd.unit_price) || defaultUnitPrice) : defaultUnitPrice;
+
+    const isOrderGst = isOrderGstApplicable(editOrderModal || {}, settings?.is_gst_enabled);
+    let taxRate = 0;
+    if (isOrderGst) {
+      if (existingSameProd && existingSameProd.tax_rate !== undefined && existingSameProd.tax_rate !== null) {
+        taxRate = Number(existingSameProd.tax_rate);
+      } else if (prod.tax_rate !== undefined && prod.tax_rate !== null && !isNaN(Number(prod.tax_rate))) {
+        taxRate = Number(prod.tax_rate);
+      } else {
+        taxRate = getOrderTaxRate(editOrderModal || {}, Number(settings?.default_tax_rate) || 5);
+      }
+    }
 
     const candidateItem: Partial<OrderItem> = {
-      product_id: prod.id,
+      product_id: existingSameProd?.product_id || prod.id,
       product_name: prod.name,
       unit_price: prodPrice,
       tax_rate: taxRate,
@@ -645,9 +667,10 @@ export default function OrdersScreen() {
           ? Math.min(Math.max(0, numDisc), editTotals?.subtotal || 0)
           : 0;
 
+      const consolidatedItemsToSave = consolidateOrderItems(editItems);
       const updated = await orderService.editActiveOrder({
         orderId: editOrderModal.id,
-        updatedItems: editItems,
+        updatedItems: consolidatedItemsToSave,
         customerName: editCustomerName.trim(),
         customerPhone: editCustomerPhone.trim() ? normalizeIndianPhone(editCustomerPhone.trim()) : "",
         deliveryAddress: editDeliveryAddress.trim(),
@@ -1691,21 +1714,26 @@ export default function OrdersScreen() {
                 )}
 
                 {/* Items List - Compact Container */}
-                <View style={styles.itemsBox}>
-                  <Text style={styles.itemsTitle}>Items ({order.items?.length || 0}):</Text>
-                  {(order.items || []).map((i, idx) => {
-                    const itemKey = i.id || (i as any).order_item_id || (i.product_id ? `prod-${i.product_id}` : `order-item-${idx}`);
-                    return (
-                      <View key={itemKey} style={styles.itemRow}>
-                        <Text style={styles.itemQty}>{i.quantity}x</Text>
-                        <Text style={styles.itemName} numberOfLines={1}>{i.product_name}</Text>
-                        <Text style={styles.itemPrice}>
-                          {formatCurrency((Number(i.unit_price) && Number(i.quantity)) ? (Number(i.unit_price) * Number(i.quantity)) : (Number(i.subtotal) || Number(i.total) || 0))}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </View>
+                {(() => {
+                  const displayItems = consolidateOrderItems(order.items || []);
+                  return (
+                    <View style={styles.itemsBox}>
+                      <Text style={styles.itemsTitle}>Items ({displayItems.length}):</Text>
+                      {displayItems.map((i, idx) => {
+                        const itemKey = i.id || (i as any).order_item_id || (i.product_id ? `prod-${i.product_id}` : `order-item-${idx}`);
+                        return (
+                          <View key={itemKey} style={styles.itemRow}>
+                            <Text style={styles.itemQty}>{i.quantity}x</Text>
+                            <Text style={styles.itemName} numberOfLines={1}>{i.product_name}</Text>
+                            <Text style={styles.itemPrice}>
+                              {formatCurrency((Number(i.unit_price) && Number(i.quantity)) ? (Number(i.unit_price) * Number(i.quantity)) : (Number(i.subtotal) || Number(i.total) || 0))}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  );
+                })()}
 
                 {/* Order Notes / Instructions / Source info */}
                 {(() => {
@@ -3864,13 +3892,14 @@ export default function OrdersScreen() {
 
                   {/* Items Card */}
                   {(() => {
-                    const orderedItemsList = (viewOrderModal.items && viewOrderModal.items.length > 0)
+                    const rawItemsList = (viewOrderModal.items && viewOrderModal.items.length > 0)
                       ? viewOrderModal.items
                       : ((viewOrderModal as any).order_items && (viewOrderModal as any).order_items.length > 0)
                       ? (viewOrderModal as any).order_items
                       : (viewOrderModal.kots && viewOrderModal.kots.length > 0)
                       ? viewOrderModal.kots.flatMap((k) => k.items || [])
                       : [];
+                    const orderedItemsList = consolidateOrderItems(rawItemsList);
 
                     return (
                       <View style={styles.invoiceItemsCard}>

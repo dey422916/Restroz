@@ -296,7 +296,7 @@ export const printService = {
         });
       });
     } else if (order.items && order.items.length > 0) {
-      order.items.forEach((oi) => {
+      consolidateOrderItems(order.items).forEach((oi) => {
         itemsToPrint.push({
           name: oi.product_name,
           quantity: oi.quantity,
@@ -569,6 +569,17 @@ export const printService = {
     }
 
     const autoPrintEnabled = isAutoPrintEnabled(settings);
+    const isManual = Boolean(options?.isManual);
+    const isReprintAction = Boolean(isReprint);
+
+    // If Auto Print is disabled and this is an automatic trigger, do not auto-print
+    if (!autoPrintEnabled && !isManual && !isReprintAction) {
+      if (__DEV__) {
+        console.log('[KOT PRINT] Auto Print is OFF and print is not manual/reprint — skipping automatic KOT print.');
+      }
+      return { direct: false, skipped: true };
+    }
+
     const restId = order.restaurant_id || settings.restaurant_id || (settings as any).id;
     const isDirectDevice = Platform.OS !== 'web' && (await devicePrinterBindingService.isDirectDeviceMode());
 
@@ -1200,6 +1211,17 @@ export const printService = {
     }
 
     const autoPrintEnabled = isAutoPrintEnabled(settings);
+    const isManual = Boolean(options?.isManual);
+    const isReprintAction = Boolean(options?.isReprint);
+
+    // If Auto Print is disabled and this is an automatic trigger, do not auto-print
+    if (!autoPrintEnabled && !isManual && !isReprintAction) {
+      if (__DEV__) {
+        console.log('[BILL PRINT] Auto Print is OFF and print is not manual/reprint — skipping automatic bill print.');
+      }
+      return { direct: false, skipped: true };
+    }
+
     const restId = order.restaurant_id || settings.restaurant_id || (settings as any).id;
     const isDirectDevice = Platform.OS !== 'web' && (await devicePrinterBindingService.isDirectDeviceMode());
 

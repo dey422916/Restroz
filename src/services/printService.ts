@@ -634,7 +634,10 @@ export const printService = {
       // Web / Cloud Agent print: Platform.OS === 'web' && !options?.forceBrowser
       if (!options?.forceBrowser) {
         try {
-          const directResult = await webDirectPrintService.printKot(order, settings, kot, { isReprint });
+          const directResult = await webDirectPrintService.printKot(order, settings, kot, {
+            isReprint,
+            isManual: options?.isManual,
+          });
           if (directResult && directResult.success) {
             if (__DEV__) {
               console.log(
@@ -1274,7 +1277,10 @@ export const printService = {
       // 2. CENTRAL_PRINT_STATION Route (Web Desktop or Central Windows Print Agent via Supabase print_jobs)
       if (!options?.forceBrowser) {
         try {
-          const directResult = await webDirectPrintService.printBill(order, settings, resolvedBilledBy);
+          const directResult = await webDirectPrintService.printBill(order, settings, resolvedBilledBy, {
+            isReprint: options?.isReprint,
+            isManual: options?.isManual,
+          });
           if (directResult && directResult.success) {
             if (__DEV__) {
               console.log(

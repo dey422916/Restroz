@@ -604,7 +604,22 @@ export const printService = {
             return { direct: true, printerName: printerNames };
           } else if ((routerResult as any).skipped) {
             if (__DEV__) {
-              console.log('[KOT ROUTING] No eligible KOT printer configured — printing skipped.');
+              console.log('[KOT ROUTING] No eligible local device printer configured — falling back to Central Print Station...');
+            }
+            const centralResult = await webDirectPrintService.printKot(order, settings, kot, {
+              isReprint,
+              isManual: options?.isManual,
+            });
+            if (centralResult && centralResult.success) {
+              return { direct: true, printerName: centralResult.printerName };
+            }
+            if (centralResult && centralResult.skipped) {
+              return { direct: false, skipped: true };
+            }
+            if (centralResult && !centralResult.success) {
+              const err: any = new Error(centralResult.message || 'Central Print Station could not print the KOT.');
+              err.code = centralResult.code || 'CENTRAL_PRINT_FAILED';
+              throw err;
             }
             return { direct: false, skipped: true };
           } else {
@@ -1248,7 +1263,22 @@ export const printService = {
             return { direct: true, printerName: printerNames };
           } else if ((routerResult as any).skipped) {
             if (__DEV__) {
-              console.log('[BILL ROUTING] No eligible Bill printer configured — printing skipped.');
+              console.log('[BILL ROUTING] No eligible local device printer configured — falling back to Central Print Station...');
+            }
+            const centralResult = await webDirectPrintService.printBill(order, settings, resolvedBilledBy, {
+              isReprint: options?.isReprint,
+              isManual: options?.isManual,
+            });
+            if (centralResult && centralResult.success) {
+              return { direct: true, printerName: centralResult.printerName };
+            }
+            if (centralResult && centralResult.skipped) {
+              return { direct: false, skipped: true };
+            }
+            if (centralResult && !centralResult.success) {
+              const err: any = new Error(centralResult.message || 'Central Print Station could not print the Bill.');
+              err.code = centralResult.code || 'CENTRAL_PRINT_FAILED';
+              throw err;
             }
             return { direct: false, skipped: true };
           } else {

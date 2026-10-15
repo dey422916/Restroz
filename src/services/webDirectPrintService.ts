@@ -1877,6 +1877,24 @@ export const webDirectPrintService = {
 
               target = agentPrinter;
             }
+          } else {
+            // Paired agent exists, but no specific printer devices synced yet
+            const defaultQueue = agentData.device_name || 'Central Printer';
+            const agentPrinter: ConfiguredDirectPrinter = {
+              id: `agent_${agentData.id}_default`,
+              name: defaultQueue,
+              transport: 'agent',
+              agentId: agentData.id,
+              agentDeviceName: agentData.device_name,
+              windowsQueueName: defaultQueue,
+              paperWidth: '80mm',
+              role: 'both',
+              isPrimary: true,
+              status: 'connected',
+              statusMessage: `RestroZ Print Agent Online (${agentData.device_name})`,
+              lastConnectedAt: Date.now(),
+            };
+            target = agentPrinter;
           }
         }
       } catch (agentErr) {
@@ -2709,16 +2727,31 @@ export const webDirectPrintService = {
     }
 
     let agentId = printer.agentId;
+    let resolvedRestId = restaurantId;
 
-    if (!agentId && restaurantId) {
-      const agent = await this.getPairedAgent(restaurantId);
+    if (!agentId && resolvedRestId) {
+      const agent = await this.getPairedAgent(resolvedRestId);
       if (agent) {
         agentId = agent.id;
       }
     }
 
+    if (!resolvedRestId && agentId) {
+      try {
+        const { data: aRow } = await supabase.from('print_agents').select('restaurant_id').eq('id', agentId).maybeSingle();
+        if (aRow?.restaurant_id) {
+          resolvedRestId = aRow.restaurant_id;
+        }
+      } catch (err) {
+        console.warn('[webDirectPrintService] Error resolving restaurantId from agentId:', err);
+      }
+    }
+
     if (!agentId) {
       throw new Error('No RestroZ Print Agent is paired for this restaurant. Please pair Print Agent in Settings.');
+    }
+    if (!resolvedRestId) {
+      throw new Error('No valid restaurant context could be resolved for this print job.');
     }
 
     // Convert binary to base64 safely across Web, Node, and React Native (Hermes)
@@ -2749,7 +2782,7 @@ export const webDirectPrintService = {
 
     console.log(
       `[PRINT_AGENT_JOB_DISPATCH]\n` +
-      `Restaurant ID: ${restaurantId || 'N/A'}\n` +
+      `Restaurant ID: ${resolvedRestId}\n` +
       `Agent ID: ${agentId}\n` +
       `Printer Queue: ${queueName}\n` +
       `Job Type: ${jobType.toUpperCase()}\n` +
@@ -2761,7 +2794,7 @@ export const webDirectPrintService = {
     const { data: job, error } = await supabase
       .from('print_jobs')
       .insert({
-        restaurant_id: restaurantId,
+        restaurant_id: resolvedRestId,
         agent_id: agentId,
         printer_name: queueName,
         job_type: jobType,

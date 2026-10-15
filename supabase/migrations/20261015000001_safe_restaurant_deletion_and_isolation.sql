@@ -80,6 +80,7 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.preview_restaurant_deletion(UUID) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.preview_restaurant_deletion(UUID) FROM anon;
 GRANT EXECUTE ON FUNCTION public.preview_restaurant_deletion(UUID) TO authenticated, service_role;
 
 -- ------------------------------------------------------------------------------
@@ -224,4 +225,5 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.delete_restaurant_completely(UUID, TEXT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.delete_restaurant_completely(UUID, TEXT) FROM anon;
 GRANT EXECUTE ON FUNCTION public.delete_restaurant_completely(UUID, TEXT) TO authenticated, service_role;

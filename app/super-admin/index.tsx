@@ -9,6 +9,7 @@ import {
   RefreshControl,
   Image,
   useWindowDimensions,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { superAdminService } from '../../src/services/api/superAdminService';
@@ -83,7 +84,10 @@ export default function SuperAdminDashboardScreen() {
 
   // Determine card width
   const getMetricCardWidth = () => {
-    if (isMobile) return '100%';
+    if (isMobile) {
+      // 2 columns on mobile: (width - 32px padding - 12px gap) / 2
+      return Math.floor((width - 32 - 12) / 2);
+    }
     if (isTablet) return '47%';
     return '18.5%';
   };
@@ -120,51 +124,85 @@ export default function SuperAdminDashboardScreen() {
       {/* Metric Cards Grid */}
       <View style={styles.metricGrid}>
         {/* Card 1: Total Restaurants */}
-        <View style={[styles.metricCard, { width: getMetricCardWidth() }]}>
+        <TouchableOpacity
+          style={[styles.metricCard, { width: getMetricCardWidth() }]}
+          onPress={() => router.push('/super-admin/restaurants')}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Total Restaurants metric card"
+        >
           <View style={[styles.metricIconWrap, { backgroundColor: 'rgba(56, 189, 248, 0.12)' }]}>
             <Text style={{ fontSize: 18 }}>🏢</Text>
           </View>
           <Text style={styles.metricValue}>{metrics?.totalRestaurants || 0}</Text>
           <Text style={styles.metricLabel}>Total Restaurants</Text>
-        </View>
+        </TouchableOpacity>
 
         {/* Card 2: Active Restaurants */}
-        <View style={[styles.metricCard, { width: getMetricCardWidth() }]}>
+        <TouchableOpacity
+          style={[styles.metricCard, { width: getMetricCardWidth() }]}
+          onPress={() => router.push('/super-admin/restaurants?filter=ACTIVE' as any)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Active Tenants metric card"
+        >
           <View style={[styles.metricIconWrap, { backgroundColor: 'rgba(16, 185, 129, 0.12)' }]}>
             <Text style={{ fontSize: 18 }}>✅</Text>
           </View>
           <Text style={styles.metricValue}>{metrics?.activeRestaurants || 0}</Text>
           <Text style={styles.metricLabel}>Active Tenants</Text>
-        </View>
+        </TouchableOpacity>
 
         {/* Card 3: Suspended Tenants */}
-        <View style={[styles.metricCard, { width: getMetricCardWidth() }]}>
+        <TouchableOpacity
+          style={[styles.metricCard, { width: getMetricCardWidth() }]}
+          onPress={() => router.push('/super-admin/restaurants?filter=SUSPENDED' as any)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Suspended Tenants metric card"
+        >
           <View style={[styles.metricIconWrap, { backgroundColor: 'rgba(239, 68, 68, 0.12)' }]}>
             <Text style={{ fontSize: 18 }}>🚫</Text>
           </View>
           <Text style={styles.metricValue}>{metrics?.suspendedRestaurants || 0}</Text>
           <Text style={styles.metricLabel}>Suspended Tenants</Text>
-        </View>
+        </TouchableOpacity>
 
         {/* Card 4: Restaurant Admins */}
-        <View style={[styles.metricCard, { width: getMetricCardWidth() }]}>
+        <TouchableOpacity
+          style={[styles.metricCard, { width: getMetricCardWidth() }]}
+          onPress={() => router.push('/super-admin/admins')}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Restaurant Admins metric card"
+        >
           <View style={[styles.metricIconWrap, { backgroundColor: 'rgba(99, 102, 241, 0.12)' }]}>
             <Text style={{ fontSize: 18 }}>👥</Text>
           </View>
           <Text style={styles.metricValue}>{metrics?.totalAdmins || 0}</Text>
           <Text style={styles.metricLabel}>Restaurant Admins</Text>
-        </View>
+        </TouchableOpacity>
 
         {/* Card 5: MRR Revenue */}
-        <View style={[styles.metricCard, { width: getMetricCardWidth() }]}>
+        <TouchableOpacity
+          style={[styles.metricCard, { width: getMetricCardWidth() }]}
+          onPress={() => router.push('/super-admin/payments')}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Monthly Revenue (MRR) metric card"
+        >
           <View style={[styles.metricIconWrap, { backgroundColor: 'rgba(16, 185, 129, 0.12)' }]}>
             <Text style={{ fontSize: 18 }}>💰</Text>
           </View>
-          <Text style={[styles.metricValue, { color: '#059669' }]}>
+          <Text
+            style={[styles.metricValue, { color: '#059669', fontSize: isMobile ? 18 : 22 }]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+          >
             ₹{(metrics?.monthlyRevenue || 0).toLocaleString('en-IN')}
           </Text>
           <Text style={styles.metricLabel}>Monthly Revenue (MRR)</Text>
-        </View>
+        </TouchableOpacity>
       </View>
 
       {/* 2-Column Dashboard Panels */}
@@ -377,17 +415,20 @@ const styles = StyleSheet.create({
   metricCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    padding: 16,
+    padding: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-  },
+    minHeight: 116,
+    justifyContent: 'flex-start',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  } as any,
   metricIconWrap: {
-    width: 38,
-    height: 38,
+    width: 36,
+    height: 36,
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   metricValue: {
     fontSize: 22,
@@ -399,6 +440,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#64748B',
+    lineHeight: 16,
+    flexWrap: 'wrap',
   },
   twoColLayout: {
     flexDirection: 'row',

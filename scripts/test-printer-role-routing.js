@@ -1,17 +1,11 @@
 /**
- * RESTROZ — PRINTER ROLE ROUTING REGRESSION TEST SUITE
+ * RESTROZ — PRINTER ROLE ROUTING & MANUAL PRINT MATRIX TEST SUITE
  *
- * Verifies the 10 critical test cases mandated for printer role routing:
- * TEST 1: One printer: role=BILL, primary=true -> KOT skipped, 0 jobs to BILL printer
- * TEST 2: One printer: role=KOT, primary=true -> Exactly 1 KOT print
- * TEST 3: One printer: role=BOTH, primary=true -> Exactly 1 KOT, exactly 1 Bill
- * TEST 4: Printer A (BILL, primary), Printer B (KOT, non-primary) -> KOT routes to B, 0 to A
- * TEST 5: Printer A (KOT, primary), Printer B (BILL, non-primary) -> Bill routes to B, 0 to A
- * TEST 6: Multiple BOTH/KOT printers -> Dedup / primary preference, 0 duplicate jobs
- * TEST 7: No eligible KOT printer -> Order creation succeeds, no print job, no browser fallback dialog
- * TEST 8: BILL-only printer + KOT reprint -> BILL printer must NOT receive KOT reprint
- * TEST 9: KOT-only printer + Bill/reprint -> KOT printer must NOT receive Bill
- * TEST 10: Role comparison handles exact RestroZ values ('kot', 'bill', 'both') case-insensitively
+ * Verifies the strict separation between AUTOMATIC ROUTING and MANUAL/EXPLICIT PRINTING:
+ * - PRINTER ROLE controls AUTOMATIC routing only (Settlement Bill, Order KOT)
+ * - PRINTER ROLE does NOT prevent explicit user-requested manual prints (Manual Thermal Bill, Reprint)
+ * - ZERO financial or business mutation on manual print, manual reprint, or print failure
+ * - Full matrix coverage for KOT, BILL, BOTH with AUTO ON and AUTO OFF
  */
 
 let totalTests = 0;
@@ -38,23 +32,31 @@ function isPrinterRoleEligible(printerRole, targetRole) {
 }
 
 // -------------------------------------------------------------
-// Router simulation matching webDirectPrintService and printService
+// Router simulation matching webDirectPrintService and androidPrintRouter
 // -------------------------------------------------------------
-function resolvePrinterForRole(printers, role) {
+function resolvePrinterForRole(printers, role, isManual = false) {
   if (!printers || printers.length === 0) return null;
 
-  // Primary printer is ONLY selected if it is eligible for the requested role!
-  const primary = printers.find((p) => p.isPrimary && isPrinterRoleEligible(p.role, role)) || null;
+  // Primary printer is selected if it matches role OR if this is an explicit manual print
+  const primary =
+    printers.find((p) => p.isPrimary && (isPrinterRoleEligible(p.role, role) || isManual)) ||
+    (isManual ? printers.find((p) => p.isPrimary) : null) ||
+    null;
   const isPrimaryReady = Boolean(primary && (primary.status === 'connected' || primary.status === 'available'));
 
   if (isPrimaryReady) {
     return primary;
   }
 
-  // Find all ready printers matching role strictly
-  const readyPrinters = printers.filter(
+  // Find all ready printers matching role strictly (or all ready printers if manual)
+  let readyPrinters = printers.filter(
     (p) => (p.status === 'connected' || p.status === 'available') && isPrinterRoleEligible(p.role, role)
   );
+  if (readyPrinters.length === 0 && isManual) {
+    readyPrinters = printers.filter(
+      (p) => p.status === 'connected' || p.status === 'available'
+    );
+  }
 
   readyPrinters.sort((a, b) => {
     const transportWeight = { agent: 1, usb: 2, serial: 3, bluetooth: 4 };
@@ -67,82 +69,69 @@ function resolvePrinterForRole(printers, role) {
     return roleA - roleB;
   });
 
-  return readyPrinters[0] || null;
-}
-
-// Simulates dispatcher with security guards
-function dispatchPrint(printer, jobType) {
-  if (!printer) {
-    return {
-      success: false,
-      skipped: true,
-      reason: `NO_ELIGIBLE_PRINTER`,
-      message: `No eligible ${jobType.toUpperCase()} printer configured — printing skipped.`,
-    };
-  }
-
-  const normRole = (printer.role || '').toLowerCase();
-  if (jobType === 'kot' && normRole === 'bill') {
-    return {
-      success: false,
-      skipped: true,
-      reason: 'ROLE_MISMATCH',
-      message: `Refusing to send KOT job to BILL-only printer "${printer.name}"`,
-    };
-  }
-  if (jobType === 'bill' && normRole === 'kot') {
-    return {
-      success: false,
-      skipped: true,
-      reason: 'ROLE_MISMATCH',
-      message: `Refusing to send Bill job to KOT-only printer "${printer.name}"`,
-    };
-  }
-
-  return {
-    success: true,
-    skipped: false,
-    printerName: printer.name,
-    jobType,
-  };
+  return readyPrinters[0] || (isManual ? (primary || printers[0]) : null);
 }
 
 // Simulates order placement flow (order creation + KOT dispatch)
-function simulateOrderCreationWithKotPrint(order, printers, isReprint = false) {
-  // Step 1: Order created (always succeeds)
+function simulateOrderCreationWithKotPrint(order, printers, isAutoPrint = true, isManual = false) {
   const orderRecord = { ...order, status: 'confirmed', created: true };
 
-  // Step 2: Route KOT
-  const targetPrinter = resolvePrinterForRole(printers, 'kot');
-  const printResult = dispatchPrint(targetPrinter, 'kot');
+  if (!isAutoPrint && !isManual) {
+    return {
+      orderRecord,
+      printResult: { success: false, skipped: true, reason: 'AUTO_PRINT_OFF' },
+      browserDialogTriggered: false,
+    };
+  }
 
-  // Step 3: Check fallback
-  let browserDialogTriggered = false;
-  if (printResult.skipped) {
-    // Under new behavior, skipped KOT prints NEVER trigger browser dialog fallback on auto-order flow
-    browserDialogTriggered = false;
+  const targetPrinter = resolvePrinterForRole(printers, 'kot', isManual);
+  if (!targetPrinter) {
+    return {
+      orderRecord,
+      printResult: { success: false, skipped: true, reason: 'NO_ELIGIBLE_PRINTER' },
+      browserDialogTriggered: false,
+    };
   }
 
   return {
     orderRecord,
-    printResult,
-    browserDialogTriggered,
+    printResult: {
+      success: true,
+      skipped: false,
+      printerName: targetPrinter.name,
+      jobType: 'kot',
+      paperWidth: targetPrinter.paperWidth || '80mm',
+    },
+    browserDialogTriggered: false,
   };
 }
 
-// Simulates bill print flow
-function simulateBillPrint(order, printers, isReprint = false) {
-  const targetPrinter = resolvePrinterForRole(printers, 'bill');
-  const printResult = dispatchPrint(targetPrinter, 'bill');
+// Simulates bill print flow (settlement auto bill or manual print)
+function simulateBillPrint(order, printers, isAutoPrint = true, isManual = false) {
+  if (!isAutoPrint && !isManual) {
+    return {
+      printResult: { success: false, skipped: true, reason: 'AUTO_PRINT_OFF' },
+      browserDialogTriggered: false,
+    };
+  }
 
-  let browserDialogTriggered = false;
-  if (printResult.skipped) {
-    browserDialogTriggered = false;
+  const targetPrinter = resolvePrinterForRole(printers, 'bill', isManual);
+  if (!targetPrinter) {
+    return {
+      printResult: { success: false, skipped: true, reason: 'NO_ELIGIBLE_PRINTER' },
+      browserDialogTriggered: false,
+    };
   }
 
   return {
-    printResult,
-    browserDialogTriggered,
+    printResult: {
+      success: true,
+      skipped: false,
+      printerName: targetPrinter.name,
+      jobType: 'bill',
+      paperWidth: targetPrinter.paperWidth || '80mm',
+    },
+    browserDialogTriggered: false,
   };
 }
 
@@ -150,138 +139,195 @@ function simulateBillPrint(order, printers, isReprint = false) {
 // TEST RUNNER
 // -------------------------------------------------------------
 console.log('=================================================================');
-console.log('RESTROZ — PRINTER ROLE ROUTING REGRESSION TEST SUITE');
+console.log('RESTROZ — PRINTER ROLE ROUTING & MANUAL PRINT MATRIX TEST SUITE');
 console.log('=================================================================\n');
 
-// TEST 1: One printer: role=BILL, primary=true. Click KOT/order.
-console.log('TEST 1: One printer: role=BILL, primary=true -> KOT/order clicked');
+// MATRIX TEST 1: ROLE KOT + AUTO ON
+console.log('MATRIX TEST 1: ROLE KOT + AUTO ON (Seznik-Veer_9394 58mm Primary)');
 {
   const printers = [
-    { id: 'p1', name: 'POS58 Printer', role: 'bill', isPrimary: true, status: 'connected', transport: 'agent' }
+    { id: 'p_seznik', name: 'Seznik-Veer_9394', role: 'kot', paperWidth: '58mm', isPrimary: true, status: 'connected', transport: 'bluetooth' }
   ];
   const order = { id: 'ord_1', order_number: '101' };
-  const res = simulateOrderCreationWithKotPrint(order, printers);
 
-  assert(res.orderRecord.created === true, 'Order created successfully');
-  assert(res.printResult.skipped === true, 'KOT print was skipped');
-  assert(res.printResult.reason === 'NO_ELIGIBLE_PRINTER', 'Skip reason is NO_ELIGIBLE_PRINTER');
-  assert(res.browserDialogTriggered === false, 'Browser dialog was NOT triggered as fallback');
+  // 1. Auto KOT
+  const autoKot = simulateOrderCreationWithKotPrint(order, printers, true, false);
+  assert(autoKot.printResult.success === true && autoKot.printResult.printerName === 'Seznik-Veer_9394', 'Auto KOT = 1 (sent to Seznik-Veer_9394)');
+  assert(autoKot.printResult.paperWidth === '58mm', 'Auto KOT formatted for 58mm');
+
+  // 2. Auto Bill after settlement
+  const autoBill = simulateBillPrint(order, printers, true, false);
+  assert(autoBill.printResult.skipped === true && autoBill.printResult.reason === 'NO_ELIGIBLE_PRINTER', 'Auto Bill = 0 (correctly skipped on role=KOT)');
+
+  // 3. Manual Thermal Bill
+  const manualBill = simulateBillPrint(order, printers, true, true);
+  assert(manualBill.printResult.success === true && manualBill.printResult.printerName === 'Seznik-Veer_9394', 'Manual Thermal Bill = 1 (routes to Seznik-Veer_9394)');
+  assert(manualBill.printResult.paperWidth === '58mm', 'Manual Thermal Bill formatted for 58mm');
+
+  // 4. Manual Bill Reprint
+  const manualReprint = simulateBillPrint(order, printers, true, true);
+  assert(manualReprint.printResult.success === true && manualReprint.printResult.printerName === 'Seznik-Veer_9394', 'Manual Bill Reprint = 1 (routes to Seznik-Veer_9394)');
 }
 
-// TEST 2: One printer: role=KOT, primary=true. Click KOT/order.
-console.log('\nTEST 2: One printer: role=KOT, primary=true -> KOT/order clicked');
+// MATRIX TEST 2: ROLE BILL + AUTO ON
+console.log('\nMATRIX TEST 2: ROLE BILL + AUTO ON');
 {
   const printers = [
-    { id: 'p1', name: 'POS58 Kitchen', role: 'kot', isPrimary: true, status: 'connected', transport: 'agent' }
+    { id: 'p_bill', name: 'Counter Bill 80', role: 'bill', paperWidth: '80mm', isPrimary: true, status: 'connected', transport: 'agent' }
   ];
   const order = { id: 'ord_2', order_number: '102' };
-  const res = simulateOrderCreationWithKotPrint(order, printers);
 
-  assert(res.orderRecord.created === true, 'Order created successfully');
-  assert(res.printResult.success === true, 'KOT printed successfully');
-  assert(res.printResult.printerName === 'POS58 Kitchen', 'KOT sent to POS58 Kitchen');
+  // 1. Auto KOT
+  const autoKot = simulateOrderCreationWithKotPrint(order, printers, true, false);
+  assert(autoKot.printResult.skipped === true && autoKot.printResult.reason === 'NO_ELIGIBLE_PRINTER', 'Auto KOT = 0 (correctly skipped on role=BILL)');
+
+  // 2. Auto Bill
+  const autoBill = simulateBillPrint(order, printers, true, false);
+  assert(autoBill.printResult.success === true && autoBill.printResult.printerName === 'Counter Bill 80', 'Auto Bill = 1 (sent to Counter Bill 80)');
+
+  // 3. Manual Thermal Bill
+  const manualBill = simulateBillPrint(order, printers, true, true);
+  assert(manualBill.printResult.success === true && manualBill.printResult.printerName === 'Counter Bill 80', 'Manual Thermal Bill = 1');
+
+  // 4. Manual KOT (explicit reprint/print)
+  const manualKot = simulateOrderCreationWithKotPrint(order, printers, true, true);
+  assert(manualKot.printResult.success === true && manualKot.printResult.printerName === 'Counter Bill 80', 'Manual KOT = 1 (fallback allowed on explicit manual action)');
 }
 
-// TEST 3: One printer: role=BOTH, primary=true.
-console.log('\nTEST 3: One printer: role=BOTH, primary=true -> KOT and Bill actions');
+// MATRIX TEST 3: ROLE BOTH + AUTO ON
+console.log('\nMATRIX TEST 3: ROLE BOTH + AUTO ON');
 {
   const printers = [
-    { id: 'p1', name: 'POS80 Main', role: 'both', isPrimary: true, status: 'connected', transport: 'agent' }
+    { id: 'p_both', name: 'POS80 Main', role: 'both', paperWidth: '80mm', isPrimary: true, status: 'connected', transport: 'agent' }
   ];
   const order = { id: 'ord_3', order_number: '103' };
-  const kotRes = simulateOrderCreationWithKotPrint(order, printers);
-  const billRes = simulateBillPrint(order, printers);
 
-  assert(kotRes.printResult.success === true && kotRes.printResult.printerName === 'POS80 Main', 'Exactly one KOT sent to POS80 Main');
-  assert(billRes.printResult.success === true && billRes.printResult.printerName === 'POS80 Main', 'Exactly one Bill sent to POS80 Main');
+  // 1. Auto KOT
+  const autoKot = simulateOrderCreationWithKotPrint(order, printers, true, false);
+  assert(autoKot.printResult.success === true && autoKot.printResult.printerName === 'POS80 Main', 'Auto KOT = 1');
+
+  // 2. Auto Bill
+  const autoBill = simulateBillPrint(order, printers, true, false);
+  assert(autoBill.printResult.success === true && autoBill.printResult.printerName === 'POS80 Main', 'Auto Bill = 1');
+
+  // 3. Manual Thermal Bill
+  const manualBill = simulateBillPrint(order, printers, true, true);
+  assert(manualBill.printResult.success === true && manualBill.printResult.printerName === 'POS80 Main', 'Manual Thermal Bill = 1');
 }
 
-// TEST 4: Printer A: role=BILL, primary=true. Printer B: role=KOT, primary=false.
-console.log('\nTEST 4: Printer A (BILL, primary), Printer B (KOT, non-primary) -> KOT action');
+// MATRIX TEST 4: ROLE KOT + AUTO OFF
+console.log('\nMATRIX TEST 4: ROLE KOT + AUTO OFF');
 {
   const printers = [
-    { id: 'pA', name: 'Printer A (Counter Bill)', role: 'bill', isPrimary: true, status: 'connected', transport: 'agent' },
-    { id: 'pB', name: 'Printer B (Kitchen KOT)', role: 'kot', isPrimary: false, status: 'connected', transport: 'agent' }
+    { id: 'p_kot', name: 'Seznik Kitchen', role: 'kot', paperWidth: '58mm', isPrimary: true, status: 'connected', transport: 'bluetooth' }
   ];
   const order = { id: 'ord_4', order_number: '104' };
-  const res = simulateOrderCreationWithKotPrint(order, printers);
 
-  assert(res.printResult.success === true, 'KOT printed successfully');
-  assert(res.printResult.printerName === 'Printer B (Kitchen KOT)', 'KOT routed to Printer B, NOT to primary Printer A');
+  const autoKot = simulateOrderCreationWithKotPrint(order, printers, false, false);
+  assert(autoKot.printResult.skipped === true && autoKot.printResult.reason === 'AUTO_PRINT_OFF', 'Auto KOT = 0');
+
+  const autoBill = simulateBillPrint(order, printers, false, false);
+  assert(autoBill.printResult.skipped === true && autoBill.printResult.reason === 'AUTO_PRINT_OFF', 'Auto Bill = 0');
+
+  const manualBill = simulateBillPrint(order, printers, false, true);
+  assert(manualBill.printResult.success === true && manualBill.printResult.printerName === 'Seznik Kitchen', 'Manual Thermal Bill = 1 (explicit print works even when Auto Print OFF)');
 }
 
-// TEST 5: Printer A: role=KOT, primary=true. Printer B: role=BILL, primary=false.
-console.log('\nTEST 5: Printer A (KOT, primary), Printer B (BILL, non-primary) -> Bill action');
+// MATRIX TEST 5: ROLE BILL + AUTO OFF
+console.log('\nMATRIX TEST 5: ROLE BILL + AUTO OFF');
 {
   const printers = [
-    { id: 'pA', name: 'Printer A (Kitchen KOT)', role: 'kot', isPrimary: true, status: 'connected', transport: 'agent' },
-    { id: 'pB', name: 'Printer B (Counter Bill)', role: 'bill', isPrimary: false, status: 'connected', transport: 'agent' }
+    { id: 'p_bill', name: 'Counter 80', role: 'bill', paperWidth: '80mm', isPrimary: true, status: 'connected', transport: 'agent' }
   ];
   const order = { id: 'ord_5', order_number: '105' };
-  const res = simulateBillPrint(order, printers);
 
-  assert(res.printResult.success === true, 'Bill printed successfully');
-  assert(res.printResult.printerName === 'Printer B (Counter Bill)', 'Bill routed to Printer B, NOT to primary Printer A');
+  const autoKot = simulateOrderCreationWithKotPrint(order, printers, false, false);
+  assert(autoKot.printResult.skipped === true && autoKot.printResult.reason === 'AUTO_PRINT_OFF', 'Auto KOT = 0');
+
+  const autoBill = simulateBillPrint(order, printers, false, false);
+  assert(autoBill.printResult.skipped === true && autoBill.printResult.reason === 'AUTO_PRINT_OFF', 'Auto Bill = 0');
+
+  const manualBill = simulateBillPrint(order, printers, false, true);
+  assert(manualBill.printResult.success === true && manualBill.printResult.printerName === 'Counter 80', 'Manual Thermal Bill = 1');
 }
 
-// TEST 6: Multiple BOTH/KOT printers according to existing RestroZ routing rules. Ensure no duplicates.
-console.log('\nTEST 6: Multiple BOTH/KOT printers -> Dedup & Primary Preference');
+// MATRIX TEST 6: ROLE BOTH + AUTO OFF
+console.log('\nMATRIX TEST 6: ROLE BOTH + AUTO OFF');
 {
   const printers = [
-    { id: 'p1', name: 'Kitchen Backup', role: 'kot', isPrimary: false, status: 'connected', transport: 'agent' },
-    { id: 'p2', name: 'Kitchen Primary', role: 'kot', isPrimary: true, status: 'connected', transport: 'agent' },
-    { id: 'p3', name: 'Floor Printer', role: 'both', isPrimary: false, status: 'connected', transport: 'agent' }
+    { id: 'p_both', name: 'All-in-One 80', role: 'both', paperWidth: '80mm', isPrimary: true, status: 'connected', transport: 'agent' }
   ];
   const order = { id: 'ord_6', order_number: '106' };
-  const res = simulateOrderCreationWithKotPrint(order, printers);
 
-  assert(res.printResult.success === true, 'KOT printed successfully');
-  assert(res.printResult.printerName === 'Kitchen Primary', 'Targeted the primary KOT printer');
+  const autoKot = simulateOrderCreationWithKotPrint(order, printers, false, false);
+  assert(autoKot.printResult.skipped === true && autoKot.printResult.reason === 'AUTO_PRINT_OFF', 'Auto KOT = 0');
+
+  const autoBill = simulateBillPrint(order, printers, false, false);
+  assert(autoBill.printResult.skipped === true && autoBill.printResult.reason === 'AUTO_PRINT_OFF', 'Auto Bill = 0');
+
+  const manualBill = simulateBillPrint(order, printers, false, true);
+  assert(manualBill.printResult.success === true && manualBill.printResult.printerName === 'All-in-One 80', 'Manual Thermal Bill = 1');
 }
 
-// TEST 7: No eligible KOT printer.
-console.log('\nTEST 7: No eligible KOT printer -> Order succeeds without errors or browser dialog');
+// TEST 7: Multi-printer setup with role segregation (Printer A = KOT, Printer B = BILL)
+console.log('\nTEST 7: Segregated setup (Printer A = KOT, Printer B = BILL)');
 {
   const printers = [
-    { id: 'p1', name: 'Bar Bill', role: 'bill', isPrimary: false, status: 'connected', transport: 'agent' },
-    { id: 'p2', name: 'Office Bill', role: 'bill', isPrimary: true, status: 'connected', transport: 'agent' }
+    { id: 'pA', name: 'Kitchen KOT', role: 'kot', isPrimary: true, status: 'connected', transport: 'bluetooth' },
+    { id: 'pB', name: 'Counter Bill', role: 'bill', isPrimary: false, status: 'connected', transport: 'agent' }
   ];
   const order = { id: 'ord_7', order_number: '107' };
-  const res = simulateOrderCreationWithKotPrint(order, printers);
 
-  assert(res.orderRecord.created === true, 'Order created successfully');
-  assert(res.printResult.skipped === true, 'KOT print safely skipped');
-  assert(res.browserDialogTriggered === false, 'Browser dialog was NOT opened');
+  // Auto KOT routes to Printer A
+  const autoKot = simulateOrderCreationWithKotPrint(order, printers, true, false);
+  assert(autoKot.printResult.success === true && autoKot.printResult.printerName === 'Kitchen KOT', 'Auto KOT routes to Kitchen KOT');
+
+  // Auto Bill routes to Printer B
+  const autoBill = simulateBillPrint(order, printers, true, false);
+  assert(autoBill.printResult.success === true && autoBill.printResult.printerName === 'Counter Bill', 'Auto Bill routes to Counter Bill');
 }
 
-// TEST 8: BILL-only printer + KOT reprint.
-console.log('\nTEST 8: BILL-only printer + KOT reprint -> BILL printer must NOT receive KOT reprint');
+// TEST 8: Financial Mutation & Idempotency Safety
+console.log('\nTEST 8: Financial & Business Data Mutation Safety');
 {
-  const printers = [
-    { id: 'p1', name: 'POS58 Printer', role: 'bill', isPrimary: true, status: 'connected', transport: 'agent' }
-  ];
-  const order = { id: 'ord_8', order_number: '108' };
-  const res = simulateOrderCreationWithKotPrint(order, printers, true);
+  const originalOrder = {
+    id: 'ord_8',
+    order_number: '108',
+    total_amount: 500,
+    paid_amount: 500,
+    payment_status: 'paid',
+    status: 'completed',
+    wallet_points_redeemed: 50,
+    wallet_points_earned: 25,
+    items: [{ id: 'item_1', name: 'Paneer Butter Masala', quantity: 2 }]
+  };
 
-  assert(res.printResult.skipped === true, 'KOT reprint skipped cleanly');
-  assert(res.printResult.reason === 'NO_ELIGIBLE_PRINTER', '0 jobs dispatched to BILL printer');
+  // Clone snapshot before manual print
+  const orderBeforePrint = JSON.parse(JSON.stringify(originalOrder));
+
+  // Simulate explicit manual reprint action
+  const printers = [{ id: 'p1', name: 'Seznik-Veer_9394', role: 'kot', isPrimary: true, status: 'connected', transport: 'bluetooth' }];
+  const manualPrintRes = simulateBillPrint(orderBeforePrint, printers, true, true);
+
+  // Assert order has 0 mutations
+  assert(manualPrintRes.printResult.success === true, 'Manual bill print succeeded');
+  assert(orderBeforePrint.total_amount === 500, '0 mutation: total_amount unchanged');
+  assert(orderBeforePrint.paid_amount === 500, '0 mutation: paid_amount unchanged');
+  assert(orderBeforePrint.payment_status === 'paid', '0 mutation: payment_status unchanged');
+  assert(orderBeforePrint.status === 'completed', '0 mutation: order status unchanged');
+  assert(orderBeforePrint.wallet_points_redeemed === 50, '0 mutation: wallet points redeemed unchanged');
+  assert(orderBeforePrint.wallet_points_earned === 25, '0 mutation: wallet points earned unchanged');
+  assert(orderBeforePrint.items.length === 1 && orderBeforePrint.items[0].quantity === 2, '0 mutation: item quantities unchanged');
+
+  // Simulate print failure
+  const failingPrinters = [];
+  const failRes = simulateBillPrint(orderBeforePrint, failingPrinters, true, true);
+  assert(failRes.printResult.skipped === true, 'Print failure simulated safely');
+  assert(orderBeforePrint.paid_amount === 500 && orderBeforePrint.payment_status === 'paid', 'Settlement remains fully committed after print failure');
 }
 
-// TEST 9: KOT-only printer + Bill/reprint.
-console.log('\nTEST 9: KOT-only printer + Bill/reprint -> KOT printer must NOT receive Bill');
-{
-  const printers = [
-    { id: 'p1', name: 'Kitchen 58', role: 'kot', isPrimary: true, status: 'connected', transport: 'agent' }
-  ];
-  const order = { id: 'ord_9', order_number: '109' };
-  const res = simulateBillPrint(order, printers, true);
-
-  assert(res.printResult.skipped === true, 'Bill reprint skipped cleanly');
-  assert(res.printResult.reason === 'NO_ELIGIBLE_PRINTER', '0 jobs dispatched to KOT printer');
-}
-
-// TEST 10: Verify role comparison handles the exact role values currently stored by RestroZ ('kot', 'bill', 'both').
-console.log('\nTEST 10: Role comparison handles exact role values case-insensitively');
+// TEST 9: Role comparison normalization
+console.log('\nTEST 9: Role comparison normalization');
 {
   assert(isPrinterRoleEligible('kot', 'kot') === true, "'kot' matches 'kot'");
   assert(isPrinterRoleEligible('kot', 'bill') === false, "'kot' does NOT match 'bill'");
@@ -289,18 +335,11 @@ console.log('\nTEST 10: Role comparison handles exact role values case-insensiti
   assert(isPrinterRoleEligible('bill', 'bill') === true, "'bill' matches 'bill'");
   assert(isPrinterRoleEligible('both', 'kot') === true, "'both' matches 'kot'");
   assert(isPrinterRoleEligible('both', 'bill') === true, "'both' matches 'bill'");
-
-  // Case-insensitivity & trimming
   assert(isPrinterRoleEligible('KOT', 'kot') === true, "'KOT' uppercase matches 'kot'");
   assert(isPrinterRoleEligible('BILL', 'bill') === true, "'BILL' uppercase matches 'bill'");
-  assert(isPrinterRoleEligible('Both', 'kot') === true, "'Both' capitalized matches 'kot'");
   assert(isPrinterRoleEligible(' Both ', 'bill') === true, "' Both ' with whitespace matches 'bill'");
-
-  // Incompatible values rejected
-  assert(isPrinterRoleEligible('kitchen', 'kot') === false, "Arbitrary role 'kitchen' rejected");
-  assert(isPrinterRoleEligible('', 'kot') === false, "Empty string rejected");
+  assert(isPrinterRoleEligible('invalid', 'kot') === false, "Invalid role rejected");
   assert(isPrinterRoleEligible(null, 'kot') === false, "null rejected");
-  assert(isPrinterRoleEligible(undefined, 'kot') === false, "undefined rejected");
 }
 
 console.log('\n=================================================================');

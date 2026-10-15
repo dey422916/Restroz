@@ -15,7 +15,8 @@ export const printerRoutingService = {
   resolvePrinterForRole(
     printers: RestaurantPrinter[],
     role: 'kot' | 'bill',
-    deviceDefaultId?: string | null
+    deviceDefaultId?: string | null,
+    isManual?: boolean
   ): RestaurantPrinter | null {
     const activePrinters = (printers || []).filter((p) => p.is_active);
     if (activePrinters.length === 0) return null;
@@ -43,7 +44,22 @@ export const printerRoutingService = {
     const matching = activePrinters.find(
       (p) => roleMatches(p.printer_role)
     );
-    return matching || null;
+    if (matching) return matching;
+
+    // 4. MANUAL PRINT FALLBACK: If user explicitly triggered a manual print/reprint
+    // and no printer has an automatic role matching 'bill' or 'kot',
+    // route to the configured device default, primary printer, or first active printer.
+    if (isManual) {
+      if (deviceDefaultId) {
+        const devicePrefAny = activePrinters.find((p) => p.id === deviceDefaultId);
+        if (devicePrefAny) return devicePrefAny;
+      }
+      const primaryAny = activePrinters.find((p) => p.is_primary);
+      if (primaryAny) return primaryAny;
+      return activePrinters[0];
+    }
+
+    return null;
   },
 
   /**

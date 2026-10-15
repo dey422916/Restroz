@@ -1666,16 +1666,21 @@ export const webDirectPrintService = {
    */
   async resolvePrinterForRole(
     role: 'kot' | 'bill',
-    restaurantId?: string | null
+    restaurantId?: string | null,
+    isManual?: boolean
   ): Promise<ConfiguredDirectPrinter | null> {
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
-      console.log('[BLE_PRE_ROUTE_ENTER]', role, restaurantId || 'default');
+      console.log('[BLE_PRE_ROUTE_ENTER]', role, restaurantId || 'default', 'isManual:', isManual);
     }
 
     const rawList = this.getSavedPrinters(restaurantId);
 
     // 1. Find configured candidate printers matching role strictly (kot/both or bill/both)
-    const candidates = rawList.filter((p) => isPrinterRoleEligible(p.role, role));
+    let candidates = rawList.filter((p) => isPrinterRoleEligible(p.role, role));
+    if (candidates.length === 0 && isManual && rawList.length > 0) {
+      // Manual print fallback: allow all saved printers if none match automatic role
+      candidates = [...rawList];
+    }
     // 2. Prefer Primary configured printer first AMONG ELIGIBLE CANDIDATES ONLY
     candidates.sort((a, b) => (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0));
 
@@ -1738,8 +1743,11 @@ export const webDirectPrintService = {
       return p;
     });
 
-    // Primary printer is ONLY selected if it is eligible for the requested role!
-    const primary = list.find((p) => p.isPrimary && isPrinterRoleEligible(p.role, role)) || null;
+    // Primary printer is ONLY selected if it is eligible for the requested role (or on explicit manual print)!
+    const primary =
+      list.find((p) => p.isPrimary && (isPrinterRoleEligible(p.role, role) || isManual)) ||
+      (isManual ? list.find((p) => p.isPrimary) : null) ||
+      null;
     const isPrimaryReady = Boolean(primary && (primary.status === 'connected' || primary.status === 'available'));
 
     let target: ConfiguredDirectPrinter | null = null;
@@ -1750,9 +1758,14 @@ export const webDirectPrintService = {
       isFallback = false;
     } else {
       // Find all ready printers matching role strictly (NEVER route to reconnect_required / offline / unsupported / role mismatch)
-      const readyPrinters = list.filter(
+      let readyPrinters = list.filter(
         (p) => (p.status === 'connected' || p.status === 'available') && isPrinterRoleEligible(p.role, role)
       );
+      if (readyPrinters.length === 0 && isManual) {
+        readyPrinters = list.filter(
+          (p) => p.status === 'connected' || p.status === 'available'
+        );
+      }
 
       // Sort by silent automatic printing preference: Agent > USB > Serial > Bluetooth
       readyPrinters.sort((a, b) => {
@@ -1793,11 +1806,14 @@ export const webDirectPrintService = {
 
           if (deviceRows && deviceRows.length > 0) {
             const currentSaved = this.getSavedPrinters(restaurantId);
-            const matchingDevices = deviceRows.filter((d: any) => {
+            let matchingDevices = deviceRows.filter((d: any) => {
               const localMatch = currentSaved.find((p) => p.windowsQueueName === d.printer_name || p.name === d.printer_name);
               const effectiveRole = localMatch?.role || d.role;
               return isPrinterRoleEligible(effectiveRole, role);
             });
+            if (matchingDevices.length === 0 && isManual) {
+              matchingDevices = [...deviceRows];
+            }
 
             matchingDevices.sort((a: any, b: any) => {
               if ((b.is_primary ? 1 : 0) !== (a.is_primary ? 1 : 0)) {
@@ -1866,6 +1882,10 @@ export const webDirectPrintService = {
       } catch (agentErr) {
         console.warn('[webDirectPrintService] Remote agent resolution error:', agentErr);
       }
+    }
+
+    if (!target && isManual && list.length > 0) {
+      target = primary || list[0] || null;
     }
 
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
@@ -2919,7 +2939,7 @@ export const webDirectPrintService = {
     order: Order,
     settings: RestaurantSettings,
     kot?: KOT,
-    options: { isReprint?: boolean } = {}
+    options: { isReprint?: boolean; isManual?: boolean } = {}
   ): Promise<WebDirectPrintResult | null> {
     const restId = order.restaurant_id || settings.restaurant_id || (settings as any).id;
     const prePrinters = this.getSavedPrinters(restId);
@@ -2931,7 +2951,8 @@ export const webDirectPrintService = {
       `Runtime Status: ${primaryPrinter?.status === 'connected' ? 'ready' : primaryPrinter?.status || 'N/A'}`
     );
 
-    const targetPrinter = await this.resolvePrinterForRole('kot', restId);
+    const isManualOrReprint = Boolean(options.isReprint || options.isManual);
+    const targetPrinter = await this.resolvePrinterForRole('kot', restId, isManualOrReprint);
 
     console.log(
       `[PRINT_ROUTE]\n` +
@@ -3053,7 +3074,8 @@ export const webDirectPrintService = {
   async printBill(
     order: Order,
     settings: RestaurantSettings,
-    billedBy: string = 'Staff'
+    billedBy: string = 'Staff',
+    options: { isReprint?: boolean; isManual?: boolean } = {}
   ): Promise<WebDirectPrintResult | null> {
     const restId = order.restaurant_id || settings.restaurant_id || (settings as any).id;
     const prePrinters = this.getSavedPrinters(restId);
@@ -3065,7 +3087,8 @@ export const webDirectPrintService = {
       `Runtime Status: ${primaryPrinter?.status === 'connected' ? 'ready' : primaryPrinter?.status || 'N/A'}`
     );
 
-    const targetPrinter = await this.resolvePrinterForRole('bill', restId);
+    const isManualOrReprint = Boolean(options.isReprint || options.isManual);
+    const targetPrinter = await this.resolvePrinterForRole('bill', restId, isManualOrReprint);
 
     console.log(
       `[PRINT_ROUTE]\n` +

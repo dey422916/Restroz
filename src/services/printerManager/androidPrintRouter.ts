@@ -508,11 +508,18 @@ export const androidPrintRouter = {
       }
     }
 
+    const isManualOrReprint = Boolean(options.isReprint || options.isManual);
     const activeKotPrinters = activePrinters.filter(
       (p) => p.printer_role === 'kot' || p.printer_role === 'both'
     );
 
-    if (activeKotPrinters.length === 0) {
+    let candidateKotPrinters = activeKotPrinters;
+    if (candidateKotPrinters.length === 0 && isManualOrReprint && activePrinters.length > 0) {
+      // Manual print fallback: allow primary/active printer even if automatic role is BILL
+      candidateKotPrinters = activePrinters;
+    }
+
+    if (candidateKotPrinters.length === 0) {
       const err = 'No eligible KOT printer is configured on this device.';
       logAndroidPrintDiagnostic({
         job: 'KOT',
@@ -551,17 +558,18 @@ export const androidPrintRouter = {
     // Priority: 1. Section/Floor printer -> 2. Device-local Default -> 3. Primary KOT printer -> 4. First matching
     let defaultKotPrinter: RestaurantPrinter | null = null;
     if (sectionName) {
-      defaultKotPrinter = printerRoutingService.resolveKotPrinterBySection(sectionName, activeKotPrinters);
+      defaultKotPrinter = printerRoutingService.resolveKotPrinterBySection(sectionName, candidateKotPrinters);
     }
     if (!defaultKotPrinter) {
       defaultKotPrinter = printerRoutingService.resolvePrinterForRole(
-        activeKotPrinters,
+        candidateKotPrinters,
         'kot',
-        deviceDefaults?.default_kot_printer_id
+        deviceDefaults?.default_kot_printer_id || (isManualOrReprint ? deviceDefaults?.default_bill_printer_id : undefined),
+        isManualOrReprint
       );
     }
-    if (!defaultKotPrinter && activeKotPrinters.length > 0) {
-      defaultKotPrinter = activeKotPrinters[0];
+    if (!defaultKotPrinter && candidateKotPrinters.length > 0) {
+      defaultKotPrinter = (isManualOrReprint ? candidateKotPrinters.find((p) => p.is_primary) : null) || candidateKotPrinters[0];
     }
 
     // 4. Candidate Items Extraction
@@ -595,13 +603,13 @@ export const androidPrintRouter = {
     }
 
     // 5. Category Splitting (PAYLOAD SPLITTING ONLY — NEVER CREATES DUPLICATE DB RECORDS)
-    const categoryPrinters = activeKotPrinters.filter(
+    const categoryPrinters = candidateKotPrinters.filter(
       (p) => p.category_ids && p.category_ids.length > 0
     );
 
     let splits: CategoryPrintSplit[] = [];
     if (categoryPrinters.length > 0) {
-      splits = printerRoutingService.resolveKotsByCategory(rawItems, activeKotPrinters, defaultKotPrinter);
+      splits = printerRoutingService.resolveKotsByCategory(rawItems, candidateKotPrinters, defaultKotPrinter);
     } else {
       if (defaultKotPrinter) {
         splits = [{ printer: defaultKotPrinter, items: rawItems }];
@@ -630,8 +638,8 @@ export const androidPrintRouter = {
       const kotNum = kot?.kot_number || 'KOT-001';
       const jobId = `kot_${kotId}_${targetPrinter.id}_${kotNum}`;
 
-      // Destination-specific deduplication (Bypassed for explicit user reprints)
-      if (!options.isReprint) {
+      // Destination-specific deduplication (Bypassed for explicit user reprints / manual triggers)
+      if (!options.isReprint && !options.isManual) {
         const alreadyPrinted = await this.hasDestinationBeenPrinted(jobId);
         if (alreadyPrinted) {
           if (__DEV__) {
@@ -818,11 +826,18 @@ export const androidPrintRouter = {
       }
     }
 
+    const isManualOrReprint = Boolean(options.isReprint || options.isManual);
     const activeBillPrinters = activePrinters.filter(
       (p) => p.printer_role === 'bill' || p.printer_role === 'both'
     );
 
-    if (activeBillPrinters.length === 0) {
+    let candidateBillPrinters = activeBillPrinters;
+    if (candidateBillPrinters.length === 0 && isManualOrReprint && activePrinters.length > 0) {
+      // Manual print fallback: allow primary/active printer even if automatic role is KOT
+      candidateBillPrinters = activePrinters;
+    }
+
+    if (candidateBillPrinters.length === 0) {
       const err = 'No eligible Bill printer is configured on this device.';
       logAndroidPrintDiagnostic({
         job: 'BILL',
@@ -858,17 +873,18 @@ export const androidPrintRouter = {
     const deviceDefaults = await devicePrinterBindingService.getDeviceDefaults();
     const targetPrinter =
       printerRoutingService.resolvePrinterForRole(
-        activeBillPrinters,
+        candidateBillPrinters,
         'bill',
-        deviceDefaults?.default_bill_printer_id
-      ) || activeBillPrinters[0];
+        deviceDefaults?.default_bill_printer_id || (isManualOrReprint ? deviceDefaults?.default_kot_printer_id : undefined),
+        isManualOrReprint
+      ) || ((isManualOrReprint ? candidateBillPrinters.find((p) => p.is_primary) : null) || candidateBillPrinters[0]);
 
     // 4. Deterministic Bill Job ID
     const invoiceNum = order.invoice_number || order.order_number || 'B1';
     const jobId = `bill_${order.id}_${targetPrinter.id}_${invoiceNum}`;
 
-    // 5. Deduplication check (bypassed on explicit reprint)
-    if (!options.isReprint) {
+    // 5. Deduplication check (bypassed on explicit reprint or manual print)
+    if (!options.isReprint && !options.isManual) {
       const alreadyPrinted = await this.hasDestinationBeenPrinted(jobId);
       if (alreadyPrinted) {
         if (__DEV__) {

@@ -293,7 +293,7 @@ export interface Coupon {
   updated_at?: string;
 }
 
-export type PaymentMethod = 'cash' | 'card' | 'upi' | 'online' | 'cod' | 'room' | 'other' | 'split' | 'due';
+export type PaymentMethod = 'cash' | 'card' | 'upi' | 'online' | 'cod' | 'room' | 'other' | 'split' | 'due' | 'wallet' | 'restroz_points';
 
 export interface Payment {
   id: string;
@@ -358,6 +358,8 @@ export interface DayRegister {
   cash_sales: number;
   upi_sales: number;
   card_sales: number;
+  other_sales?: number;
+  points_sales?: number;
   digital_sales?: number;
   refunds?: number;
   cash_out?: number;
@@ -397,6 +399,8 @@ export interface DaySalesSummary {
   cash_sales: number;
   upi_sales: number;
   card_sales: number;
+  other_sales?: number;
+  points_sales?: number;
   dine_in_sales: number;
   takeaway_sales: number;
   delivery_sales: number;

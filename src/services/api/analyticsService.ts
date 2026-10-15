@@ -1,5 +1,6 @@
 import { Order, Product, ItemSalesSummary, DaySalesSummary } from '../../types';
 import { getLocalRestaurantDate } from './dayRegisterService';
+import { resolveOrderFinancials } from '../../utils/orderFinancials';
 
 export const analyticsService = {
   /**
@@ -59,6 +60,8 @@ export const analyticsService = {
     let cash_sales = 0;
     let upi_sales = 0;
     let card_sales = 0;
+    let other_sales = 0;
+    let points_sales = 0;
 
     let dine_in_sales = 0;
     let takeaway_sales = 0;
@@ -71,36 +74,25 @@ export const analyticsService = {
         return;
       }
 
-      const payable = Number(ord.payable_amount) || 0;
-      const subtotal = Number(ord.subtotal) || 0;
+      const fin = resolveOrderFinancials(ord);
+      const payable = fin.grossTotal;
       const tax = (Number(ord.cgst_amount) || 0) + (Number(ord.sgst_amount) || 0) + (Number(ord.igst_amount) || 0);
       const discount = (Number(ord.discount_amount) || 0) + (Number(ord.coupon_discount) || 0);
 
-      gross_sales += Number(ord.grand_total) || (subtotal + tax);
-      net_sales += payable;
+      gross_sales += fin.grossTotal;
+      net_sales += fin.grossTotal;
       tax_collected += tax;
       discount_amount += discount;
 
-      if (ord.payment_status === 'paid' || ord.status === 'completed') {
+      if (fin.isFullyPaid) {
         paid_orders_count++;
       }
 
-      // Reconcile payments from payment records where available
-      if (ord.payments && ord.payments.length > 0) {
-        ord.payments.forEach((p) => {
-          const amt = Number(p.amount) || 0;
-          if (p.payment_method === 'cash') cash_sales += amt;
-          else if (p.payment_method === 'upi') upi_sales += amt;
-          else if (p.payment_method === 'card') card_sales += amt;
-          else cash_sales += amt;
-        });
-      } else if (ord.payment_status === 'paid') {
-        const method = (ord as any).payment_method || 'cash';
-        if (method === 'cash') cash_sales += payable;
-        else if (method === 'upi') upi_sales += payable;
-        else if (method === 'card') card_sales += payable;
-        else cash_sales += payable;
-      }
+      cash_sales += fin.paymentBreakdown.cash;
+      upi_sales += fin.paymentBreakdown.upi;
+      card_sales += fin.paymentBreakdown.card;
+      other_sales += fin.paymentBreakdown.other;
+      points_sales += fin.walletRedeemed;
 
       // Order Channel Sales
       const src = ord.order_source;
@@ -148,6 +140,8 @@ export const analyticsService = {
       cash_sales: Math.round(cash_sales * 100) / 100,
       upi_sales: Math.round(upi_sales * 100) / 100,
       card_sales: Math.round(card_sales * 100) / 100,
+      other_sales: Math.round(other_sales * 100) / 100,
+      points_sales: Math.round(points_sales * 100) / 100,
       dine_in_sales: Math.round(dine_in_sales * 100) / 100,
       takeaway_sales: Math.round(takeaway_sales * 100) / 100,
       delivery_sales: Math.round(delivery_sales * 100) / 100,

@@ -5,6 +5,7 @@ import { auditService } from './auditService';
 import { orderService } from './orderService';
 import { restaurantService } from './restaurantService';
 import { subscriptionGuardService } from './subscriptionGuardService';
+import { resolveOrderFinancials } from '../../utils/orderFinancials';
 
 const STORAGE_KEY_REGISTERS = '@kullad_chai_day_registers';
 
@@ -142,6 +143,7 @@ export const dayRegisterService = {
     upi_sales: number;
     card_sales: number;
     other_sales: number;
+    points_sales: number;
     digital_sales: number;
     refunds: number;
     cash_out: number;
@@ -164,36 +166,31 @@ export const dayRegisterService = {
     let upi_sales = 0;
     let card_sales = 0;
     let other_sales = 0;
+    let points_sales = 0;
     let refunds = 0;
 
     for (const ord of shiftOrders) {
+      const fin = resolveOrderFinancials(ord);
+
       if (ord.status === 'cancelled') {
         if (ord.payment_status === 'paid') {
-          refunds += Number(ord.payable_amount) || 0;
+          // Strictly physical cash refund reduces the cash drawer
+          refunds += fin.paymentBreakdown.cash;
         }
         continue;
       }
 
-      if (ord.payments && ord.payments.length > 0) {
-        for (const p of ord.payments) {
-          const amount = Number(p.amount) || 0;
-          if (p.payment_method === 'cash') cash_sales += amount;
-          else if (p.payment_method === 'upi') upi_sales += amount;
-          else if (p.payment_method === 'card') card_sales += amount;
-          else other_sales += amount;
-        }
-      } else if (ord.payment_status === 'paid') {
-        const amount = Number(ord.payable_amount) || 0;
-        const method = (ord as any).payment_method || 'cash';
-        if (method === 'cash') cash_sales += amount;
-        else if (method === 'upi') upi_sales += amount;
-        else if (method === 'card') card_sales += amount;
-        else other_sales += amount;
+      if (fin.isFullyPaid || (ord.payments && ord.payments.length > 0)) {
+        cash_sales += fin.paymentBreakdown.cash;
+        upi_sales += fin.paymentBreakdown.upi;
+        card_sales += fin.paymentBreakdown.card;
+        other_sales += fin.paymentBreakdown.other;
+        points_sales += fin.walletRedeemed;
       }
     }
 
     const digital_sales = upi_sales + card_sales + other_sales;
-    const total_sales = cash_sales + digital_sales;
+    const total_sales = cash_sales + digital_sales + points_sales;
     const cash_out = Number(register.cash_out) || 0;
     const expected_cash = register.opening_cash_float + cash_sales - refunds - cash_out;
 
@@ -202,6 +199,7 @@ export const dayRegisterService = {
       upi_sales: Math.round(upi_sales * 100) / 100,
       card_sales: Math.round(card_sales * 100) / 100,
       other_sales: Math.round(other_sales * 100) / 100,
+      points_sales: Math.round(points_sales * 100) / 100,
       digital_sales: Math.round(digital_sales * 100) / 100,
       refunds: Math.round(refunds * 100) / 100,
       cash_out: Math.round(cash_out * 100) / 100,
@@ -502,6 +500,8 @@ export const dayRegisterService = {
       cash_sales: reconciliation.cash_sales,
       upi_sales: reconciliation.upi_sales,
       card_sales: reconciliation.card_sales,
+      other_sales: reconciliation.other_sales,
+      points_sales: reconciliation.points_sales,
       refunds: reconciliation.refunds,
       cash_out: reconciliation.cash_out,
       total_sales: reconciliation.total_sales,

@@ -287,8 +287,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
     try {
       setIsProcessing(true);
+      const totalPointsRedeemed = existingWalletRedeemed + walletRedeemAmount;
+      const effectiveMethod = netPayable > 0 ? paymentMethod : (totalPointsRedeemed > 0 ? 'wallet' : 'cash');
       await onProcessPayment(
-        netPayable > 0 ? paymentMethod : 'cash',
+        effectiveMethod,
         netPayable > 0 ? (paymentMethod === 'split' ? netPayable : Math.min(numTendered, netPayable)) : 0,
         refNo,
         {
@@ -505,7 +507,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
                 {existingWalletRedeemed > 0 && (
                   <View style={[styles.billRow, { marginTop: 4 }]}>
-                    <Text style={[styles.billLabel, { color: '#059669', fontWeight: '800' }]}>🎁 Rewards Redeemed:</Text>
+                    <Text style={[styles.billLabel, { color: '#059669', fontWeight: '800' }]}>⭐ RestroZ Points Redeemed:</Text>
                     <Text style={[styles.billVal, { color: '#059669', fontWeight: '900' }]}>
                       -{formatCurrency(existingWalletRedeemed)}
                     </Text>
@@ -584,7 +586,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                         </View>
                         <View style={{ flex: 1 }}>
                           <Text style={[styles.checkboxLabel, !canRedeem && styles.checkboxLabelDisabled]}>
-                            Redeem Wallet Balance ({formatCurrency(walletBalance)})
+                            Redeem RestroZ Points ({formatCurrency(walletBalance)})
                           </Text>
                           {!canRedeem && (
                             <Text style={styles.walletHintText}>
@@ -608,7 +610,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                           </View>
                           <View style={styles.walletBreakdownRow}>
                             <Text style={[styles.walletBreakdownLabel, { color: '#059669', fontWeight: '800' }]}>
-                              Wallet Used:
+                              RestroZ Points Used:
                             </Text>
                             <Text style={[styles.walletBreakdownVal, { color: '#059669', fontWeight: '900' }]}>
                               - {formatCurrency(walletRedeemAmount)}

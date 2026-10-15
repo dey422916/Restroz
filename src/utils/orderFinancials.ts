@@ -101,15 +101,38 @@ export function resolveOrderFinancials(order: Partial<Order>): OrderFinancialSum
   let externalPaid = 0;
   if (order.payments && order.payments.length > 0) {
     const completedNonWallet = order.payments
-      .filter((p: any) => String(p.payment_method).toLowerCase() !== 'wallet')
+      .filter((p: any) => {
+        const m = String(p.payment_method || '').toLowerCase();
+        return m !== 'wallet' && m !== 'rewards' && m !== 'restroz_points';
+      })
       .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
     if (completedNonWallet > 0) {
       externalPaid = completedNonWallet;
     } else {
-      externalPaid = Number(order.paid_amount || 0);
+      const pm = String(order.payment_method || '').toLowerCase();
+      if (pm === 'wallet' || pm === 'rewards' || pm === 'restroz_points') {
+        externalPaid = 0;
+      } else {
+        const rawPaid = Number(order.paid_amount || 0);
+        if (rawPaid > 0 && walletRedeemed > 0 && Math.abs(rawPaid - grossTotal) < 0.01) {
+          externalPaid = Math.max(0, rawPaid - walletRedeemed);
+        } else {
+          externalPaid = rawPaid;
+        }
+      }
     }
   } else {
-    externalPaid = Number(order.paid_amount || 0);
+    const pm = String(order.payment_method || '').toLowerCase();
+    if (pm === 'wallet' || pm === 'rewards' || pm === 'restroz_points') {
+      externalPaid = 0;
+    } else {
+      const rawPaid = Number(order.paid_amount || 0);
+      if (rawPaid > 0 && walletRedeemed > 0 && Math.abs(rawPaid - grossTotal) < 0.01) {
+        externalPaid = Math.max(0, rawPaid - walletRedeemed);
+      } else {
+        externalPaid = rawPaid;
+      }
+    }
   }
   externalPaid = roundToTwoDecimals(Math.max(0, externalPaid));
 
@@ -141,7 +164,7 @@ export function resolveOrderFinancials(order: Partial<Order>): OrderFinancialSum
       if (m === 'cash' || m === 'cod') breakdown.cash += amt;
       else if (m === 'upi' || m === 'online') breakdown.upi += amt;
       else if (m === 'card') breakdown.card += amt;
-      else if (m === 'wallet') breakdown.wallet = Math.max(breakdown.wallet, amt);
+      else if (m === 'wallet' || m === 'rewards' || m === 'restroz_points') breakdown.wallet = Math.max(breakdown.wallet, amt);
       else breakdown.other += amt;
     });
   } else if (externalPaid > 0) {
@@ -149,7 +172,9 @@ export function resolveOrderFinancials(order: Partial<Order>): OrderFinancialSum
     if (m === 'cash' || m === 'cod') breakdown.cash = externalPaid;
     else if (m === 'upi' || m === 'online') breakdown.upi = externalPaid;
     else if (m === 'card') breakdown.card = externalPaid;
-    else breakdown.other = externalPaid;
+    else if (m === 'wallet' || m === 'rewards' || m === 'restroz_points') {
+      // Points tender already in breakdown.wallet
+    } else breakdown.other = externalPaid;
   }
 
   // 7. Payment method label
@@ -160,15 +185,25 @@ export function resolveOrderFinancials(order: Partial<Order>): OrderFinancialSum
     if (breakdown.upi > 0) parts.push('UPI');
     if (breakdown.card > 0) parts.push('CARD');
     if (breakdown.other > 0) parts.push('OTHER');
-    if (parts.length === 0) {
-      parts.push((order.payment_method || 'CASH').toUpperCase());
-    }
     if (walletRedeemed > 0) {
-      parts.push('REWARDS');
+      parts.push('RESTROZ POINTS');
+    }
+    if (parts.length === 0) {
+      const fallbackMethod = String(order.payment_method || '').toLowerCase();
+      if (fallbackMethod === 'wallet' || fallbackMethod === 'rewards' || fallbackMethod === 'restroz_points') {
+        parts.push('RESTROZ POINTS');
+      } else {
+        parts.push((order.payment_method || 'CASH').toUpperCase());
+      }
     }
     paymentMethodLabel = parts.join(' + ');
   } else {
-    paymentMethodLabel = (order.payment_method || 'UNPAID').toUpperCase();
+    const fallbackMethod = String(order.payment_method || '').toLowerCase();
+    if (fallbackMethod === 'wallet' || fallbackMethod === 'rewards' || fallbackMethod === 'restroz_points') {
+      paymentMethodLabel = 'RESTROZ POINTS';
+    } else {
+      paymentMethodLabel = (order.payment_method || 'UNPAID').toUpperCase();
+    }
   }
 
   return {

@@ -1945,12 +1945,17 @@ export const orderService = {
         }
       }
 
-      const normalizedPaymentMethod: PaymentMethod =
+      let normalizedPaymentMethod: PaymentMethod =
         paymentMethod === 'online' || (paymentMethod as any) === 'upi'
           ? 'upi'
           : (paymentMethod as any) === 'cod'
           ? 'cash'
           : paymentMethod;
+
+      // If external amountPaid is 0 and points were redeemed to settle the bill, normalize to 'wallet'
+      if ((amountPaid === 0 || amountPaid === null || amountPaid === undefined) && (walletRedeemAmount || 0) > 0) {
+        normalizedPaymentMethod = 'wallet';
+      }
 
       const { data: rpcRes, error: rpcErr } = await supabase.rpc('settle_order', {
         p_order_id: orderId,

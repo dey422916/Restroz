@@ -200,7 +200,7 @@ export function renderBillToEscPos(
 
   if (fin.walletRedeemed > 0) {
     builder.addKeyValue('Total Bill:', `INR ${fin.grossTotal.toFixed(2)}`, { bold: true });
-    builder.addKeyValue('Rewards Used:', `-INR ${fin.walletRedeemed.toFixed(2)}`, { bold: true });
+    builder.addKeyValue('RestroZ Points:', `-INR ${fin.walletRedeemed.toFixed(2)}`, { bold: true });
     builder.addKeyValue('Net Payable:', `INR ${fin.netPayableAfterRewards.toFixed(2)}`, { bold: true });
     if (fin.externalPaid > 0 && isPaid) {
       builder.addKeyValue('Paid Amount:', `INR ${fin.externalPaid.toFixed(2)}`);

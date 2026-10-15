@@ -1915,7 +1915,7 @@ export default function OrdersScreen() {
                       if (externalPaidVal > 0) {
                         badgeLabel = `✓ PAID (${fin.paymentMethodLabel})`;
                       } else {
-                        badgeLabel = '✓ PAID (REWARDS)';
+                        badgeLabel = '✓ PAID (RESTROZ POINTS)';
                       }
                     } else if (isCardPay) badgeLabel = '✓ PAID (CARD)';
                     else if (isUpiPay) badgeLabel = '✓ PAID (UPI)';
@@ -1971,7 +1971,7 @@ export default function OrdersScreen() {
                             <>
                               <View style={styles.orderFinanceDivider} />
                               <View style={styles.orderFinanceCol}>
-                                <Text style={[styles.orderFinanceLabel, { color: '#059669' }]}>Rewards</Text>
+                                <Text style={[styles.orderFinanceLabel, { color: '#059669' }]}>RestroZ Points</Text>
                                 <Text style={[styles.orderFinanceVal, { color: '#059669', fontWeight: '800' }]}>
                                   -{formatCurrency(walletRedeemedVal)}
                                 </Text>
@@ -4044,7 +4044,7 @@ export default function OrdersScreen() {
                                   <>
                                     <View style={[styles.invoiceRow, { marginTop: 6 }]}>
                                       <Text style={[styles.invoiceLabel, { color: '#059669', fontWeight: '800' }]}>
-                                        ⭐ Rewards Used
+                                        ⭐ RestroZ Points
                                       </Text>
                                       <Text style={[styles.invoiceVal, { color: '#059669', fontWeight: '900' }]}>
                                         -{formatCurrency(modalFin.walletRedeemed)}
@@ -4072,7 +4072,7 @@ export default function OrdersScreen() {
                                     </Text>
                                     {modalFin.walletRedeemed > 0 && (
                                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
-                                        <Text style={{ fontSize: 12, color: '#059669', fontWeight: '700' }}>🎁 Rewards Redeemed:</Text>
+                                        <Text style={{ fontSize: 12, color: '#059669', fontWeight: '700' }}>⭐ RestroZ Points:</Text>
                                         <Text style={{ fontSize: 12, color: '#059669', fontWeight: '800' }}>{formatCurrency(modalFin.walletRedeemed)}</Text>
                                       </View>
                                     )}

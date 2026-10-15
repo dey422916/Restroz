@@ -1124,7 +1124,7 @@ export const printService = {
               <span>INR ${fin.grossTotal.toFixed(2)}</span>
             </div>
             <div class="flex-between bold">
-              <span>Rewards Used:</span>
+              <span>RestroZ Points:</span>
               <span>-INR ${fin.walletRedeemed.toFixed(2)}</span>
             </div>
             <div class="flex-between bold" style="font-size: ${is58 ? '12px' : isA4 ? '15px' : '13px'};">
@@ -1938,7 +1938,7 @@ export const printService = {
                     fin.walletRedeemed > 0
                       ? `
                   <div class="total-row"><span>Bill Total:</span><b>${formatCurrency(fin.grossTotal)}</b></div>
-                  <div class="total-row" style="color: #15803d;"><span>Rewards Used:</span><b>-${formatCurrency(fin.walletRedeemed)}</b></div>
+                  <div class="total-row" style="color: #15803d;"><span>RestroZ Points:</span><b>-${formatCurrency(fin.walletRedeemed)}</b></div>
                   <div class="grand-total-row">
                     <span>Net Payable:</span>
                     <span class="grand-total-val">${formatCurrency(fin.netPayableAfterRewards)}</span>
@@ -2071,9 +2071,10 @@ export const printService = {
     const cashSales = register.cash_sales || 0;
     const upiSales = register.upi_sales || 0;
     const cardSales = register.card_sales || 0;
+    const pointsSales = (register as any).points_sales || 0;
     const refunds = register.refunds || 0;
     const cashOut = register.cash_out || 0;
-    const totalSales = register.total_sales || (cashSales + upiSales + cardSales);
+    const totalSales = register.total_sales || (cashSales + upiSales + cardSales + pointsSales);
     const expectedCash = register.expected_cash || (openingFloat + cashSales - refunds - cashOut);
     const countedCash = register.actual_cash_counted || 0;
 
@@ -2341,6 +2342,17 @@ export const printService = {
                   <td>Credit / Debit card EDC machine swipe settlements</td>
                   <td class="text-right text-bold">₹${cardSales.toFixed(2)}</td>
                 </tr>
+                ${
+                  pointsSales > 0
+                    ? `
+                  <tr>
+                    <td class="text-bold" style="color: #059669;">⭐ RestroZ Points (Non-Cash)</td>
+                    <td style="color: #059669;">Customer loyalty points redeemed at checkout</td>
+                    <td class="text-right text-bold" style="color: #059669;">₹${pointsSales.toFixed(2)}</td>
+                  </tr>
+                `
+                    : ''
+                }
                 ${
                   refunds > 0
                     ? `

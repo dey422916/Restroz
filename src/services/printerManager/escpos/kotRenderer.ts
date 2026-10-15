@@ -85,20 +85,32 @@ export function renderKotToEscPos(
     builder.addLine(restaurantName.toUpperCase(), { align: 'center', bold: true });
   }
 
+  const cancelledItems = itemsToPrint.filter(
+    (i) => i.quantity < 0 || (i.notes && i.notes.includes('[CANCELLED]')) || i.name.includes('[CANCELLED]')
+  );
+  const addedItems = itemsToPrint.filter(
+    (i) => i.quantity > 0 && !(i.notes && i.notes.includes('[CANCELLED]')) && !i.name.includes('[CANCELLED]')
+  );
+  const hasCancellation = cancelledItems.length > 0;
+
   // 2. Reprint Banner
   if (isReprint) {
     builder.addBanner('*** REPRINT ***');
   }
 
-  // 3. Supplementary Banner
-  if (isSupplementary) {
+  // 3. Supplementary / Update Banner
+  if (hasCancellation) {
+    builder.addBanner('*** KOT UPDATE ***');
+  } else if (isSupplementary) {
     builder.addBanner('*** SUPPLEMENTARY KOT (SUP) ***');
   }
 
   // 4. KOT Title & Number (Centered, Bold, Double-Height)
   builder.addDivider('-');
   const kotTitle = kotNum.startsWith('KOT') ? kotNum : `KOT #${kotNum}`;
-  const displayTitle = isSupplementary && !kotNum.toUpperCase().includes('SUP') ? `${kotTitle} (SUP)` : kotTitle;
+  const displayTitle = (isSupplementary || hasCancellation) && !kotNum.toUpperCase().includes('SUP')
+    ? `${kotTitle} (SUP)`
+    : kotTitle;
   builder.addLine(displayTitle, { align: 'center', bold: true, scale: 'double_height' });
   builder.addDivider('-');
 
@@ -134,29 +146,62 @@ export function renderKotToEscPos(
 
   builder.addDivider('-');
 
-  // 10. Table Column Header
-  builder.addKotTableHeader();
-  builder.addDivider('-');
+  // 10. Line Items with clear Cancellation vs Addition sections
+  if (hasCancellation) {
+    // 10a. CANCELLED / REMOVE Section
+    builder.addLine('*** CANCELLED / REMOVE ***', { align: 'center', bold: true });
+    builder.addKotTableHeader();
+    builder.addDivider('-');
+    for (const item of cancelledItems) {
+      const cleanName = item.name.replace('[CANCELLED]', '').trim();
+      const cleanNotes = item.notes?.replace('[CANCELLED]', '').trim();
+      builder.addKotItem({
+        name: cleanName,
+        quantity: Math.abs(item.quantity),
+        notes: cleanNotes || undefined,
+      });
+    }
+    builder.addDivider('-');
 
-  // 11. Line Items (with guaranteed right-aligned QTY & item wrapping)
-  for (const item of itemsToPrint) {
-    builder.addKotItem({
-      name: item.name,
-      quantity: item.quantity,
-      notes: item.notes,
-    });
+    // 10b. ADDED Section
+    if (addedItems.length > 0) {
+      builder.addLine('*** ADDED ***', { align: 'center', bold: true });
+      builder.addKotTableHeader();
+      builder.addDivider('-');
+      for (const item of addedItems) {
+        builder.addKotItem({
+          name: item.name,
+          quantity: item.quantity,
+          notes: item.notes,
+        });
+      }
+      builder.addDivider('-');
+    }
+  } else {
+    // Normal order or addition-only supplementary KOT
+    if (isSupplementary && addedItems.length > 0) {
+      builder.addLine('*** ADDED ***', { align: 'center', bold: true });
+    }
+    builder.addKotTableHeader();
+    builder.addDivider('-');
+    for (const item of itemsToPrint) {
+      builder.addKotItem({
+        name: item.name,
+        quantity: item.quantity,
+        notes: item.notes,
+      });
+    }
+    builder.addDivider('-');
   }
 
-  builder.addDivider('-');
-
-  // 12. Total Items & Qty Count
+  // 11. Total Items & Qty Count
   const totalItemCount = itemsToPrint.length;
-  const totalQty = itemsToPrint.reduce((sum, i) => sum + i.quantity, 0);
-  builder.addKeyValue(`Total Items: ${totalItemCount}`, `Qty: ${totalQty}`, { bold: true });
+  const totalQty = itemsToPrint.reduce((sum, i) => sum + Math.abs(i.quantity), 0);
+  builder.addKeyValue(`Total Items: ${totalItemCount}`, `${hasCancellation ? 'Delta ' : ''}Qty: ${totalQty}`, { bold: true });
 
   builder.addDivider('-');
 
-  // 13. Paper Feed & Partial Cut
+  // 12. Paper Feed & Partial Cut
   builder.addFeedAndCut(is58mm ? 2 : 3);
 
   return builder.build();

@@ -157,18 +157,32 @@ export const kotService = {
     // If itemsToInclude is passed, generate KOT for those specific items; otherwise use all order.items
     const targetItems = itemsToInclude || order.items || [];
 
-    const kotItems: KOTItem[] = targetItems.map((item) => ({
-      id: 'kot-item-' + Date.now() + Math.random().toString(36).substr(2, 4),
-      kot_id: '',
-      product_name: item.product_name,
-      quantity: item.quantity,
-      notes: item.item_notes,
-    }));
+    const kotItems: KOTItem[] = targetItems.map((item) => {
+      const rawQty = Number(item.quantity) || 1;
+      const isCancelled = rawQty < 0 || Boolean(item.item_notes && item.item_notes.includes('[CANCELLED]'));
+      const effectiveNotes = item.item_notes || (item as any).notes;
+      return {
+        id: 'kot-item-' + Date.now() + Math.random().toString(36).substr(2, 4),
+        kot_id: '',
+        product_name: item.product_name,
+        quantity: rawQty,
+        notes: isCancelled && effectiveNotes && !effectiveNotes.includes('[CANCELLED]')
+          ? `[CANCELLED] ${effectiveNotes}`
+          : effectiveNotes,
+      };
+    });
+
+    const hasCancelled = kotItems.some((ki) => ki.quantity < 0 || (ki.notes && ki.notes.includes('[CANCELLED]')));
+    const hasAdded = kotItems.some((ki) => ki.quantity > 0);
 
     const noteText =
       kitchenNotes ||
       (isSupplementary
-        ? `[SUPPLEMENTARY KOT - SUP] ${order.notes ? order.notes : 'New items added'}`
+        ? hasCancelled && hasAdded
+          ? `[KOT UPDATE] Order #${order.order_number} modified`
+          : hasCancelled
+          ? `[KOT CANCEL] Items removed from Order #${order.order_number}`
+          : `[SUPPLEMENTARY KOT - SUP] ${order.notes ? order.notes : 'New items added'}`
         : order.notes || '');
 
     const newKot: KOT = {

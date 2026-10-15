@@ -4129,14 +4129,20 @@ export default function OrdersScreen() {
                       style={[styles.invoiceActionBtn, styles.invoiceBtnKot]}
                       onPress={async () => {
                         try {
-                          const res = await printService.printKotThermal(viewOrderModal, settings, undefined, false, { isManual: true });
+                          const latestKot = viewOrderModal.kots && viewOrderModal.kots.length > 0
+                            ? viewOrderModal.kots[viewOrderModal.kots.length - 1]
+                            : undefined;
+                          const res = await printService.printKotThermal(viewOrderModal, settings, latestKot, false, { isManual: true });
                           if (res && res.direct) {
                             showAlert('🖨️ KOT Printed', `Kitchen slip printed for Order #${viewOrderModal.order_number}.`);
                           }
                         } catch (err: any) {
                           console.warn('[orders.tsx] viewOrderModal KOT print failed:', err);
                           await handleThermalPrintFallback(err, 'KOT', async () => {
-                            await printService.printKotThermalBrowser(viewOrderModal, settings);
+                            const latestKot = viewOrderModal.kots && viewOrderModal.kots.length > 0
+                              ? viewOrderModal.kots[viewOrderModal.kots.length - 1]
+                              : undefined;
+                            await printService.printKotThermalBrowser(viewOrderModal, settings, latestKot);
                           });
                         }
                       }}

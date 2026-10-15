@@ -1304,14 +1304,16 @@ export const orderService = {
     }
 
     const consolidatedUpdated = consolidateOrderItems(updatedItems);
-
-    const oldItems = existingOrder.items || [];
+    const consolidatedOld = consolidateOrderItems(existingOrder.items || []);
 
     // Calculate item differences for KOT supplementary generation
-    // Sum existing order item quantities matching identical configuration
+    // Uses canonical identity rules (product_id, variant, modifiers, notes, unit_price, tax_rate)
     const addedItems: OrderItem[] = [];
+    const removedItems: OrderItem[] = [];
+
+    // 1. Identify added items or increased quantities
     for (const newItem of consolidatedUpdated) {
-      const matchingOldItems = oldItems.filter((old) => areOrderItemsIdentical(old, newItem));
+      const matchingOldItems = consolidatedOld.filter((old) => areOrderItemsIdentical(old, newItem));
       const oldQty = matchingOldItems.reduce((sum, old) => sum + (Number(old.quantity) || 0), 0);
       const newQty = Number(newItem.quantity) || 0;
 
@@ -1324,6 +1326,32 @@ export const orderService = {
           total: Number((diffQty * Number(newItem.unit_price || 0)).toFixed(2)),
           total_price: Number((diffQty * Number(newItem.unit_price || 0)).toFixed(2)),
         });
+      } else if (newQty < oldQty) {
+        const diffQty = oldQty - newQty;
+        removedItems.push({
+          ...newItem,
+          quantity: diffQty,
+          subtotal: Number((diffQty * Number(newItem.unit_price || 0)).toFixed(2)),
+          total: Number((diffQty * Number(newItem.unit_price || 0)).toFixed(2)),
+          total_price: Number((diffQty * Number(newItem.unit_price || 0)).toFixed(2)),
+        });
+      }
+    }
+
+    // 2. Identify items that were completely removed from the order
+    for (const oldItem of consolidatedOld) {
+      const hasMatchInNew = consolidatedUpdated.some((newItem) => areOrderItemsIdentical(newItem, oldItem));
+      if (!hasMatchInNew) {
+        const diffQty = Number(oldItem.quantity) || 0;
+        if (diffQty > 0) {
+          removedItems.push({
+            ...oldItem,
+            quantity: diffQty,
+            subtotal: Number((diffQty * Number(oldItem.unit_price || 0)).toFixed(2)),
+            total: Number((diffQty * Number(oldItem.unit_price || 0)).toFixed(2)),
+            total_price: Number((diffQty * Number(oldItem.unit_price || 0)).toFixed(2)),
+          });
+        }
       }
     }
 
@@ -1531,16 +1559,40 @@ export const orderService = {
         throw new Error('Database did not return updated order record.');
       }
 
-      // Automatically generate supplementary KOT if items were added
+      // Automatically generate supplementary KOT if items were added or removed
       let generatedKot: KOT | undefined;
-      if (addedItems.length > 0 && existingOrder.status !== 'held') {
+      const hasKotDelta = (addedItems.length > 0 || removedItems.length > 0);
+      if (hasKotDelta && existingOrder.status !== 'held') {
         try {
+          const kotDeltaItems: OrderItem[] = [
+            ...addedItems.map((item) => ({
+              ...item,
+              quantity: Math.abs(Number(item.quantity) || 1),
+            })),
+            ...removedItems.map((item) => ({
+              ...item,
+              quantity: -Math.abs(Number(item.quantity) || 1),
+              item_notes: item.item_notes
+                ? (item.item_notes.includes('[CANCELLED]') ? item.item_notes : `[CANCELLED] ${item.item_notes}`)
+                : '[CANCELLED]',
+            })),
+          ];
+
+          let kotNotes: string;
+          if (addedItems.length > 0 && removedItems.length > 0) {
+            kotNotes = `[KOT UPDATE] Order #${existingOrder.order_number} modified`;
+          } else if (removedItems.length > 0) {
+            kotNotes = `[KOT CANCEL] Items removed from Order #${existingOrder.order_number}`;
+          } else {
+            kotNotes = `[ADD-ON KOT] Original: #${existingOrder.order_number}`;
+          }
+
           const supplementaryOrderForKot: Order = {
             ...updatedOrder,
-            items: addedItems,
-            notes: `[ADD-ON KOT] Original: #${existingOrder.order_number}`,
+            items: kotDeltaItems,
+            notes: kotNotes,
           };
-          generatedKot = await kotService.generateKot(supplementaryOrderForKot);
+          generatedKot = await kotService.generateKot(supplementaryOrderForKot, kotNotes, kotDeltaItems);
         } catch (kotErr) {
           console.warn('Failed to auto-generate supplementary KOT on edit:', kotErr);
         }
@@ -1567,7 +1619,84 @@ export const orderService = {
       return fullUpdatedOrder;
     }
 
-    throw new Error('Supabase client is not configured.');
+    // Local mock storage fallback
+    let mockGeneratedKot: KOT | undefined;
+    const hasMockKotDelta = (addedItems.length > 0 || removedItems.length > 0);
+    if (hasMockKotDelta && existingOrder.status !== 'held') {
+      try {
+        const kotDeltaItems: OrderItem[] = [
+          ...addedItems.map((item) => ({
+            ...item,
+            quantity: Math.abs(Number(item.quantity) || 1),
+          })),
+          ...removedItems.map((item) => ({
+            ...item,
+            quantity: -Math.abs(Number(item.quantity) || 1),
+            item_notes: item.item_notes
+              ? (item.item_notes.includes('[CANCELLED]') ? item.item_notes : `[CANCELLED] ${item.item_notes}`)
+              : '[CANCELLED]',
+          })),
+        ];
+
+        let kotNotes: string;
+        if (addedItems.length > 0 && removedItems.length > 0) {
+          kotNotes = `[KOT UPDATE] Order #${existingOrder.order_number} modified`;
+        } else if (removedItems.length > 0) {
+          kotNotes = `[KOT CANCEL] Items removed from Order #${existingOrder.order_number}`;
+        } else {
+          kotNotes = `[ADD-ON KOT] Original: #${existingOrder.order_number}`;
+        }
+
+        const supplementaryOrderForKot: Order = {
+          ...existingOrder,
+          items: kotDeltaItems,
+          notes: kotNotes,
+        };
+        mockGeneratedKot = await kotService.generateKot(supplementaryOrderForKot, kotNotes, kotDeltaItems);
+      } catch (kotErr) {
+        console.warn('Failed to auto-generate supplementary KOT on mock edit:', kotErr);
+      }
+    }
+
+    const localOrders = mockStorage.getOrders(existingOrder.restaurant_id);
+    const orderIndex = localOrders.findIndex((o) => o.id === orderId);
+    const mockUpdatedOrder: Order = {
+      ...existingOrder,
+      items: normalizedItems,
+      customer_name: customerName,
+      customer_phone: customerPhone,
+      delivery_address: deliveryAddress,
+      delivery_landmark: deliveryLandmark,
+      delivery_charge: deliveryCharge,
+      table_id: tableId,
+      table_number: tableNumber,
+      notes: notes,
+      discount_type: discountType,
+      discount_value: discountValue,
+      discount_amount: discountAmount || 0,
+      coupon_code: couponCode,
+      coupon_discount: couponDiscount,
+      subtotal: calculated.subtotal,
+      taxable_amount: calculated.taxableSubtotal,
+      cgst_amount: calculated.cgstAmount,
+      sgst_amount: calculated.sgstAmount,
+      service_charge: calculated.serviceCharge,
+      grand_total: calculated.rawTotal,
+      round_off: calculated.roundOff,
+      payable_amount: calculated.payableAmount,
+      kots: mockGeneratedKot ? [...(existingOrder.kots || []), mockGeneratedKot] : (existingOrder.kots || []),
+      updated_at: new Date().toISOString(),
+    };
+    (mockUpdatedOrder as any).latest_kot = mockGeneratedKot;
+    if (orderIndex !== -1) {
+      localOrders[orderIndex] = mockUpdatedOrder;
+    } else {
+      localOrders.unshift(mockUpdatedOrder);
+    }
+    mockStorage.saveOrders(localOrders, existingOrder.restaurant_id);
+    clearOrdersCache(existingOrder.restaurant_id);
+    clearKotsCache(existingOrder.restaurant_id);
+    return mockUpdatedOrder;
   },
 
   /**

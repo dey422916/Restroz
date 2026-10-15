@@ -167,7 +167,7 @@ function resolveOrderFinancials(order) {
       parts.push((order.payment_method || 'CASH').toUpperCase());
     }
     if (walletRedeemed > 0) {
-      parts.push('REWARDS');
+      parts.push('RESTROZ POINTS');
     }
     paymentMethodLabel = parts.join(' + ');
   } else {
@@ -263,7 +263,7 @@ async function runTestSuite() {
   assert('2D', 'Completed Order totalPaid is ₹427 (₹100 Rewards + ₹327 Cash)', completedFin.totalPaid === 427, `totalPaid = ₹${completedFin.totalPaid}`);
   assert('2E', 'Completed Order remainingBalance is ₹0', completedFin.remainingBalance === 0, `remainingBalance = ₹${completedFin.remainingBalance}`);
   assert('2F', 'Completed Order is fully paid', completedFin.isFullyPaid, `isFullyPaid = ${completedFin.isFullyPaid}`);
-  assert('2G', 'Completed Order paymentMethodLabel displays CASH + REWARDS', completedFin.paymentMethodLabel === 'CASH + REWARDS', `label = ${completedFin.paymentMethodLabel}`);
+  assert('2G', 'Completed Order paymentMethodLabel displays CASH + RESTROZ POINTS', completedFin.paymentMethodLabel === 'CASH + RESTROZ POINTS', `label = ${completedFin.paymentMethodLabel}`);
 
   // TEST 3: Real Live Order #INV-2026-00074 from Production DB
   console.log('\n--- 3. REAL LIVE PRODUCTION ORDER #INV-2026-00074 VERIFICATION ---');
@@ -287,7 +287,7 @@ async function runTestSuite() {
   assert('3C', 'Real Order #INV-2026-00074 externalPaid = ₹327', realFin.externalPaid === 327, `externalPaid = ₹${realFin.externalPaid}`);
   assert('3D', 'Real Order #INV-2026-00074 totalPaid = ₹427', realFin.totalPaid === 427, `totalPaid = ₹${realFin.totalPaid}`);
   assert('3E', 'Real Order #INV-2026-00074 remainingBalance = ₹0', realFin.remainingBalance === 0, `remainingBalance = ₹${realFin.remainingBalance}`);
-  assert('3F', 'Real Order #INV-2026-00074 paymentMethodLabel = CASH + REWARDS', realFin.paymentMethodLabel === 'CASH + REWARDS', `paymentMethodLabel = ${realFin.paymentMethodLabel}`);
+  assert('3F', 'Real Order #INV-2026-00074 paymentMethodLabel = CASH + RESTROZ POINTS', realFin.paymentMethodLabel === 'CASH + RESTROZ POINTS', `paymentMethodLabel = ${realFin.paymentMethodLabel}`);
 
   // TEST 4: Historical Safety — Order with NO Wallet Redemption (walletRedeemed = 0)
   console.log('\n--- 4. HISTORICAL ORDER SAFETY (NO REWARDS USED) ---');

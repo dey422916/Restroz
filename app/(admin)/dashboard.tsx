@@ -257,6 +257,7 @@ export default function DashboardScreen() {
           upi_sales: 0,
           card_sales: 0,
           other_sales: 0,
+          points_sales: 0,
           dine_in_sales: 0,
           takeaway_sales: 0,
           delivery_sales: 0,
@@ -886,6 +887,26 @@ export default function DashboardScreen() {
                     />
                   </View>
                 </View>
+
+                {(daySalesData.totals.points_sales || 0) > 0 && (
+                  <View style={styles.breakdownItem}>
+                    <View style={styles.breakdownItemHeader}>
+                      <Text style={styles.breakdownItemTitle} numberOfLines={1}>⭐ RestroZ Points</Text>
+                      <Text style={styles.breakdownItemVal}>{formatCurrency(daySalesData.totals.points_sales || 0)}</Text>
+                    </View>
+                    <View style={styles.progressBarBg}>
+                      <View
+                        style={[
+                          styles.progressBarFill,
+                          {
+                            backgroundColor: '#059669',
+                            width: `${daySalesData.totals.net_sales > 0 ? ((daySalesData.totals.points_sales || 0) / daySalesData.totals.net_sales) * 100 : 0}%`,
+                          },
+                        ]}
+                      />
+                    </View>
+                  </View>
+                )}
               </View>
 
               {/* Order Channels Breakdown */}
@@ -2030,6 +2051,15 @@ export default function DashboardScreen() {
                 </Text>
               </View>
 
+              {(liveReconciliation?.points_sales || 0) > 0 && (
+                <View style={styles.reconRow}>
+                  <Text style={styles.reconLabel}>⭐ RestroZ Points (Non-Cash):</Text>
+                  <Text style={[styles.reconVal, { color: '#059669', fontWeight: '800' }]}>
+                    {formatCurrency(liveReconciliation?.points_sales || 0)}
+                  </Text>
+                </View>
+              )}
+
               {/* 5. Refunds */}
               <View style={styles.reconRow}>
                 <Text style={styles.reconLabel}>5. Refunds:</Text>
@@ -2201,6 +2231,12 @@ export default function DashboardScreen() {
                     <Text style={styles.receiptText}>UPI / Digital Sales:</Text>
                     <Text style={styles.receiptText}>{formatCurrency(viewingZReport.upi_sales + viewingZReport.card_sales)}</Text>
                   </View>
+                  {(viewingZReport.points_sales || 0) > 0 && (
+                    <View style={styles.receiptRow}>
+                      <Text style={styles.receiptText}>RestroZ Points (Non-Cash):</Text>
+                      <Text style={[styles.receiptText, { color: '#059669', fontWeight: '800' }]}>{formatCurrency(viewingZReport.points_sales || 0)}</Text>
+                    </View>
+                  )}
                   <View style={styles.receiptRow}>
                     <Text style={[styles.receiptText, { fontWeight: 'bold' }]}>TOTAL NET SALES:</Text>
                     <Text style={[styles.receiptText, { fontWeight: 'bold' }]}>{formatCurrency(viewingZReport.total_sales)}</Text>

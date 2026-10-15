@@ -513,6 +513,7 @@ export const orderService = {
         restaurant_id: ord.restaurant_id || restaurantId || '',
         order_source: resolveOrderSource(ord),
         status: normalizeOrderStatus(ord),
+        items: consolidateOrderItems(ord.items || []),
         subtotal: getOrderSubtotal(ord),
         discount_type: resolveOrderDiscounts(ord).discount_type,
         discount_value: resolveOrderDiscounts(ord).discount_value,
@@ -1551,10 +1552,11 @@ export const orderService = {
       const orderIndex = localOrders.findIndex((o) => o.id === orderId);
       const fullUpdatedOrder: Order = {
         ...updatedOrder,
-        items: rpcRes?.items || normalizedItems,
+        items: consolidateOrderItems(rpcRes?.items || normalizedItems),
         payments: rpcRes?.payments || [],
         kots: generatedKot ? [generatedKot] : (updatedOrder.kots || []),
       };
+      (fullUpdatedOrder as any).latest_kot = generatedKot;
       if (orderIndex !== -1) {
         localOrders[orderIndex] = fullUpdatedOrder;
       } else {

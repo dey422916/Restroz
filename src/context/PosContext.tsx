@@ -312,13 +312,26 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             : defaultTax)
         : 0;
 
-      const unitPrice = product.discounted_price || product.price;
+      const existingSameProd = prev.find((i) => {
+        const aId = (i.product_id || '').trim();
+        const bId = (product.id || '').trim();
+        if (aId && bId && aId === bId) return true;
+        const aName = (i.product_name || (i as any).name || '').trim().toLowerCase();
+        const bName = (product.name || '').trim().toLowerCase();
+        return aName === bName;
+      });
+
+      const defaultUnitPrice = product.discounted_price || product.price;
+      const unitPrice = existingSameProd ? (Number(existingSameProd.unit_price) || defaultUnitPrice) : defaultUnitPrice;
+      const effectiveTaxRate = (existingSameProd && existingSameProd.tax_rate !== undefined && existingSameProd.tax_rate !== null)
+        ? Number(existingSameProd.tax_rate)
+        : taxRate;
 
       const candidateItem: Partial<OrderItem> = {
-        product_id: product.id,
+        product_id: existingSameProd?.product_id || product.id,
         product_name: product.name,
         unit_price: unitPrice,
-        tax_rate: taxRate,
+        tax_rate: effectiveTaxRate,
         item_notes: notes,
       };
 

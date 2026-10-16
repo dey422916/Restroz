@@ -25,9 +25,11 @@ import { Product, Category, FoodType } from '../../src/types';
 import { formatCurrency } from '../../src/utils/currency';
 import { subscriptionGuardService } from '../../src/services/api/subscriptionGuardService';
 import { downloadSampleProductsCsv } from '../../src/utils/sampleCsv';
+import { useHorizontalScroll } from '../../src/hooks/useHorizontalScroll';
 
 export default function ProductsScreen() {
   const router = useRouter();
+  const categoryScrollRef = useHorizontalScroll();
   const { activeRestaurantId, hasPermission } = useAuth();
   const canManageProducts = hasPermission ? hasPermission('can_manage_products') : true;
   const [products, setProducts] = useState<Product[]>([]);
@@ -530,6 +532,7 @@ export default function ProductsScreen() {
 
         {/* Categories Horizontal Scroll */}
         <ScrollView
+          ref={categoryScrollRef}
           horizontal
           showsHorizontalScrollIndicator={false}
           style={styles.catScroll}

@@ -45,9 +45,11 @@ import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError
 import { naturalTableCompare } from '../../src/utils/sortUtils';
 import { getCurrentLoggedInUserDisplayName } from '../../src/utils/receiptIdentity';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useHorizontalScroll } from '../../src/hooks/useHorizontalScroll';
 
 export default function PosScreen() {
   const router = useRouter();
+  const categoryScrollRef = useHorizontalScroll();
   const { settings, isOnlineOrdersEnabled, toggleOnlineOrders } = useSettings();
   const { user, role, isSuperAdmin, activeRestaurantId, activeRestaurant, hasPermission } = useAuth();
   const { showToast } = useNotification();
@@ -1804,6 +1806,7 @@ export default function PosScreen() {
             {/* Grouped Categories Horizontal Scroll (FOOD / LIQUOR) */}
             <View style={styles.catScrollWrapper}>
               <ScrollView
+                ref={categoryScrollRef}
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.catScrollContent}

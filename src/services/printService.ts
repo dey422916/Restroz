@@ -615,7 +615,7 @@ export const printService = {
     kot?: KOT,
     isReprint: boolean = false,
     options?: { forceBrowser?: boolean; isManual?: boolean }
-  ): Promise<{ direct: boolean; printerName?: string; skipped?: boolean }> {
+  ): Promise<{ direct: boolean; printerName?: string; skipped?: boolean; code?: string; message?: string }> {
     const html = this.generateKotHtml(order, settings, kot, isReprint);
     const paperSize = settings.kot_paper_size || '80mm';
 
@@ -636,7 +636,7 @@ export const printService = {
       if (__DEV__) {
         console.log('[KOT PRINT] Auto Print is OFF and print is not manual/reprint — skipping automatic KOT print.');
       }
-      return { direct: false, skipped: true };
+      return { direct: false, skipped: true, code: 'AUTO_PRINT_OFF', message: 'Auto Print is disabled' };
     }
 
     const restId = order.restaurant_id || settings.restaurant_id || (settings as any).id;
@@ -673,14 +673,14 @@ export const printService = {
               return { direct: true, printerName: centralResult.printerName };
             }
             if (centralResult && centralResult.skipped) {
-              return { direct: false, skipped: true };
+              return { direct: false, skipped: true, code: centralResult.code, message: centralResult.message };
             }
             if (centralResult && !centralResult.success) {
               const err: any = new Error(centralResult.message || 'Central Print Station could not print the KOT.');
               err.code = centralResult.code || 'CENTRAL_PRINT_FAILED';
               throw err;
             }
-            return { direct: false, skipped: true };
+            return { direct: false, skipped: true, code: centralResult?.code, message: centralResult?.message };
           }
         } catch (nativeErr: any) {
           if (__DEV__) {
@@ -695,7 +695,7 @@ export const printService = {
               return { direct: true, printerName: centralResult.printerName };
             }
             if (centralResult && centralResult.skipped) {
-              return { direct: false, skipped: true };
+              return { direct: false, skipped: true, code: centralResult.code, message: centralResult.message };
             }
           } catch (centralErr) {
             if (__DEV__) {
@@ -703,7 +703,7 @@ export const printService = {
             }
           }
           if (autoPrintEnabled && !options?.isManual && !isReprint) {
-            return { direct: false };
+            return { direct: false, skipped: true, code: 'NATIVE_PRINT_ERROR', message: nativeErr?.message };
           }
           throw nativeErr;
         }
@@ -736,7 +736,7 @@ export const printService = {
             if (__DEV__) {
               console.log('[KOT ROUTING] No eligible KOT printer configured — printing skipped.');
             }
-            return { direct: false, skipped: true };
+            return { direct: false, skipped: true, code: directResult.code, message: directResult.message };
           }
           if (directResult && !directResult.success) {
             const err: any = new Error(directResult.message || 'Printer could not print the KOT.');
@@ -748,7 +748,7 @@ export const printService = {
             console.warn('[THERMAL PRINT]\nDocument: KOT\nResult: FAILED\nReason: ' + (err?.message || err));
           }
           if (autoPrintEnabled && !options?.isManual && !isReprint) {
-            return { direct: false };
+            return { direct: false, skipped: true, code: err?.code || 'PRINT_FAILED', message: err?.message };
           }
           throw err;
         }
@@ -779,7 +779,7 @@ export const printService = {
     settings: RestaurantSettings,
     billedBy?: string,
     options?: { forceBrowser?: boolean; isReprint?: boolean; isManual?: boolean }
-  ): Promise<{ direct: boolean; printerName?: string; skipped?: boolean }> {
+  ): Promise<{ direct: boolean; printerName?: string; skipped?: boolean; code?: string; message?: string }> {
     return this.printFinalReceiptThermal(order, settings, billedBy, options);
   },
 
@@ -1278,7 +1278,7 @@ export const printService = {
     settings: RestaurantSettings,
     billedBy?: string,
     options?: { forceBrowser?: boolean; isReprint?: boolean; isManual?: boolean }
-  ): Promise<{ direct: boolean; printerName?: string; skipped?: boolean }> {
+  ): Promise<{ direct: boolean; printerName?: string; skipped?: boolean; code?: string; message?: string }> {
     const identity = resolveReceiptIdentity(settings, undefined, billedBy);
     const resolvedBilledBy = identity.billedBy;
     const html = this.generateFinalReceiptHtml(order, settings, resolvedBilledBy);
@@ -1301,7 +1301,7 @@ export const printService = {
       if (__DEV__) {
         console.log('[BILL PRINT] Auto Print is OFF and print is not manual/reprint — skipping automatic bill print.');
       }
-      return { direct: false, skipped: true };
+      return { direct: false, skipped: true, code: 'AUTO_PRINT_OFF', message: 'Auto Print is disabled' };
     }
 
     const restId = order.restaurant_id || settings.restaurant_id || (settings as any).id;
@@ -1337,14 +1337,14 @@ export const printService = {
               return { direct: true, printerName: centralResult.printerName };
             }
             if (centralResult && centralResult.skipped) {
-              return { direct: false, skipped: true };
+              return { direct: false, skipped: true, code: centralResult.code, message: centralResult.message };
             }
             if (centralResult && !centralResult.success) {
               const err: any = new Error(centralResult.message || 'Central Print Station could not print the Bill.');
               err.code = centralResult.code || 'CENTRAL_PRINT_FAILED';
               throw err;
             }
-            return { direct: false, skipped: true };
+            return { direct: false, skipped: true, code: centralResult?.code, message: centralResult?.message };
           }
         } catch (nativeErr: any) {
           if (__DEV__) {
@@ -1359,7 +1359,7 @@ export const printService = {
               return { direct: true, printerName: centralResult.printerName };
             }
             if (centralResult && centralResult.skipped) {
-              return { direct: false, skipped: true };
+              return { direct: false, skipped: true, code: centralResult.code, message: centralResult.message };
             }
           } catch (centralErr) {
             if (__DEV__) {
@@ -1367,7 +1367,7 @@ export const printService = {
             }
           }
           if (autoPrintEnabled && !options?.isManual && !options?.isReprint) {
-            return { direct: false };
+            return { direct: false, skipped: true, code: 'NATIVE_PRINT_ERROR', message: nativeErr?.message };
           }
           throw nativeErr;
         }
@@ -1399,7 +1399,7 @@ export const printService = {
             if (__DEV__) {
               console.log('[BILL ROUTING] No eligible Bill printer configured — printing skipped.');
             }
-            return { direct: false, skipped: true };
+            return { direct: false, skipped: true, code: directResult.code, message: directResult.message };
           }
           if (directResult && !directResult.success) {
             const err: any = new Error(directResult.message || 'Printer could not print the Bill.');
@@ -1411,7 +1411,7 @@ export const printService = {
             console.warn('[THERMAL PRINT]\nDocument: Thermal Bill\nResult: FAILED\nReason: ' + (err?.message || err));
           }
           if (autoPrintEnabled && !options?.isManual && !options?.isReprint) {
-            return { direct: false };
+            return { direct: false, skipped: true, code: err?.code || 'PRINT_FAILED', message: err?.message };
           }
           throw err;
         }

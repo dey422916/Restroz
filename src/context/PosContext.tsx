@@ -767,13 +767,17 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       : await kotService.generateKot(newOrder, orderNotes);
 
     // Print KOT slip upon order placement / KOT Print button action
+    let kotWarning: string | null = null;
     try {
-      await printService.printKotThermal(newOrder, settings, initialKot, false);
-      if (settings.auto_print_kot) {
+      const printResult = await printService.printKotThermal(newOrder, settings, initialKot, false);
+      if (printResult?.skipped && printResult?.code && ['NO_ELIGIBLE_PRINTER', 'NO_PAIRED_AGENT', 'AGENT_OFFLINE', 'NO_PRINTER'].includes(printResult.code)) {
+        kotWarning = 'Central Print Agent is not paired or no eligible printer is available.';
+      } else if (settings.auto_print_kot && printResult?.direct) {
         await printedKotTracker.markKotAsAutoPrinted(initialKot.id, initialKot.kitchen_notes);
       }
     } catch (printErr: any) {
       console.warn('[PosContext] KOT print handled safely:', printErr);
+      kotWarning = printErr?.message || 'Printer could not be reached.';
       await handleThermalPrintFallback(printErr, 'KOT', async () => {
         await printService.printKotThermalBrowser(newOrder, settings, initialKot, false);
         if (settings.auto_print_kot) {
@@ -782,7 +786,15 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
 
-    showToast('success', 'Order & KOT Dispatched!', `Order #${newOrder.order_number} sent to Kitchen (KOT #${initialKot.kot_number}).`);
+    if (kotWarning) {
+      showToast(
+        'warning',
+        'Order Saved (KOT Not Printed)',
+        `Order #${newOrder.order_number} saved, but KOT was not printed. ${kotWarning}`
+      );
+    } else {
+      showToast('success', 'Order & KOT Dispatched!', `Order #${newOrder.order_number} sent to Kitchen (KOT #${initialKot.kot_number}).`);
+    }
     clearCart();
     await refreshOrders();
     return newOrder;
@@ -870,13 +882,17 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if ((updated as any).latest_kot) {
       const deltaKot = (updated as any).latest_kot;
+      let deltaKotWarning: string | null = null;
       try {
-        await printService.printKotThermal(updated, settings, deltaKot, false);
-        if (settings.auto_print_kot) {
+        const deltaResult = await printService.printKotThermal(updated, settings, deltaKot, false);
+        if (deltaResult?.skipped && deltaResult?.code && ['NO_ELIGIBLE_PRINTER', 'NO_PAIRED_AGENT', 'AGENT_OFFLINE', 'NO_PRINTER'].includes(deltaResult.code)) {
+          deltaKotWarning = 'Central Print Agent is not paired or no eligible printer is available.';
+        } else if (settings.auto_print_kot && deltaResult?.direct) {
           await printedKotTracker.markKotAsAutoPrinted(deltaKot.id, deltaKot.kitchen_notes);
         }
       } catch (printErr: any) {
         console.warn('[PosContext] Delta KOT print handled safely:', printErr);
+        deltaKotWarning = printErr?.message || 'Printer could not be reached.';
         await handleThermalPrintFallback(printErr, 'KOT', async () => {
           await printService.printKotThermalBrowser(updated, settings, deltaKot, false);
           if (settings.auto_print_kot) {
@@ -885,13 +901,21 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
       }
       const hasCancellations = deltaKot.items?.some((i: any) => i.quantity < 0 || (i.notes && i.notes.includes('[CANCELLED]')));
-      showToast(
-        'success',
-        hasCancellations ? 'KOT Amendment Saved' : 'New Item KOT Saved',
-        hasCancellations
-          ? `Sent KOT #${deltaKot.kot_number} amendment to kitchen.`
-          : `Sent KOT #${deltaKot.kot_number} for new items.`
-      );
+      if (deltaKotWarning) {
+        showToast(
+          'warning',
+          hasCancellations ? 'KOT Amendment Saved (Not Printed)' : 'New Item KOT Saved (Not Printed)',
+          `Order #${updated.order_number} updated, but KOT was not printed. ${deltaKotWarning}`
+        );
+      } else {
+        showToast(
+          'success',
+          hasCancellations ? 'KOT Amendment Saved' : 'New Item KOT Saved',
+          hasCancellations
+            ? `Sent KOT #${deltaKot.kot_number} amendment to kitchen.`
+            : `Sent KOT #${deltaKot.kot_number} for new items.`
+        );
+      }
     } else {
       showToast('success', 'Order Updated', `Order #${updated.order_number} successfully updated.`);
     }
@@ -931,15 +955,26 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const generateKot = async (order: Order, kitchenNotes?: string, itemsToInclude?: OrderItem[]): Promise<KOT> => {
     const kot = await kotService.generateKot(order, kitchenNotes, itemsToInclude);
-    showToast('warning', 'KOT Generated!', `KOT #${kot.kot_number} created.`);
+    let printWarning: string | null = null;
     try {
-      await printService.printKotThermal(order, settings, kot);
+      const res = await printService.printKotThermal(order, settings, kot, false, { isManual: true });
+      if (res?.skipped && res?.code && ['NO_ELIGIBLE_PRINTER', 'NO_PAIRED_AGENT', 'AGENT_OFFLINE', 'NO_PRINTER'].includes(res.code)) {
+        printWarning = 'Central Print Agent is not paired or no eligible printer is available.';
+      }
     } catch (printErr: any) {
       console.warn('[PosContext] Direct KOT print failed:', printErr);
+      printWarning = printErr?.message || 'Printer connection failed.';
       await handleThermalPrintFallback(printErr, 'KOT', async () => {
         await printService.printKotThermalBrowser(order, settings, kot);
       });
     }
+
+    if (printWarning) {
+      showToast('warning', 'KOT Created (Not Printed)', `KOT #${kot.kot_number} generated, but KOT was not printed. ${printWarning}`);
+    } else {
+      showToast('success', 'KOT Dispatched!', `KOT #${kot.kot_number} sent to printer.`);
+    }
+
     await refreshOrders();
     return kot;
   };
@@ -997,7 +1032,10 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (isAutoPrintEnabled(settings)) {
       try {
         const billedBy = getCurrentLoggedInUserDisplayName(user);
-        await printService.printBillThermal(updatedOrder, settings, billedBy);
+        const billRes = await printService.printBillThermal(updatedOrder, settings, billedBy);
+        if (billRes?.skipped && billRes?.code && ['NO_ELIGIBLE_PRINTER', 'NO_PAIRED_AGENT', 'AGENT_OFFLINE', 'NO_PRINTER'].includes(billRes.code)) {
+          showToast('warning', 'Bill Not Printed', 'Payment settled, but Bill was not printed. Central Print Agent is not paired or no eligible printer is available.');
+        }
       } catch (printErr) {
         console.warn('[PosContext] Auto print bill after payment settlement skipped/failed safely:', printErr);
       }

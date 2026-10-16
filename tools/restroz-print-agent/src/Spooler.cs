@@ -102,7 +102,37 @@ namespace RestroZPrintAgent
 
             try
             {
-                if (!OpenPrinter(printerName.Normalize(), out hPrinter, IntPtr.Zero))
+                bool opened = !string.IsNullOrEmpty(printerName) && OpenPrinter(printerName.Normalize(), out hPrinter, IntPtr.Zero);
+                if (!opened)
+                {
+                    // Fallback to installed thermal printer or first installed queue
+                    var installed = GetInstalledPrinters();
+                    string fallback = null;
+                    foreach (var p in installed)
+                    {
+                        var pl = (p ?? "").ToLowerInvariant();
+                        if (pl.Contains("pos") || pl.Contains("thermal") || pl.Contains("receipt") || pl.Contains("kot") || pl.Contains("58") || pl.Contains("80"))
+                        {
+                            fallback = p;
+                            break;
+                        }
+                    }
+                    if (fallback == null && installed.Count > 0)
+                    {
+                        fallback = installed[0];
+                    }
+                    if (fallback != null && OpenPrinter(fallback.Normalize(), out hPrinter, IntPtr.Zero))
+                    {
+                        if (logger != null)
+                        {
+                            logger(string.Format("[SPOOLER FALLBACK] Queue '{0}' could not be opened; routed to installed printer '{1}'", printerName, fallback));
+                        }
+                        printerName = fallback;
+                        opened = true;
+                    }
+                }
+
+                if (!opened)
                 {
                     int err = Marshal.GetLastWin32Error();
                     errorMessage = string.Format("Could not open Windows printer '{0}'. Error code: {1}", printerName, err);

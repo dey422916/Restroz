@@ -831,11 +831,9 @@ export const androidPrintRouter = {
       (p) => p.printer_role === 'bill' || p.printer_role === 'both'
     );
 
-    let candidateBillPrinters = activeBillPrinters;
-    if (candidateBillPrinters.length === 0 && isManualOrReprint && activePrinters.length > 0) {
-      // Manual print fallback: allow primary/active printer even if automatic role is KOT
-      candidateBillPrinters = activePrinters;
-    }
+    let candidateBillPrinters = isManualOrReprint
+      ? activePrinters
+      : activeBillPrinters;
 
     if (candidateBillPrinters.length === 0) {
       const err = 'No eligible Bill printer is configured on this device.';

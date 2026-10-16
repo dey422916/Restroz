@@ -1675,12 +1675,12 @@ export const webDirectPrintService = {
 
     const rawList = this.getSavedPrinters(restaurantId);
 
-    // 1. Find configured candidate printers matching role strictly (kot/both or bill/both)
-    let candidates = rawList.filter((p) => isPrinterRoleEligible(p.role, role));
-    if (candidates.length === 0 && isManual && rawList.length > 0) {
-      // Manual print fallback: allow all saved printers if none match automatic role
-      candidates = [...rawList];
-    }
+    // 1. Find configured candidate printers:
+    // On explicit manual print, do NOT filter out printers by role — allow primary/configured printers regardless of KOT/BILL role.
+    // On automatic routing, strictly filter by role (kot/both or bill/both).
+    let candidates = isManual
+      ? [...rawList]
+      : rawList.filter((p) => isPrinterRoleEligible(p.role, role));
     // 2. Prefer Primary configured printer first AMONG ELIGIBLE CANDIDATES ONLY
     candidates.sort((a, b) => (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0));
 
@@ -1757,15 +1757,10 @@ export const webDirectPrintService = {
       target = primary;
       isFallback = false;
     } else {
-      // Find all ready printers matching role strictly (NEVER route to reconnect_required / offline / unsupported / role mismatch)
+      // Find all ready printers matching role strictly (on manual print, allow any ready printer)
       let readyPrinters = list.filter(
-        (p) => (p.status === 'connected' || p.status === 'available') && isPrinterRoleEligible(p.role, role)
+        (p) => (p.status === 'connected' || p.status === 'available') && (isPrinterRoleEligible(p.role, role) || isManual)
       );
-      if (readyPrinters.length === 0 && isManual) {
-        readyPrinters = list.filter(
-          (p) => p.status === 'connected' || p.status === 'available'
-        );
-      }
 
       // Sort by silent automatic printing preference: Agent > USB > Serial > Bluetooth
       readyPrinters.sort((a, b) => {
@@ -1807,21 +1802,19 @@ export const webDirectPrintService = {
           if (deviceRows && deviceRows.length > 0) {
             const currentSaved = this.getSavedPrinters(restaurantId);
             let matchingDevices = deviceRows.filter((d: any) => {
+              if (isManual) return true;
               const localMatch = currentSaved.find((p) => p.windowsQueueName === d.printer_name || p.name === d.printer_name);
               const effectiveRole = localMatch?.role || d.role;
               return isPrinterRoleEligible(effectiveRole, role);
             });
-            if (matchingDevices.length === 0 && isManual) {
-              matchingDevices = [...deviceRows];
-            }
 
             matchingDevices.sort((a: any, b: any) => {
               if ((b.is_primary ? 1 : 0) !== (a.is_primary ? 1 : 0)) {
                 return (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0);
               }
-              // Prioritize physical thermal printer queues (POS80, POS58, Thermal, etc.) over virtual drivers
-              const isThermalA = /^(pos|thermal|receipt|kot|sr|rpp|xp|epson|tsp|58|80)/i.test(a.printer_name);
-              const isThermalB = /^(pos|thermal|receipt|kot|sr|rpp|xp|epson|tsp|58|80)/i.test(b.printer_name);
+              // Prioritize physical thermal printer queues (POS80, POS58, Thermal, Seznik, etc.) over virtual drivers
+              const isThermalA = /^(pos|thermal|receipt|kot|sr|rpp|xp|epson|tsp|58|80|seznik|veer)/i.test(a.printer_name);
+              const isThermalB = /^(pos|thermal|receipt|kot|sr|rpp|xp|epson|tsp|58|80|seznik|veer)/i.test(b.printer_name);
               if (isThermalA !== isThermalB) return (isThermalB ? 1 : 0) - (isThermalA ? 1 : 0);
 
               const isVirtualA = /pdf|xps|fax|onenote|anydesk|document writer/i.test(a.printer_name);
@@ -2696,12 +2689,14 @@ export const webDirectPrintService = {
     data: Uint8Array,
     jobType: 'kot' | 'bill' | 'test' = 'kot',
     jobTitle: string = 'Print Job',
-    restaurantId?: string | null
+    restaurantId?: string | null,
+    options?: { isManual?: boolean }
   ): Promise<WebDirectPrintResult> {
     const queueName = printer.windowsQueueName || printer.name;
     const normRole = (printer.role || '').toLowerCase();
+    const isManual = Boolean(options?.isManual);
 
-    if (jobType === 'kot' && normRole === 'bill') {
+    if (jobType === 'kot' && normRole === 'bill' && !isManual) {
       console.warn(`[PRINT_AGENT_GUARD] Refusing to send KOT job to BILL-only printer "${queueName}"`);
       return {
         success: false,
@@ -2713,7 +2708,7 @@ export const webDirectPrintService = {
         message: `Printer "${queueName}" has role BILL and cannot receive KOT print jobs.`,
       };
     }
-    if (jobType === 'bill' && normRole === 'kot') {
+    if (jobType === 'bill' && normRole === 'kot' && !isManual) {
       console.warn(`[PRINT_AGENT_GUARD] Refusing to send Bill job to KOT-only printer "${queueName}"`);
       return {
         success: false,
@@ -3095,7 +3090,7 @@ export const webDirectPrintService = {
     }
 
     if (targetPrinter.transport === 'agent') {
-      return await this.sendEscPosToAgent(targetPrinter, kotDoc.bytes, 'kot', jobName, restId);
+      return await this.sendEscPosToAgent(targetPrinter, kotDoc.bytes, 'kot', jobName, restId, { isManual: isManualOrReprint });
     }
 
     return null;
@@ -3267,7 +3262,7 @@ export const webDirectPrintService = {
     }
 
     if (targetPrinter.transport === 'agent') {
-      return await this.sendEscPosToAgent(targetPrinter, billDoc.bytes, 'bill', jobName, restId);
+      return await this.sendEscPosToAgent(targetPrinter, billDoc.bytes, 'bill', jobName, restId, { isManual: isManualOrReprint });
     }
 
     return null;

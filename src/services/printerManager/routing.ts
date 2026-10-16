@@ -26,17 +26,17 @@ export const printerRoutingService = {
       return r === role || r === 'both';
     };
 
-    // 1. Device-local override if valid and active for this role
+    // 1. Device-local override if valid and active for this role (or on explicit manual print)
     if (deviceDefaultId) {
       const devicePref = activePrinters.find(
-        (p) => p.id === deviceDefaultId && roleMatches(p.printer_role)
+        (p) => p.id === deviceDefaultId && (roleMatches(p.printer_role) || isManual)
       );
       if (devicePref) return devicePref;
     }
 
-    // 2. Primary Cloud Printer for this role ONLY
+    // 2. Primary Cloud Printer for this role (or on explicit manual print, primary printer regardless of role)
     const primary = activePrinters.find(
-      (p) => p.is_primary && roleMatches(p.printer_role)
+      (p) => p.is_primary && (roleMatches(p.printer_role) || isManual)
     );
     if (primary) return primary;
 

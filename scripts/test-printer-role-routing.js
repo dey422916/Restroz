@@ -48,15 +48,10 @@ function resolvePrinterForRole(printers, role, isManual = false) {
     return primary;
   }
 
-  // Find all ready printers matching role strictly (or all ready printers if manual)
+  // Find all ready printers matching role strictly (on manual print, allow any ready printer)
   let readyPrinters = printers.filter(
-    (p) => (p.status === 'connected' || p.status === 'available') && isPrinterRoleEligible(p.role, role)
+    (p) => (p.status === 'connected' || p.status === 'available') && (isPrinterRoleEligible(p.role, role) || isManual)
   );
-  if (readyPrinters.length === 0 && isManual) {
-    readyPrinters = printers.filter(
-      (p) => p.status === 'connected' || p.status === 'available'
-    );
-  }
 
   readyPrinters.sort((a, b) => {
     const transportWeight = { agent: 1, usb: 2, serial: 3, bluetooth: 4 };
@@ -340,6 +335,83 @@ console.log('\nTEST 9: Role comparison normalization');
   assert(isPrinterRoleEligible(' Both ', 'bill') === true, "' Both ' with whitespace matches 'bill'");
   assert(isPrinterRoleEligible('invalid', 'kot') === false, "Invalid role rejected");
   assert(isPrinterRoleEligible(null, 'kot') === false, "null rejected");
+}
+
+// TEST 10: RestroZ Print Agent job creation guard simulation
+console.log('\nTEST 10: RestroZ Print Agent Guard Simulation (sendEscPosToAgent)');
+{
+  function simulateSendEscPosToAgent(printer, jobType, isManual = false) {
+    const normRole = (printer.role || '').toLowerCase();
+    if (jobType === 'kot' && normRole === 'bill' && !isManual) {
+      return { success: false, skipped: true, code: 'ROLE_MISMATCH' };
+    }
+    if (jobType === 'bill' && normRole === 'kot' && !isManual) {
+      return { success: false, skipped: true, code: 'ROLE_MISMATCH' };
+    }
+    return { success: true, printerName: printer.name, transport: 'agent', jobType };
+  }
+
+  const kotOnlyAgentPrinter = { id: 'p_agent_kot', name: 'Seznik-Veer_9394', role: 'kot', transport: 'agent' };
+
+  // 1. Automatic bill print at settlement to KOT printer -> BLOCKED
+  const autoBillRes = simulateSendEscPosToAgent(kotOnlyAgentPrinter, 'bill', false);
+  assert(autoBillRes.skipped === true && autoBillRes.code === 'ROLE_MISMATCH', 'Auto Bill to KOT agent printer rejected by guard');
+
+  // 2. Manual bill print to KOT printer -> ALLOWED
+  const manualBillRes = simulateSendEscPosToAgent(kotOnlyAgentPrinter, 'bill', true);
+  assert(manualBillRes.success === true && manualBillRes.printerName === 'Seznik-Veer_9394', 'Manual Bill to KOT agent printer allowed by guard override');
+}
+
+// TEST 11: Multi-device ranking: primary KOT printer prioritized on manual bill print
+console.log('\nTEST 11: Multi-device ranking: primary KOT printer prioritized on manual bill print');
+{
+  const printers = [
+    { id: 'p_pri_kot', name: 'Seznik-Veer_9394', role: 'kot', isPrimary: true, status: 'connected', transport: 'agent' },
+    { id: 'p_sec_bill', name: 'Virtual Bill Printer', role: 'bill', isPrimary: false, status: 'connected', transport: 'agent' }
+  ];
+
+  // Auto Bill routes strictly to role=bill printer
+  const autoTarget = resolvePrinterForRole(printers, 'bill', false);
+  assert(autoTarget && autoTarget.name === 'Virtual Bill Printer', 'Auto Bill routes strictly to role=bill printer');
+
+  // Manual Bill routes to PRIMARY printer even though its role is KOT
+  const manualTarget = resolvePrinterForRole(printers, 'bill', true);
+  assert(manualTarget && manualTarget.name === 'Seznik-Veer_9394', 'Manual Bill routes to primary printer (Seznik-Veer_9394)');
+}
+
+// TEST 12: Manual bill after order is already settled
+console.log('\nTEST 12: Manual bill after order is already settled');
+{
+  const printers = [
+    { id: 'p_seznik', name: 'Seznik-Veer_9394', role: 'kot', isPrimary: true, status: 'connected', transport: 'agent' }
+  ];
+  const settledOrder = { id: 'ord_settled', order_number: '120', payment_status: 'paid', status: 'completed' };
+
+  // Order is already settled, auto-print is OFF or already finished
+  const manualPrintRes = simulateBillPrint(settledOrder, printers, false, true);
+  assert(manualPrintRes.printResult.success === true && manualPrintRes.printResult.printerName === 'Seznik-Veer_9394', 'Manual bill prints successfully after settlement');
+  assert(settledOrder.payment_status === 'paid', 'Settlement status preserved');
+}
+
+// TEST 13: Settlement deduplication / no duplicate auto-bill printed
+console.log('\nTEST 13: Settlement deduplication / no duplicate auto-bill printed');
+{
+  const printers = [
+    { id: 'p_seznik', name: 'Seznik-Veer_9394', role: 'kot', isPrimary: true, status: 'connected', transport: 'agent' }
+  ];
+  const order = { id: 'ord_dedup', order_number: '121' };
+
+  // Settlement auto-bill attempt 1: skipped (no bill printer)
+  const settleBill1 = simulateBillPrint(order, printers, true, false);
+  assert(settleBill1.printResult.skipped === true, 'Settlement bill attempt 1: skipped on role=KOT');
+
+  // Settlement auto-bill attempt 2: skipped (no duplicate print)
+  const settleBill2 = simulateBillPrint(order, printers, true, false);
+  assert(settleBill2.printResult.skipped === true, 'Settlement bill attempt 2: skipped (no duplicate auto-bill)');
+
+  // Explicit manual print works
+  const manualBill = simulateBillPrint(order, printers, true, true);
+  assert(manualBill.printResult.success === true, 'Explicit manual print succeeds without duplicate auto-bill');
 }
 
 console.log('\n=================================================================');

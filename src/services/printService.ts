@@ -640,10 +640,10 @@ export const printService = {
     }
 
     const restId = order.restaurant_id || settings.restaurant_id || (settings as any).id;
-    const isDirectDevice = Platform.OS !== 'web' && (await devicePrinterBindingService.isDirectDeviceMode());
+    const isDirectDevice = Platform.OS !== 'web' && (await devicePrinterBindingService.isDirectDeviceMode(restId));
 
     // 1. Android Native DIRECT_DEVICE Route (Local BLE GATT / Classic SPP / USB OTG via androidPrintRouter)
-    // In DIRECT_DEVICE mode, NEVER enter webDirectPrintService, Windows Print Agent, or Supabase print_jobs
+    // In DIRECT_DEVICE mode, attempt native local print; if unavailable or failed, fall back to Central Print Station
     // Native print condition: Platform.OS !== 'web' && autoPrintEnabled
     if (isDirectDevice) {
       if (!options?.forceBrowser) {
@@ -661,9 +661,9 @@ export const printService = {
               console.log('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinters: ' + printerNames);
             }
             return { direct: true, printerName: printerNames };
-          } else if ((routerResult as any).skipped) {
+          } else {
             if (__DEV__) {
-              console.log('[KOT ROUTING] No eligible local device printer configured — falling back to Central Print Station...');
+              console.log('[KOT ROUTING] Native direct router had no success or was skipped — falling back to Central Print Station...');
             }
             const centralResult = await webDirectPrintService.printKot(order, settings, kot, {
               isReprint,
@@ -681,21 +681,26 @@ export const printService = {
               throw err;
             }
             return { direct: false, skipped: true };
-          } else {
-            if (__DEV__) {
-              console.warn('[THERMAL PRINT]\nDocument: KOT\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
-            }
-            const firstErr = routerResult.destinations.find((d) => d.status !== 'success' && d.status !== 'skipped_dedup');
-            const errObj: any = new Error(firstErr?.message || routerResult.summary || 'Direct print failed. Check printer connection.');
-            errObj.isDirectDevice = true;
-            errObj.status = firstErr?.status || 'failed_before_write';
-            errObj.errorCode = (firstErr as any)?.errorCode || 'PRINT_FAILED';
-            errObj.destinationResults = routerResult.destinations;
-            throw errObj;
           }
         } catch (nativeErr: any) {
           if (__DEV__) {
-            console.warn('[THERMAL PRINT] Android direct router error:', nativeErr?.message || nativeErr);
+            console.warn('[THERMAL PRINT] Android direct router error, falling back to Central Print Station:', nativeErr?.message || nativeErr);
+          }
+          try {
+            const centralResult = await webDirectPrintService.printKot(order, settings, kot, {
+              isReprint,
+              isManual: options?.isManual,
+            });
+            if (centralResult && centralResult.success) {
+              return { direct: true, printerName: centralResult.printerName };
+            }
+            if (centralResult && centralResult.skipped) {
+              return { direct: false, skipped: true };
+            }
+          } catch (centralErr) {
+            if (__DEV__) {
+              console.warn('[THERMAL PRINT] Central Print fallback after exception also failed:', centralErr);
+            }
           }
           if (autoPrintEnabled && !options?.isManual && !isReprint) {
             return { direct: false };
@@ -1300,10 +1305,10 @@ export const printService = {
     }
 
     const restId = order.restaurant_id || settings.restaurant_id || (settings as any).id;
-    const isDirectDevice = Platform.OS !== 'web' && (await devicePrinterBindingService.isDirectDeviceMode());
+    const isDirectDevice = Platform.OS !== 'web' && (await devicePrinterBindingService.isDirectDeviceMode(restId));
 
     // 1. Android Native DIRECT_DEVICE Route (Local BLE GATT / Classic SPP / USB OTG via androidPrintRouter)
-    // In DIRECT_DEVICE mode, NEVER enter webDirectPrintService, Windows Print Agent, or Supabase print_jobs
+    // In DIRECT_DEVICE mode, attempt native local print; if unavailable or failed, fall back to Central Print Station
     if (isDirectDevice) {
       if (!options?.forceBrowser) {
         try {
@@ -1320,9 +1325,9 @@ export const printService = {
               console.log('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ANDROID_DIRECT_ROUTER\nResult: SUCCESS\nPrinter: ' + printerNames);
             }
             return { direct: true, printerName: printerNames };
-          } else if ((routerResult as any).skipped) {
+          } else {
             if (__DEV__) {
-              console.log('[BILL ROUTING] No eligible local device printer configured — falling back to Central Print Station...');
+              console.log('[BILL ROUTING] Native direct router had no success or was skipped — falling back to Central Print Station...');
             }
             const centralResult = await webDirectPrintService.printBill(order, settings, resolvedBilledBy, {
               isReprint: options?.isReprint,
@@ -1340,21 +1345,26 @@ export const printService = {
               throw err;
             }
             return { direct: false, skipped: true };
-          } else {
-            if (__DEV__) {
-              console.warn('[THERMAL PRINT]\nDocument: Thermal Bill\nRoute: ANDROID_DIRECT_ROUTER\nResult: FAILED\nErrors: ' + routerResult.errors.join('; '));
-            }
-            const firstErr = routerResult.destinations.find((d) => d.status !== 'success' && d.status !== 'skipped_dedup');
-            const errObj: any = new Error(firstErr?.message || routerResult.summary || 'Direct print failed. Check printer connection.');
-            errObj.isDirectDevice = true;
-            errObj.status = firstErr?.status || 'failed_before_write';
-            errObj.errorCode = (firstErr as any)?.errorCode || 'PRINT_FAILED';
-            errObj.destinationResults = routerResult.destinations;
-            throw errObj;
           }
         } catch (nativeErr: any) {
           if (__DEV__) {
-            console.warn('[THERMAL PRINT] Android direct router error:', nativeErr?.message || nativeErr);
+            console.warn('[THERMAL PRINT] Android direct router error, falling back to Central Print Station:', nativeErr?.message || nativeErr);
+          }
+          try {
+            const centralResult = await webDirectPrintService.printBill(order, settings, resolvedBilledBy, {
+              isReprint: options?.isReprint,
+              isManual: options?.isManual,
+            });
+            if (centralResult && centralResult.success) {
+              return { direct: true, printerName: centralResult.printerName };
+            }
+            if (centralResult && centralResult.skipped) {
+              return { direct: false, skipped: true };
+            }
+          } catch (centralErr) {
+            if (__DEV__) {
+              console.warn('[THERMAL PRINT] Central Print fallback after exception also failed:', centralErr);
+            }
           }
           if (autoPrintEnabled && !options?.isManual && !options?.isReprint) {
             return { direct: false };

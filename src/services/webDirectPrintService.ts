@@ -1879,7 +1879,7 @@ export const webDirectPrintService = {
             }
           } else {
             // Paired agent exists, but no specific printer devices synced yet
-            const defaultQueue = agentData.device_name || 'Central Printer';
+            const defaultQueue = 'POS58 Printer';
             const agentPrinter: ConfiguredDirectPrinter = {
               id: `agent_${agentData.id}_default`,
               name: defaultQueue,

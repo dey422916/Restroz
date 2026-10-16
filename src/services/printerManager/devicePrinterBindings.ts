@@ -2,6 +2,8 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DevicePrinterBinding, DevicePrinterDefaults, RestaurantPrinter } from '../../types';
 
+import { supabase } from '../supabase';
+
 const STORAGE_KEY_DEVICE_BINDINGS = '@restroz_device_printer_bindings';
 const STORAGE_KEY_DEVICE_DEFAULTS = '@restroz_device_printer_defaults';
 const STORAGE_KEY_DEVICE_PRINT_MODE = '@restroz_device_print_mode';
@@ -12,10 +14,14 @@ export type DevicePrintMode = 'DIRECT_DEVICE' | 'CENTRAL_PRINT_STATION';
 export const devicePrinterBindingService = {
   /**
    * Retrieves the current device print routing mode.
-   * On native Android / iOS, if any direct device printer or binding exists, defaults to DIRECT_DEVICE.
-   * Otherwise defaults to CENTRAL_PRINT_STATION.
+   * On native Android / iOS:
+   * 1. Checks explicit device-local override.
+   * 2. If restaurantId is provided and restaurant has a paired Central Print Agent in Supabase
+   *    and no local direct printers exist, defaults to CENTRAL_PRINT_STATION.
+   * 3. Otherwise if any direct device printer or binding exists, defaults to DIRECT_DEVICE.
+   * 4. Otherwise defaults to CENTRAL_PRINT_STATION.
    */
-  async getDevicePrintMode(): Promise<DevicePrintMode> {
+  async getDevicePrintMode(restaurantId?: string): Promise<DevicePrintMode> {
     if (Platform.OS === 'web') {
       return 'CENTRAL_PRINT_STATION';
     }
@@ -23,6 +29,26 @@ export const devicePrinterBindingService = {
       const explicitMode = await AsyncStorage.getItem(STORAGE_KEY_DEVICE_PRINT_MODE);
       if (explicitMode === 'DIRECT_DEVICE' || explicitMode === 'CENTRAL_PRINT_STATION') {
         return explicitMode as DevicePrintMode;
+      }
+
+      // Check restaurant-level paired Central Print Agent
+      if (restaurantId) {
+        try {
+          const { data: agent } = await supabase
+            .from('print_agents')
+            .select('id')
+            .eq('restaurant_id', restaurantId)
+            .eq('is_paired', true)
+            .limit(1)
+            .maybeSingle();
+
+          if (agent && agent.id) {
+            const localPrinters = await this.getDevicePrinters();
+            if (localPrinters.length === 0) {
+              return 'CENTRAL_PRINT_STATION';
+            }
+          }
+        } catch (_) {}
       }
 
       // Check if any device-local bindings or printers exist
@@ -60,9 +86,9 @@ export const devicePrinterBindingService = {
   /**
    * Fast check whether this device is running in native DIRECT_DEVICE mode.
    */
-  async isDirectDeviceMode(): Promise<boolean> {
+  async isDirectDeviceMode(restaurantId?: string): Promise<boolean> {
     if (Platform.OS === 'web') return false;
-    const mode = await this.getDevicePrintMode();
+    const mode = await this.getDevicePrintMode(restaurantId);
     return mode === 'DIRECT_DEVICE';
   },
 

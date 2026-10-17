@@ -123,6 +123,7 @@ export default function PosScreen() {
   const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false);
   const [showQuickBillModal, setShowQuickBillModal] = useState<boolean>(false);
   const [showRegisterClosedModal, setShowRegisterClosedModal] = useState<boolean>(false);
+  const [showClearCartModal, setShowClearCartModal] = useState<boolean>(false);
   const [openingFloatInput, setOpeningFloatInput] = useState<string>('0');
   const [isOpeningRegisterFromPos, setIsOpeningRegisterFromPos] = useState<boolean>(false);
 
@@ -524,6 +525,7 @@ export default function PosScreen() {
     setCreatedOrder(null);
     setIsKotDispatched(false);
     setHasUnsentItems(false);
+    setPosStep('catalog');
   };
 
   const handleSendKotAction = async () => {
@@ -1163,7 +1165,10 @@ export default function PosScreen() {
       </TouchableOpacity>
 
       {/* Clear Cart Action */}
-      <TouchableOpacity style={styles.clearBtnInline} onPress={handleClearCartAction}>
+      <TouchableOpacity
+        style={styles.clearBtnInline}
+        onPress={() => setShowClearCartModal(true)}
+      >
         <Text style={styles.clearBtnText}>🗑️ Clear Cart</Text>
       </TouchableOpacity>
     </View>
@@ -1415,35 +1420,6 @@ export default function PosScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Preset Quick Chips */}
-            <View style={styles.posDiscountChipsRow}>
-              {(discountType === 'percentage'
-                ? [5, 10, 15, 20, 25]
-                : [20, 50, 100, 200, 500]
-              ).map((preset) => {
-                const isSelected = discountValue === preset;
-                return (
-                  <TouchableOpacity
-                    key={preset}
-                    style={[styles.posDiscountChip, isSelected && styles.posDiscountChipActive]}
-                    onPress={() => {
-                      setDiscountInputValue(String(preset));
-                      setDiscount(discountType, preset);
-                    }}
-                  >
-                    <Text
-                      style={[
-                        styles.posDiscountChipText,
-                        isSelected && styles.posDiscountChipTextActive,
-                      ]}
-                    >
-                      {discountType === 'percentage' ? `${preset}%` : `₹${preset}`}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
             {/* Custom Input */}
             <View style={styles.posDiscountInputRow}>
               <TextInput
@@ -1476,7 +1452,8 @@ export default function PosScreen() {
               <TextInput
                 style={[
                   styles.custInput,
-                  { flex: 1, minWidth: 0, minHeight: 40, textTransform: 'uppercase' } as any,
+                  styles.custInputSlim,
+                  { flex: 1, minWidth: 0, textTransform: 'uppercase' } as any,
                 ]}
                 placeholder="Coupon Code"
                 placeholderTextColor="#64748b"
@@ -1485,7 +1462,7 @@ export default function PosScreen() {
                 onChangeText={setCouponCodeInput}
               />
               <TouchableOpacity
-                style={[styles.applyCouponBtn, { minHeight: 40, paddingHorizontal: 16 }]}
+                style={[styles.applyCouponBtn, styles.applyCouponBtnSlim]}
                 onPress={async () => {
                   if (couponCodeInput) {
                     await applyCouponCode(couponCodeInput);
@@ -2556,6 +2533,79 @@ export default function PosScreen() {
               >
                 <Text style={{ color: '#64748b', fontSize: 12, fontWeight: '700' }}>
                   Cancel
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Clear Cart Confirmation Modal */}
+      <Modal
+        visible={showClearCartModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowClearCartModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.viewOrderModalContent, { maxWidth: 400, padding: 22 }]}>
+            <View style={{ alignItems: 'center', marginBottom: 16 }}>
+              <View
+                style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: 26,
+                  backgroundColor: '#fee2e2',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 12,
+                }}
+              >
+                <Text style={{ fontSize: 24 }}>🗑️</Text>
+              </View>
+              <Text style={{ fontSize: 18, fontWeight: '900', color: '#0f172a', textAlign: 'center' }}>
+                Clear Cart?
+              </Text>
+              <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', marginTop: 6, lineHeight: 19 }}>
+                Are you sure you want to remove all items from this cart?
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 6 }}>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  backgroundColor: '#f1f5f9',
+                  borderWidth: 1,
+                  borderColor: '#cbd5e1',
+                  paddingVertical: 11,
+                  borderRadius: 10,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                onPress={() => setShowClearCartModal(false)}
+              >
+                <Text style={{ color: '#475569', fontSize: 13, fontWeight: '700' }}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  backgroundColor: '#e11d48',
+                  paddingVertical: 11,
+                  borderRadius: 10,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                onPress={() => {
+                  setShowClearCartModal(false);
+                  handleClearCartAction();
+                }}
+              >
+                <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '800' }}>
+                  Clear Cart
                 </Text>
               </TouchableOpacity>
             </View>
@@ -4106,6 +4156,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     justifyContent: 'center',
     borderRadius: 8,
+  },
+  applyCouponBtnSlim: {
+    minHeight: 34,
+    height: 34,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   applyCouponText: {
     color: '#ffffff',

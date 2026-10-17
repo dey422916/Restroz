@@ -562,7 +562,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const clearCart = () => {
     setLoadedOrder(null);
     setCartItems([]);
-    setSelectedTable(null);
+    // Do NOT reset selectedTable: clearing the cart should keep the table selection active for Dine-In
     setIsSupplementary(false);
     setCustomerInfoState({ name: '', phone: '' });
     setOrderNotes('');

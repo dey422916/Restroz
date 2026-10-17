@@ -27,7 +27,7 @@ import { useSettings } from '../../src/context/SettingsContext';
 import { useNotification } from '../../src/context/NotificationContext';
 import { useAuth } from '../../src/context/AuthContext';
 import { RegisterClosedError } from '../../src/context/PosContext';
-import { formatCurrency, numberToWords } from '../../src/utils/currency';
+import { formatCurrency, numberToWords, formatPrice, roundToTwoDecimals } from '../../src/utils/currency';
 import { getOrderSubtotal, getOrderTaxRate, getOrderInvoiceTotals } from '../../src/utils/gst';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { consolidateOrderItems } from '../../src/utils/orderItemIdentity';
@@ -137,6 +137,22 @@ export default function PosScreen() {
   const [isKotDispatched, setIsKotDispatched] = useState<boolean>(false);
   const [hasUnsentItems, setHasUnsentItems] = useState<boolean>(false);
   const [isSendingKot, setIsSendingKot] = useState<boolean>(false);
+  const [cashReceived, setCashReceived] = useState<string>('');
+
+  // Reset cashReceived when switching orders or clearing cart
+  useEffect(() => {
+    setCashReceived('');
+  }, [createdOrder?.id]);
+
+  useEffect(() => {
+    if (cartItems.length === 0) {
+      setCashReceived('');
+    }
+  }, [cartItems.length]);
+
+  const finalPayableTotal = walletRedeemAmount > 0 ? netPayable : totals.payableAmount;
+  const numCashReceived = parseFloat(cashReceived) || 0;
+  const returnAmount = cashReceived.trim() === '' ? 0 : Math.max(0, roundToTwoDecimals(numCashReceived - finalPayableTotal));
 
   const insets = useSafeAreaInsets();
   const [windowWidth, setWindowWidth] = useState<number>(Dimensions.get('window').width);
@@ -504,6 +520,7 @@ export default function PosScreen() {
 
   const handleClearCartAction = () => {
     clearCart();
+    setCashReceived('');
     setCreatedOrder(null);
     setIsKotDispatched(false);
     setHasUnsentItems(false);
@@ -1181,8 +1198,8 @@ export default function PosScreen() {
             <TextInput
               style={[
                 styles.custInput,
+                styles.custInputSlim,
                 isCustomerRowStacked ? { width: '100%' } : { flex: 1, minWidth: 180 },
-                { minHeight: 42 },
               ]}
               placeholder={
                 orderType === 'dine_in'
@@ -1196,8 +1213,8 @@ export default function PosScreen() {
             <TextInput
               style={[
                 styles.custInput,
+                styles.custInputSlim,
                 isCustomerRowStacked ? { width: '100%' } : { flex: 1, minWidth: 180 },
-                { minHeight: 42 },
               ]}
               placeholder={
                 orderType === 'delivery'
@@ -1457,60 +1474,38 @@ export default function PosScreen() {
           </View>
         )}
 
-        {/* Loyalty Rewards Section */}
+        {/* Cash Received / Return Amount Calculator (Fix 3) */}
         {cartItems.length > 0 && (
-          <View style={styles.posLoyaltySection}>
-            <View style={styles.posLoyaltyHeader}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={{ fontSize: 15 }}>🎁</Text>
-                <Text style={styles.posLoyaltyTitle}>Loyalty Rewards</Text>
+          <View style={styles.cashReturnSection}>
+            <View style={styles.cashReturnRow}>
+              {/* LEFT FIELD: Cash Received */}
+              <View style={styles.cashReturnCol}>
+                <Text style={styles.cashReturnLabel}>Cash Received</Text>
+                <TextInput
+                  style={styles.cashReturnInput}
+                  placeholder="₹0"
+                  placeholderTextColor="#94a3b8"
+                  value={cashReceived}
+                  onChangeText={(val) => {
+                    const clean = val.replace(/[^0-9.]/g, '');
+                    const parts = clean.split('.');
+                    if (parts.length > 2) return;
+                    setCashReceived(clean);
+                  }}
+                  keyboardType="decimal-pad"
+                />
               </View>
-              {walletInfo && Boolean(customerInfo.phone && isValidIndianPhone(customerInfo.phone)) && (
-                <View style={styles.posLoyaltyBalBadge}>
-                  <Text style={styles.posLoyaltyBalText}>
-                    Bal: {formatCurrency(walletInfo.balance)}
-                  </Text>
-                </View>
-              )}
-            </View>
 
-            {(!customerInfo.phone || !isValidIndianPhone(customerInfo.phone)) ? (
-              <Text style={styles.posLoyaltyHintText}>
-                💡 Enter 10-digit customer phone above to check or redeem loyalty points.
-              </Text>
-            ) : walletInfo?.is_enabled ? (
-              walletInfo.can_redeem ? (
-                <TouchableOpacity
-                  style={[styles.posLoyaltyCheckRow, isRedeemLoyalty && styles.posLoyaltyCheckRowActive]}
-                  onPress={() => setIsRedeemLoyalty(!isRedeemLoyalty)}
-                  activeOpacity={0.8}
-                >
-                  <View style={[styles.posLoyaltyBox, isRedeemLoyalty && styles.posLoyaltyBoxChecked]}>
-                    {isRedeemLoyalty && <Text style={styles.posLoyaltyCheckmark}>✓</Text>}
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.posLoyaltyCheckLabel, isRedeemLoyalty && styles.posLoyaltyCheckLabelActive]}>
-                      Redeem Loyalty Points ({formatCurrency(walletRedeemAmount || Math.min(walletInfo.balance, totals.payableAmount))})
-                    </Text>
-                    <Text style={styles.posLoyaltySubText}>
-                      Available: {formatCurrency(walletInfo.balance)} • 1 Point = ₹1.00
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              ) : (
-                <View style={styles.posLoyaltyIneligibleBox}>
-                  <Text style={styles.posLoyaltyIneligibleText}>
-                    {walletInfo.balance > 0
-                      ? `⚠️ Minimum balance of ${formatCurrency(walletInfo.min_redeem_balance)} required to redeem (Current: ${formatCurrency(walletInfo.balance)}).`
-                      : 'ℹ️ Customer has 0 loyalty points.'}
+              {/* RIGHT FIELD: Return Amount */}
+              <View style={styles.cashReturnCol}>
+                <Text style={styles.cashReturnLabel}>Return Amount</Text>
+                <View style={styles.cashReturnDisplayBox}>
+                  <Text style={[styles.cashReturnDisplayText, returnAmount > 0 && styles.cashReturnDisplayTextActive]}>
+                    ₹{formatPrice(returnAmount)}
                   </Text>
                 </View>
-              )
-            ) : (
-              <Text style={styles.posLoyaltyHintText}>
-                Loyalty rewards program is inactive for this restaurant.
-              </Text>
-            )}
+              </View>
+            </View>
           </View>
         )}
 
@@ -2615,6 +2610,7 @@ export default function PosScreen() {
           onProcessPayment={async (method, amt, ref, discountData) => {
             await processPayment(createdOrder.id, method, amt, ref, discountData);
             clearCart();
+            setCashReceived('');
             setCreatedOrder(null);
             setSelectedTable(null);
             setPosStep('choose_type');
@@ -3886,6 +3882,73 @@ const styles = StyleSheet.create({
     minWidth: 0,
     maxWidth: '100%',
     ...(Platform.OS === 'web' ? { boxSizing: 'border-box' as any, outlineStyle: 'none' as any } : {}),
+  },
+  custInputSlim: {
+    paddingVertical: 5,
+    minHeight: 34,
+    height: 34,
+  },
+  cashReturnSection: {
+    marginVertical: 6,
+    padding: 10,
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  cashReturnRow: {
+    flexDirection: 'row',
+    gap: 8,
+    width: '100%',
+    alignItems: 'flex-start',
+    ...(Platform.OS === 'web' ? { boxSizing: 'border-box' as any } : {}),
+  },
+  cashReturnCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  cashReturnLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#475569',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  cashReturnInput: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#94a3b8',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    height: 36,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+    width: '100%',
+    ...(Platform.OS === 'web' ? { boxSizing: 'border-box' as any, outlineStyle: 'none' as any } : {}),
+  },
+  cashReturnDisplayBox: {
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    height: 36,
+    justifyContent: 'center',
+    width: '100%',
+    ...(Platform.OS === 'web' ? { boxSizing: 'border-box' as any } : {}),
+  },
+  cashReturnDisplayText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#475569',
+  },
+  cashReturnDisplayTextActive: {
+    color: '#15803d',
+    fontWeight: '900',
   },
   emptyCartBox: {
     alignItems: 'center',

@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Order, PaymentMethod, CustomerWalletInfo } from '../../types';
-import { formatCurrency, numberToWords } from '../../utils/currency';
+import { formatCurrency, numberToWords, formatPrice } from '../../utils/currency';
 import { calculateOrderTotals, getOrderSubtotal, getOrderTaxRate, isOrderGstApplicable } from '../../utils/gst';
 import { formatOrderDateTime } from '../../utils/dateUtils';
 import { validateGSTIN } from '../../utils/validators';
@@ -219,6 +219,18 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   }, [isRedeemWallet, canRedeem, walletBalance, remainingBalance]);
 
   const netPayable = Math.max(0, remainingBalance - walletRedeemAmount);
+
+  // Cashier Cash Received & Return Amount Calculator (Fix 4)
+  const [cashReceived, setCashReceived] = useState<string>('');
+
+  useEffect(() => {
+    if (isOpen) {
+      setCashReceived('');
+    }
+  }, [isOpen, order?.id]);
+
+  const numCashReceived = parseFloat(cashReceived) || 0;
+  const returnAmount = cashReceived.trim() === '' ? 0 : Math.max(0, roundToTwoDecimals(numCashReceived - netPayable));
 
   const [tendered, setTendered] = useState<string>(netPayable.toString());
 
@@ -534,6 +546,39 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                     </View>
                   </View>
                 )}
+              </View>
+
+              {/* Cash Received / Return Amount Calculator (Fix 4) */}
+              <View style={styles.cashReturnSection}>
+                <View style={styles.cashReturnRow}>
+                  {/* LEFT FIELD: Cash Received */}
+                  <View style={styles.cashReturnCol}>
+                    <Text style={styles.cashReturnLabel}>Cash Received</Text>
+                    <TextInput
+                      style={styles.cashReturnInput}
+                      placeholder="₹0"
+                      placeholderTextColor="#94a3b8"
+                      value={cashReceived}
+                      onChangeText={(val) => {
+                        const clean = val.replace(/[^0-9.]/g, '');
+                        const parts = clean.split('.');
+                        if (parts.length > 2) return;
+                        setCashReceived(clean);
+                      }}
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+
+                  {/* RIGHT FIELD: Return Amount */}
+                  <View style={styles.cashReturnCol}>
+                    <Text style={styles.cashReturnLabel}>Return Amount</Text>
+                    <View style={styles.cashReturnDisplayBox}>
+                      <Text style={[styles.cashReturnDisplayText, returnAmount > 0 && styles.cashReturnDisplayTextActive]}>
+                        ₹{formatPrice(returnAmount)}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
               </View>
 
               {/* 3. CUSTOMER LOYALTY WALLET REDEMPTION SECTION */}
@@ -1190,5 +1235,67 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0.5,
+  },
+  cashReturnSection: {
+    marginVertical: 10,
+    padding: 12,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  cashReturnRow: {
+    flexDirection: 'row',
+    gap: 10,
+    width: '100%',
+    alignItems: 'flex-start',
+    ...(Platform.OS === 'web' ? { boxSizing: 'border-box' as any } : {}),
+  },
+  cashReturnCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  cashReturnLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#475569',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  cashReturnInput: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#94a3b8',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    height: 38,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+    width: '100%',
+    ...(Platform.OS === 'web' ? { boxSizing: 'border-box' as any, outlineStyle: 'none' as any } : {}),
+  },
+  cashReturnDisplayBox: {
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    height: 38,
+    justifyContent: 'center',
+    width: '100%',
+    ...(Platform.OS === 'web' ? { boxSizing: 'border-box' as any } : {}),
+  },
+  cashReturnDisplayText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#475569',
+  },
+  cashReturnDisplayTextActive: {
+    color: '#15803d',
+    fontWeight: '900',
   },
 });

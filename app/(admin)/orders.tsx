@@ -26,7 +26,7 @@ import { kotService, clearKotsCache } from '../../src/services/api/kotService';
 import { printService, formatLogoDataUri, handleThermalPrintFallback } from '../../src/services/printService';
 import { isAutoPrintEnabled } from '../../src/services/directPrintService';
 import { Order, OrderItem, OrderStatus, PaymentStatus, OrderSource, Product, DiningTable, RestaurantSettings, PaymentMethod, CustomerWalletInfo } from '../../src/types';
-import { formatCurrency, numberToWords, roundToTwoDecimals } from '../../src/utils/currency';
+import { formatCurrency, numberToWords, roundToTwoDecimals, formatPrice } from '../../src/utils/currency';
 import { calculateSplitAutoFill } from '../../src/utils/splitPayment';
 import { getOrderSubtotal, calculateOrderTotals, getOrderTaxableBreakdown, getOrderInvoiceTotals, getOrderTaxRate, isOrderGstApplicable } from '../../src/utils/gst';
 import { areOrderItemsIdentical, consolidateOrderItems } from '../../src/utils/orderItemIdentity';
@@ -107,6 +107,12 @@ export default function OrdersScreen() {
   const [payCustomerPhone, setPayCustomerPhone] = useState<string>('');
   const [payWalletInfo, setPayWalletInfo] = useState<CustomerWalletInfo | null>(null);
   const [isRedeemPayWallet, setIsRedeemPayWallet] = useState<boolean>(false);
+  const [payCashReceived, setPayCashReceived] = useState<string>('');
+
+  useEffect(() => {
+    setPayCashReceived('');
+  }, [payOrderModal?.id]);
+
   const [closingOrder, setClosingOrder] = useState<boolean>(false);
   const [verifyingPaymentOrderId, setVerifyingPaymentOrderId] = useState<string | null>(null);
   const [fullScreenProofOrder, setFullScreenProofOrder] = useState<Order | null>(null);
@@ -1257,6 +1263,11 @@ export default function OrdersScreen() {
   }, [isRedeemPayWallet, canRedeemPayWallet, payWalletBalance, remainingDueBeforeLoyalty]);
 
   const netPayableDue = roundToTwoDecimals(Math.max(0, remainingDueBeforeLoyalty - payWalletRedeemAmount));
+
+  // Cashier Cash Received & Return Amount Calculator (Fix 4)
+  const settleFinalPayable = netPayableDue;
+  const settleNumCashReceived = parseFloat(payCashReceived) || 0;
+  const settleReturnAmount = payCashReceived.trim() === '' ? 0 : Math.max(0, roundToTwoDecimals(settleNumCashReceived - settleFinalPayable));
 
   // Close & Pay Order confirmation
   const handleConfirmCloseAndPay = async () => {
@@ -3373,6 +3384,39 @@ export default function OrdersScreen() {
                   })()}
                 </View>
 
+                {/* Cash Received / Return Amount Calculator (Fix 4) */}
+                <View style={styles.cashReturnSection}>
+                  <View style={styles.cashReturnRow}>
+                    {/* LEFT FIELD: Cash Received */}
+                    <View style={styles.cashReturnCol}>
+                      <Text style={styles.cashReturnLabel}>Cash Received</Text>
+                      <TextInput
+                        style={styles.cashReturnInput}
+                        placeholder="₹0"
+                        placeholderTextColor="#94a3b8"
+                        value={payCashReceived}
+                        onChangeText={(val) => {
+                          const clean = val.replace(/[^0-9.]/g, '');
+                          const parts = clean.split('.');
+                          if (parts.length > 2) return;
+                          setPayCashReceived(clean);
+                        }}
+                        keyboardType="decimal-pad"
+                      />
+                    </View>
+
+                    {/* RIGHT FIELD: Return Amount */}
+                    <View style={styles.cashReturnCol}>
+                      <Text style={styles.cashReturnLabel}>Return Amount</Text>
+                      <View style={styles.cashReturnDisplayBox}>
+                        <Text style={[styles.cashReturnDisplayText, settleReturnAmount > 0 && styles.cashReturnDisplayTextActive]}>
+                          ₹{formatPrice(settleReturnAmount)}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+
                 {/* Customer Loyalty Wallet Section */}
                 {isPayRewardsEnabled && (
                   <View style={{ marginVertical: 8, padding: 12, backgroundColor: '#f8fafc', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' }}>
@@ -5392,5 +5436,67 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontWeight: '800',
     letterSpacing: 0.2,
+  },
+  cashReturnSection: {
+    marginVertical: 10,
+    padding: 12,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  cashReturnRow: {
+    flexDirection: 'row',
+    gap: 10,
+    width: '100%',
+    alignItems: 'flex-start',
+    ...(Platform.OS === 'web' ? { boxSizing: 'border-box' as any } : {}),
+  },
+  cashReturnCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  cashReturnLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#475569',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  cashReturnInput: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#94a3b8',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    height: 38,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+    width: '100%',
+    ...(Platform.OS === 'web' ? { boxSizing: 'border-box' as any, outlineStyle: 'none' as any } : {}),
+  },
+  cashReturnDisplayBox: {
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    height: 38,
+    justifyContent: 'center',
+    width: '100%',
+    ...(Platform.OS === 'web' ? { boxSizing: 'border-box' as any } : {}),
+  },
+  cashReturnDisplayText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#475569',
+  },
+  cashReturnDisplayTextActive: {
+    color: '#15803d',
+    fontWeight: '900',
   },
 });

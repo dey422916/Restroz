@@ -141,6 +141,9 @@ export function MarketingFooter() {
             <TouchableOpacity onPress={() => handleNav('/info/terms')}>
               <Text style={styles.colLink}>Terms of Service</Text>
             </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleNav('/info/data-deletion')}>
+              <Text style={styles.colLink}>Data Deletion</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -158,8 +161,8 @@ export function MarketingFooter() {
               <Text style={styles.bottomLegalLink}>Terms</Text>
             </TouchableOpacity>
             <Text style={styles.bottomDivider}>•</Text>
-            <TouchableOpacity onPress={() => handleNav('/info/contact')}>
-              <Text style={styles.bottomLegalLink}>Security</Text>
+            <TouchableOpacity onPress={() => handleNav('/info/data-deletion')}>
+              <Text style={styles.bottomLegalLink}>Data Deletion</Text>
             </TouchableOpacity>
           </View>
         </View>

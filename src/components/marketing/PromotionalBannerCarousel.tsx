@@ -6,11 +6,10 @@ import {
   TouchableOpacity,
   Image,
   useWindowDimensions,
-  Platform,
   Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { marketingService, DEFAULT_MARKETING_BANNERS } from '../../services/api/marketingService';
+import { marketingService } from '../../services/api/marketingService';
 import { WebsiteBanner } from '../../types/marketing';
 
 const LOCAL_BANNER_ASSETS: Record<string, any> = {
@@ -23,24 +22,46 @@ export function PromotionalBannerCarousel() {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
-  const [banners, setBanners] = useState<WebsiteBanner[]>(DEFAULT_MARKETING_BANNERS);
+  // Initialize with empty array and loading state to prevent wrong square image flash on refresh
+  const [banners, setBanners] = useState<WebsiteBanner[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const timerRef = useRef<any>(null);
 
   useEffect(() => {
-    loadBanners();
-  }, []);
-
-  const loadBanners = async () => {
-    try {
-      const activeBanners = await marketingService.getActiveBanners();
-      if (activeBanners && activeBanners.length > 0) {
-        setBanners(activeBanners);
+    let isMounted = true;
+    const loadBanners = async () => {
+      try {
+        const activeBanners = await marketingService.getActiveBanners();
+        if (isMounted) {
+          if (activeBanners && activeBanners.length > 0) {
+            // Discard any default dummy banner referencing the unrelated square image
+            const validBanners = activeBanners.filter(
+              (b) =>
+                b.id !== 'banner-complete-management-default' &&
+                b.desktop_image_url !== '/banners/banner-complete-management.jpg'
+            );
+            setBanners(validBanners);
+          } else {
+            setBanners([]);
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to load banners:', e);
+        if (isMounted) {
+          setBanners([]);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
-    } catch (e) {
-      console.warn('Failed to load banners:', e);
-    }
-  };
+    };
+    loadBanners();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (banners.length > 1) {
@@ -61,13 +82,29 @@ export function PromotionalBannerCarousel() {
     setCurrentIndex((prev) => (prev + 1) % banners.length);
   };
 
+  // If banners are loading, show a neutral skeleton container with matching 16:5 aspect ratio
+  if (isLoading) {
+    return (
+      <View style={styles.carouselContainer}>
+        <View style={styles.skeletonCard} />
+      </View>
+    );
+  }
+
+  // If no banners are available, do not render any temporary fallback
   if (banners.length === 0) {
     return null;
   }
 
   const currentBanner = banners[currentIndex];
-  const rawImageUrl = isMobile && currentBanner.mobile_image_url
-    ? currentBanner.mobile_image_url
+  // On mobile, never substitute the old square image
+  const mobileImage =
+    currentBanner.mobile_image_url &&
+    currentBanner.mobile_image_url !== '/banners/banner-complete-management.jpg'
+      ? currentBanner.mobile_image_url
+      : null;
+  const rawImageUrl = isMobile && mobileImage
+    ? mobileImage
     : currentBanner.desktop_image_url;
 
   const imageSource = rawImageUrl && LOCAL_BANNER_ASSETS[rawImageUrl]
@@ -85,48 +122,28 @@ export function PromotionalBannerCarousel() {
     }
   };
 
-  const bannerHeight = isMobile ? 360 : 480;
-
   return (
     <View style={styles.carouselContainer}>
       <TouchableOpacity
-        style={[styles.bannerCard, { height: bannerHeight }]}
+        style={styles.bannerCard}
         onPress={handleCta}
-        activeOpacity={0.92}
+        activeOpacity={currentBanner.cta_url ? 0.95 : 1}
+        disabled={!currentBanner.cta_url}
       >
-        {/* Ambient Color Aura Layer (Matches image colors seamlessly) */}
         {imageSource ? (
           <Image
             source={imageSource}
-            style={styles.ambientBlurBg}
-            blurRadius={Platform.OS === 'web' ? 45 : 25}
-            resizeMode="cover"
+            style={styles.sharpBannerImage}
+            resizeMode="contain"
           />
-        ) : null}
-
-        {/* Ambient Dark Tint & Vignette */}
-        <View style={styles.ambientDarkTint} />
-
-        {/* Sharp Foreground Content Container */}
-        <View style={styles.foregroundWrapper}>
-          {imageSource ? (
-            <Image
-              source={imageSource}
-              style={[
-                styles.sharpBannerImage,
-                { height: bannerHeight - (isMobile ? 24 : 32) }
-              ]}
-              resizeMode="contain"
-            />
-          ) : (
-            <View style={styles.fallbackCard}>
-              <Text style={styles.headline}>{currentBanner.headline}</Text>
-              {currentBanner.subheadline ? (
-                <Text style={styles.subheadline}>{currentBanner.subheadline}</Text>
-              ) : null}
-            </View>
-          )}
-        </View>
+        ) : (
+          <View style={styles.fallbackCard}>
+            <Text style={styles.headline}>{currentBanner.headline}</Text>
+            {currentBanner.subheadline ? (
+              <Text style={styles.subheadline}>{currentBanner.subheadline}</Text>
+            ) : null}
+          </View>
+        )}
 
         {/* Floating Category Badge */}
         {currentBanner.badge_text ? (
@@ -193,58 +210,38 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'center',
     paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 10,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  skeletonCard: {
+    width: '100%',
+    aspectRatio: 16 / 5,
+    borderRadius: 16,
+    backgroundColor: '#E2E8F0',
   },
   bannerCard: {
-    backgroundColor: '#0F172A',
-    borderRadius: 24,
+    width: '100%',
+    aspectRatio: 16 / 5,
+    borderRadius: 16,
     overflow: 'hidden',
     position: 'relative',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.18,
-    shadowRadius: 28,
-    elevation: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  ambientBlurBg: {
-    ...(StyleSheet.absoluteFill as any),
-    width: '100%',
-    height: '100%',
-    opacity: 0.5,
-    transform: [{ scale: 1.15 }],
-  },
-  ambientDarkTint: {
-    ...(StyleSheet.absoluteFill as any),
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
-  },
-  foregroundWrapper: {
-    flex: 1,
-    width: '100%',
-    height: '100%',
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    zIndex: 2,
   },
   sharpBannerImage: {
     width: '100%',
-    maxWidth: 1200,
+    height: '100%',
     borderRadius: 16,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 16,
   },
   fallbackCard: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 16,
     padding: 32,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#0F172A',
   },
   headline: {
     color: '#FFFFFF',
@@ -260,67 +257,67 @@ const styles = StyleSheet.create({
   },
   floatingBadge: {
     position: 'absolute',
-    top: 16,
-    right: 18,
+    top: 12,
+    right: 14,
     backgroundColor: '#FC8019',
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 8,
+    borderRadius: 6,
     zIndex: 5,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.15,
     shadowRadius: 4,
     elevation: 3,
   },
   floatingBadgeText: {
     color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.8,
+    letterSpacing: 0.6,
     textTransform: 'uppercase',
   },
   navArrowBtn: {
     position: 'absolute',
     top: '50%',
-    marginTop: -24,
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    marginTop: -20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.25)',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
   },
   navArrowLeft: {
-    left: 18,
+    left: 14,
   },
   navArrowRight: {
-    right: 18,
+    right: 14,
   },
   navArrowIcon: {
     color: '#FFFFFF',
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
   },
   dotsPill: {
     position: 'absolute',
-    bottom: 14,
+    bottom: 12,
     flexDirection: 'row',
     gap: 8,
     alignSelf: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.15)',
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 20,
     zIndex: 10,
   },
@@ -328,10 +325,10 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.35)',
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
   },
   dotItemActive: {
-    width: 26,
+    width: 24,
     backgroundColor: '#FC8019',
   },
 });

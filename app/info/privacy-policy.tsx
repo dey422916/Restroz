@@ -13,35 +13,86 @@ export function PrivacyPolicyPage() {
     >
       <View style={styles.heroSection}>
         <View style={styles.heroInner}>
-          <Text style={styles.title}>Privacy Policy</Text>
-          <Text style={styles.subtitle}>Last updated: October 2026</Text>
+          <Text style={styles.title}>RestroZ Privacy Policy</Text>
+          <Text style={styles.subtitle}>Last Updated: 17 October 2026</Text>
         </View>
       </View>
 
       <View style={styles.contentSection}>
         <View style={styles.contentInner}>
           <Text style={styles.paragraph}>
-            At RestroZ ("we", "our", or "us"), we take your privacy and data security seriously. This Privacy Policy explains how personal and business data is handled when you use the RestroZ platform, websites, mobile applications, and services.
+            RestroZ respects your privacy and is committed to protecting personal and business information. This Privacy Policy explains how information is collected, used, and protected when you use the RestroZ website, mobile application, POS platform, and related services.
           </Text>
 
           <Text style={styles.sectionHeader}>1. Information We Collect</Text>
           <Text style={styles.paragraph}>
-            We collect information you provide directly to us when creating a restaurant account, requesting a demo, contacting sales, or using our POS services. This may include your name, business name, phone number, email address, outlet city/state, and billing details.
+            Depending on the features you use, RestroZ may collect or process:
+          </Text>
+          <View style={styles.bulletList}>
+            <Text style={styles.bulletItem}>• Name, email address, phone number, and account information.</Text>
+            <Text style={styles.bulletItem}>• Restaurant/business name, address, and other business details.</Text>
+            <Text style={styles.bulletItem}>• Menu, product, table, staff, inventory, and outlet information.</Text>
+            <Text style={styles.bulletItem}>• Orders, KOTs, bills, payment records, and sales information.</Text>
+            <Text style={styles.bulletItem}>• Customer information entered by restaurants, such as name and phone number.</Text>
+            <Text style={styles.bulletItem}>• Device and technical information necessary for app functionality and security.</Text>
+          </View>
+
+          <Text style={styles.sectionHeader}>2. How We Use Information</Text>
+          <Text style={styles.paragraph}>
+            Information is used to provide and operate RestroZ services, including POS billing, order and KOT management, restaurant operations, reporting, customer management, loyalty features, QR ordering, account authentication, support, security, and service improvements.
           </Text>
 
-          <Text style={styles.sectionHeader}>2. Tenant Data Isolation & Security</Text>
+          <Text style={styles.sectionHeader}>3. Device Permissions</Text>
           <Text style={styles.paragraph}>
-            RestroZ utilizes strict enterprise multi-tenant row-level security (RLS). Your restaurant's sales figures, customer phone lists, menu catalogs, and financial transaction records are strictly isolated and never shared with other tenants.
+            The RestroZ mobile app may request device permissions required for specific features.
+          </Text>
+          <Text style={styles.paragraph}>
+            Bluetooth/Nearby Devices and USB access may be used to discover, connect to, and print through compatible thermal printers. Other permissions may be requested only when required for a feature being used.
+          </Text>
+          <Text style={styles.paragraph}>
+            RestroZ does not use these permissions for unrelated tracking or advertising.
           </Text>
 
-          <Text style={styles.sectionHeader}>3. How We Use Your Information</Text>
+          <Text style={styles.sectionHeader}>4. Data Security and Restaurant Data</Text>
           <Text style={styles.paragraph}>
-            We use your data to provide, maintain, and improve POS services, process payments, deliver automated KOT tickets, generate sales tax reports, and communicate service updates.
+            RestroZ uses security measures designed to protect restaurant and user information from unauthorized access.
+          </Text>
+          <Text style={styles.paragraph}>
+            Restaurant data, including sales records, customer information, menus, and operational data, is kept separate from other restaurant accounts using access-control mechanisms.
           </Text>
 
-          <Text style={styles.sectionHeader}>4. Contact Us</Text>
+          <Text style={styles.sectionHeader}>5. Data Sharing</Text>
           <Text style={styles.paragraph}>
-            If you have questions regarding this Privacy Policy or your data, please contact our data protection team at privacy@restroz.shop or call +91 7098513441.
+            RestroZ does not sell personal or restaurant customer information.
+          </Text>
+          <Text style={styles.paragraph}>
+            Information may be processed by service providers necessary to operate RestroZ or disclosed when required by law, for security purposes, or when authorized by the user or restaurant.
+          </Text>
+
+          <Text style={styles.sectionHeader}>6. Data Retention and Deletion</Text>
+          <Text style={styles.paragraph}>
+            Information is retained only as reasonably necessary to provide RestroZ services and meet applicable business, legal, accounting, and security requirements.
+          </Text>
+          <Text style={styles.paragraph}>
+            Users may contact us to request access, correction, or deletion of eligible personal information.
+          </Text>
+
+          <Text style={styles.sectionHeader}>7. Children's Privacy</Text>
+          <Text style={styles.paragraph}>
+            RestroZ is a business and restaurant-management platform and is not intended for use by children.
+          </Text>
+
+          <Text style={styles.sectionHeader}>8. Changes to This Policy</Text>
+          <Text style={styles.paragraph}>
+            We may update this Privacy Policy when our services, legal requirements, or data practices change. The latest version will be published on this page.
+          </Text>
+
+          <Text style={styles.sectionHeader}>9. Contact Us</Text>
+          <Text style={styles.paragraph}>
+            RestroZ{'\n'}
+            Sales: +91 7098513441{'\n'}
+            Email: restroz.pos@gmail.com{'\n'}
+            Website: https://restroz.shop
           </Text>
         </View>
       </View>
@@ -97,5 +148,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#475569',
     lineHeight: 24,
+  },
+  bulletList: {
+    gap: 8,
+    paddingLeft: 4,
+    marginTop: -4,
+  },
+  bulletItem: {
+    fontSize: 15,
+    color: '#475569',
+    lineHeight: 22,
   },
 });

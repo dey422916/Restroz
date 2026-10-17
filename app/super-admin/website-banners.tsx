@@ -314,6 +314,9 @@ export default function SuperAdminWebsiteBanners() {
                   {/* Desktop Image */}
                   <View style={[styles.inputWrap, { width: '100%' }]}>
                     <Text style={styles.inputLabel}>Desktop Background Image URL *</Text>
+                    <Text style={styles.uploadRecommendationText}>
+                      Recommended: 1600 × 500 px (16:5) for best display quality. Use JPG, PNG or WebP.
+                    </Text>
                     <View style={styles.uploadRow}>
                       <TextInput
                         style={[styles.textInput, { flex: 1 }]}
@@ -338,6 +341,9 @@ export default function SuperAdminWebsiteBanners() {
                   {/* Mobile Image */}
                   <View style={[styles.inputWrap, { width: '100%' }]}>
                     <Text style={styles.inputLabel}>Mobile Background Image URL (Optional)</Text>
+                    <Text style={styles.uploadRecommendationText}>
+                      Recommended: 1600 × 500 px (16:5) for best display quality. Use JPG, PNG or WebP.
+                    </Text>
                     <View style={styles.uploadRow}>
                       <TextInput
                         style={[styles.textInput, { flex: 1 }]}
@@ -694,6 +700,12 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
+  },
+  uploadRecommendationText: {
+    fontSize: 11.5,
+    color: '#64748B',
+    lineHeight: 16,
+    marginBottom: 4,
   },
   modalFooter: {
     flexDirection: 'row',

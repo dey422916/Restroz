@@ -62,6 +62,8 @@ export default function AdminLayout() {
     currentPath.startsWith('/staff/') ||
     currentPath === '/printers' ||
     currentPath.startsWith('/printers/') ||
+    currentPath === '/kot-screen' ||
+    currentPath.startsWith('/kot-screen/') ||
     currentPath === '/my-plan' ||
     currentPath.startsWith('/my-plan/') ||
     currentPath === '/settings' ||
@@ -80,7 +82,7 @@ export default function AdminLayout() {
         const isCoupons = currentPath === '/coupons' || currentPath === '/(admin)/coupons' || currentPath.startsWith('/(admin)/coupons/');
         const isBulkImport = currentPath === '/bulk-import' || currentPath === '/(admin)/bulk-import' || currentPath.startsWith('/(admin)/bulk-import/');
         const isSettings = currentPath === '/settings' || currentPath === '/(admin)/settings' || currentPath.startsWith('/(admin)/settings/');
-        const isPrinters = currentPath === '/printers' || currentPath === '/(admin)/printers' || currentPath.startsWith('/(admin)/printers/');
+        const isPrinters = currentPath === '/printers' || currentPath.startsWith('/printers/') || currentPath === '/(admin)/printers' || currentPath.startsWith('/(admin)/printers/');
         const isStaff = currentPath === '/staff' || currentPath === '/(admin)/staff' || currentPath.startsWith('/(admin)/staff/');
         const isMyPlan = currentPath === '/my-plan' || currentPath === '/(admin)/my-plan' || currentPath.startsWith('/(admin)/my-plan/');
         const isOrders = currentPath === '/orders' || currentPath === '/(admin)/orders' || currentPath.startsWith('/(admin)/orders/');

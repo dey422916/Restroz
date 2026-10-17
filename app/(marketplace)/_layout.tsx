@@ -40,6 +40,10 @@ export default function MarketplaceLayout() {
     currentPath.startsWith('/bulk-import/') ||
     currentPath === '/staff' ||
     currentPath.startsWith('/staff/') ||
+    currentPath === '/printers' ||
+    currentPath.startsWith('/printers/') ||
+    currentPath === '/kot-screen' ||
+    currentPath.startsWith('/kot-screen/') ||
     currentPath === '/my-plan' ||
     currentPath.startsWith('/my-plan/') ||
     currentPath === '/settings' ||
@@ -55,13 +59,15 @@ export default function MarketplaceLayout() {
     currentPath === '/forgot-password' ||
     currentPath === '/reset-password' ||
     currentPath === '/verify-email';
+  const isInfoRoute = currentPath.startsWith('/info') || currentPath.startsWith('/(info)');
 
   const isMarketplaceRoute =
     !isAdminRoute &&
     !isSuperAdminRoute &&
     !isDedicatedWebsiteRoute &&
     !isMenuTableRoute &&
-    !isAuthRoute;
+    !isAuthRoute &&
+    !isInfoRoute;
 
   // Authoritative Route Guard:
   // 1. Restaurant ADMIN & STAFF must NEVER access customer marketplace directly -> Redirect to POS

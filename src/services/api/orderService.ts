@@ -10,7 +10,8 @@ import { couponService } from './couponService';
 import { getOrderSubtotal, calculateOrderTotals, getOrderTaxRate, isOrderGstApplicable } from '../../utils/gst';
 import { isValidPhoneNumber, validatePhoneNumberOrThrow } from '../../utils/phone';
 import { restaurantService } from './restaurantService';
-import { attachDiscountToNotes, extractDiscountFromNotes, attachGstinToNotes, extractGstinFromNotes, attachRewardToNotes, extractRewardFromNotes } from '../../utils/orderNotes';
+import { attachDiscountToNotes, extractDiscountFromNotes, attachGstinToNotes, extractGstinFromNotes, attachRewardToNotes, extractRewardFromNotes, attachB2bToNotes, extractB2bFromNotes, B2BBillingDetails } from '../../utils/orderNotes';
+import { getStateFromGSTIN } from '../../utils/validators';
 import { resolveOrderFinancials } from '../../utils/orderFinancials';
 import { areOrderItemsIdentical, consolidateOrderItems, getOrderItemCanonicalKey } from '../../utils/orderItemIdentity';
 
@@ -121,6 +122,34 @@ export function resolveOrderDiscounts(ord: Partial<Order>): {
   return { discount_type, discount_value, discount_amount: discountAmount };
 }
 
+export function resolveOrderB2B(ord: {
+  notes?: string | null;
+  customer_gstin?: string | null;
+  customer_business_name?: string | null;
+  billing_address?: string | null;
+  billing_state?: string | null;
+  billing_state_code?: string | null;
+}): {
+  customer_gstin?: string;
+  customer_business_name?: string;
+  billing_address?: string;
+  billing_state?: string;
+  billing_state_code?: string;
+} {
+  const gstinFromNotes = extractGstinFromNotes(ord.notes);
+  const effectiveGstin = ord.customer_gstin?.trim().toUpperCase() || gstinFromNotes || undefined;
+  const b2b = extractB2bFromNotes(ord.notes);
+  const stateFromGstin = effectiveGstin ? getStateFromGSTIN(effectiveGstin) : null;
+
+  return {
+    customer_gstin: effectiveGstin,
+    customer_business_name: ord.customer_business_name || b2b?.business_name || undefined,
+    billing_address: ord.billing_address || b2b?.billing_address || undefined,
+    billing_state: ord.billing_state || b2b?.billing_state || stateFromGstin?.stateName || undefined,
+    billing_state_code: ord.billing_state_code || b2b?.billing_state_code || stateFromGstin?.stateCode || undefined,
+  };
+}
+
 export const orderService = {
   clearOrdersCache,
 
@@ -227,7 +256,7 @@ export const orderService = {
             const resolvedKots = (ord.kots && ord.kots.length > 0)
               ? ord.kots
               : (orderDirectKots.length > 0 ? orderDirectKots : orderLocalKots);
-            const gstin = extractGstinFromNotes(ord.notes);
+            const b2b = resolveOrderB2B(ord);
             const fin = resolveOrderFinancials(ord);
             return {
               ...ord,
@@ -239,7 +268,11 @@ export const orderService = {
               subtotal: getOrderSubtotal(ord),
               discount_type: resolveOrderDiscounts(ord).discount_type,
               discount_value: resolveOrderDiscounts(ord).discount_value,
-              customer_gstin: ord.customer_gstin || gstin || undefined,
+              customer_gstin: b2b.customer_gstin,
+              customer_business_name: b2b.customer_business_name,
+              billing_address: b2b.billing_address,
+              billing_state: b2b.billing_state,
+              billing_state_code: b2b.billing_state_code,
               invoice_number: ord.invoice_number || ord.order_number,
               wallet_redeemed: fin.walletRedeemed > 0 ? fin.walletRedeemed : undefined,
             };
@@ -264,7 +297,7 @@ export const orderService = {
         const orderLocalKots = localAllKots.filter((k) => k.order_id === ord.id);
         const resolvedKots = (ord.kots && ord.kots.length > 0) ? ord.kots : orderLocalKots;
         const disc = extractDiscountFromNotes(ord.notes);
-        const gstin = extractGstinFromNotes(ord.notes);
+        const b2b = resolveOrderB2B(ord);
         const fin = resolveOrderFinancials(ord);
         return {
           ...ord,
@@ -276,7 +309,11 @@ export const orderService = {
           subtotal: getOrderSubtotal(ord),
           discount_type: resolveOrderDiscounts(ord).discount_type,
           discount_value: resolveOrderDiscounts(ord).discount_value,
-          customer_gstin: ord.customer_gstin || gstin || undefined,
+          customer_gstin: b2b.customer_gstin,
+          customer_business_name: b2b.customer_business_name,
+          billing_address: b2b.billing_address,
+          billing_state: b2b.billing_state,
+          billing_state_code: b2b.billing_state_code,
           invoice_number: ord.invoice_number || ord.order_number,
           wallet_redeemed: fin.walletRedeemed > 0 ? fin.walletRedeemed : undefined,
         };
@@ -379,7 +416,7 @@ export const orderService = {
               ? ord.kots
               : (orderDirectKots.length > 0 ? orderDirectKots : orderLocalKots);
 
-            const gstin = extractGstinFromNotes(ord.notes);
+            const b2b = resolveOrderB2B(ord);
             const fin = resolveOrderFinancials(ord);
             return {
               ...ord,
@@ -391,7 +428,11 @@ export const orderService = {
               subtotal: getOrderSubtotal(ord),
               discount_type: resolveOrderDiscounts(ord).discount_type,
               discount_value: resolveOrderDiscounts(ord).discount_value,
-              customer_gstin: ord.customer_gstin || gstin || undefined,
+              customer_gstin: b2b.customer_gstin,
+              customer_business_name: b2b.customer_business_name,
+              billing_address: b2b.billing_address,
+              billing_state: b2b.billing_state,
+              billing_state_code: b2b.billing_state_code,
               invoice_number: ord.invoice_number || ord.order_number,
               wallet_redeemed: fin.walletRedeemed > 0 ? fin.walletRedeemed : undefined,
             };
@@ -506,7 +547,7 @@ export const orderService = {
     const hasMore = filtered.length > to;
     const pageItems = filtered.slice(from, to).map((ord) => {
       const disc = extractDiscountFromNotes(ord.notes);
-      const gstin = extractGstinFromNotes(ord.notes);
+      const b2b = resolveOrderB2B(ord);
       const fin = resolveOrderFinancials(ord);
       return {
         ...ord,
@@ -517,7 +558,11 @@ export const orderService = {
         subtotal: getOrderSubtotal(ord),
         discount_type: resolveOrderDiscounts(ord).discount_type,
         discount_value: resolveOrderDiscounts(ord).discount_value,
-        customer_gstin: ord.customer_gstin || gstin || undefined,
+        customer_gstin: b2b.customer_gstin,
+        customer_business_name: b2b.customer_business_name,
+        billing_address: b2b.billing_address,
+        billing_state: b2b.billing_state,
+        billing_state_code: b2b.billing_state_code,
         invoice_number: ord.invoice_number || ord.order_number,
         wallet_redeemed: fin.walletRedeemed > 0 ? fin.walletRedeemed : undefined,
       };
@@ -637,7 +682,7 @@ export const orderService = {
             return null;
           }
           const disc = extractDiscountFromNotes(ord.notes);
-          const gstin = extractGstinFromNotes(ord.notes);
+          const b2b = resolveOrderB2B(ord);
           return {
             ...ord,
             items: consolidateOrderItems(ord.items || []),
@@ -646,7 +691,11 @@ export const orderService = {
             subtotal: getOrderSubtotal(ord),
             discount_type: resolveOrderDiscounts(ord).discount_type,
             discount_value: resolveOrderDiscounts(ord).discount_value,
-            customer_gstin: ord.customer_gstin || gstin || undefined,
+            customer_gstin: b2b.customer_gstin,
+            customer_business_name: b2b.customer_business_name,
+            billing_address: b2b.billing_address,
+            billing_state: b2b.billing_state,
+            billing_state_code: b2b.billing_state_code,
             invoice_number: ord.invoice_number || ord.order_number,
           };
         }
@@ -662,7 +711,7 @@ export const orderService = {
         return null;
       }
       const disc = extractDiscountFromNotes(found.notes);
-      const gstin = extractGstinFromNotes(found.notes);
+      const b2b = resolveOrderB2B(found);
       return {
         ...found,
         items: consolidateOrderItems(found.items || []),
@@ -671,7 +720,11 @@ export const orderService = {
         subtotal: getOrderSubtotal(found),
         discount_type: resolveOrderDiscounts(found).discount_type,
         discount_value: resolveOrderDiscounts(found).discount_value,
-        customer_gstin: found.customer_gstin || gstin || undefined,
+        customer_gstin: b2b.customer_gstin,
+        customer_business_name: b2b.customer_business_name,
+        billing_address: b2b.billing_address,
+        billing_state: b2b.billing_state,
+        billing_state_code: b2b.billing_state_code,
         invoice_number: found.invoice_number || found.order_number,
       };
     }
@@ -755,7 +808,7 @@ export const orderService = {
             }
 
             const disc = extractDiscountFromNotes(ord.notes);
-            const gstin = extractGstinFromNotes(ord.notes);
+            const b2b = resolveOrderB2B(ord);
             return {
               ...ord,
               order_source: resolveOrderSource(ord),
@@ -763,7 +816,11 @@ export const orderService = {
               subtotal: getOrderSubtotal(ord),
               discount_type: resolveOrderDiscounts(ord).discount_type,
               discount_value: resolveOrderDiscounts(ord).discount_value,
-              customer_gstin: ord.customer_gstin || gstin || undefined,
+              customer_gstin: b2b.customer_gstin,
+              customer_business_name: b2b.customer_business_name,
+              billing_address: b2b.billing_address,
+              billing_state: b2b.billing_state,
+              billing_state_code: b2b.billing_state_code,
               invoice_number: ord.invoice_number || ord.order_number,
               kots: orderKots,
             };
@@ -777,15 +834,19 @@ export const orderService = {
     const all = mockStorage.getOrders();
     return all.filter((o) => o.customer_id === customerId).map((ord) => {
       const disc = extractDiscountFromNotes(ord.notes);
-      const gstin = extractGstinFromNotes(ord.notes);
+      const b2b = resolveOrderB2B(ord);
       return {
         ...ord,
         order_source: resolveOrderSource(ord),
         status: normalizeOrderStatus(ord),
         subtotal: getOrderSubtotal(ord),
         discount_type: resolveOrderDiscounts(ord).discount_type,
-              discount_value: resolveOrderDiscounts(ord).discount_value,
-        customer_gstin: ord.customer_gstin || gstin || undefined,
+        discount_value: resolveOrderDiscounts(ord).discount_value,
+        customer_gstin: b2b.customer_gstin,
+        customer_business_name: b2b.customer_business_name,
+        billing_address: b2b.billing_address,
+        billing_state: b2b.billing_state,
+        billing_state_code: b2b.billing_state_code,
         invoice_number: ord.invoice_number || ord.order_number,
       };
     });
@@ -895,13 +956,28 @@ export const orderService = {
       finalNotesWithDiscAndGstin,
       initialRewardAmount
     );
+    const finalNotesWithB2B = attachB2bToNotes(finalNotesWithAll, {
+      business_name: orderData.customer_business_name,
+      customer_gstin: orderData.customer_gstin,
+      billing_address: orderData.billing_address,
+      billing_state: orderData.billing_state,
+      billing_state_code: orderData.billing_state_code,
+    });
+    const b2bResolved = resolveOrderB2B({
+      ...orderData,
+      notes: finalNotesWithB2B,
+    });
 
     const newOrder: Order = {
       id: 'ord-' + Date.now() + Math.random().toString(36).substr(2, 4),
       restaurant_id: targetRestaurantId,
       order_number: orderNumber,
       invoice_number: orderData.invoice_number || orderNumber,
-      customer_gstin: orderData.customer_gstin,
+      customer_gstin: b2bResolved.customer_gstin,
+      customer_business_name: b2bResolved.customer_business_name,
+      billing_address: b2bResolved.billing_address,
+      billing_state: b2bResolved.billing_state,
+      billing_state_code: b2bResolved.billing_state_code,
       order_source: resolvedSource,
       order_type: orderData.order_type || 'dine_in',
       table_id: resolvedTableId || undefined,
@@ -935,7 +1011,7 @@ export const orderService = {
       payment_proof_url: orderData.payment_proof_url || undefined,
       payment_status: isPaid ? 'paid' : 'unpaid',
       is_supplementary: orderData.is_supplementary ?? false,
-      notes: finalNotesWithAll,
+      notes: finalNotesWithB2B,
       items: consolidateOrderItems(orderData.items || []),
       payments: orderData.payments || [],
       kots: orderData.kots || [],
@@ -2025,6 +2101,10 @@ export const orderService = {
     payableAmount?: number;
     customerGstin?: string;
     customer_gstin?: string;
+    customer_business_name?: string;
+    billing_address?: string;
+    billing_state?: string;
+    billing_state_code?: string;
     customerPhone?: string;
     customer_phone?: string;
     splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;
@@ -2048,6 +2128,10 @@ export const orderService = {
       payableAmount,
       customerGstin,
       customer_gstin,
+      customer_business_name,
+      billing_address,
+      billing_state,
+      billing_state_code,
       customerPhone,
       customer_phone,
       splitPayments,
@@ -2162,6 +2246,32 @@ export const orderService = {
         ? rpcRes.kots
         : (existingOrder?.kots && existingOrder.kots.length > 0 ? existingOrder.kots : []);
 
+      const b2bNotes = attachB2bToNotes(settledOrder.notes, {
+        business_name: customer_business_name,
+        customer_gstin: effectiveCustomerGstin,
+        billing_address,
+        billing_state,
+        billing_state_code,
+      });
+      const finalNotes = attachRewardToNotes(b2bNotes, Number(rpcRes?.wallet_redeemed) || walletRedeemAmount || 0);
+
+      if (effectiveCustomerGstin && (customer_business_name || billing_address || billing_state || billing_state_code)) {
+        try {
+          await supabase.from('orders').update({ notes: finalNotes }).eq('id', orderId);
+        } catch (notesErr) {
+          console.warn('[orderService] Sync B2B notes to order failed:', notesErr);
+        }
+      }
+
+      const b2bData = resolveOrderB2B({
+        notes: finalNotes,
+        customer_gstin: effectiveCustomerGstin,
+        customer_business_name,
+        billing_address,
+        billing_state,
+        billing_state_code,
+      });
+
       const fullSettledOrder: Order & { reward_earned?: number; new_wallet_balance?: number; wallet_redeemed?: number } = {
         ...settledOrder,
         items: finalItems,
@@ -2179,10 +2289,15 @@ export const orderService = {
         grand_total: grandTotal !== undefined ? grandTotal : settledOrder.grand_total,
         round_off: roundOff !== undefined ? roundOff : settledOrder.round_off,
         payable_amount: payableAmount !== undefined ? payableAmount : settledOrder.payable_amount,
+        customer_gstin: b2bData.customer_gstin,
+        customer_business_name: b2bData.customer_business_name,
+        billing_address: b2bData.billing_address,
+        billing_state: b2bData.billing_state,
+        billing_state_code: b2bData.billing_state_code,
         reward_earned: Number(rpcRes?.reward_earned) || 0,
         new_wallet_balance: Number(rpcRes?.new_wallet_balance) || 0,
         wallet_redeemed: Number(rpcRes?.wallet_redeemed) || walletRedeemAmount || 0,
-        notes: attachRewardToNotes(settledOrder.notes, Number(rpcRes?.wallet_redeemed) || walletRedeemAmount || 0),
+        notes: finalNotes,
       };
       if (orderIndex !== -1) {
         localOrders[orderIndex] = fullSettledOrder;
@@ -2437,6 +2552,10 @@ export const orderService = {
       round_off?: number;
       payable_amount?: number;
       customer_gstin?: string;
+      customer_business_name?: string;
+      billing_address?: string;
+      billing_state?: string;
+      billing_state_code?: string;
       customer_phone?: string;
       customerPhone?: string;
       splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;
@@ -2460,6 +2579,10 @@ export const orderService = {
       roundOff: params.round_off,
       payableAmount: params.payable_amount,
       customer_gstin: params.customer_gstin,
+      customer_business_name: params.customer_business_name,
+      billing_address: params.billing_address,
+      billing_state: params.billing_state,
+      billing_state_code: params.billing_state_code,
       customer_phone: params.customer_phone ?? params.customerPhone,
       splitPayments: params.splitPayments,
       walletRedeemAmount: params.wallet_redeem_amount ?? params.walletRedeemAmount ?? 0,

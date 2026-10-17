@@ -126,6 +126,10 @@ interface PosContextType {
       round_off?: number;
       payable_amount?: number;
       customer_gstin?: string;
+      customer_business_name?: string;
+      billing_address?: string;
+      billing_state?: string;
+      billing_state_code?: string;
       customer_phone?: string;
       wallet_redeem_amount?: number;
       splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;
@@ -995,6 +999,10 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       round_off?: number;
       payable_amount?: number;
       customer_gstin?: string;
+      customer_business_name?: string;
+      billing_address?: string;
+      billing_state?: string;
+      billing_state_code?: string;
       customer_phone?: string;
       wallet_redeem_amount?: number;
       splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;

@@ -204,6 +204,10 @@ export interface Order {
   order_number: string;
   invoice_number?: string;
   customer_gstin?: string;
+  customer_business_name?: string;
+  billing_address?: string;
+  billing_state?: string;
+  billing_state_code?: string;
   order_type: OrderType;
   order_source?: OrderSource;
   table_id?: string;

@@ -37,7 +37,7 @@ import { printedKotTracker } from '../../src/utils/printedKotTracker';
 import { cleanCustomerOrderNotes } from '../../src/utils/orderNotes';
 import { isValidPhoneNumber, normalizePhoneNumber } from '../../src/utils/phone';
 import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError } from '../../src/utils/validation';
-import { validateGSTIN } from '../../src/utils/validators';
+import { validateGSTIN, getStateFromGSTIN } from '../../src/utils/validators';
 import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
 import { useNotification } from '../../src/context/NotificationContext';
 import { useNewOrderTracker } from '../../src/hooks/useNewOrderTracker';
@@ -102,6 +102,10 @@ export default function OrdersScreen() {
     { id: '2', method: 'upi', amount: '', ref: '' },
   ]);
   const [payCustomerGstin, setPayCustomerGstin] = useState<string>('');
+  const [payCustomerBusinessName, setPayCustomerBusinessName] = useState<string>('');
+  const [payBillingAddress, setPayBillingAddress] = useState<string>('');
+  const [payBillingState, setPayBillingState] = useState<string>('');
+  const [payBillingStateCode, setPayBillingStateCode] = useState<string>('');
   const [payDiscountType, setPayDiscountType] = useState<'none' | 'fixed' | 'percentage'>('none');
   const [payDiscountValue, setPayDiscountValue] = useState<string>('');
   const [payCustomerPhone, setPayCustomerPhone] = useState<string>('');
@@ -1177,6 +1181,10 @@ export default function OrdersScreen() {
       { id: '2', method: 'upi', amount: '', ref: '' },
     ]);
     setPayCustomerGstin(order.customer_gstin || '');
+    setPayCustomerBusinessName(order.customer_business_name || '');
+    setPayBillingAddress(order.billing_address || '');
+    setPayBillingState(order.billing_state || '');
+    setPayBillingStateCode(order.billing_state_code || '');
     setPayCustomerPhone(order.customer_phone || '');
     const initialFin = resolveOrderFinancials(order);
     setIsRedeemPayWallet(initialFin.walletRedeemed > 0);
@@ -1184,6 +1192,18 @@ export default function OrdersScreen() {
     const resolvedPayDisc = resolveOrderDiscounts(order);
     setPayDiscountType(resolvedPayDisc.discount_type);
     setPayDiscountValue(resolvedPayDisc.discount_value > 0 ? String(resolvedPayDisc.discount_value) : '');
+  };
+
+  const handlePayGstinChange = (v: string) => {
+    const clean = v.toUpperCase().trim();
+    setPayCustomerGstin(clean);
+    if (clean.length >= 2) {
+      const stateInfo = getStateFromGSTIN(clean);
+      if (stateInfo) {
+        setPayBillingState(stateInfo.stateName);
+        setPayBillingStateCode(stateInfo.stateCode);
+      }
+    }
   };
 
   // Reactive wallet fetch on phone input for orders.tsx settlement modal
@@ -1220,9 +1240,8 @@ export default function OrdersScreen() {
       : 0;
 
   const payGstinValidation = useMemo(() => {
-    if (!payCustomerGstin.trim()) return { isValid: true, error: null };
-    return validateGSTIN(payCustomerGstin);
-  }, [payCustomerGstin]);
+    return validateGSTIN(payCustomerGstin, payBillingStateCode);
+  }, [payCustomerGstin, payBillingStateCode]);
 
   const payTotals = useMemo(() => {
     if (!payOrderModal) return null;
@@ -1334,6 +1353,10 @@ export default function OrdersScreen() {
         roundOff: payTotals?.roundOff,
         payableAmount: payTotals?.payableAmount,
         customer_gstin: payCustomerGstin.trim().toUpperCase() || undefined,
+        customer_business_name: payCustomerBusinessName.trim() || undefined,
+        billing_address: payBillingAddress.trim() || undefined,
+        billing_state: payBillingState.trim() || undefined,
+        billing_state_code: payBillingStateCode.trim() || undefined,
         customer_phone: payCustomerPhone.trim() || undefined,
         walletRedeemAmount: orderExistingWallet + payWalletRedeemAmount,
       });
@@ -3683,7 +3706,7 @@ export default function OrdersScreen() {
                       placeholder="15-digit GSTIN (e.g. 19AAAAA0000A1Z5)"
                       placeholderTextColor="#64748b"
                       value={payCustomerGstin}
-                      onChangeText={(v) => setPayCustomerGstin(v.toUpperCase().trim())}
+                      onChangeText={handlePayGstinChange}
                       maxLength={15}
                       autoCapitalize="characters"
                     />
@@ -3691,6 +3714,63 @@ export default function OrdersScreen() {
                       <Text style={{ color: '#ef4444', fontSize: 10, marginTop: 3, fontWeight: '700' }}>
                         ⚠️ {payGstinValidation.error}
                       </Text>
+                    )}
+                    {payGstinValidation.isValid && payCustomerGstin.trim().length === 15 && (
+                      <Text style={{ color: '#16a34a', fontSize: 10, marginTop: 3, fontWeight: '700' }}>
+                        ✓ GSTIN format valid ({payGstinValidation.stateName || payBillingState})
+                      </Text>
+                    )}
+
+                    {Boolean(payCustomerGstin.trim()) && (
+                      <View style={{ backgroundColor: '#f1f5f9', borderRadius: 8, padding: 10, marginTop: 8, borderWidth: 1, borderColor: '#cbd5e1' }}>
+                        <Text style={{ fontSize: 11, fontWeight: '800', color: '#1e40af', marginBottom: 8, textTransform: 'uppercase' }}>
+                          B2B Recipient Billing Details (Optional)
+                        </Text>
+
+                        <Text style={[styles.fieldLabel, { fontSize: 11 }]}>Registered Business / Legal Name</Text>
+                        <TextInput
+                          style={[styles.fieldInput, { backgroundColor: '#ffffff', height: 38, fontSize: 12 }]}
+                          placeholder="e.g. Acme Enterprises Pvt Ltd"
+                          placeholderTextColor="#94a3b8"
+                          value={payCustomerBusinessName}
+                          onChangeText={setPayCustomerBusinessName}
+                        />
+
+                        <Text style={[styles.fieldLabel, { fontSize: 11, marginTop: 6 }]}>Complete Billing Address</Text>
+                        <TextInput
+                          style={[styles.fieldInput, { backgroundColor: '#ffffff', minHeight: 46, height: undefined, fontSize: 12, textAlignVertical: 'top', paddingVertical: 6 }]}
+                          placeholder="Complete Street, Building, City, PIN"
+                          placeholderTextColor="#94a3b8"
+                          value={payBillingAddress}
+                          onChangeText={setPayBillingAddress}
+                          multiline
+                        />
+
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+                          <View style={{ flex: 2 }}>
+                            <Text style={[styles.fieldLabel, { fontSize: 11 }]}>Billing State</Text>
+                            <TextInput
+                              style={[styles.fieldInput, { backgroundColor: '#ffffff', height: 38, fontSize: 12 }]}
+                              placeholder="State Name"
+                              placeholderTextColor="#94a3b8"
+                              value={payBillingState}
+                              onChangeText={setPayBillingState}
+                            />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.fieldLabel, { fontSize: 11 }]}>State Code</Text>
+                            <TextInput
+                              style={[styles.fieldInput, { backgroundColor: '#ffffff', height: 38, fontSize: 12 }]}
+                              placeholder="Code"
+                              placeholderTextColor="#94a3b8"
+                              value={payBillingStateCode}
+                              onChangeText={setPayBillingStateCode}
+                              maxLength={2}
+                              keyboardType="numeric"
+                            />
+                          </View>
+                        </View>
+                      </View>
                     )}
                   </View>
                 )}
@@ -3834,28 +3914,80 @@ export default function OrdersScreen() {
 
                     <View style={styles.invoiceMetaDivider} />
 
-                    <View style={styles.invoiceMetaRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.invoiceMetaLabel}>CUSTOMER</Text>
-                        <Text style={styles.invoiceMetaVal}>{viewOrderModal.customer_name || 'Walk-in Guest'}</Text>
-                      </View>
-                      <View style={{ flex: 1, alignItems: 'flex-end' }}>
-                        <Text style={styles.invoiceMetaLabel}>PHONE</Text>
-                        <Text style={styles.invoiceMetaVal}>{viewOrderModal.customer_phone || 'N/A'}</Text>
-                      </View>
-                    </View>
-
                     {isTaxInvoice && viewOrderModal.customer_gstin ? (
                       <>
+                        {viewOrderModal.customer_business_name ? (
+                          <View style={styles.invoiceMetaRow}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.invoiceMetaLabel}>REGISTERED BUSINESS NAME</Text>
+                              <Text style={[styles.invoiceMetaVal, { fontWeight: '700', color: '#0f172a' }]}>
+                                {viewOrderModal.customer_business_name}
+                              </Text>
+                            </View>
+                          </View>
+                        ) : null}
+
+                        {viewOrderModal.customer_business_name ? <View style={styles.invoiceMetaDivider} /> : null}
+
+                        <View style={styles.invoiceMetaRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.invoiceMetaLabel}>
+                              {viewOrderModal.customer_business_name ? 'ATTENTION / CONTACT' : 'CUSTOMER'}
+                            </Text>
+                            <Text style={styles.invoiceMetaVal}>
+                              {viewOrderModal.customer_name || 'Business Customer'}
+                            </Text>
+                          </View>
+                          <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                            <Text style={styles.invoiceMetaLabel}>PHONE</Text>
+                            <Text style={styles.invoiceMetaVal}>{viewOrderModal.customer_phone || 'N/A'}</Text>
+                          </View>
+                        </View>
+
                         <View style={styles.invoiceMetaDivider} />
                         <View style={styles.invoiceMetaRow}>
                           <View style={{ flex: 1 }}>
-                            <Text style={styles.invoiceMetaLabel}>CUSTOMER GSTIN (B2B)</Text>
-                            <Text style={[styles.invoiceMetaVal, { color: '#1d4ed8' }]}>{viewOrderModal.customer_gstin}</Text>
+                            <Text style={styles.invoiceMetaLabel}>CUSTOMER GSTIN (RECIPIENT)</Text>
+                            <Text style={[styles.invoiceMetaVal, { color: '#1d4ed8', fontFamily: 'monospace' }]}>
+                              {viewOrderModal.customer_gstin}
+                            </Text>
                           </View>
+                          {viewOrderModal.billing_state || viewOrderModal.billing_state_code ? (
+                            <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                              <Text style={styles.invoiceMetaLabel}>STATE & CODE</Text>
+                              <Text style={styles.invoiceMetaVal}>
+                                {viewOrderModal.billing_state || ''}{viewOrderModal.billing_state_code ? ` (${viewOrderModal.billing_state_code})` : ''}
+                              </Text>
+                            </View>
+                          ) : null}
                         </View>
+
+                        {viewOrderModal.billing_address ? (
+                          <>
+                            <View style={styles.invoiceMetaDivider} />
+                            <View style={styles.invoiceMetaRow}>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.invoiceMetaLabel}>BILLING ADDRESS</Text>
+                                <Text style={[styles.invoiceMetaVal, { color: '#334155' }]}>
+                                  {viewOrderModal.billing_address}
+                                </Text>
+                              </View>
+                            </View>
+                          </>
+                        ) : null}
                       </>
-                    ) : null}
+                    ) : (
+                      <View style={styles.invoiceMetaRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.invoiceMetaLabel}>CUSTOMER</Text>
+                          <Text style={styles.invoiceMetaVal}>{viewOrderModal.customer_name || 'Walk-in Guest'}</Text>
+                        </View>
+                        <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                          <Text style={styles.invoiceMetaLabel}>PHONE</Text>
+                          <Text style={styles.invoiceMetaVal}>{viewOrderModal.customer_phone || 'N/A'}</Text>
+                        </View>
+                      </View>
+                    )}
 
                     {isTaxInvoice ? (
                       <>

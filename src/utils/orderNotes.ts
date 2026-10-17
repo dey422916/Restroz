@@ -13,6 +13,11 @@ export function cleanCustomerOrderNotes(notes?: string | null): string {
     .replace(/\[REWARD:[^\]]+\]/gi, '')
     .replace(/\[WALLET:[^\]]+\]/gi, '')
     .replace(/\[GSTIN:[^\]]+\]/gi, '')
+    .replace(/\[B2B:[^\]]+\]/gi, '')
+    .replace(/\[B2B_BIZ:[^\]]+\]/gi, '')
+    .replace(/\[B2B_ADDR:[^\]]+\]/gi, '')
+    .replace(/\[B2B_STATE:[^\]]+\]/gi, '')
+    .replace(/\[B2B_CODE:[^\]]+\]/gi, '')
     .replace(/\[ONLINE_DELIVERY\]/gi, '')
     .replace(/\[ONLINE_APP\]/gi, '')
     .replace(/\[DELIVERY\]/gi, '')
@@ -27,6 +32,96 @@ export function cleanCustomerOrderNotes(notes?: string | null): string {
     .trim();
 
   return cleaned;
+}
+
+/**
+ * Interface representing B2B billing snapshot metadata stored in order notes.
+ */
+export interface B2BBillingDetails {
+  business_name?: string;
+  customer_business_name?: string;
+  customerBusinessName?: string;
+  customer_gstin?: string;
+  customerGstin?: string;
+  billing_address?: string;
+  billingAddress?: string;
+  billing_state?: string;
+  billingState?: string;
+  billing_state_code?: string;
+  billingStateCode?: string;
+}
+
+/**
+ * Attaches B2B billing details safely to order notes for schema-safe persistence.
+ */
+export function attachB2bToNotes(
+  notes: string | undefined | null,
+  b2b?: B2BBillingDetails | null
+): string {
+  let baseNotes = (notes || '')
+    .replace(/\[B2B:[^\]]+\]/gi, '')
+    .replace(/\[B2B_BIZ:[^\]]+\]/gi, '')
+    .replace(/\[B2B_ADDR:[^\]]+\]/gi, '')
+    .replace(/\[B2B_STATE:[^\]]+\]/gi, '')
+    .replace(/\[B2B_CODE:[^\]]+\]/gi, '')
+    .trim();
+
+  if (!b2b) return baseNotes;
+
+  const biz = b2b.business_name || b2b.customer_business_name || b2b.customerBusinessName;
+  const addr = b2b.billing_address || b2b.billingAddress;
+  const state = b2b.billing_state || b2b.billingState;
+  const code = b2b.billing_state_code || b2b.billingStateCode;
+
+  const parts: string[] = [];
+  if (biz?.trim()) {
+    parts.push(`[B2B_BIZ:${biz.trim().replace(/[\[\]]/g, '')}]`);
+  }
+  if (addr?.trim()) {
+    parts.push(`[B2B_ADDR:${addr.trim().replace(/[\[\]]/g, '')}]`);
+  }
+  if (state?.trim()) {
+    parts.push(`[B2B_STATE:${state.trim().replace(/[\[\]]/g, '')}]`);
+  }
+  if (code?.trim()) {
+    parts.push(`[B2B_CODE:${code.trim().replace(/[\[\]]/g, '')}]`);
+  }
+
+  if (parts.length === 0) return baseNotes;
+  const tags = parts.join(' ');
+  return baseNotes ? `${baseNotes} ${tags}`.trim() : tags;
+}
+
+/**
+ * Extracts B2B billing details from order notes.
+ */
+export function extractB2bFromNotes(notes?: string | null): B2BBillingDetails | null {
+  if (!notes || typeof notes !== 'string') return null;
+  const bizMatch = notes.match(/\[B2B_BIZ:([^\]]+)\]/i);
+  const addrMatch = notes.match(/\[B2B_ADDR:([^\]]+)\]/i);
+  const stateMatch = notes.match(/\[B2B_STATE:([^\]]+)\]/i);
+  const codeMatch = notes.match(/\[B2B_CODE:([^\]]+)\]/i);
+
+  if (!bizMatch && !addrMatch && !stateMatch && !codeMatch) {
+    return null;
+  }
+
+  const biz = bizMatch ? bizMatch[1].trim() : undefined;
+  const addr = addrMatch ? addrMatch[1].trim() : undefined;
+  const state = stateMatch ? stateMatch[1].trim() : undefined;
+  const code = codeMatch ? codeMatch[1].trim() : undefined;
+
+  return {
+    business_name: biz,
+    customer_business_name: biz,
+    customerBusinessName: biz,
+    billing_address: addr,
+    billingAddress: addr,
+    billing_state: state,
+    billingState: state,
+    billing_state_code: code,
+    billingStateCode: code,
+  };
 }
 
 /**

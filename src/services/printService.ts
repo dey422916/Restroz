@@ -12,6 +12,17 @@ import { devicePrinterBindingService } from './printerManager/devicePrinterBindi
 import { supabase } from './supabase';
 import { resolveReceiptIdentity } from '../utils/receiptIdentity';
 import { consolidateOrderItems } from '../utils/orderItemIdentity';
+import { isValidGSTIN, getStateFromGSTIN } from '../utils/validators';
+
+function escapeHtml(str?: string | null): string {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 /**
  * Handles thermal print errors with explicit user confirmation before opening browser/system print preview.
@@ -1511,13 +1522,13 @@ export const printService = {
   },
 
   /**
-   * Tax Invoice (A4 Standard Format for PDF & Printing)
+   * Generates Tax Invoice (A4 Standard Format) HTML string.
    */
-  async printTaxInvoiceA4(
+  getTaxInvoiceA4Html(
     order: Order,
     settings: RestaurantSettings,
     billedBy?: string
-  ): Promise<void> {
+  ): string {
     const identity = resolveReceiptIdentity(settings, undefined, billedBy);
     const resolvedPhone = identity.restaurantPhone;
     const kotRefs = (order.kots || []).map((k) => k.kot_number).join(', ') || 'N/A';
@@ -1525,7 +1536,13 @@ export const printService = {
     const logoUrl = formatLogoDataUri(settings?.logo_url || (order as any)?.restaurant?.logo_url);
 
     const invoiceNumber = order.invoice_number || order.order_number;
-    const customerGstin = order.customer_gstin;
+    const customerGstin = order.customer_gstin?.trim().toUpperCase();
+    const isB2B = Boolean(customerGstin && isValidGSTIN(customerGstin));
+    const customerBusinessName = order.customer_business_name?.trim();
+    const billingAddress = order.billing_address?.trim();
+    const stateFromGstin = customerGstin ? getStateFromGSTIN(customerGstin) : null;
+    const recipientStateName = order.billing_state?.trim() || stateFromGstin?.stateName || '';
+    const recipientStateCode = order.billing_state_code?.trim() || stateFromGstin?.stateCode || '';
     const fssaiNo = (settings as any).fssai_number || (settings as any).fssai_license_number || '';
     const stateName = settings.state || 'West Bengal';
     const stateCode = settings.state_code || '19';
@@ -1871,7 +1888,7 @@ export const printService = {
                   ${settings.legal_name ? `<div class="legal-name">${settings.legal_name}</div>` : ''}
                   <div class="rest-meta">${settings.address || ''}</div>
                   <div class="rest-meta">${resolvedPhone ? `Phone: <b>${resolvedPhone}</b> ` : ''}${settings.email ? `• Email: ${settings.email}` : ''}</div>
-                  ${isTaxInvoice && settings.gstin ? `<div class="rest-meta">GSTIN: <b>${settings.gstin}</b></div>` : ''}
+                  ${isTaxInvoice && settings.gstin ? `<div class="rest-meta">GSTIN (Supplier): <b>${escapeHtml(settings.gstin)}</b></div>` : ''}
                   ${fssaiNo ? `<div class="rest-meta">FSSAI Lic No: <b>${fssaiNo}</b></div>` : ''}
                 </div>
               </div>
@@ -1881,7 +1898,7 @@ export const printService = {
                 <div class="meta-line">${isTaxInvoice ? 'Invoice No:' : 'Bill No:'} <b style="font-size: 12.5px;">${invoiceNumber}</b></div>
                 <div class="meta-line">Date & Time: <b>${formatOrderDateTime(order.created_at)}</b></div>
                 <div class="meta-line">Order ID: <b>${order.order_number}</b></div>
-                <div class="meta-line">Order Type: <b>${order.order_type.toUpperCase()}</b> ${order.table_number ? `(Table: <b>${order.table_number}</b>)` : ''}</div>
+                <div class="meta-line">Order Type: <b>${(order.order_type || 'dine_in').toUpperCase()}</b> ${order.table_number ? `(Table: <b>${order.table_number}</b>)` : ''}</div>
                 ${kotRefs && kotRefs !== 'N/A' ? `<div class="meta-line">KOT Ref: <b>${kotRefs}</b></div>` : ''}
                 ${
                   isTaxInvoice
@@ -1895,11 +1912,23 @@ export const printService = {
             <!-- Details Grid -->
             <div class="details-grid">
               <div class="detail-card">
-                <div class="card-title">Customer / Billed To Details</div>
-                <div class="card-item">Customer Name: <b>${order.customer_name || 'Walk-in Guest'}</b></div>
-                <div class="card-item">Phone: <b>${order.customer_phone || 'N/A'}</b></div>
-                ${isTaxInvoice && customerGstin ? `<div class="card-item">Customer GSTIN: <b style="color: #1e40af;">${customerGstin}</b> (B2B)</div>` : ''}
-                ${order.delivery_address ? `<div class="card-item">Delivery Address: <b>${order.delivery_address}${order.delivery_landmark ? ` (${order.delivery_landmark})` : ''}</b></div>` : ''}
+                <div class="card-title">${isB2B ? 'Billed To / Recipient Details (B2B)' : 'Customer / Billed To Details'}</div>
+                ${
+                  isB2B
+                    ? `
+                  ${customerBusinessName ? `<div class="card-item" style="font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 4px; word-break: break-word;">${escapeHtml(customerBusinessName)}</div>` : ''}
+                  ${order.customer_name && (!customerBusinessName || order.customer_name.trim().toLowerCase() !== customerBusinessName.toLowerCase()) && !['walk-in guest', 'dine-in guest', 'takeaway guest'].includes(order.customer_name.trim().toLowerCase()) ? `<div class="card-item">Attention / Contact: <b>${escapeHtml(order.customer_name)}</b></div>` : (!customerBusinessName ? `<div class="card-item">Customer Name: <b>${escapeHtml(order.customer_name || 'Business Customer')}</b></div>` : '')}
+                  <div class="card-item">GSTIN (Recipient): <b style="color: #1e40af; font-family: monospace; font-size: 12px; letter-spacing: 0.5px;">${escapeHtml(customerGstin)}</b></div>
+                  ${billingAddress ? `<div class="card-item" style="word-break: break-word; line-height: 1.35;">Billing Address: <b>${escapeHtml(billingAddress)}</b></div>` : (order.delivery_address ? `<div class="card-item" style="word-break: break-word;">Address: <b>${escapeHtml(order.delivery_address)}${order.delivery_landmark ? ` (${escapeHtml(order.delivery_landmark)})` : ''}</b></div>` : '')}
+                  ${recipientStateName || recipientStateCode ? `<div class="card-item">State & Code: <b>${escapeHtml(recipientStateName)}${recipientStateCode ? ` (${escapeHtml(recipientStateCode)})` : ''}</b></div>` : ''}
+                  ${order.customer_phone && order.customer_phone !== 'N/A' ? `<div class="card-item">Phone: <b>${escapeHtml(order.customer_phone)}</b></div>` : ''}
+                    `
+                    : `
+                  <div class="card-item">Customer Name: <b>${escapeHtml(order.customer_name || 'Walk-in Guest')}</b></div>
+                  <div class="card-item">Phone: <b>${escapeHtml(order.customer_phone || 'N/A')}</b></div>
+                  ${order.delivery_address ? `<div class="card-item" style="word-break: break-word;">Delivery Address: <b>${escapeHtml(order.delivery_address)}${order.delivery_landmark ? ` (${escapeHtml(order.delivery_landmark)})` : ''}</b></div>` : ''}
+                    `
+                }
               </div>
               <div class="detail-card">
                 <div class="card-title">Payment & Settlement Details</div>
@@ -2041,6 +2070,18 @@ export const printService = {
       </html>
     `;
 
+    return html;
+  },
+
+  /**
+   * Tax Invoice (A4 Standard Format for PDF & Printing)
+   */
+  async printTaxInvoiceA4(
+    order: Order,
+    settings: RestaurantSettings,
+    billedBy?: string
+  ): Promise<void> {
+    const html = this.getTaxInvoiceA4Html(order, settings, billedBy);
     try {
       await executeIsolatedPrint(html);
     } catch (e) {

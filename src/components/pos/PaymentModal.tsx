@@ -17,7 +17,7 @@ import { Order, PaymentMethod, CustomerWalletInfo } from '../../types';
 import { formatCurrency, numberToWords, formatPrice } from '../../utils/currency';
 import { calculateOrderTotals, getOrderSubtotal, getOrderTaxRate, isOrderGstApplicable } from '../../utils/gst';
 import { formatOrderDateTime } from '../../utils/dateUtils';
-import { validateGSTIN } from '../../utils/validators';
+import { validateGSTIN, getStateFromGSTIN } from '../../utils/validators';
 import { useSettings } from '../../context/SettingsContext';
 import { resolveOrderDiscounts } from '../../services/api/orderService';
 import { loyaltyService } from '../../services/api/loyaltyService';
@@ -45,6 +45,10 @@ interface PaymentModalProps {
       round_off: number;
       payable_amount: number;
       customer_gstin?: string;
+      customer_business_name?: string;
+      billing_address?: string;
+      billing_state?: string;
+      billing_state_code?: string;
       customer_phone?: string;
       wallet_redeem_amount?: number;
       splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;
@@ -92,6 +96,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   );
 
   const [customerGstinInput, setCustomerGstinInput] = useState<string>(order.customer_gstin || '');
+  const [customerBusinessName, setCustomerBusinessName] = useState<string>(order.customer_business_name || '');
+  const [billingAddress, setBillingAddress] = useState<string>(order.billing_address || '');
+  const [billingState, setBillingState] = useState<string>(order.billing_state || '');
+  const [billingStateCode, setBillingStateCode] = useState<string>(order.billing_state_code || '');
+
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
     order.payment_method === 'online' || order.payment_method === 'upi'
       ? 'upi'
@@ -124,6 +133,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           : 'cash'
       );
       setCustomerGstinInput(order.customer_gstin || '');
+      setCustomerBusinessName(order.customer_business_name || '');
+      setBillingAddress(order.billing_address || '');
+      setBillingState(order.billing_state || '');
+      setBillingStateCode(order.billing_state_code || '');
       setCustomerPhoneInput(order.customer_phone || '');
       if (initialRedeemLoyalty !== undefined) {
         setIsRedeemWallet(initialRedeemLoyalty);
@@ -135,6 +148,18 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       );
     }
   }, [order?.id, order?.restaurant_id, order?.customer_phone, initialRedeemLoyalty]);
+
+  const handleGstinChange = (v: string) => {
+    const clean = v.toUpperCase().trim();
+    setCustomerGstinInput(clean);
+    if (clean.length >= 2) {
+      const stateInfo = getStateFromGSTIN(clean);
+      if (stateInfo) {
+        setBillingState(stateInfo.stateName);
+        setBillingStateCode(stateInfo.stateCode);
+      }
+    }
+  };
 
   // Reactive wallet fetch on phone input
   useEffect(() => {
@@ -180,9 +205,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   }, [discountType, numDiscount, subtotal]);
 
   const gstinValidation = useMemo(() => {
-    if (!customerGstinInput.trim()) return { isValid: true, error: null };
-    return validateGSTIN(customerGstinInput);
-  }, [customerGstinInput]);
+    return validateGSTIN(customerGstinInput, billingStateCode);
+  }, [customerGstinInput, billingStateCode]);
 
   const totals = useMemo(() => {
     return calculateOrderTotals({
@@ -316,6 +340,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           round_off: totals.roundOff,
           payable_amount: totals.payableAmount,
           customer_gstin: customerGstinInput.trim().toUpperCase() || undefined,
+          customer_business_name: customerBusinessName.trim() || undefined,
+          billing_address: billingAddress.trim() || undefined,
+          billing_state: billingState.trim() || undefined,
+          billing_state_code: billingStateCode.trim() || undefined,
           customer_phone: customerPhoneInput.trim() || undefined,
           wallet_redeem_amount: existingWalletRedeemed + walletRedeemAmount,
           splitPayments: splitArray,
@@ -822,9 +850,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 </>
               )}
 
-              {/* B2B Customer GSTIN (Optional) */}
+              {/* B2B Customer GSTIN & Billing Details (Optional) */}
               {isGstEnabled && (
-                <View style={{ marginBottom: 8, marginTop: netPayable <= 0 ? 12 : 0 }}>
+                <View style={{ marginBottom: 10, marginTop: netPayable <= 0 ? 12 : 0 }}>
                   <Text style={styles.fieldLabel}>Customer GSTIN (Optional for B2B Invoice)</Text>
                   <TextInput
                     style={[
@@ -832,16 +860,73 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                       !isGstinValid && { borderColor: '#ef4444', borderWidth: 1.5 },
                     ]}
                     value={customerGstinInput}
-                    onChangeText={(v) => setCustomerGstinInput(v.toUpperCase().trim())}
+                    onChangeText={handleGstinChange}
                     placeholder="15-digit GSTIN (e.g. 19AAAAA0000A1Z5)"
                     placeholderTextColor="#64748b"
                     maxLength={15}
                     autoCapitalize="characters"
                   />
                   {!isGstinValid && gstinValidation.error && (
-                    <Text style={{ color: '#ef4444', fontSize: 10, marginTop: -8, marginBottom: 8, fontWeight: '700' }}>
+                    <Text style={{ color: '#ef4444', fontSize: 10, marginTop: -6, marginBottom: 8, fontWeight: '700' }}>
                       ⚠️ {gstinValidation.error}
                     </Text>
+                  )}
+                  {isGstinValid && customerGstinInput.trim().length === 15 && (
+                    <Text style={{ color: '#16a34a', fontSize: 10, marginTop: -6, marginBottom: 8, fontWeight: '700' }}>
+                      ✓ GSTIN format valid ({gstinValidation.stateName || billingState})
+                    </Text>
+                  )}
+
+                  {Boolean(customerGstinInput.trim()) && (
+                    <View style={{ backgroundColor: '#f1f5f9', borderRadius: 8, padding: 10, marginTop: 4, borderWidth: 1, borderColor: '#cbd5e1' }}>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#1e40af', marginBottom: 8, textTransform: 'uppercase' }}>
+                        B2B Recipient Billing Details (Optional)
+                      </Text>
+
+                      <Text style={[styles.fieldLabel, { fontSize: 11 }]}>Registered Business / Legal Name</Text>
+                      <TextInput
+                        style={[styles.input, { backgroundColor: '#ffffff', height: 38, fontSize: 12 }]}
+                        value={customerBusinessName}
+                        onChangeText={setCustomerBusinessName}
+                        placeholder="e.g. Acme Enterprises Pvt Ltd"
+                        placeholderTextColor="#94a3b8"
+                      />
+
+                      <Text style={[styles.fieldLabel, { fontSize: 11, marginTop: 6 }]}>Complete Billing Address</Text>
+                      <TextInput
+                        style={[styles.input, { backgroundColor: '#ffffff', minHeight: 46, height: undefined, fontSize: 12, textAlignVertical: 'top', paddingVertical: 6 }]}
+                        value={billingAddress}
+                        onChangeText={setBillingAddress}
+                        placeholder="Complete Street, Building, City, PIN"
+                        placeholderTextColor="#94a3b8"
+                        multiline
+                      />
+
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+                        <View style={{ flex: 2 }}>
+                          <Text style={[styles.fieldLabel, { fontSize: 11 }]}>Billing State</Text>
+                          <TextInput
+                            style={[styles.input, { backgroundColor: '#ffffff', height: 38, fontSize: 12 }]}
+                            value={billingState}
+                            onChangeText={setBillingState}
+                            placeholder="State Name"
+                            placeholderTextColor="#94a3b8"
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.fieldLabel, { fontSize: 11 }]}>State Code</Text>
+                          <TextInput
+                            style={[styles.input, { backgroundColor: '#ffffff', height: 38, fontSize: 12 }]}
+                            value={billingStateCode}
+                            onChangeText={setBillingStateCode}
+                            placeholder="Code"
+                            placeholderTextColor="#94a3b8"
+                            maxLength={2}
+                            keyboardType="numeric"
+                          />
+                        </View>
+                      </View>
+                    </View>
                   )}
                 </View>
               )}

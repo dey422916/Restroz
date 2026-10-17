@@ -136,6 +136,66 @@ export function validateCoupon(coupon: Coupon, orderSubtotal: number): { isValid
 }
 
 /**
+ * Official Indian GST State Codes (2-digit) mapping to State / Union Territory names
+ */
+export const INDIAN_GST_STATE_CODES: Record<string, string> = {
+  '01': 'Jammu and Kashmir',
+  '02': 'Himachal Pradesh',
+  '03': 'Punjab',
+  '04': 'Chandigarh',
+  '05': 'Uttarakhand',
+  '06': 'Haryana',
+  '07': 'Delhi',
+  '08': 'Rajasthan',
+  '09': 'Uttar Pradesh',
+  '10': 'Bihar',
+  '11': 'Sikkim',
+  '12': 'Arunachal Pradesh',
+  '13': 'Nagaland',
+  '14': 'Manipur',
+  '15': 'Mizoram',
+  '16': 'Tripura',
+  '17': 'Meghalaya',
+  '18': 'Assam',
+  '19': 'West Bengal',
+  '20': 'Jharkhand',
+  '21': 'Odisha',
+  '22': 'Chhattisgarh',
+  '23': 'Madhya Pradesh',
+  '24': 'Gujarat',
+  '25': 'Daman and Diu',
+  '26': 'Dadra and Nagar Haveli and Daman and Diu',
+  '27': 'Maharashtra',
+  '28': 'Andhra Pradesh',
+  '29': 'Karnataka',
+  '30': 'Goa',
+  '31': 'Lakshadweep',
+  '32': 'Kerala',
+  '33': 'Tamil Nadu',
+  '34': 'Puducherry',
+  '35': 'Andaman and Nicobar Islands',
+  '36': 'Telangana',
+  '37': 'Andhra Pradesh',
+  '38': 'Ladakh',
+  '97': 'Other Territory',
+};
+
+/**
+ * Extracts Indian state code and state name from the first 2 digits of a GSTIN.
+ */
+export function getStateFromGSTIN(gstin?: string | null): { stateCode: string; stateName: string } | null {
+  if (!gstin) return null;
+  const clean = gstin.trim().toUpperCase();
+  if (clean.length < 2) return null;
+  const code = clean.substring(0, 2);
+  const name = INDIAN_GST_STATE_CODES[code];
+  if (name) {
+    return { stateCode: code, stateName: name };
+  }
+  return null;
+}
+
+/**
  * Standard Indian GSTIN Format Validation
  * Format: 2 digits (state code), 5 letters (PAN), 4 digits, 1 letter, 1 alphanumeric, 'Z', 1 alphanumeric checksum
  */
@@ -144,10 +204,23 @@ export const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z
 export function isValidGSTIN(gstin?: string | null): boolean {
   if (!gstin) return false;
   const clean = gstin.trim().toUpperCase();
-  return clean.length === 15 && GSTIN_REGEX.test(clean);
+  if (clean.length !== 15 || !GSTIN_REGEX.test(clean)) return false;
+  const stateCode = clean.substring(0, 2);
+  return Boolean(INDIAN_GST_STATE_CODES[stateCode]);
 }
 
-export function validateGSTIN(gstin?: string | null): { isValid: boolean; message?: string; error?: string } {
+export interface GSTINValidationResult {
+  isValid: boolean;
+  message?: string;
+  error?: string | null;
+  stateCode?: string;
+  stateName?: string;
+}
+
+export function validateGSTIN(
+  gstin?: string | null,
+  selectedStateCode?: string | null
+): GSTINValidationResult {
   if (!gstin || !gstin.trim()) {
     return { isValid: true }; // Optional field: valid if empty
   }
@@ -157,8 +230,22 @@ export function validateGSTIN(gstin?: string | null): { isValid: boolean; messag
     return { isValid: false, message: err, error: err };
   }
   if (!GSTIN_REGEX.test(clean)) {
-    const err = 'Invalid GSTIN format. Example: 36AAAAA0000A1Z5';
+    const err = 'Invalid GSTIN format. Example: 19AAAAA0000A1Z5';
     return { isValid: false, message: err, error: err };
   }
-  return { isValid: true };
+  const stateCode = clean.substring(0, 2);
+  const stateName = INDIAN_GST_STATE_CODES[stateCode];
+  if (!stateName) {
+    const err = `Invalid GSTIN state code prefix "${stateCode}".`;
+    return { isValid: false, message: err, error: err };
+  }
+  if (selectedStateCode && selectedStateCode.trim()) {
+    const normSelected = selectedStateCode.trim().padStart(2, '0');
+    if (normSelected !== stateCode) {
+      const err = `GSTIN state code prefix (${stateCode} - ${stateName}) does not match selected billing state code (${normSelected}).`;
+      return { isValid: false, message: err, error: err, stateCode, stateName };
+    }
+  }
+  return { isValid: true, message: 'GSTIN format valid', stateCode, stateName };
 }
+

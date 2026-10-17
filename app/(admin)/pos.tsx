@@ -169,7 +169,7 @@ export default function PosScreen() {
   const isWideDesktop = windowWidth >= 1200;
   const isTablet = windowWidth >= 768;
   const [customerBoxWidth, setCustomerBoxWidth] = useState<number>(0);
-  const isCustomerRowStacked = customerBoxWidth > 0 ? customerBoxWidth < 420 : true;
+  const isCustomerRowStacked = !isTablet && (customerBoxWidth > 0 ? customerBoxWidth < 280 : windowWidth < 340);
   const safeModalTop = Math.max(insets.top, Platform.OS === 'web' ? 16 : 24);
   const safeModalBottom = Math.max(insets.bottom, Platform.OS === 'web' ? 16 : 24);
   const availableModalHeight = Math.max(300, windowHeight - safeModalTop - safeModalBottom - 20);
@@ -1135,6 +1135,40 @@ export default function PosScreen() {
   // ============================================================
   // STEP 3: FOOD MENU CATALOG & CART INTERFACE
   // ============================================================
+  const renderCartActionButtons = () => (
+    <View style={styles.cartActionAreaContainer}>
+      {/* Primary Action: KOT Print Button (Label: KOT Print - no amount) */}
+      <TouchableOpacity
+        testID="pos-send-kot-btn"
+        style={[
+          styles.sendKotMainBtn,
+          isKotDispatched && !hasUnsentItems && styles.sendKotBtnDisabled,
+          isSendingKot && styles.btnDisabled,
+        ]}
+        onPress={handleSendKotAction}
+        disabled={(isKotDispatched && !hasUnsentItems) || isSendingKot}
+      >
+        {isSendingKot ? (
+          <ActivityIndicator size="small" color="#ffffff" />
+        ) : (
+          <Text
+            style={[
+              styles.sendKotMainBtnText,
+              isKotDispatched && !hasUnsentItems && styles.sendKotBtnTextDisabled,
+            ]}
+          >
+            {isKotDispatched && !hasUnsentItems ? '✓ KOT Printed' : 'KOT Print'}
+          </Text>
+        )}
+      </TouchableOpacity>
+
+      {/* Clear Cart Action */}
+      <TouchableOpacity style={styles.clearBtnInline} onPress={handleClearCartAction}>
+        <Text style={styles.clearBtnText}>🗑️ Clear Cart</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
   const renderCartContent = () => (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -1199,7 +1233,7 @@ export default function PosScreen() {
               style={[
                 styles.custInput,
                 styles.custInputSlim,
-                isCustomerRowStacked ? { width: '100%' } : { flex: 1, minWidth: 180 },
+                isCustomerRowStacked ? { width: '100%' } : { flex: 1, minWidth: 0 },
               ]}
               placeholder={
                 orderType === 'dine_in'
@@ -1214,7 +1248,7 @@ export default function PosScreen() {
               style={[
                 styles.custInput,
                 styles.custInputSlim,
-                isCustomerRowStacked ? { width: '100%' } : { flex: 1, minWidth: 180 },
+                isCustomerRowStacked ? { width: '100%' } : { flex: 1, minWidth: 0 },
               ]}
               placeholder={
                 orderType === 'delivery'
@@ -1617,89 +1651,18 @@ export default function PosScreen() {
               </>
             )}
 
-            {/* Primary Action 1: KOT Print Button */}
-            <TouchableOpacity
-              testID="pos-send-kot-btn"
-              style={[
-                styles.sendKotMainBtn,
-                isKotDispatched && !hasUnsentItems && styles.sendKotBtnDisabled,
-                isSendingKot && styles.btnDisabled,
-              ]}
-              onPress={handleSendKotAction}
-              disabled={(isKotDispatched && !hasUnsentItems) || isSendingKot}
-            >
-              {isSendingKot ? (
-                <ActivityIndicator size="small" color="#ffffff" />
-              ) : (
-                <Text
-                  style={[
-                    styles.sendKotMainBtnText,
-                    isKotDispatched && !hasUnsentItems && styles.sendKotBtnTextDisabled,
-                  ]}
-                >
-                  {isKotDispatched && !hasUnsentItems
-                    ? '✓ KOT Printed'
-                    : hasUnsentItems && isKotDispatched
-                    ? `🖨️ KOT Print (Updated • ${formatCurrency(walletRedeemAmount > 0 ? netPayable : totals.payableAmount)})`
-                    : `🖨️ KOT Print (${formatCurrency(walletRedeemAmount > 0 ? netPayable : totals.payableAmount)})`}
-                </Text>
-              )}
-            </TouchableOpacity>
-
-            {/* Operational Action Buttons: Print Bill | Update Order | Hold | Close Order */}
-            <View style={styles.opActionGrid}>
-              <TouchableOpacity
-                testID="pos-print-bill-btn"
-                style={[styles.opBtn, styles.opBtnPrintBill, !isKotDispatched && styles.opBtnDisabled]}
-                onPress={handlePrintBillAction}
-                disabled={!isKotDispatched}
-              >
-                <Text style={[styles.opBtnText, !isKotDispatched && styles.opBtnTextDisabled]}>
-                  📄 Print Bill
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                testID="pos-update-order-btn"
-                style={[styles.opBtn, styles.opBtnUpdate, !isKotDispatched && styles.opBtnDisabled]}
-                onPress={handleUpdateOrderAction}
-                disabled={!isKotDispatched}
-              >
-                <Text style={[styles.opBtnText, !isKotDispatched && styles.opBtnTextDisabled]}>
-                  ✏️ Update Order
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                testID="pos-payment-btn"
-                style={[styles.opBtn, { backgroundColor: '#eff6ff', borderColor: '#93c5fd' }, !isKotDispatched && styles.opBtnDisabled]}
-                onPress={handlePaymentAction}
-                disabled={!isKotDispatched}
-              >
-                <Text style={[{ fontSize: 11, fontWeight: '800', color: '#1d4ed8' }, !isKotDispatched && styles.opBtnTextDisabled]}>
-                  💳 Payment
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                testID="pos-close-bill-btn"
-                style={[styles.opBtn, styles.opBtnClose, !isKotDispatched && styles.opBtnDisabled]}
-                onPress={handleCloseBillAction}
-                disabled={!isKotDispatched}
-              >
-                <Text style={[styles.opBtnText, styles.opBtnTextClose, !isKotDispatched && styles.opBtnTextDisabled]}>
-                  💳 Close Order
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Clear Cart Action */}
-            <TouchableOpacity style={styles.clearBtnInline} onPress={handleClearCartAction}>
-              <Text style={styles.clearBtnText}>🗑️ Clear Cart</Text>
-            </TouchableOpacity>
+            {/* Inline Action Area on Mobile only */}
+            {!isTablet && renderCartActionButtons()}
           </View>
         )}
       </ScrollView>
+
+      {/* Sticky Bottom Action Area for Desktop & Tablet */}
+      {isTablet && cartItems.length > 0 && (
+        <View style={styles.cartStickyActionArea}>
+          {renderCartActionButtons()}
+        </View>
+      )}
     </KeyboardAvoidingView>
   );
 
@@ -3626,10 +3589,22 @@ const styles = StyleSheet.create({
     borderLeftWidth: 1,
     borderColor: '#e2e8f0',
     padding: 12,
+    minHeight: 0,
   },
   cartItemsScroll: {
     flex: 1,
+    minHeight: 0,
     ...(Platform.OS === 'web' ? { overflowX: 'hidden' as any } : {}),
+  },
+  cartStickyActionArea: {
+    paddingTop: 10,
+    marginTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
+  },
+  cartActionAreaContainer: {
+    width: '100%',
   },
   cartHeader: {
     flexDirection: 'row',
@@ -3884,9 +3859,11 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { boxSizing: 'border-box' as any, outlineStyle: 'none' as any } : {}),
   },
   custInputSlim: {
+    paddingHorizontal: 10,
     paddingVertical: 5,
     minHeight: 34,
     height: 34,
+    fontSize: 12.5,
   },
   cashReturnSection: {
     marginVertical: 6,

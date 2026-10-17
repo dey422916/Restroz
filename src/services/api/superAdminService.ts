@@ -1201,6 +1201,22 @@ export const superAdminService = {
     return data as SubscriptionPayment;
   },
 
+  async deletePayment(paymentId: string): Promise<boolean> {
+    if (!paymentId) throw new Error('Payment ID is required.');
+    if (!isSupabaseConfigured) return true;
+
+    const { error } = await supabase
+      .from('subscription_payments')
+      .delete()
+      .eq('id', paymentId);
+
+    if (error) {
+      console.error('deletePayment error:', error);
+      throw error;
+    }
+    return true;
+  },
+
   // --------------------------------------------------------------------------
   // 8. AUDIT LOGS
   // --------------------------------------------------------------------------

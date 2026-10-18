@@ -1093,7 +1093,19 @@ export const orderService = {
           table_id: resolvedTableId,
           is_supplementary: newOrder.is_supplementary ?? false,
           customer_id: validCustomerId,
+          customer_gstin: newOrder.customer_gstin || null,
+          customer_business_name: newOrder.customer_business_name || null,
+          billing_address: newOrder.billing_address || null,
+          billing_state: newOrder.billing_state || null,
+          billing_state_code: newOrder.billing_state_code || null,
         };
+
+        // Sanitize payload: strip any undefined keys so PostgREST never fails on schema inspection
+        Object.keys(dbPayload).forEach((k) => {
+          if (dbPayload[k] === undefined) {
+            delete dbPayload[k];
+          }
+        });
 
         let { data: createdDbOrder, error: orderError } = await supabase
           .from('orders')
@@ -1104,6 +1116,31 @@ export const orderService = {
         // If column does not exist in DB (e.g. 42703 on older schema), retry without is_supplementary
         if (orderError && (orderError.code === '42703' || orderError.message?.includes('is_supplementary'))) {
           delete dbPayload.is_supplementary;
+          const retryRes = await supabase
+            .from('orders')
+            .insert([dbPayload])
+            .select()
+            .single();
+          createdDbOrder = retryRes.data;
+          orderError = retryRes.error;
+        }
+
+        // If B2B column does not exist in schema cache or DB, retry without B2B snapshot columns
+        if (orderError && (
+          orderError.code === '42703' ||
+          orderError.code === 'PGRST204' ||
+          orderError.message?.includes('billing_address') ||
+          orderError.message?.includes('customer_business_name') ||
+          orderError.message?.includes('customer_gstin') ||
+          orderError.message?.includes('billing_state') ||
+          orderError.message?.includes('schema cache')
+        )) {
+          console.warn('[orderService] Retrying order insert without direct B2B columns:', orderError.message);
+          delete dbPayload.customer_gstin;
+          delete dbPayload.customer_business_name;
+          delete dbPayload.billing_address;
+          delete dbPayload.billing_state;
+          delete dbPayload.billing_state_code;
           const retryRes = await supabase
             .from('orders')
             .insert([dbPayload])
@@ -2257,9 +2294,21 @@ export const orderService = {
 
       if (effectiveCustomerGstin && (customer_business_name || billing_address || billing_state || billing_state_code)) {
         try {
-          await supabase.from('orders').update({ notes: finalNotes }).eq('id', orderId);
+          await supabase.from('orders').update({
+            notes: finalNotes,
+            customer_gstin: effectiveCustomerGstin,
+            customer_business_name: customer_business_name || null,
+            billing_address: billing_address || null,
+            billing_state: billing_state || null,
+            billing_state_code: billing_state_code || null,
+          }).eq('id', orderId);
         } catch (notesErr) {
-          console.warn('[orderService] Sync B2B notes to order failed:', notesErr);
+          console.warn('[orderService] Sync B2B columns to order failed, falling back to notes-only:', notesErr);
+          try {
+            await supabase.from('orders').update({ notes: finalNotes }).eq('id', orderId);
+          } catch (fallbackErr) {
+            console.warn('[orderService] Fallback B2B notes update failed:', fallbackErr);
+          }
         }
       }
 

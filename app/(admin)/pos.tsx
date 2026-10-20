@@ -186,13 +186,13 @@ export default function PosScreen() {
       const [prods, cats, tbls] = await Promise.all([
         productService.getProducts(activeRestaurantId),
         categoryService.getCategories(activeRestaurantId),
-        tableService.getTables(activeRestaurantId),
+        tableService.getTables(activeRestaurantId, isRefresh),
       ]);
       setProducts(prods);
       setCategories(cats);
       setTables(tbls);
       if (refreshOrders) {
-        await refreshOrders();
+        await refreshOrders(isRefresh);
       }
     } catch (e) {
       console.warn('POS initial load failed:', e);
@@ -212,11 +212,8 @@ export default function PosScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
-      loadInitialData(true);
-      if (refreshOrders) {
-        refreshOrders();
-      }
-    }, [activeRestaurantId, refreshOrders])
+      loadInitialData(false);
+    }, [activeRestaurantId])
   );
 
   // When cart is cleared, reset KOT state

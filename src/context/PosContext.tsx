@@ -100,7 +100,7 @@ interface PosContextType {
   resumeOrder: (orderId: string) => Promise<Order>;
 
   activeOrders: Order[];
-  refreshOrders: () => Promise<void>;
+  refreshOrders: (forceRefresh?: boolean) => Promise<void>;
   pendingCustomerOrders: Order[];
   acceptCustomerOrder: (orderId: string) => Promise<void>;
   rejectCustomerOrder: (orderId: string) => Promise<void>;
@@ -163,10 +163,12 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [heldOrders, setHeldOrders] = useState<Order[]>([]);
   const [pendingCustomerOrders, setPendingCustomerOrders] = useState<Order[]>([]);
 
-  const refreshOrders = useCallback(async () => {
+  const refreshOrders = useCallback(async (forceRefresh: boolean = false) => {
     if (!activeRestaurantId || !user) return;
-    clearOrdersCache(activeRestaurantId);
-    const orders = await orderService.getOrders(activeRestaurantId, true);
+    if (forceRefresh) {
+      clearOrdersCache(activeRestaurantId);
+    }
+    const orders = await orderService.getOrders(activeRestaurantId, forceRefresh);
     setActiveOrders(orders);
 
     const held = orders.filter((o) => o.status === 'held');

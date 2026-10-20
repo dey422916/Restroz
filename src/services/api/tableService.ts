@@ -5,7 +5,24 @@ import { getTableQrUrl } from '../../utils/qr';
 import { subscriptionGuardService } from './subscriptionGuardService';
 import { naturalTableCompare } from '../../utils/sortUtils';
 
+// High-performance in-memory cache for dining tables per tenant (15s TTL)
+const inMemoryTablesCache: Record<string, { timestamp: number; data: DiningTable[] }> = {};
+const inFlightTablesRequests: Record<string, Promise<DiningTable[]> | undefined> = {};
+const TABLES_CACHE_TTL = 15 * 1000;
+
+export function clearTablesCache(restaurantId?: string) {
+  if (restaurantId) {
+    delete inMemoryTablesCache[restaurantId];
+    delete inFlightTablesRequests[restaurantId];
+  } else {
+    Object.keys(inMemoryTablesCache).forEach((k) => delete inMemoryTablesCache[k]);
+    Object.keys(inFlightTablesRequests).forEach((k) => delete inFlightTablesRequests[k]);
+  }
+}
+
 export const tableService = {
+  clearTablesCache,
+
   async resolveTable(identifier: string): Promise<DiningTable | null> {
     if (!identifier || identifier === 'general') return null;
 
@@ -99,77 +116,109 @@ export const tableService = {
     return t?.status === 'occupied';
   },
 
-  async getTables(restaurantId?: string): Promise<DiningTable[]> {
-    if (isSupabaseConfigured) {
-      try {
-        let query = supabase
-          .from('tables')
-          .select('*')
-          .order('table_number', { ascending: true });
+  async getTables(restaurantId?: string, forceRefresh = false): Promise<DiningTable[]> {
+    const cacheKey = restaurantId || 'all';
 
-        let ordersQuery = supabase
-          .from('orders')
-          .select('id, table_id, table_number, status, payment_status')
-          .not('status', 'in', '("completed","cancelled")')
-          .neq('payment_status', 'paid');
-
-        if (restaurantId) {
-          query = query.eq('restaurant_id', restaurantId);
-          ordersQuery = ordersQuery.eq('restaurant_id', restaurantId);
-        }
-
-        const [{ data: tableData, error: tableError }, { data: activeOrders }] = await Promise.all([
-          query,
-          ordersQuery,
-        ]);
-
-        if (!tableError && tableData) {
-          const activeOrdersByTable = new Map<string, string[]>();
-          (activeOrders || []).forEach((o) => {
-            if (o.table_id) {
-              const list = activeOrdersByTable.get(o.table_id) || [];
-              list.push(o.id);
-              activeOrdersByTable.set(o.table_id, list);
-            }
-            if (o.table_number) {
-              const key = o.table_number.toLowerCase().trim();
-              const list = activeOrdersByTable.get(key) || [];
-              list.push(o.id);
-              activeOrdersByTable.set(key, list);
-            }
-          });
-
-          const list: DiningTable[] = (tableData as DiningTable[]).map((t) => {
-            const activeOrderIds = activeOrdersByTable.get(t.id) || activeOrdersByTable.get(t.table_number.toLowerCase().trim()) || [];
-            const isOccupied = activeOrderIds.length > 0;
-            const status: 'available' | 'occupied' | 'reserved' = isOccupied
-              ? 'occupied'
-              : t.status === 'reserved'
-              ? 'reserved'
-              : 'available';
-
-            return {
-              ...t,
-              restaurant_id: t.restaurant_id || restaurantId,
-              status,
-              current_order_id: activeOrderIds[0],
-              active_order_ids: activeOrderIds,
-              active_order_count: activeOrderIds.length,
-            };
-          });
-
-          // Sort tables in natural ascending order (e.g. Table 1, Table 2, ... Table 10)
-          list.sort(naturalTableCompare);
-
-          mockStorage.saveTables(list);
-          return list;
-        }
-      } catch (e) {
-        console.warn('Supabase getTables failed, using local cache:', e);
+    if (!forceRefresh && inMemoryTablesCache[cacheKey]) {
+      const entry = inMemoryTablesCache[cacheKey];
+      if (Date.now() - entry.timestamp < TABLES_CACHE_TTL) {
+        return entry.data;
       }
     }
-    const local = mockStorage.getTables();
-    return [...local].sort(naturalTableCompare);
+
+    if (inFlightTablesRequests[cacheKey]) {
+      return inFlightTablesRequests[cacheKey];
+    }
+
+    const fetchPromise = (async () => {
+      if (isSupabaseConfigured) {
+        try {
+          let query = supabase
+            .from('tables')
+            .select('*')
+            .order('table_number', { ascending: true });
+
+          let ordersQuery = supabase
+            .from('orders')
+            .select('id, table_id, table_number, status, payment_status')
+            .not('status', 'in', '("completed","cancelled")')
+            .neq('payment_status', 'paid');
+
+          if (restaurantId) {
+            query = query.eq('restaurant_id', restaurantId);
+            ordersQuery = ordersQuery.eq('restaurant_id', restaurantId);
+          }
+
+          const [{ data: tableData, error: tableError }, { data: activeOrders }] = await Promise.all([
+            query,
+            ordersQuery,
+          ]);
+
+          if (!tableError && tableData) {
+            const activeOrdersByTable = new Map<string, string[]>();
+            (activeOrders || []).forEach((o) => {
+              if (o.table_id) {
+                const list = activeOrdersByTable.get(o.table_id) || [];
+                list.push(o.id);
+                activeOrdersByTable.set(o.table_id, list);
+              }
+              if (o.table_number) {
+                const key = o.table_number.toLowerCase().trim();
+                const list = activeOrdersByTable.get(key) || [];
+                list.push(o.id);
+                activeOrdersByTable.set(key, list);
+              }
+            });
+
+            const list: DiningTable[] = (tableData as DiningTable[]).map((t) => {
+              const activeOrderIds = activeOrdersByTable.get(t.id) || activeOrdersByTable.get(t.table_number.toLowerCase().trim()) || [];
+              const isOccupied = activeOrderIds.length > 0;
+              const status: 'available' | 'occupied' | 'reserved' = isOccupied
+                ? 'occupied'
+                : t.status === 'reserved'
+                ? 'reserved'
+                : 'available';
+
+              return {
+                ...t,
+                restaurant_id: t.restaurant_id || restaurantId,
+                status,
+                current_order_id: activeOrderIds[0],
+                active_order_ids: activeOrderIds,
+                active_order_count: activeOrderIds.length,
+              };
+            });
+
+            // Sort tables in natural ascending order (e.g. Table 1, Table 2, ... Table 10)
+            list.sort(naturalTableCompare);
+
+            inMemoryTablesCache[cacheKey] = {
+              timestamp: Date.now(),
+              data: list,
+            };
+
+            mockStorage.saveTables(list);
+            return list;
+          }
+        } catch (e) {
+          console.warn('Supabase getTables failed, using local cache:', e);
+        }
+      }
+      const local = mockStorage.getTables();
+      const sorted = [...local].sort(naturalTableCompare);
+      inMemoryTablesCache[cacheKey] = {
+        timestamp: Date.now(),
+        data: sorted,
+      };
+      return sorted;
+    })();
+
+    inFlightTablesRequests[cacheKey] = fetchPromise;
+    try {
+      return await fetchPromise;
+    } finally {
+      delete inFlightTablesRequests[cacheKey];
+    }
   },
 
   async saveTable(table: Partial<DiningTable>, restaurantId?: string): Promise<DiningTable> {
@@ -247,7 +296,8 @@ export const tableService = {
             .single();
 
           if (!error && data) {
-            await this.getTables(targetRestId);
+            clearTablesCache(targetRestId);
+            mockStorage.updateTable(table.id, data as DiningTable);
             return data as DiningTable;
           }
           if (error) throw error;
@@ -259,7 +309,8 @@ export const tableService = {
             .single();
 
           if (!error && data) {
-            await this.getTables(targetRestId);
+            clearTablesCache(targetRestId);
+            mockStorage.addTable(data as DiningTable);
             return data as DiningTable;
           }
           if (error) throw error;
@@ -270,6 +321,7 @@ export const tableService = {
       }
     }
 
+    clearTablesCache(targetRestId);
     if (table.id) {
       const updated = mockStorage.updateTable(table.id, dbPayload);
       if (!updated) throw new Error('Table not found in local cache.');
@@ -280,6 +332,7 @@ export const tableService = {
   },
 
   async deleteTable(id: string, restaurantId?: string): Promise<void> {
+    clearTablesCache(restaurantId);
     if (isSupabaseConfigured) {
       try {
         let query = supabase.from('tables').delete().eq('id', id);
@@ -289,7 +342,6 @@ export const tableService = {
         const { error } = await query;
         if (error) throw error;
         mockStorage.deleteTable(id);
-        await this.getTables(restaurantId);
         return;
       } catch (e: any) {
         console.error('Supabase deleteTable error:', e);
@@ -300,6 +352,7 @@ export const tableService = {
   },
 
   async updateTableStatus(id: string, status: 'available' | 'occupied' | 'reserved', force: boolean = false): Promise<DiningTable | null> {
+    clearTablesCache();
     if (isSupabaseConfigured) {
       try {
         if (status === 'available' && !force) {

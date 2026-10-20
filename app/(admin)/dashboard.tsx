@@ -149,7 +149,7 @@ export default function DashboardScreen() {
       setActiveRegister(curReg && curReg.status === 'open' ? curReg : null);
 
       if (curReg && curReg.status === 'open') {
-        const recon = await dayRegisterService.calculateRegisterReconciliation(curReg);
+        const recon = await dayRegisterService.calculateRegisterReconciliation(curReg, activeRestaurantId, ords);
         setLiveReconciliation(recon);
       }
     } catch (e) {
@@ -182,7 +182,7 @@ export default function DashboardScreen() {
             const curReg = await dayRegisterService.getCurrentRegister(activeRestaurantId);
             setActiveRegister(curReg && curReg.status === 'open' ? curReg : null);
             if (curReg && curReg.status === 'open') {
-              const recon = await dayRegisterService.calculateRegisterReconciliation(curReg);
+              const recon = await dayRegisterService.calculateRegisterReconciliation(curReg, activeRestaurantId, refreshedOrders);
               setLiveReconciliation(recon);
             }
           }
@@ -198,7 +198,7 @@ export default function DashboardScreen() {
         const curReg = await dayRegisterService.getCurrentRegister(activeRestaurantId);
         setActiveRegister(curReg && curReg.status === 'open' ? curReg : null);
         if (curReg && curReg.status === 'open') {
-          const recon = await dayRegisterService.calculateRegisterReconciliation(curReg);
+          const recon = await dayRegisterService.calculateRegisterReconciliation(curReg, activeRestaurantId, refreshedOrders);
           setLiveReconciliation(recon);
         }
       }
@@ -378,8 +378,8 @@ export default function DashboardScreen() {
       }
 
       const [unsettled, recon] = await Promise.all([
-        dayRegisterService.getUnsettledOrders(activeRestaurantId, reg.opened_at),
-        dayRegisterService.calculateRegisterReconciliation(reg, activeRestaurantId),
+        dayRegisterService.getUnsettledOrders(activeRestaurantId, reg.opened_at, orders),
+        dayRegisterService.calculateRegisterReconciliation(reg, activeRestaurantId, orders),
       ]);
 
       setUnsettledOrdersForClose(unsettled);

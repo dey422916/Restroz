@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Order } from '../types';
-import { newOrderNotificationService, NewOrderCounts } from '../services/newOrderNotificationService';
+import { newOrderNotificationService, NewOrderCounts, TrackableOrder } from '../services/newOrderNotificationService';
 
-export function useNewOrderTracker(restaurantId: string | undefined, orders: Order[]) {
+export function useNewOrderTracker(restaurantId: string | undefined, orders: TrackableOrder[]) {
   const [seenOrderIds, setSeenOrderIds] = useState<Set<string>>(new Set());
 
   // Initial load of seen order IDs from storage

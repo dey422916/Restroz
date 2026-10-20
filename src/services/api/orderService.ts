@@ -883,7 +883,16 @@ export const orderService = {
       }
     }
 
-    let orderNumber = await this.generateNextOrderNumber(settings.invoice_prefix || 'INV-', targetRestaurantId);
+    // Resolve order number and table concurrently to eliminate sequential network round-trips
+    let orderNumber: string;
+    let resolvedTableId = orderData.table_id || null;
+    let resolvedTableNumber = orderData.table_number || null;
+
+    const [genOrderNum, resolvedTable] = await Promise.all([
+      this.generateNextOrderNumber(settings.invoice_prefix || 'INV-', targetRestaurantId),
+      resolvedTableId ? tableService.resolveTable(resolvedTableId).catch(() => null) : Promise.resolve(null),
+    ]);
+    orderNumber = genOrderNum;
 
     const paymentMethod = orderData.payment_method || 'cash';
     const isPaid = orderData.payment_status === 'paid';
@@ -896,35 +905,31 @@ export const orderService = {
       }
     }
 
-    // Resolve valid table_id from DB scoped to target restaurant to prevent foreign key violations
-    let resolvedTableId = orderData.table_id || null;
-    let resolvedTableNumber = orderData.table_number || null;
-
-    if (resolvedTableId || resolvedTableNumber) {
+    if (resolvedTable) {
+      resolvedTableId = resolvedTable.id;
+      resolvedTableNumber = resolvedTable.table_number;
+      if (resolvedTable.restaurant_id) {
+        targetRestaurantId = resolvedTable.restaurant_id;
+      }
+    } else if (resolvedTableId || resolvedTableNumber) {
       try {
-        let matched: DiningTable | null = null;
-        if (resolvedTableId) {
-          matched = await tableService.resolveTable(resolvedTableId);
-        }
-        if (!matched) {
-          const allTables = await tableService.getTables(targetRestaurantId);
-          matched =
-            allTables.find((t) => {
-              const cleanTId = t.id.toLowerCase().replace(/[-_ ]/g, '');
-              const cleanTNum = t.table_number.toLowerCase().replace(/[-_ ]/g, '');
-              const inputId = (resolvedTableId || '').toLowerCase().replace(/[-_ ]/g, '');
-              const inputNum = (resolvedTableNumber || '').toLowerCase().replace(/[-_ ]/g, '');
-              return (
-                t.id === resolvedTableId ||
-                t.table_number === resolvedTableNumber ||
-                cleanTId === inputId ||
-                cleanTNum === inputNum ||
-                cleanTNum === `table${inputId}` ||
-                cleanTId === `tbl${inputNum}` ||
-                cleanTId === `tbl${inputId}`
-              );
-            }) || null;
-        }
+        const allTables = await tableService.getTables(targetRestaurantId);
+        const matched =
+          allTables.find((t) => {
+            const cleanTId = t.id.toLowerCase().replace(/[-_ ]/g, '');
+            const cleanTNum = t.table_number.toLowerCase().replace(/[-_ ]/g, '');
+            const inputId = (resolvedTableId || '').toLowerCase().replace(/[-_ ]/g, '');
+            const inputNum = (resolvedTableNumber || '').toLowerCase().replace(/[-_ ]/g, '');
+            return (
+              t.id === resolvedTableId ||
+              t.table_number === resolvedTableNumber ||
+              cleanTId === inputId ||
+              cleanTNum === inputNum ||
+              cleanTNum === `table${inputId}` ||
+              cleanTId === `tbl${inputNum}` ||
+              cleanTId === `tbl${inputId}`
+            );
+          }) || null;
         if (matched) {
           resolvedTableId = matched.id;
           resolvedTableNumber = matched.table_number;
@@ -1244,40 +1249,46 @@ export const orderService = {
             await supabase.from('payments').insert([payRecord]);
           }
 
-          // Deduct product stock quantities
+          // Deduct product stock quantities concurrently in the background so KOT generation and printing are not blocked
           if (items && items.length > 0) {
-            for (const itm of items) {
-              if (itm.product_id && !itm.product_id.startsWith('quick-') && itm.quantity > 0) {
-                try {
-                  const { data: curP } = await supabase
-                    .from('products')
-                    .select('stock_quantity')
-                    .eq('id', itm.product_id)
-                    .single();
-                  if (curP) {
-                    const newStock = Math.max(0, (curP.stock_quantity || 0) - itm.quantity);
-                    await supabase
-                      .from('products')
-                      .update({ stock_quantity: newStock, is_available: newStock > 0 })
-                      .eq('id', itm.product_id);
-                  }
-                } catch (err) {
-                  console.warn('Stock deduction exception:', err);
-                }
+            (async () => {
+              try {
+                await Promise.all(
+                  items
+                    .filter((itm) => itm.product_id && !itm.product_id.startsWith('quick-') && itm.quantity > 0)
+                    .map(async (itm) => {
+                      try {
+                        const { data: curP } = await supabase
+                          .from('products')
+                          .select('stock_quantity')
+                          .eq('id', itm.product_id)
+                          .single();
+                        if (curP) {
+                          const newStock = Math.max(0, (curP.stock_quantity || 0) - itm.quantity);
+                          await supabase
+                            .from('products')
+                            .update({ stock_quantity: newStock, is_available: newStock > 0 })
+                            .eq('id', itm.product_id);
+                        }
+                      } catch (err) {
+                        console.warn('Stock deduction exception for item:', itm.product_id, err);
+                      }
+                    })
+                );
+              } catch (bgErr) {
+                console.warn('Background stock deduction batch error:', bgErr);
               }
-            }
+            })();
           }
 
-          // Mark table as occupied for dine_in
+          // Mark table as occupied for dine_in non-blocking
           if (newOrder.order_type === 'dine_in' && newOrder.table_id) {
-            try {
-              await tableService.updateTableStatus(newOrder.table_id, 'occupied');
-            } catch (tErr) {
+            tableService.updateTableStatus(newOrder.table_id, 'occupied').catch((tErr) => {
               console.warn('Table status update warning:', tErr);
-            }
+            });
           }
 
-          // Automatically generate KOT for the order (held orders must NOT generate KOT)
+          // Automatically generate KOT for the order immediately (held orders must NOT generate KOT)
           const fullCreatedOrder: Order = {
             ...createdDbOrder,
             items: items || [],
@@ -1290,15 +1301,16 @@ export const orderService = {
             fullCreatedOrder.kots = [];
           }
 
-          await auditService.log('CREATE_ORDER', {
+          auditService.log('CREATE_ORDER', {
             order_number: fullCreatedOrder.order_number,
             order_type: fullCreatedOrder.order_type,
             table: fullCreatedOrder.table_number,
             payable_amount: fullCreatedOrder.payable_amount,
-          });
+          }).catch((err) => console.warn('Non-blocking create order audit log exception:', err));
 
           clearOrdersCache(targetRestaurantId);
-          await this.getOrders(targetRestaurantId);
+          const localOrders = mockStorage.getOrders(targetRestaurantId);
+          mockStorage.saveOrders([fullCreatedOrder, ...localOrders.filter((o) => o.id !== fullCreatedOrder.id)], targetRestaurantId);
           return fullCreatedOrder;
         } else if (orderError) {
           console.error('Supabase order insert error:', orderError);
@@ -1728,7 +1740,6 @@ export const orderService = {
         localOrders.unshift(fullUpdatedOrder);
       }
       mockStorage.saveOrders(localOrders, existingOrder.restaurant_id);
-      await this.getOrders(existingOrder.restaurant_id, true);
       return fullUpdatedOrder;
     }
 

@@ -11,12 +11,41 @@ export interface SubscriptionAccessStatus {
   message?: string;
 }
 
+const SUBSCRIPTION_CACHE_TTL = 60000; // 60s operational in-memory cache
+const inMemorySubCache: Record<string, { timestamp: number; data: SubscriptionAccessStatus }> = {};
+
+export function clearSubscriptionCache(restaurantId?: string) {
+  if (restaurantId) {
+    delete inMemorySubCache[restaurantId];
+  } else {
+    Object.keys(inMemorySubCache).forEach((k) => delete inMemorySubCache[k]);
+  }
+}
+
 export const subscriptionService = {
+  clearSubscriptionCache,
+
   /**
    * Check tenant subscription access and operational status.
    * Decoupled architecture: Evaluates both restaurant.status and subscription.status.
    */
-  async checkTenantAccess(restaurantId: string): Promise<SubscriptionAccessStatus> {
+  async checkTenantAccess(restaurantId: string, forceRefresh: boolean = false): Promise<SubscriptionAccessStatus> {
+    if (!restaurantId) {
+      return {
+        isAllowed: false,
+        status: 'none',
+        restaurantStatus: 'INACTIVE',
+        planName: 'No Active Plan',
+        daysRemaining: 0,
+        endDate: null,
+      };
+    }
+
+    const now = Date.now();
+    if (!forceRefresh && inMemorySubCache[restaurantId] && (now - inMemorySubCache[restaurantId].timestamp < SUBSCRIPTION_CACHE_TTL)) {
+      return inMemorySubCache[restaurantId].data;
+    }
+
     if (!isSupabaseConfigured) {
       return {
         isAllowed: false,
@@ -57,7 +86,7 @@ export const subscriptionService = {
               };
             }
 
-            return {
+            const allowedStatus: SubscriptionAccessStatus = {
               isAllowed: true,
               status: subStatus,
               restaurantStatus: restStatus,
@@ -66,6 +95,11 @@ export const subscriptionService = {
               endDate: resObj.end_date || null,
               message: resObj.message || 'Active subscription verified',
             };
+            inMemorySubCache[restaurantId] = {
+              timestamp: Date.now(),
+              data: allowedStatus,
+            };
+            return allowedStatus;
           }
         }
       } catch (rpcErr) {
@@ -165,7 +199,7 @@ export const subscriptionService = {
         };
       }
 
-      return {
+      const allowedResult: SubscriptionAccessStatus = {
         isAllowed: true,
         status: activeSub.status as any,
         restaurantStatus: restaurant.status as any,
@@ -173,6 +207,11 @@ export const subscriptionService = {
         daysRemaining,
         endDate: activeSub.end_date,
       };
+      inMemorySubCache[restaurantId] = {
+        timestamp: Date.now(),
+        data: allowedResult,
+      };
+      return allowedResult;
     } catch (e: any) {
       console.warn('checkTenantAccess error:', e);
       return {

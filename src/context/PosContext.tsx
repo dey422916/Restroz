@@ -800,7 +800,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast('success', 'Order & KOT Dispatched!', `Order #${newOrder.order_number} sent to Kitchen (KOT #${initialKot.kot_number}).`);
     }
     clearCart();
-    await refreshOrders();
+    refreshOrders().catch((err) => console.warn('Non-blocking refreshOrders warning:', err));
     return newOrder;
   };
 
@@ -924,7 +924,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast('success', 'Order Updated', `Order #${updated.order_number} successfully updated.`);
     }
 
-    await refreshOrders();
+    refreshOrders().catch((err) => console.warn('Non-blocking refreshOrders warning:', err));
     return updated;
   };
 

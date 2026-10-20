@@ -1,4 +1,4 @@
-import { KOT, Order, KOTItem, OrderItem } from '../../types';
+import { KOT, Order, KOTItem, OrderItem, RestaurantSettings } from '../../types';
 import { mockStorage } from '../mockStorage';
 import { settingsService } from './settingsService';
 import { supabase, isSupabaseConfigured } from '../supabase';
@@ -81,8 +81,8 @@ export const kotService = {
    * Scans existing restaurant KOTs to ensure uniqueness under the uq_kots_restaurant_kot_number constraint.
    * Format: KOT-001, KOT-002, KOT-003...
    */
-  async generateNextUniqueKotNumber(restaurantId: string): Promise<string> {
-    const settings = await settingsService.getSettings(restaurantId);
+  async generateNextUniqueKotNumber(restaurantId: string, customSettings?: RestaurantSettings): Promise<string> {
+    const settings = customSettings || (await settingsService.getSettings(restaurantId));
     const prefix = settings.kot_prefix || 'KOT-';
     let maxSeq = 0;
 
@@ -93,7 +93,7 @@ export const kotService = {
           .select('kot_number')
           .eq('restaurant_id', restaurantId)
           .order('created_at', { ascending: false })
-          .limit(200);
+          .limit(30);
 
         if (data && data.length > 0) {
           for (const row of data) {
@@ -133,12 +133,30 @@ export const kotService = {
   async generateKot(order: Order, kitchenNotes?: string, itemsToInclude?: OrderItem[]): Promise<KOT> {
     const targetRestId = order.restaurant_id || (await restaurantService.getDefaultRestaurant())?.id || '';
     const settings = await settingsService.getSettings(targetRestId);
-    const existingKots = await this.getKots(targetRestId);
-    
-    // Find all existing KOTs for THIS specific order
-    const orderKots = (order.kots && order.kots.length > 0)
-      ? order.kots
-      : existingKots.filter((k) => k.order_id === order.id);
+
+    // Resolve existing order KOTs efficiently without querying all restaurant KOTs:
+    let orderKots: KOT[] = (order.kots && order.kots.length > 0) ? order.kots : [];
+    const isExplicitlyNewOrder = !order.id || order.is_supplementary === false;
+    if (orderKots.length === 0 && !isExplicitlyNewOrder && order.id) {
+      if (isSupabaseConfigured) {
+        try {
+          const { data: dbKots } = await supabase
+            .from('kots')
+            .select('id, kot_number')
+            .eq('order_id', order.id)
+            .order('created_at', { ascending: true });
+          if (dbKots && dbKots.length > 0) {
+            orderKots = dbKots as any;
+          }
+        } catch (e) {
+          console.warn('Targeted order KOTs lookup failed:', e);
+        }
+      }
+      if (orderKots.length === 0) {
+        const localKots = mockStorage.getKots(targetRestId);
+        orderKots = localKots.filter((k) => k.order_id === order.id);
+      }
+    }
     const isSupplementary = orderKots.length > 0;
 
     let kotNumber: string;
@@ -151,7 +169,7 @@ export const kotService = {
       kotNumber = supCount === 1 ? `${baseKotNumber}-SUP` : `${baseKotNumber}-SUP${supCount}`;
     } else {
       // Brand new order -> Generate next unique sequential KOT number
-      kotNumber = await this.generateNextUniqueKotNumber(targetRestId);
+      kotNumber = await this.generateNextUniqueKotNumber(targetRestId, settings);
     }
 
     // If itemsToInclude is passed, generate KOT for those specific items; otherwise use all order.items
@@ -208,7 +226,7 @@ export const kotService = {
         // If duplicate kot_number collision occurs, regenerate next sequential number and retry once
         if (error && (error.code === '23505' || error.message?.includes('uq_kots_restaurant_kot_number'))) {
           console.warn('KOT number collision detected, regenerating unique sequence...');
-          const retryKotNumber = await this.generateNextUniqueKotNumber(targetRestId);
+          const retryKotNumber = await this.generateNextUniqueKotNumber(targetRestId, settings);
           kotRecord.kot_number = retryKotNumber;
           newKot.kot_number = retryKotNumber;
           const retryRes = await supabase.from('kots').insert([kotRecord]).select().single();
@@ -221,14 +239,14 @@ export const kotService = {
             const formatted = items.map((i) => ({ ...i, kot_id: data.id }));
             await supabase.from('kot_items').insert(formatted);
           }
-          await auditService.log(isSupplementary ? 'CREATE_SUPPLEMENTARY_KOT' : 'CREATE_KOT', {
+          auditService.log(isSupplementary ? 'CREATE_SUPPLEMENTARY_KOT' : 'CREATE_KOT', {
             restaurant_id: targetRestId,
             kot_id: data.id,
             order_id: order.id,
             kot_number: newKot.kot_number,
             order_number: order.order_number,
-            items_count: items.length,
-          });
+            items_count: items?.length || 0,
+          }).catch((auditErr) => console.warn('Non-blocking KOT audit log exception:', auditErr));
 
           // Also update order in local mock storage
           const localOrders = mockStorage.getOrders(targetRestId);
@@ -245,8 +263,14 @@ export const kotService = {
 
           clearKotsCache(targetRestId);
           clearOrdersCache(targetRestId);
-          await this.getKots(targetRestId, true);
-          return { ...data, items } as KOT;
+          const fullKot: KOT = { ...data, items } as KOT;
+          if (inMemoryKotsCache[targetRestId]) {
+            inMemoryKotsCache[targetRestId] = {
+              timestamp: Date.now(),
+              data: [fullKot, ...(inMemoryKotsCache[targetRestId].data || [])],
+            };
+          }
+          return fullKot;
         }
       } catch (e) {
         console.warn('Supabase generateKot failed, fallback to local:', e);
@@ -255,8 +279,9 @@ export const kotService = {
 
     clearKotsCache(targetRestId);
     clearOrdersCache(targetRestId);
-    existingKots.unshift(newKot);
-    mockStorage.saveKots(existingKots, targetRestId);
+    const localKotsList = mockStorage.getKots(targetRestId);
+    localKotsList.unshift(newKot);
+    mockStorage.saveKots(localKotsList, targetRestId);
 
     const localOrders = mockStorage.getOrders(targetRestId);
     const orderIdx = localOrders.findIndex((o) => o.id === order.id);

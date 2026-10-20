@@ -342,7 +342,7 @@ export const orderService = {
     try {
       const { data, error } = await supabase
         .from('orders')
-        .select('id, order_source, status, created_at')
+        .select('id, order_type, notes, table_id, status, created_at')
         .eq('restaurant_id', restaurantId)
         .order('created_at', { ascending: false })
         .limit(50);
@@ -421,11 +421,11 @@ export const orderService = {
 
         // 2. Database-level orderCategory filter:
         if (orderCategory === 'online') {
-          query = query.or('order_source.eq.CUSTOMER_APP,order_type.eq.delivery');
+          query = query.or('order_type.eq.delivery,notes.ilike.%[ONLINE_DELIVERY]%,notes.ilike.%[DELIVERY]%');
         } else if (orderCategory === 'qr') {
-          query = query.eq('order_source', 'CUSTOMER_QR');
+          query = query.or('notes.ilike.%[QR_DINE_IN]%,notes.ilike.%[QR_ORDER]%,notes.ilike.%QR%');
         } else if (orderCategory === 'pos') {
-          query = query.or('order_source.eq.POS,created_by.eq.POS_STAFF,order_source.is.null');
+          query = query.or('notes.ilike.%[POS]%,notes.is.null');
         }
 
         if (search && search.trim()) {

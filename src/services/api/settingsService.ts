@@ -10,6 +10,17 @@ import { clearMarketplaceRestaurantCache } from './sharedRestaurantUtils';
 const STORAGE_KEY_PRINTER_PREFIX = '@restaurant_printer_settings_';
 const STORAGE_KEY_GST_PREFIX = '@restaurant_gst_settings_';
 
+const SETTINGS_CACHE_TTL = 30000; // 30s in-memory cache
+const inMemorySettingsCache: Record<string, { timestamp: number; data: RestaurantSettings }> = {};
+
+export function clearSettingsCache(restaurantId?: string) {
+  if (restaurantId) {
+    delete inMemorySettingsCache[restaurantId];
+  } else {
+    Object.keys(inMemorySettingsCache).forEach((k) => delete inMemorySettingsCache[k]);
+  }
+}
+
 const RESTAURANT_SETTINGS_COLUMNS = new Set([
   'name',
   'legal_name',
@@ -159,10 +170,17 @@ export const settingsService = {
     return {};
   },
 
-  async getSettings(restaurantId?: string): Promise<RestaurantSettings> {
+  clearSettingsCache,
+
+  async getSettings(restaurantId?: string, forceRefresh: boolean = false): Promise<RestaurantSettings> {
     const targetRestId = restaurantId || '';
     if (!targetRestId) {
       return mockStorage.getSettings();
+    }
+
+    const now = Date.now();
+    if (!forceRefresh && inMemorySettingsCache[targetRestId] && (now - inMemorySettingsCache[targetRestId].timestamp < SETTINGS_CACHE_TTL)) {
+      return inMemorySettingsCache[targetRestId].data;
     }
     // 0. Load local printer & GST settings cache if available
     let localPrinterSettings: {
@@ -371,6 +389,10 @@ export const settingsService = {
             tax_rate: resolvedTaxRate,
           };
           mockStorage.saveSettings(loaded);
+          inMemorySettingsCache[targetRestId] = {
+            timestamp: Date.now(),
+            data: loaded,
+          };
           return loaded;
         } else if (restData) {
           const loaded: RestaurantSettings = {
@@ -405,6 +427,10 @@ export const settingsService = {
             tax_rate: 0,
           };
           mockStorage.saveSettings(loaded);
+          inMemorySettingsCache[targetRestId] = {
+            timestamp: Date.now(),
+            data: loaded,
+          };
           return loaded;
         }
       } catch (e) {
@@ -419,7 +445,7 @@ export const settingsService = {
     const localIsGst = (localGstSettings?.is_gst_enabled !== undefined ? localGstSettings.is_gst_enabled : (localSettings.is_gst_enabled ?? Boolean(localSettings.gstin))) && localGstReg && validLocalTax > 0;
     const localTaxInv = (localGstSettings?.tax_invoice_enabled !== undefined ? localGstSettings.tax_invoice_enabled : (localSettings.tax_invoice_enabled ?? Boolean(localSettings.gstin))) && localGstReg && localIsGst && validLocalTax > 0;
 
-    return {
+    const resultSettings: RestaurantSettings = {
       ...localSettings,
       kot_paper_size: localPrinterSettings?.kot_paper_size || localSettings.kot_paper_size || '80mm',
       bill_paper_size: localPrinterSettings?.bill_paper_size || localSettings.bill_paper_size || '80mm',
@@ -430,6 +456,11 @@ export const settingsService = {
       default_tax_rate: validLocalTax,
       tax_rate: validLocalTax,
     };
+    inMemorySettingsCache[targetRestId] = {
+      timestamp: Date.now(),
+      data: resultSettings,
+    };
+    return resultSettings;
   },
 
   async saveSettings(
@@ -678,6 +709,7 @@ export const settingsService = {
       } catch (e) {
         // ignore
       }
+      clearSettingsCache(targetRestId);
       return persisted;
     }
 
@@ -699,6 +731,7 @@ export const settingsService = {
     } catch (e) {
       // ignore
     }
+    clearSettingsCache(targetRestId);
     return persistedLocal;
   },
 };

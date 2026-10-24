@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,9 @@ import {
   Platform,
   Alert,
   useWindowDimensions,
+  AppState,
 } from 'react-native';
+
 import { useRouter } from 'expo-router';
 import { orderService } from '../../src/services/api/orderService';
 import { productService } from '../../src/services/api/productService';
@@ -128,44 +130,143 @@ export default function DashboardScreen() {
   // Z-Report Modal
   const [viewingZReport, setViewingZReport] = useState<DayRegister | null>(null);
 
-  // Load all initial data
-  const loadData = async () => {
+  const lastFetchTimestampRef = useRef<number>(0);
+  const isStaleRef = useRef<boolean>(false);
+  const isMountedRef = useRef<boolean>(true);
+  const refreshTimerRef = useRef<any>(null);
+  const activeRestaurantIdRef = useRef<string | undefined>(activeRestaurantId);
+  activeRestaurantIdRef.current = activeRestaurantId;
+  const activeRegisterRef = useRef<DayRegister | null>(activeRegister);
+  activeRegisterRef.current = activeRegister;
+  const startDateRef = useRef<string>(startDate);
+  startDateRef.current = startDate;
+  const endDateRef = useRef<string>(endDate);
+  endDateRef.current = endDate;
+
+  // Check if browser tab or app is actively visible
+  const isDocumentVisible = useCallback((): boolean => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      return !document.hidden;
+    }
+    return AppState.currentState === 'active';
+  }, []);
+
+  // Dedicated targeted orders and live register reconciliation refresh
+  const refreshDashboardOrders = useCallback(
+    async (forceRefresh: boolean = false) => {
+      const targetRestId = activeRestaurantIdRef.current;
+      if (!targetRestId) return;
+
+      try {
+        const curStart = startDateRef.current;
+        const curEnd = endDateRef.current;
+        const refreshedOrders = await orderService.getDashboardOrders(
+          targetRestId,
+          curStart,
+          curEnd,
+          forceRefresh
+        );
+
+        if (!isMountedRef.current) return;
+        setOrders(refreshedOrders);
+        lastFetchTimestampRef.current = Date.now();
+
+        // Calculate live reconciliation if a register is active
+        const curReg = activeRegisterRef.current;
+        if (curReg && curReg.status === 'open') {
+          const recon = await dayRegisterService.calculateRegisterReconciliation(
+            curReg,
+            targetRestId,
+            refreshedOrders
+          );
+          if (isMountedRef.current) {
+            setLiveReconciliation(recon);
+          }
+        }
+      } catch (err) {
+        console.warn('refreshDashboardOrders error:', err);
+      }
+    },
+    []
+  );
+
+  // Load all initial metadata (products, categories, settings, registers)
+  const loadData = useCallback(async () => {
+    if (!activeRestaurantId) return;
     try {
       setLoading(true);
-      const [ords, prods, cats, sets, regList, curReg] = await Promise.all([
-        orderService.getOrders(activeRestaurantId),
+      const [prods, cats, sets, regList] = await Promise.all([
         productService.getProducts(activeRestaurantId),
         categoryService.getCategories(activeRestaurantId),
         settingsService.getSettings(activeRestaurantId),
         dayRegisterService.getRegisters(activeRestaurantId),
-        dayRegisterService.getCurrentRegister(activeRestaurantId),
       ]);
 
-      setOrders(ords);
+      if (!isMountedRef.current) return;
       setProducts(prods);
       setCategories(cats);
       setSettings(sets);
       setRegisters(regList);
+
+      const curReg = regList && regList.length > 0 ? regList[0] : null;
       setActiveRegister(curReg && curReg.status === 'open' ? curReg : null);
 
-      if (curReg && curReg.status === 'open') {
-        const recon = await dayRegisterService.calculateRegisterReconciliation(curReg, activeRestaurantId, ords);
-        setLiveReconciliation(recon);
-      }
+      await refreshDashboardOrders(false);
     } catch (e) {
       console.warn('Dashboard loadData exception:', e);
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [activeRestaurantId, refreshDashboardOrders]);
 
+  // Initial mount load
   useEffect(() => {
+    isMountedRef.current = true;
     loadData();
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [activeRestaurantId, loadData]);
 
-    // 1. Live Realtime Orders subscription for instant dashboard metrics updates
+  // Refresh orders when date range changes
+  useEffect(() => {
+    refreshDashboardOrders(false);
+  }, [startDate, endDate, refreshDashboardOrders]);
+
+  // Debounced event-driven refresh trigger
+  const triggerDebouncedRefresh = useCallback((refreshRegisters = false) => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = setTimeout(async () => {
+      if (!isDocumentVisible()) {
+        isStaleRef.current = true;
+        return;
+      }
+      if (refreshRegisters && activeRestaurantIdRef.current) {
+        try {
+          const regList = await dayRegisterService.getRegisters(activeRestaurantIdRef.current, true);
+          if (isMountedRef.current) {
+            setRegisters(regList);
+            const curReg = regList && regList.length > 0 ? regList[0] : null;
+            setActiveRegister(curReg && curReg.status === 'open' ? curReg : null);
+          }
+        } catch (_) {}
+      }
+      await refreshDashboardOrders(true);
+    }, 500);
+  }, [isDocumentVisible, refreshDashboardOrders]);
+
+  // Supabase Realtime multi-table listener & fallback management
+  useEffect(() => {
+    if (!activeRestaurantId) return;
+
     let channel: any = null;
-    if (isSupabaseConfigured && activeRestaurantId) {
-      const channelName = `sub_dash_orders_${activeRestaurantId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    if (isSupabaseConfigured) {
+      // Single stable channel name per tenant to avoid duplicate connection handshakes
+      const channelName = `realtime_dash_${activeRestaurantId}`;
       channel = supabase
         .channel(channelName)
         .on(
@@ -176,41 +277,91 @@ export default function DashboardScreen() {
             table: 'orders',
             filter: `restaurant_id=eq.${activeRestaurantId}`,
           },
-          async () => {
-            const refreshedOrders = await orderService.getOrders(activeRestaurantId);
-            setOrders(refreshedOrders);
-            const curReg = await dayRegisterService.getCurrentRegister(activeRestaurantId);
-            setActiveRegister(curReg && curReg.status === 'open' ? curReg : null);
-            if (curReg && curReg.status === 'open') {
-              const recon = await dayRegisterService.calculateRegisterReconciliation(curReg, activeRestaurantId, refreshedOrders);
-              setLiveReconciliation(recon);
-            }
+          () => {
+            triggerDebouncedRefresh(false);
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'payments',
+            filter: `restaurant_id=eq.${activeRestaurantId}`,
+          },
+          () => {
+            triggerDebouncedRefresh(false);
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'day_registers',
+            filter: `restaurant_id=eq.${activeRestaurantId}`,
+          },
+          () => {
+            triggerDebouncedRefresh(true);
           }
         )
         .subscribe();
     }
 
-    // 2. Low-frequency 60s background reconciliation fallback (reduced from 6s to eliminate 90% redundant egress)
-    const interval = setInterval(async () => {
-      if (activeRestaurantId) {
-        const refreshedOrders = await orderService.getOrders(activeRestaurantId);
-        setOrders(refreshedOrders);
-        const curReg = await dayRegisterService.getCurrentRegister(activeRestaurantId);
-        setActiveRegister(curReg && curReg.status === 'open' ? curReg : null);
-        if (curReg && curReg.status === 'open') {
-          const recon = await dayRegisterService.calculateRegisterReconciliation(curReg, activeRestaurantId, refreshedOrders);
-          setLiveReconciliation(recon);
+    // Visibility Listener: on tab regain focus / app resume, catch up if data became stale
+    const handleVisibilityResume = () => {
+      if (isDocumentVisible()) {
+        const timeSinceLastFetch = Date.now() - lastFetchTimestampRef.current;
+        if (isStaleRef.current || timeSinceLastFetch > 60000) {
+          isStaleRef.current = false;
+          triggerDebouncedRefresh(true);
         }
       }
+    };
+
+    let appStateSubscription: any = null;
+    if (Platform.OS !== 'web') {
+      appStateSubscription = AppState.addEventListener('change', (state) => {
+        if (state === 'active') {
+          handleVisibilityResume();
+        }
+      });
+    } else if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityResume);
+      window.addEventListener('focus', handleVisibilityResume);
+    }
+
+    // Retain 60s background reconciliation fallback (only runs if tab is visible & unrefreshed)
+    const interval = setInterval(() => {
+      if (!isDocumentVisible()) {
+        isStaleRef.current = true;
+        return;
+      }
+      // If Realtime already refreshed within the last 55 seconds, skip redundant execution
+      if (Date.now() - lastFetchTimestampRef.current < 55000) {
+        return;
+      }
+      refreshDashboardOrders(false);
     }, 60000);
 
     return () => {
       clearInterval(interval);
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
       if (channel) {
         supabase.removeChannel(channel);
       }
+      if (appStateSubscription) {
+        appStateSubscription.remove();
+      }
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityResume);
+        window.removeEventListener('focus', handleVisibilityResume);
+      }
     };
-  }, [activeRestaurantId]);
+  }, [activeRestaurantId, triggerDebouncedRefresh, isDocumentVisible, refreshDashboardOrders]);
+
 
   // Handle Date Presets
   const applyDatePreset = (preset: 'today' | 'yesterday' | '7days' | '30days' | 'custom') => {

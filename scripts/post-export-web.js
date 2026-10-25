@@ -151,6 +151,11 @@ for (const page of MARKETING_PAGES) {
   });
 
   fs.writeFileSync(pageFile, pageHtml, 'utf8');
+  if (page.path !== '/') {
+    const directFile = path.join(distDir, page.path.replace(/^\//, '') + '.html');
+    fs.mkdirSync(path.dirname(directFile), { recursive: true });
+    fs.writeFileSync(directFile, pageHtml, 'utf8');
+  }
   preRenderedCount++;
 }
 
@@ -273,6 +278,8 @@ for (const art of BLOG_ARTICLES) {
   });
 
   fs.writeFileSync(artFile, artHtml, 'utf8');
+  const directArtFile = path.join(distDir, 'info', 'blog', art.slug + '.html');
+  fs.writeFileSync(directArtFile, artHtml, 'utf8');
   blogPreRenderedCount++;
 }
 

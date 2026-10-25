@@ -304,6 +304,18 @@ export default {
     // -------------------------------------------------------------------------
     let response = await env.ASSETS.fetch(request);
 
+    // If Cloudflare assets returned 307 redirecting to trailing slash or vice versa, resolve directly
+    if ((response.status === 307 || response.status === 308) && (request.method === 'GET' || request.method === 'HEAD')) {
+      const loc = response.headers.get('location') || '';
+      if (loc && (loc.startsWith('/') || loc.startsWith(url.origin))) {
+        const targetUrl = new URL(loc, url.origin);
+        const resolved = await env.ASSETS.fetch(new Request(targetUrl, request));
+        if (resolved.status === 200) {
+          response = resolved;
+        }
+      }
+    }
+
     // If not found and request is a navigation GET/HEAD, rewrite to /index.html
     if (response.status === 404 && (request.method === 'GET' || request.method === 'HEAD')) {
       const isFileWithExtension = /\.[a-zA-Z0-9]+$/.test(url.pathname);

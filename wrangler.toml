@@ -1,9 +1,16 @@
 name = "ancient-mud-9b5f"
 main = "./worker.js"
 compatibility_date = "2024-09-02"
+workers_dev = true
+
+routes = [
+  { pattern = "restroz.shop/*", zone_name = "restroz.shop" },
+  { pattern = "www.restroz.shop/*", zone_name = "restroz.shop" }
+]
 
 [assets]
 directory = "./dist"
 binding = "ASSETS"
+run_worker_first = true
 not_found_handling = "single-page-application"
 html_handling = "auto-trailing-slash"

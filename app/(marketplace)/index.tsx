@@ -14,6 +14,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import Head from 'expo-router/head';
 import { useAuth } from '../../src/context/AuthContext';
 import { useStorefront } from '../../src/context/StorefrontContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
@@ -205,6 +206,31 @@ export default function MarketplaceHomeScreen() {
 
   return (
     <View style={styles.container}>
+      {Platform.OS === 'web' && (
+        <Head>
+          <title>RestroZ — Restaurant POS & Management Software | Cloud Billing & KOT</title>
+          <meta
+            name="description"
+            content="RestroZ is the modern all-in-one cloud restaurant POS and billing platform. Features lightning-fast KOT printing, table-side waiter app, digital QR ordering, billing, inventory, and multi-outlet management."
+          />
+          <meta
+            name="keywords"
+            content="restaurant POS software, restaurant billing software, KOT printing software, cloud restaurant POS, restaurant management software, QR digital menu, waiter ordering app, restaurant inventory management, multi-outlet restaurant software, RestroZ POS"
+          />
+          <link rel="canonical" href="https://restroz.shop/" />
+          <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+          <meta property="og:type" content="website" />
+          <meta property="og:url" content="https://restroz.shop/" />
+          <meta property="og:title" content="RestroZ — Restaurant POS & Management Software | Cloud Billing & KOT" />
+          <meta property="og:description" content="From orders to happy customers — RestroZ is the modern cloud restaurant POS software with table-side waiter app, KOT printing, QR menu, inventory, and multi-outlet management." />
+          <meta property="og:image" content="https://restroz.shop/restroz-logo.png" />
+          <meta name="twitter:card" content="summary_large_image" />
+          <meta name="twitter:url" content="https://restroz.shop/" />
+          <meta name="twitter:title" content="RestroZ — Restaurant POS & Management Software" />
+          <meta name="twitter:description" content="From orders to happy customers — RestroZ is the modern cloud restaurant POS software with table-side waiter app, KOT printing, QR menu, inventory, and multi-outlet management." />
+          <meta name="twitter:image" content="https://restroz.shop/restroz-logo.png" />
+        </Head>
+      )}
       {/* Mobile-Only Header with Single RestroZ Brand (Desktop uses Layout Navbar) */}
       {!isDesktop && (
         <View style={styles.mobileHeader}>

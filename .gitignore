@@ -6,6 +6,8 @@ scripts/
 
 !scripts/post-export-web.js
 !scripts/build-production-web.js
+!scripts/generate-sitemap.js
+!scripts/seo-data.js
 !scripts/test-personal-website-dev.js
 !scripts/test-dedicated-qr.js
 !scripts/test-bulk-products-dev.js

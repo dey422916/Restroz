@@ -1,14 +1,35 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <!-- Marketing Website Home -->
+  <url>
+    <loc>https://restroz.shop/</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>
   <url>
     <loc>https://restroz.shop/info</loc>
     <lastmod>2026-10-25</lastmod>
-    <changefreq>weekly</changefreq>
+    <changefreq>daily</changefreq>
     <priority>1.0</priority>
   </url>
-
-  <!-- Feature Hub & Subpages -->
+  <url>
+    <loc>https://restroz.shop/info/pricing</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://restroz.shop/info/locations</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.85</priority>
+  </url>
+  <url>
+    <loc>https://restroz.shop/info/blog</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.85</priority>
+  </url>
   <url>
     <loc>https://restroz.shop/info/features</loc>
     <lastmod>2026-10-25</lastmod>
@@ -19,19 +40,25 @@
     <loc>https://restroz.shop/info/features/pos-billing</loc>
     <lastmod>2026-10-25</lastmod>
     <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
+    <priority>0.85</priority>
+  </url>
+  <url>
+    <loc>https://restroz.shop/info/features/gst-billing</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.85</priority>
   </url>
   <url>
     <loc>https://restroz.shop/info/features/kot-kitchen</loc>
     <lastmod>2026-10-25</lastmod>
     <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
+    <priority>0.85</priority>
   </url>
   <url>
     <loc>https://restroz.shop/info/features/waiter-mobile-app</loc>
     <lastmod>2026-10-25</lastmod>
     <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
+    <priority>0.85</priority>
   </url>
   <url>
     <loc>https://restroz.shop/info/features/qr-digital-menu</loc>
@@ -87,8 +114,6 @@
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
-
-  <!-- Solutions Hub & Subpages -->
   <url>
     <loc>https://restroz.shop/info/solutions</loc>
     <lastmod>2026-10-25</lastmod>
@@ -131,12 +156,10 @@
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
-
-  <!-- Commercial & Corporate Pages -->
   <url>
-    <loc>https://restroz.shop/info/pricing</loc>
+    <loc>https://restroz.shop/info/book-demo</loc>
     <lastmod>2026-10-25</lastmod>
-    <changefreq>weekly</changefreq>
+    <changefreq>monthly</changefreq>
     <priority>0.85</priority>
   </url>
   <url>
@@ -152,21 +175,9 @@
     <priority>0.75</priority>
   </url>
   <url>
-    <loc>https://restroz.shop/info/book-demo</loc>
-    <lastmod>2026-10-25</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.85</priority>
-  </url>
-  <url>
     <loc>https://restroz.shop/info/faq</loc>
     <lastmod>2026-10-25</lastmod>
     <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://restroz.shop/info/blog</loc>
-    <lastmod>2026-10-25</lastmod>
-    <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
@@ -186,5 +197,77 @@
     <lastmod>2026-10-25</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://restroz.shop/info/blog/how-to-choose-best-restaurant-pos-software-india</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://restroz.shop/info/blog/restaurant-billing-software-guide-india</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://restroz.shop/info/blog/cloud-pos-vs-traditional-desktop-pos</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://restroz.shop/info/blog/restaurant-pos-software-cost-pricing-india</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://restroz.shop/info/blog/what-is-kot-automatic-kitchen-order-ticket-printing</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://restroz.shop/info/blog/thermal-printer-guide-bluetooth-usb-lan-restaurant-pos</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://restroz.shop/info/blog/restaurant-gst-billing-rules-slabs-guide</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://restroz.shop/info/blog/restaurant-inventory-management-recipe-costing-guide</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://restroz.shop/info/blog/contactless-qr-code-digital-menus-benefits</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://restroz.shop/info/blog/table-side-waiter-ordering-apps-benefits</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://restroz.shop/info/blog/multi-outlet-restaurant-management-franchise-operations</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://restroz.shop/info/blog/prevent-cash-theft-daily-cash-register-reconciliation</loc>
+    <lastmod>2026-10-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
   </url>
 </urlset>

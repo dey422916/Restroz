@@ -14,10 +14,24 @@ export default function MarketingHome() {
   return (
     <MarketingLayout
       seo={{
-        title: 'RestroZ — Complete Restaurant Management & Cloud POS System',
+        title: 'Best Restaurant POS Software in India | RestroZ',
         description:
-          'From orders to happy customers — RestroZ is the modern cloud restaurant POS software with table-side waiter app, KOT printing, QR menu, inventory, and multi-outlet management.',
+          'Discover RestroZ restaurant POS software for billing, KOT printing, table management, inventory, QR menus and sales reports. Explore features and book a demo.',
         canonicalPath: '/info',
+        keywords: [
+          'best restaurant POS software in India',
+          'restaurant billing software India',
+          'restaurant POS software',
+          'restaurant management software',
+          'restaurant billing system',
+          'cloud restaurant POS software',
+          'KOT printing software',
+          'restaurant inventory management',
+          'restaurant GST billing software',
+          'waiter mobile app restaurant',
+          'QR code digital menu',
+          'RestroZ POS',
+        ],
       }}
     >
       {/* Top Promotional Carousel (Super Admin Managed) */}

@@ -28,8 +28,9 @@ export function HeroSection() {
             <Text style={styles.badgeText}>Next-Gen Cloud Restaurant Management</Text>
           </View>
 
-          <Text style={styles.headline}>
-            Run Your Restaurant <Text style={styles.headlineHighlight}>Smarter</Text> with RestroZ
+          <Text role="heading" aria-level={1} style={styles.headline}>
+            Restaurant POS & Billing Software for{' '}
+            <Text style={styles.headlineHighlight}>Modern Indian Restaurants</Text>
           </Text>
 
           <Text style={styles.subheadline}>

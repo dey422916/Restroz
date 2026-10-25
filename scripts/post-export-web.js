@@ -89,8 +89,12 @@ function createPageHtml({ title, description, keywords, canonical, schema, seman
   }
 
   // 4. Semantic Body inside <div id="root">
-  if (semanticBody && html.includes('<div id="root"></div>')) {
-    html = html.replace('<div id="root"></div>', `<div id="root">${semanticBody}</div>`);
+  if (semanticBody) {
+    if (html.includes('<div id="root"></div>')) {
+      html = html.replace('<div id="root"></div>', `<div id="root">${semanticBody}</div>`);
+    } else if (/<div id="root">[\s\S]*?<\/div>/.test(html)) {
+      html = html.replace(/<div id="root">[\s\S]*?<\/div>/, `<div id="root">${semanticBody}</div>`);
+    }
   }
 
   return html;

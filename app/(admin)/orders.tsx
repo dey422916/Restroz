@@ -39,6 +39,7 @@ import { isValidPhoneNumber, normalizePhoneNumber } from '../../src/utils/phone'
 import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError } from '../../src/utils/validation';
 import { validateGSTIN, getStateFromGSTIN } from '../../src/utils/validators';
 import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
+import { createSafeRealtimeChannel, removeSafeRealtimeChannel } from '../../src/utils/realtime';
 import { useNotification } from '../../src/context/NotificationContext';
 import { useNewOrderTracker } from '../../src/hooks/useNewOrderTracker';
 import { getCurrentLoggedInUserDisplayName } from '../../src/utils/receiptIdentity';
@@ -265,13 +266,18 @@ export default function OrdersScreen() {
     }, [loadData])
   );
 
+  const loadDataRef = useRef(loadData);
+  loadDataRef.current = loadData;
+  const showToastRef = useRef(showToast);
+  showToastRef.current = showToast;
+  const playOrderBellRef = useRef(playOrderBell);
+  playOrderBellRef.current = playOrderBell;
+
   // Realtime subscription for incoming orders and status updates
   useEffect(() => {
     if (!isSupabaseConfigured || !activeRestaurantId) return;
 
-    const chName = `admin_orders_realtime_${activeRestaurantId}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const channel = supabase
-      .channel(chName)
+    const channel = createSafeRealtimeChannel('admin_orders_realtime', activeRestaurantId)
       .on(
         'postgres_changes',
         {
@@ -285,22 +291,22 @@ export default function OrdersScreen() {
             const newOrd = payload.new as Order;
             const src = resolveOrderSource(newOrd);
             if (src === 'CUSTOMER_APP') {
-              showToast('info', '🌐 New Online Order!', `Order #${newOrd.order_number || ''} received from marketplace.`);
-              playOrderBell();
+              showToastRef.current('info', '🌐 New Online Order!', `Order #${newOrd.order_number || ''} received from marketplace.`);
+              playOrderBellRef.current();
             } else if (src === 'CUSTOMER_QR') {
-              showToast('info', '📱 New QR Order!', `Order #${newOrd.order_number || ''} received from table QR.`);
-              playOrderBell();
+              showToastRef.current('info', '📱 New QR Order!', `Order #${newOrd.order_number || ''} received from table QR.`);
+              playOrderBellRef.current();
             }
           }
-          loadData(true);
+          loadDataRef.current(true);
         }
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      removeSafeRealtimeChannel(channel);
     };
-  }, [activeRestaurantId, loadData, showToast, playOrderBell]);
+  }, [activeRestaurantId]);
 
   // Auto-navigate to the correct tab/filter when redirected from KOT dispatch
   const handledOpenOrderIdRef = useRef<string | null>(null);

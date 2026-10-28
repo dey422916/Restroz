@@ -28,6 +28,7 @@ import { useAuth } from '../../src/context/AuthContext';
 import { formatCurrency } from '../../src/utils/currency';
 import { validateReportDateRange, getEarliestRestaurantReportingDate } from '../../src/utils/dateValidation';
 import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
+import { createSafeRealtimeChannel, removeSafeRealtimeChannel } from '../../src/utils/realtime';
 import { Order, Product, Category, DayRegister, RestaurantSettings, ItemSalesSummary } from '../../src/types';
 
 export default function DashboardScreen() {
@@ -264,11 +265,8 @@ export default function DashboardScreen() {
     if (!activeRestaurantId) return;
 
     let channel: any = null;
-    if (isSupabaseConfigured) {
-      // Single stable channel name per tenant to avoid duplicate connection handshakes
-      const channelName = `realtime_dash_${activeRestaurantId}`;
-      channel = supabase
-        .channel(channelName)
+    if (isSupabaseConfigured && activeRestaurantId) {
+      channel = createSafeRealtimeChannel('realtime_dash', activeRestaurantId)
         .on(
           'postgres_changes',
           {
@@ -350,7 +348,8 @@ export default function DashboardScreen() {
         clearTimeout(refreshTimerRef.current);
       }
       if (channel) {
-        supabase.removeChannel(channel);
+        removeSafeRealtimeChannel(channel);
+        channel = null;
       }
       if (appStateSubscription) {
         appStateSubscription.remove();

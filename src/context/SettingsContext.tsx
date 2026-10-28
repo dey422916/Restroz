@@ -3,6 +3,7 @@ import { RestaurantSettings } from '../types';
 import { settingsService } from '../services/api/settingsService';
 import { marketplaceService } from '../services/api/marketplaceService';
 import { supabase, isSupabaseConfigured } from '../services/supabase';
+import { createSafeRealtimeChannel, removeSafeRealtimeChannel } from '../utils/realtime';
 import { useAuth } from './AuthContext';
 
 interface SettingsContextType {
@@ -107,9 +108,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     // Exactly one single Realtime channel per activeRestaurantId
     if (isSupabaseConfigured) {
-      const channelName = `realtime_settings_${activeRestaurantId}`;
-      const channel = supabase
-        .channel(channelName)
+      const channel = createSafeRealtimeChannel('realtime_settings', activeRestaurantId)
         .on(
           'postgres_changes',
           {
@@ -168,7 +167,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         .subscribe();
 
       return () => {
-        supabase.removeChannel(channel);
+        removeSafeRealtimeChannel(channel);
       };
     }
   }, [activeRestaurantId, user?.id, fetchLatestSettings]);

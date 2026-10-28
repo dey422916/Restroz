@@ -26,6 +26,7 @@ import { printService, handleThermalPrintFallback } from '../services/printServi
 import { isAutoPrintEnabled } from '../services/directPrintService';
 import { getCurrentLoggedInUserDisplayName } from '../utils/receiptIdentity';
 import { supabase, isSupabaseConfigured } from '../services/supabase';
+import { createSafeRealtimeChannel, removeSafeRealtimeChannel } from '../utils/realtime';
 import { printedKotTracker } from '../utils/printedKotTracker';
 
 // Custom error to represent expected register closed validation
@@ -191,9 +192,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Setup Supabase Realtime Listener for Instant Order Notifications strictly scoped to activeRestaurantId for authenticated users
     if (isSupabaseConfigured) {
-      const channelName = `realtime_orders_${activeRestaurantId}_pos`;
-      const ordersChannel = supabase
-        .channel(channelName)
+      const ordersChannel = createSafeRealtimeChannel('realtime_orders', `${activeRestaurantId}_pos`)
         .on(
           'postgres_changes',
           {
@@ -213,7 +212,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         .subscribe();
 
       return () => {
-        supabase.removeChannel(ordersChannel);
+        removeSafeRealtimeChannel(ordersChannel);
       };
     } else {
       // Fallback polling for offline/local mode

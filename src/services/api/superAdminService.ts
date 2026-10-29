@@ -597,118 +597,30 @@ export const superAdminService = {
 
     let targetUserId = existingProfile?.id;
 
-    // 1. Attempt Server-Side Provisioning RPC (Bypasses SMTP email rate limits completely)
-    try {
-      const { data: rpcData, error: rpcErr } = await supabase.rpc('provision_privileged_user', {
-        p_restaurant_id: payload.restaurant_id,
-        p_email: cleanEmail,
-        p_password: payload.password || undefined,
-        p_full_name: cleanName,
-        p_phone: payload.phone?.trim() || null,
-        p_role: 'ADMIN',
-      });
+    const resolvedPassword = payload.password && payload.password.trim() ? payload.password.trim() : 'Staff12345!';
 
-      if (!rpcErr && rpcData?.user_id) {
-        return {
-          user_id: rpcData.user_id,
-          membership_id: rpcData.member_id || rpcData.user_id,
-        };
-      }
-      if (rpcErr && !rpcErr.message.includes('function') && !rpcErr.message.includes('not found')) {
-        // If it's a domain validation error (e.g. admin limit reached), propagate it
-        if (rpcErr.message.includes('Admin limit reached') || rpcErr.message.includes('already an active member')) {
-          throw new Error(rpcErr.message);
-        }
-      }
-    } catch (rpcEx: any) {
-      if (rpcEx.message?.includes('Admin limit reached') || rpcEx.message?.includes('already an active member')) {
-        throw rpcEx;
-      }
-      console.warn('provision_privileged_user RPC fallback:', rpcEx?.message);
-    }
-
-    if (!targetUserId) {
-      // Attempt client-side signup with user-friendly rate limit mapping
-      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-        throw new Error('Missing required Supabase environment variables for restaurant admin provisioning.');
-      }
-
-      const tempClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-          detectSessionInUrl: false,
-        },
-      });
-
-      const { data: signUpData, error: signUpErr } = await tempClient.auth.signUp({
-        email: cleanEmail,
-        password: payload.password || `RestroZ_${Math.random().toString(36).slice(2, 10)}!`,
-        options: {
-          data: {
-            full_name: cleanName,
-            phone: payload.phone,
-            role: 'ADMIN',
-          },
-        },
-      });
-
-      if (signUpErr) {
-        if (signUpErr.message.toLowerCase().includes('rate limit') || signUpErr.message.toLowerCase().includes('over_email_send_rate_limit')) {
-          throw new Error(
-            'Supabase Email Rate Limit Exceeded. Please run the SQL Migration script (20260820000009_bypass_email_rate_limit_privileged_provisioning.sql) in your Supabase SQL Editor to enable zero-email direct provisioning.'
-          );
-        }
-        if (!signUpErr.message.toLowerCase().includes('already registered') && !signUpErr.message.toLowerCase().includes('already exists')) {
-          throw new Error(signUpErr.message || 'Failed to create admin user account.');
-        }
-      }
-
-      targetUserId = signUpData?.user?.id;
-    }
-
-    if (!targetUserId) {
-      const { data: retryProf } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('email', cleanEmail)
-        .maybeSingle();
-      targetUserId = retryProf?.id;
-    }
-
-    if (!targetUserId) {
-      throw new Error(`Could not resolve user account for email: ${payload.email}`);
-    }
-
-    // Ensure profile has ADMIN role
-    await supabase.from('profiles').upsert({
-      id: targetUserId,
-      email: cleanEmail,
-      full_name: cleanName,
-      phone: payload.phone,
-      role: 'ADMIN',
-      updated_at: new Date().toISOString(),
+    // 1. Authoritative Server-Side Provisioning RPC (Bypasses SMTP email rate limits completely, sets confirmed email)
+    const { data: rpcData, error: rpcErr } = await supabase.rpc('provision_privileged_user', {
+      p_restaurant_id: payload.restaurant_id,
+      p_email: cleanEmail,
+      p_password: resolvedPassword,
+      p_full_name: cleanName,
+      p_phone: payload.phone?.trim() || null,
+      p_role: 'ADMIN',
+      p_preset: null,
+      p_permissions: null,
     });
 
-    // Create restaurant_members row (Source of truth)
-    const { data: member, error: memErr } = await supabase
-      .from('restaurant_members')
-      .upsert(
-        {
-          restaurant_id: payload.restaurant_id,
-          user_id: targetUserId,
-          role: 'ADMIN',
-          is_active: true,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'restaurant_id,user_id' }
-      )
-      .select()
-      .single();
+    if (rpcErr) {
+      console.error('provision_privileged_user RPC error in superAdminService:', rpcErr);
+      throw new Error(rpcErr.message || 'Failed to create restaurant admin.');
+    }
 
-    if (memErr || !member) throw memErr || new Error('Failed to create restaurant member.');
+    if (!rpcData?.user_id) {
+      throw new Error('Failed to create restaurant admin: no user ID returned.');
+    }
 
-    return { user_id: targetUserId, membership_id: member.id };
+    return { user_id: rpcData.user_id, membership_id: rpcData.member_id || rpcData.user_id };
   },
 
   async updateRestaurantAdmin(payload: {

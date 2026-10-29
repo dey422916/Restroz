@@ -143,10 +143,11 @@ export default function RestaurantAdminsScreen() {
         full_name: cleanName,
         email: cleanEmail,
         phone: cleanPhone,
-        password: formPassword.trim() || undefined,
+        password: formPassword.trim() || 'Staff12345!',
       });
 
-      Alert.alert('Success', `Admin account created immediately without OTP/email verification. Login is active.`);
+      const assignedPwd = formPassword.trim() || 'Staff12345!';
+      Alert.alert('Success', `Admin account for ${cleanName} created successfully!\nInitial Password: ${assignedPwd}\nLogin is active.`);
       setModalVisible(false);
       resetProvisionForm();
       loadData();

@@ -278,7 +278,8 @@ export default function StaffManagementScreen() {
         preset: assignedRole === 'STAFF' ? selectedPreset : undefined,
       });
 
-      Alert.alert('Success', `Staff member ${cleanName} provisioned immediately without OTP/email verification.`);
+      const assignedPwd = password.trim() || 'Staff12345!';
+      Alert.alert('Success', `Staff member ${cleanName} provisioned successfully!\nInitial Password: ${assignedPwd}\nLogin is immediately active.`);
       setAddModalVisible(false);
       setFullName('');
       setEmail('');

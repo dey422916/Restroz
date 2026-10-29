@@ -225,181 +225,33 @@ export const authService = {
     const cleanName = fullName.trim();
     const cleanPhone = phone?.trim() || '';
 
-    let targetUserId: string | null = null;
-
-    // 1. Attempt Server-Side Provisioning RPC (Bypasses SMTP email rate limits completely)
-    if (restaurantId) {
-      try {
-        const { data: rpcData, error: rpcErr } = await supabase.rpc('provision_privileged_user', {
-          p_restaurant_id: restaurantId,
-          p_email: cleanEmail,
-          p_password: password,
-          p_full_name: cleanName,
-          p_phone: cleanPhone || null,
-          p_role: targetRole,
-        });
-
-        if (!rpcErr && rpcData?.user_id) {
-          targetUserId = rpcData.user_id;
-        }
-        if (rpcErr && !rpcErr.message.includes('function') && !rpcErr.message.includes('not found')) {
-          if (rpcErr.message.includes('limit reached') || rpcErr.message.includes('already an active member')) {
-            throw new Error(rpcErr.message);
-          }
-        }
-      } catch (rpcEx: any) {
-        if (rpcEx.message?.includes('limit reached') || rpcEx.message?.includes('already an active member')) {
-          throw rpcEx;
-        }
-        console.warn('provision_privileged_user RPC fallback in authService:', rpcEx?.message);
-      }
+    if (!restaurantId) {
+      throw new Error('Restaurant ID is required to provision an admin or staff user.');
     }
 
-    // 2. Try Supabase Edge Function next if deployed
-    if (!targetUserId) {
-      try {
-        const { data, error } = await supabase.functions.invoke('create-admin', {
-          body: {
-            email: cleanEmail,
-            password,
-            fullName: cleanName,
-            phone: cleanPhone,
-            role: targetRole,
-            restaurantId: restaurantId || null,
-          },
-        });
+    const resolvedPassword = password && password.trim() ? password.trim() : 'Staff12345!';
 
-        if (!error && (data?.user_id || data?.user?.id)) {
-          targetUserId = data.user_id || data.user.id;
-        }
-      } catch (edgeErr) {
-        console.warn('create-admin Edge Function invocation bypassed, utilizing direct provisioning:', edgeErr);
-      }
+    const { data: rpcData, error: rpcErr } = await supabase.rpc('provision_privileged_user', {
+      p_restaurant_id: restaurantId,
+      p_email: cleanEmail,
+      p_password: resolvedPassword,
+      p_full_name: cleanName,
+      p_phone: cleanPhone || null,
+      p_role: targetRole,
+      p_preset: targetRole === 'STAFF' ? 'CASHIER' : null,
+      p_permissions: null,
+    });
+
+    if (rpcErr) {
+      throw new Error(rpcErr.message || 'Failed to provision user.');
     }
 
-    // 3. Direct Provisioning Fallback (100% resilient across Web, iOS, Android)
-    if (!targetUserId) {
-      // Check if user already exists in profiles
-      const { data: existingProf } = await supabase
-        .from('profiles')
-        .select('id, email')
-        .eq('email', cleanEmail)
-        .maybeSingle();
-
-      if (existingProf?.id) {
-        targetUserId = existingProf.id;
-      } else {
-        // Create auth user using an isolated, non-persisted client so caller's active admin session is NEVER altered
-        if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-          throw new Error('Missing required Supabase environment variables for admin provisioning.');
-        }
-
-        const tempClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-          auth: {
-            persistSession: false,
-            autoRefreshToken: false,
-            detectSessionInUrl: false,
-          },
-        });
-
-        const { data: signUpData, error: signUpErr } = await tempClient.auth.signUp({
-          email: cleanEmail,
-          password,
-          options: {
-            data: {
-              full_name: cleanName,
-              role: targetRole,
-            },
-          },
-        });
-
-        if (signUpErr) {
-          if (signUpErr.message.toLowerCase().includes('rate limit') || signUpErr.message.toLowerCase().includes('over_email_send_rate_limit')) {
-            throw new Error(
-              'Supabase Email Rate Limit Exceeded. Please run the SQL Migration script (20260820000009_bypass_email_rate_limit_privileged_provisioning.sql) in your Supabase SQL Editor to enable zero-email direct provisioning.'
-            );
-          }
-          if (!signUpErr.message.toLowerCase().includes('already registered') && !signUpErr.message.toLowerCase().includes('already exists')) {
-            throw new Error(signUpErr.message || 'Failed to create user account.');
-          }
-          // Fetch existing user ID if already registered
-          const { data: retryProf } = await supabase
-            .from('profiles')
-            .select('id')
-            .eq('email', cleanEmail)
-            .maybeSingle();
-          targetUserId = retryProf?.id || null;
-        } else if (signUpData?.user?.id) {
-          targetUserId = signUpData.user.id;
-        }
-      }
-    }
-
-    if (!targetUserId) {
-      throw new Error('Unable to resolve user ID for new account.');
-    }
-
-    // 3. Upsert user profile record
-    const profilePayload = {
-      id: targetUserId,
-      email: cleanEmail,
-      full_name: cleanName,
-      phone: cleanPhone,
-      role: targetRole,
-      updated_at: new Date().toISOString(),
-    };
-    const { error: profErr } = await supabase.from('profiles').upsert(profilePayload);
-    if (profErr) {
-      console.warn('Profile upsert warning:', profErr.message);
-    }
-
-    // 4. Link Restaurant Membership if restaurantId is provided
-    if (restaurantId) {
-      const { data: existingMember } = await supabase
-        .from('restaurant_members')
-        .select('id, is_active')
-        .eq('restaurant_id', restaurantId)
-        .eq('user_id', targetUserId)
-        .maybeSingle();
-
-      if (existingMember) {
-        if (!existingMember.is_active) {
-          await supabase
-            .from('restaurant_members')
-            .update({ is_active: true, role: targetRole, updated_at: new Date().toISOString() })
-            .eq('id', existingMember.id);
-        }
-      } else {
-        await supabase.from('restaurant_members').insert({
-          restaurant_id: restaurantId,
-          user_id: targetUserId,
-          role: targetRole,
-          is_active: true,
-        });
-      }
-    }
-
-    // 5. Write to Audit Logs
-    try {
-      await supabase.from('audit_logs').insert([{
-        restaurant_id: restaurantId || null,
-        user_id: currentUser.id,
-        action: targetRole === 'ADMIN' ? 'CREATE_ADMIN' : 'CREATE_STAFF',
-        entity_type: 'STAFF',
-        entity_id: targetUserId,
-        new_values: {
-          created_user_id: targetUserId,
-          created_user_email: cleanEmail,
-          assigned_role: targetRole,
-          restaurant_id: restaurantId || null,
-        },
-      }]);
-    } catch (auditErr) {
-      console.warn('Audit log write error:', auditErr);
+    if (!rpcData?.user_id) {
+      throw new Error('User provisioning failed: no user ID returned.');
     }
 
     return {
-      id: targetUserId,
+      id: rpcData.user_id,
       email: cleanEmail,
       full_name: cleanName,
       phone: cleanPhone,

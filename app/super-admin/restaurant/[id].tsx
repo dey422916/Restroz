@@ -689,12 +689,13 @@ const extractSingleBannerUrl = (bannerRaw?: string | null): string => {
         full_name: cleanName,
         email: cleanEmail,
         phone: cleanPhone,
-        password: newMemberPassword.trim() || undefined,
+        password: newMemberPassword.trim() || 'Staff12345!',
         role: newMemberRole,
         preset: newMemberRole === 'STAFF' ? newMemberPreset : undefined,
       });
 
-      Alert.alert('Success', `${newMemberRole === 'ADMIN' ? 'Admin' : 'Staff'} provisioned immediately without OTP/email verification.`);
+      const assignedPwd = newMemberPassword.trim() || 'Staff12345!';
+      Alert.alert('Success', `${newMemberRole === 'ADMIN' ? 'Admin' : 'Staff'} ${cleanName} provisioned successfully!\nInitial Password: ${assignedPwd}\nLogin is immediately active without email verification.`);
       setAddMemberModalVisible(false);
       setNewMemberName('');
       setNewMemberEmail('');

@@ -180,189 +180,34 @@ export const staffService = {
 
     if (isSupabaseConfigured) {
       try {
-        // 1. Attempt Server-Side Provisioning RPC (Bypasses SMTP email rate limits completely)
-        try {
-          const { data: rpcData, error: rpcErr } = await supabase.rpc('provision_privileged_user', {
-            p_restaurant_id: restaurantId,
-            p_email: cleanEmail,
-            p_password: staffData.password || undefined,
-            p_full_name: cleanName,
-            p_phone: staffData.phone?.trim() || null,
-            p_role: memberRole,
-            p_preset: staffData.preset || null,
-            p_permissions: staffData.permissions ? staffData.permissions : null,
-          });
+        const resolvedPassword = staffData.password && staffData.password.trim() ? staffData.password.trim() : 'Staff12345!';
 
-          if (!rpcErr && rpcData?.user_id) {
-            return {
-              success: true,
-              member_id: rpcData.member_id,
-              message: `${memberRole} account provisioned immediately without email verification.`,
-            };
-          }
-          if (rpcErr && !rpcErr.message.includes('function') && !rpcErr.message.includes('not found')) {
-            if (rpcErr.message.includes('limit reached') || rpcErr.message.includes('already an active member')) {
-              throw new Error(rpcErr.message);
-            }
-          }
-        } catch (rpcEx: any) {
-          if (rpcEx.message?.includes('limit reached') || rpcEx.message?.includes('already an active member')) {
-            throw rpcEx;
-          }
-          console.warn('provision_privileged_user RPC fallback in staffService:', rpcEx?.message);
-        }
-
-        // Find or check existing profile by email
-        let targetUserId: string | null = null;
-        const { data: existingProf } = await supabase
-          .from('profiles')
-          .select('id, email')
-          .eq('email', cleanEmail)
-          .maybeSingle();
-
-        if (existingProf) {
-          targetUserId = existingProf.id;
-        }
-
-        // If user does not exist, create auth user
-        if (!targetUserId) {
-          const tempPassword = staffData.password || `RestroZ_${Math.random().toString(36).slice(2, 10)}!`;
-          if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-            throw new Error('Missing required Supabase environment variables for staff provisioning.');
-          }
-
-          const tempClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-            auth: {
-              persistSession: false,
-              autoRefreshToken: false,
-              detectSessionInUrl: false,
-            },
-          });
-
-          const { data: signUpData, error: signUpErr } = await tempClient.auth.signUp({
-            email: cleanEmail,
-            password: tempPassword,
-            options: {
-              data: {
-                full_name: cleanName,
-                role: memberRole,
-              },
-            },
-          });
-
-          if (signUpErr) {
-            if (signUpErr.message.toLowerCase().includes('rate limit') || signUpErr.message.toLowerCase().includes('over_email_send_rate_limit')) {
-              throw new Error(
-                'Supabase Email Rate Limit Exceeded. Please run the SQL Migration script (20260820000009_bypass_email_rate_limit_privileged_provisioning.sql) in your Supabase SQL Editor to enable zero-email direct provisioning.'
-              );
-            }
-            if (!signUpErr.message.toLowerCase().includes('already registered') && !signUpErr.message.toLowerCase().includes('already exists')) {
-              throw new Error(`Failed to create account: ${signUpErr.message}`);
-            }
-            // Fetch existing user ID if already registered
-            const { data: retryProf } = await supabase
-              .from('profiles')
-              .select('id')
-              .eq('email', cleanEmail)
-              .maybeSingle();
-            targetUserId = retryProf?.id || null;
-          } else if (signUpData?.user?.id) {
-            targetUserId = signUpData.user.id;
-          }
-        }
-
-        if (!targetUserId) {
-          // Final attempt to find profile
-          const { data: lastRetry } = await supabase
-            .from('profiles')
-            .select('id')
-            .eq('email', cleanEmail)
-            .maybeSingle();
-          targetUserId = lastRetry?.id || null;
-        }
-
-        if (!targetUserId) {
-          throw new Error('Unable to resolve user ID for new member.');
-        }
-
-        // Check if user is already a member of this specific restaurant
-        const { data: existingMember } = await supabase
-          .from('restaurant_members')
-          .select('id, is_active, role')
-          .eq('restaurant_id', restaurantId)
-          .eq('user_id', targetUserId)
-          .maybeSingle();
-
-        let memberId: string;
-        if (existingMember) {
-          if (existingMember.is_active) {
-            throw new Error('This user is already an active member of this restaurant.');
-          }
-          // Reactivate
-          await supabase
-            .from('restaurant_members')
-            .update({
-              is_active: true,
-              role: memberRole,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', existingMember.id);
-          memberId = existingMember.id;
-        } else {
-          // Insert membership scoped to this restaurant
-          const { data: newMem, error: memErr } = await supabase
-            .from('restaurant_members')
-            .insert({
-              restaurant_id: restaurantId,
-              user_id: targetUserId,
-              role: memberRole,
-              is_active: true,
-            })
-            .select()
-            .single();
-
-          if (memErr || !newMem) {
-            throw new Error(`Failed to assign restaurant membership: ${memErr?.message}`);
-          }
-          memberId = newMem.id;
-        }
-
-        // Determine permissions
-        let resolvedPerms: Partial<RestaurantMemberPermissions>;
-        if (memberRole === 'ADMIN') {
-          resolvedPerms = {
-            can_use_pos: true,
-            can_view_orders: true,
-            can_edit_orders: true,
-            can_cancel_orders: true,
-            can_manage_products: true,
-            can_manage_categories: true,
-            can_manage_tables: true,
-            can_manage_coupons: true,
-            can_view_reports: true,
-            can_manage_register: true,
-            can_view_settings: true,
-            can_manage_settings: true,
-            can_manage_staff: true,
-          };
-        } else {
-          const resolvedPreset = staffData.preset && staffData.preset !== 'CUSTOM' ? PERMISSION_PRESETS[staffData.preset] : null;
-          resolvedPerms = resolvedPreset || staffData.permissions || PERMISSION_PRESETS.CASHIER;
-        }
-
-        // Set permissions
-        await this.updateStaffPermissions(memberId, resolvedPerms);
-
-        await auditService.log('CREATE_STAFF', {
-          restaurant_id: restaurantId,
-          target_user_id: targetUserId,
-          target_member_id: memberId,
-          role: memberRole,
-          email: staffData.email,
-          preset: staffData.preset || (memberRole === 'ADMIN' ? 'ADMIN_FULL' : 'CUSTOM'),
+        // 1. Authoritative Server-Side Provisioning RPC (Bypasses SMTP email rate limits completely, sets confirmed email)
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('provision_privileged_user', {
+          p_restaurant_id: restaurantId,
+          p_email: cleanEmail,
+          p_password: resolvedPassword,
+          p_full_name: cleanName,
+          p_phone: staffData.phone?.trim() || null,
+          p_role: memberRole,
+          p_preset: staffData.preset || (memberRole === 'STAFF' ? 'CASHIER' : null),
+          p_permissions: staffData.permissions ? staffData.permissions : null,
         });
 
-        return { success: true, member_id: memberId };
+        if (rpcErr) {
+          console.error('provision_privileged_user RPC error in staffService:', rpcErr);
+          throw new Error(rpcErr.message || `Failed to provision ${memberRole.toLowerCase()} account.`);
+        }
+
+        if (rpcData?.user_id) {
+          return {
+            success: true,
+            member_id: rpcData.member_id,
+            message: `${memberRole} account provisioned immediately without email verification.`,
+          };
+        }
+
+        throw new Error(`Failed to provision ${memberRole.toLowerCase()} account: no user ID returned.`);
       } catch (err: any) {
         throw new Error(err.message || 'Failed to provision member.');
       }

@@ -252,33 +252,7 @@ export default function RestaurantMenuScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Top Header Bar - only in marketplace mode (dedicated mode uses dedicated top navbar) */}
-      {!isDedicated && (
-        <View style={styles.headerBar}>
-          <TouchableOpacity
-            style={styles.backBtn}
-            onPress={() => router.replace('/(marketplace)')}
-          >
-            <Text style={{ fontSize: 14, fontWeight: '700', color: customerColors.primary }}>
-              ← Restaurants
-            </Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {restaurant.name}
-          </Text>
-          <TouchableOpacity
-            style={styles.cartIconBtn}
-            onPress={() => router.push('/(marketplace)/cart')}
-          >
-            <Text style={{ fontSize: 18 }}>🛍️</Text>
-            {itemCount > 0 && (
-              <View style={styles.cartBadge}>
-                <Text style={styles.cartBadgeText}>{itemCount}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        </View>
-      )}
+      {/* Dedicated storefront navigation is managed globally by MarketplaceLayout */}
 
       <ScrollView
         style={styles.scrollArea}

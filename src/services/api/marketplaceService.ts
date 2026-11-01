@@ -974,7 +974,27 @@ export const marketplaceService = {
       if (orderItemsToInsert.length > 0) {
         const { error: itemsErr } = await supabase.from('order_items').insert(orderItemsToInsert);
         if (itemsErr) {
-          console.error('Error inserting order items for delivery order:', itemsErr);
+          console.error('Error inserting order items for delivery order, rolling back order:', itemsErr);
+          // Clean up orphaned order record so no empty orders exist
+          try {
+            await supabase.from('orders').delete().eq('id', orderId);
+          } catch (delErr) {
+            console.error('Failed to cleanup orphaned order record:', delErr);
+          }
+          // Restore deducted product stock if any
+          for (const item of payload.items) {
+            try {
+              const prod = prods.find((p) => p.id === item.product_id);
+              if (prod && prod.stock_quantity !== null && prod.stock_quantity !== undefined) {
+                const { data: currentProd } = await supabase.from('products').select('stock_quantity').eq('id', prod.id).single();
+                if (currentProd) {
+                  await supabase.from('products').update({ stock_quantity: (currentProd.stock_quantity || 0) + item.quantity }).eq('id', prod.id);
+                }
+              }
+            } catch (stockRollbackErr) {
+              console.warn('Failed to rollback stock deduction:', stockRollbackErr);
+            }
+          }
           throw new Error('Failed to create order items: ' + (itemsErr.message || 'Database error'));
         }
       }

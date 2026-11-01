@@ -96,33 +96,53 @@ export const StorefrontProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     (slugOrId: string, restaurantObj?: (Restaurant & { public_profile?: RestaurantPublicProfile }) | null) => {
       if (!slugOrId) return;
       const clean = slugOrId.trim();
-      setMode('dedicated');
-      setDedicatedSlug(clean);
+      const targetSlug = restaurantObj?.slug || clean;
+      const targetRestId = restaurantObj?.id || null;
+
+      // Idempotent state updates using functional setters to prevent redundant re-renders
+      setMode((prev) => (prev === 'dedicated' ? prev : 'dedicated'));
+      setDedicatedSlug((prev) => (prev === targetSlug ? prev : targetSlug));
 
       if (restaurantObj) {
-        setDedicatedRestaurant(restaurantObj);
-        setDedicatedRestaurantId(restaurantObj.id);
-        if (restaurantObj.slug) setDedicatedSlug(restaurantObj.slug);
-      } else {
-        // Resolve asynchronously if not provided
-        marketplaceService.getRestaurantPublicDetails(clean).then((rest) => {
-          if (rest) {
-            setDedicatedRestaurant(rest);
-            setDedicatedRestaurantId(rest.id);
-            if (rest.slug) setDedicatedSlug(rest.slug);
+        setDedicatedRestaurantId((prev) => (prev === restaurantObj.id ? prev : restaurantObj.id));
+        setDedicatedRestaurant((prev) => {
+          if (prev && prev.id === restaurantObj.id && prev.slug === restaurantObj.slug && prev.name === restaurantObj.name) {
+            return prev;
           }
-        }).catch(console.warn);
+          return restaurantObj;
+        });
+      } else {
+        setDedicatedRestaurant((prev) => {
+          if (!prev || (prev.slug !== clean && prev.id !== clean)) {
+            marketplaceService
+              .getRestaurantPublicDetails(clean)
+              .then((rest) => {
+                if (rest) {
+                  setDedicatedRestaurant((curr) => {
+                    if (curr && curr.id === rest.id && curr.slug === rest.slug) return curr;
+                    return rest;
+                  });
+                  setDedicatedRestaurantId((curr) => (curr === rest.id ? curr : rest.id));
+                  if (rest.slug) {
+                    setDedicatedSlug((curr) => (curr === rest.slug ? curr : rest.slug));
+                  }
+                }
+              })
+              .catch(console.warn);
+          }
+          return prev;
+        });
       }
 
       // Persist
       if (Platform.OS === 'web' && typeof window !== 'undefined' && window.sessionStorage) {
         window.sessionStorage.setItem(STORAGE_MODE_KEY, 'dedicated');
-        window.sessionStorage.setItem(STORAGE_SLUG_KEY, clean);
-        if (restaurantObj?.id) window.sessionStorage.setItem(STORAGE_REST_ID_KEY, restaurantObj.id);
+        window.sessionStorage.setItem(STORAGE_SLUG_KEY, targetSlug);
+        if (targetRestId) window.sessionStorage.setItem(STORAGE_REST_ID_KEY, targetRestId);
       }
       AsyncStorage.setItem(STORAGE_MODE_KEY, 'dedicated').catch(() => {});
-      AsyncStorage.setItem(STORAGE_SLUG_KEY, clean).catch(() => {});
-      if (restaurantObj?.id) AsyncStorage.setItem(STORAGE_REST_ID_KEY, restaurantObj.id).catch(() => {});
+      AsyncStorage.setItem(STORAGE_SLUG_KEY, targetSlug).catch(() => {});
+      if (targetRestId) AsyncStorage.setItem(STORAGE_REST_ID_KEY, targetRestId).catch(() => {});
     },
     []
   );

@@ -16,13 +16,32 @@ export function getRestaurantOnlineOrderingUrl(
     typeof window !== 'undefined' &&
     (window.location?.hostname === 'localhost' ||
       window.location?.hostname === '127.0.0.1' ||
-      window.location?.hostname?.endsWith('.local'));
+      window.location?.hostname?.endsWith('.local') ||
+      window.location?.hostname?.endsWith('.internal'));
+
+  const isDevEnv =
+    (typeof __DEV__ !== 'undefined' && __DEV__) ||
+    process.env.EXPO_PUBLIC_APP_ENV === 'development' ||
+    process.env.NODE_ENV === 'development';
+
+  const isExplicitProduction =
+    forceProduction ||
+    process.env.EXPO_PUBLIC_APP_ENV === 'production' ||
+    (!isLocalhost && !isDevEnv && process.env.NODE_ENV === 'production');
 
   let origin = 'https://restroz.shop';
-  if (!forceProduction && !isLocalhost && Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin) {
+
+  if (!isExplicitProduction && Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin) {
     origin = window.location.origin;
-  } else if (!forceProduction && !isLocalhost && process.env.EXPO_PUBLIC_APP_URL) {
+  } else if (!isExplicitProduction && process.env.EXPO_PUBLIC_APP_URL) {
     origin = process.env.EXPO_PUBLIC_APP_URL.replace(/\/+$/, '');
+  } else if (!isExplicitProduction && isDevEnv) {
+    origin = 'http://localhost:8081';
+  } else {
+    origin =
+      process.env.EXPO_PUBLIC_APP_URL && !process.env.EXPO_PUBLIC_APP_URL.includes('localhost')
+        ? process.env.EXPO_PUBLIC_APP_URL.replace(/\/+$/, '')
+        : 'https://restroz.shop';
   }
 
   return `${origin}/r/${clean}`;
@@ -178,9 +197,9 @@ function encodePureJsPng(width: number, height: number, getPixel: (x: number, y:
  */
 export async function generateRestaurantQrDataUrl(
   slugOrId?: string | null,
-  options?: { size?: number }
+  options?: { size?: number; forceProduction?: boolean }
 ): Promise<string> {
-  const url = getRestaurantOnlineOrderingUrl(slugOrId, true);
+  const url = getRestaurantOnlineOrderingUrl(slugOrId, options?.forceProduction ?? false);
   if (!url) throw new Error('Cannot generate QR code: restaurant URL is empty');
 
   const size = options?.size ?? 1024;
@@ -224,9 +243,10 @@ export async function generateRestaurantQrDataUrl(
  */
 export async function downloadRestaurantQrCode(
   slugOrId?: string | null,
-  restaurantName?: string
+  restaurantName?: string,
+  options?: { forceProduction?: boolean }
 ): Promise<{ success: boolean; fileName: string; url: string; error?: string }> {
-  const url = getRestaurantOnlineOrderingUrl(slugOrId, true);
+  const url = getRestaurantOnlineOrderingUrl(slugOrId, options?.forceProduction ?? false);
   const fileName = getRestaurantQrFilename(slugOrId, restaurantName);
 
   if (!url) {

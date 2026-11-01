@@ -50,7 +50,7 @@ export default function MarketplaceLayout() {
     currentPath.startsWith('/settings/');
 
   const isSuperAdminRoute = currentPath.startsWith('/super-admin') || currentPath.startsWith('/(super-admin)');
-  const isDedicatedWebsiteRoute = currentPath.startsWith('/r/');
+  const isDedicatedWebsiteRoute = currentPath.startsWith('/r/') || currentPath.startsWith('/restaurant/');
   const isMenuTableRoute = currentPath.startsWith('/menu/');
   const isAuthRoute =
     currentPath.startsWith('/(auth)') ||
@@ -117,8 +117,8 @@ export default function MarketplaceLayout() {
   const isTabActive = (tab: { name: string; icon: string; route: string; path: string }) => {
     if (tab.name === 'Menu') {
       return (
-        pathname.includes('/restaurant') ||
         pathname.includes('/r/') ||
+        pathname.includes('/restaurant') ||
         pathname === menuRoute
       );
     }

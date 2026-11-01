@@ -17,6 +17,7 @@ import {
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
 import { useCustomerCart } from '../../src/context/CustomerCartContext';
+import { useStorefront } from '../../src/context/StorefrontContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { storageService } from '../../src/services/api/storageService';
 import { CustomerAddress } from '../../src/types';
@@ -27,6 +28,7 @@ import { formatPrice } from '../../src/utils/currency';
 
 export default function DeliveryCheckoutScreen() {
   const router = useRouter();
+  const { isDedicated, dedicatedSlug, dedicatedRestaurantId } = useStorefront();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 860;
   const { user, loading: authLoading } = useAuth();
@@ -260,7 +262,19 @@ export default function DeliveryCheckoutScreen() {
       isSubmittingRef.current = false;
       setPlacingOrder(false);
       Alert.alert('Login Required', 'Please log in to place a delivery order.', [
-        { text: 'Log In', onPress: () => router.push('/(auth)/login') },
+        {
+          text: 'Log In',
+          onPress: () => {
+            const activeSlug = isDedicated ? (dedicatedSlug || dedicatedRestaurantId || cart.restaurantId) : cart.restaurantId;
+            router.push({
+              pathname: '/(auth)/login',
+              params: {
+                ...(activeSlug ? { redirectSlug: activeSlug } : {}),
+                redirectUrl: '/(marketplace)/checkout',
+              },
+            } as any);
+          },
+        },
         { text: 'Cancel', style: 'cancel' },
       ]);
       return;
@@ -412,7 +426,16 @@ export default function DeliveryCheckoutScreen() {
                   </View>
                   <TouchableOpacity
                     style={styles.loginBtnSmall}
-                    onPress={() => router.push('/(auth)/login')}
+                    onPress={() => {
+                      const activeSlug = isDedicated ? (dedicatedSlug || dedicatedRestaurantId || cart.restaurantId) : cart.restaurantId;
+                      router.push({
+                        pathname: '/(auth)/login',
+                        params: {
+                          ...(activeSlug ? { redirectSlug: activeSlug } : {}),
+                          redirectUrl: '/(marketplace)/checkout',
+                        },
+                      } as any);
+                    }}
                     activeOpacity={0.8}
                   >
                     <Text style={styles.loginBtnSmallText}>Log In</Text>

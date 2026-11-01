@@ -16,14 +16,30 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useAuth } from '../../src/context/AuthContext';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { isValidEmail, normalizeEmail } from '../../src/utils/validation';
+import { useStorefront } from '../../src/context/StorefrontContext';
+import { pendingRedirectUtil } from '../../src/utils/pendingRedirect';
 
 const REMEMBER_EMAIL_KEY = 'ratnadeep_remember_email';
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const { login, consumePendingTableId } = useAuth();
+  const { isDedicated, dedicatedSlug, dedicatedRestaurantId } = useStorefront();
   const router = useRouter();
-  const params = useLocalSearchParams<{ redirectTableId?: string }>();
+  const params = useLocalSearchParams<{ redirectTableId?: string; redirectSlug?: string; redirectUrl?: string }>();
+
+  // Synchronize incoming redirect parameters into persistent pending storage
+  useEffect(() => {
+    if (params.redirectSlug) {
+      pendingRedirectUtil.setPendingRedirectSlug(params.redirectSlug);
+    }
+    if (params.redirectUrl) {
+      pendingRedirectUtil.setPendingRedirectUrl(params.redirectUrl);
+    }
+    if (params.redirectTableId) {
+      pendingRedirectUtil.setPendingTableId(params.redirectTableId);
+    }
+  }, [params.redirectSlug, params.redirectUrl, params.redirectTableId]);
 
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
@@ -83,7 +99,23 @@ export default function LoginScreen() {
         if (pendingTable && pendingTable !== 'general') {
           router.replace(`/menu/table/${pendingTable}` as any);
         } else {
-          router.replace('/(marketplace)' as any);
+          // Check for dedicated restaurant storefront redirect
+          const targetSlug =
+            params.redirectSlug ||
+            (await pendingRedirectUtil.consumePendingRedirectSlug()) ||
+            (isDedicated ? (dedicatedSlug || dedicatedRestaurantId) : null);
+
+          const targetUrl =
+            params.redirectUrl ||
+            (await pendingRedirectUtil.consumePendingRedirectUrl());
+
+          if (targetUrl && !targetUrl.includes('(marketplace)/index') && targetUrl !== '/(marketplace)' && targetUrl !== '/') {
+            router.replace(targetUrl as any);
+          } else if (targetSlug) {
+            router.replace(`/r/${encodeURIComponent(targetSlug)}` as any);
+          } else {
+            router.replace('/(marketplace)' as any);
+          }
         }
       }
     } catch (err: any) {
@@ -120,7 +152,15 @@ export default function LoginScreen() {
   };
 
   const handleForgotPassword = () => {
-    router.push('/(auth)/forgot-password');
+    const activeSlug = params.redirectSlug || (isDedicated ? (dedicatedSlug || dedicatedRestaurantId) : undefined);
+    router.push({
+      pathname: '/(auth)/forgot-password',
+      params: {
+        ...(params.redirectTableId ? { redirectTableId: params.redirectTableId } : {}),
+        ...(activeSlug ? { redirectSlug: activeSlug } : {}),
+        ...(params.redirectUrl ? { redirectUrl: params.redirectUrl } : {}),
+      },
+    } as any);
   };
 
   const isEmailError =
@@ -261,12 +301,17 @@ export default function LoginScreen() {
             <View style={styles.signupRow}>
               <Text style={styles.signupPrompt}>New customer? </Text>
               <TouchableOpacity
-                onPress={() =>
+                onPress={() => {
+                  const activeSlug = params.redirectSlug || (isDedicated ? (dedicatedSlug || dedicatedRestaurantId) : undefined);
                   router.push({
                     pathname: '/(auth)/signup',
-                    params: params.redirectTableId ? { redirectTableId: params.redirectTableId } : undefined,
-                  })
-                }
+                    params: {
+                      ...(params.redirectTableId ? { redirectTableId: params.redirectTableId } : {}),
+                      ...(activeSlug ? { redirectSlug: activeSlug } : {}),
+                      ...(params.redirectUrl ? { redirectUrl: params.redirectUrl } : {}),
+                    },
+                  } as any);
+                }}
                 activeOpacity={0.7}
               >
                 <Text style={styles.signupAction}>Sign Up</Text>

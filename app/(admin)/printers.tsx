@@ -16,6 +16,7 @@ import { useAuth } from '../../src/context/AuthContext';
 import { useSettings } from '../../src/context/SettingsContext';
 import { categoryService } from '../../src/services/api/categoryService';
 import { storageService } from '../../src/services/api/storageService';
+import { OptimizedImage } from '../../src/components/common/OptimizedImage';
 import { Category, PaperSize } from '../../src/types';
 import { PrinterManagementSection } from '../../src/components/PrinterManagementSection';
 import { SeznikPrinterManagementSection } from '../../src/components/SeznikPrinterManagementSection';
@@ -528,10 +529,11 @@ export default function PrintersScreen() {
             {billLogoUrl ? (
               <View style={styles.brandingPreviewContainer}>
                 <View style={styles.brandingPreviewImgWrap}>
-                  <Image
-                    source={{ uri: billLogoUrl }}
+                  <OptimizedImage
+                    source={billLogoUrl}
                     style={styles.brandingPreviewImg}
-                    resizeMode="contain"
+                    contentFit="contain"
+                    type="logo"
                   />
                 </View>
                 <View style={styles.brandingPreviewInfo}>
@@ -618,10 +620,11 @@ export default function PrintersScreen() {
             {billPaymentQrUrl ? (
               <View style={styles.brandingPreviewContainer}>
                 <View style={styles.brandingPreviewImgWrap}>
-                  <Image
-                    source={{ uri: billPaymentQrUrl }}
+                  <OptimizedImage
+                    source={billPaymentQrUrl}
                     style={styles.brandingPreviewImg}
-                    resizeMode="contain"
+                    contentFit="contain"
+                    type="logo"
                   />
                 </View>
                 <View style={styles.brandingPreviewInfo}>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../src/context/AuthContext';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { pendingRedirectUtil } from '../../src/utils/pendingRedirect';
 import {
   isValidEmail,
   normalizeEmail,
@@ -25,7 +26,16 @@ export default function SignupScreen() {
   const insets = useSafeAreaInsets();
   const { signUp, setPendingTableId } = useAuth();
   const router = useRouter();
-  const params = useLocalSearchParams<{ redirectTableId?: string }>();
+  const params = useLocalSearchParams<{ redirectTableId?: string; redirectSlug?: string; redirectUrl?: string }>();
+
+  useEffect(() => {
+    if (params.redirectSlug) {
+      pendingRedirectUtil.setPendingRedirectSlug(params.redirectSlug);
+    }
+    if (params.redirectUrl) {
+      pendingRedirectUtil.setPendingRedirectUrl(params.redirectUrl);
+    }
+  }, [params.redirectSlug, params.redirectUrl]);
 
   const [fullName, setFullName] = useState<string>('');
   const [email, setEmail] = useState<string>('');
@@ -73,7 +83,12 @@ export default function SignupScreen() {
       Alert.alert('Account Created', 'A verification email has been sent to your email address.');
       router.replace({
         pathname: '/(auth)/verify-email',
-        params: { email: cleanEmail, redirectTableId: params.redirectTableId },
+        params: {
+          email: cleanEmail,
+          ...(params.redirectTableId ? { redirectTableId: params.redirectTableId } : {}),
+          ...(params.redirectSlug ? { redirectSlug: params.redirectSlug } : {}),
+          ...(params.redirectUrl ? { redirectUrl: params.redirectUrl } : {}),
+        },
       });
     } catch (err: any) {
       Alert.alert('Registration Failed', err.message || 'Could not register customer account.');
@@ -172,7 +187,7 @@ export default function SignupScreen() {
 
           <View style={styles.linkRow}>
             <Text style={styles.linkText}>Already have an account? </Text>
-            <TouchableOpacity onPress={() => router.push({ pathname: '/(auth)/login', params: params.redirectTableId ? { redirectTableId: params.redirectTableId } : undefined })}>
+            <TouchableOpacity onPress={() => router.push({ pathname: '/(auth)/login', params: { ...(params.redirectTableId ? { redirectTableId: params.redirectTableId } : {}), ...(params.redirectSlug ? { redirectSlug: params.redirectSlug } : {}), ...(params.redirectUrl ? { redirectUrl: params.redirectUrl } : {}) } as any })}>
               <Text style={styles.linkAction}>Sign In</Text>
             </TouchableOpacity>
           </View>

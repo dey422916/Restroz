@@ -25,6 +25,7 @@ import { addressService } from '../../../src/services/api/addressService';
 import { settingsService } from '../../../src/services/api/settingsService';
 import { restaurantService } from '../../../src/services/api/restaurantService';
 import { storageService } from '../../../src/services/api/storageService';
+import { OptimizedImage } from '../../../src/components/common/OptimizedImage';
 import { Product, Category, DiningTable, OrderItem, Order, Coupon, PaymentMethod, SavedAddress, RestaurantSettings } from '../../../src/types';
 import { formatCurrency } from '../../../src/utils/currency';
 import { calculateOrderTotals, getOrderSubtotal } from '../../../src/utils/gst';
@@ -760,7 +761,7 @@ export default function CustomerDigitalMenuScreen() {
         <View style={styles.headerLeft}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             {restaurantInfo?.logo_url || settings.logo_url ? (
-              <Image source={{ uri: restaurantInfo?.logo_url || settings.logo_url }} style={{ width: 28, height: 28, borderRadius: 6 }} resizeMode="contain" />
+              <OptimizedImage source={restaurantInfo?.logo_url || settings.logo_url} style={{ width: 28, height: 28, borderRadius: 6 }} contentFit="contain" type="logo" />
             ) : null}
             <Text style={styles.brandTitle}>{restaurantInfo?.name || (table as any)?.restaurant_name || settings.name || 'Restaurant'}</Text>
           </View>
@@ -983,10 +984,11 @@ export default function CustomerDigitalMenuScreen() {
                 {/* Image Container with Badges */}
                 <View style={styles.imgContainer}>
                   {prod.image_url ? (
-                    <Image
-                      source={{ uri: prod.image_url }}
+                    <OptimizedImage
+                      source={prod.image_url}
                       style={[styles.productImg, !isAvailable && styles.productImgOutOfStock]}
-                      resizeMode="cover"
+                      contentFit="cover"
+                      type="product"
                     />
                   ) : (
                     <View style={[styles.productImg, { backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' }, !isAvailable && styles.productImgOutOfStock]}>
@@ -1486,10 +1488,10 @@ export default function CustomerDigitalMenuScreen() {
                                 activeOpacity={0.85}
                                 style={styles.qrTouchable}
                               >
-                                <Image
-                                  source={{ uri: restSettingsData?.delivery_payment_qr_url || restSettingsData?.payment_qr_url }}
+                                <OptimizedImage
+                                  source={restSettingsData?.delivery_payment_qr_url || restSettingsData?.payment_qr_url}
                                   style={styles.qrImage}
-                                  resizeMode="contain"
+                                  contentFit="contain"
                                 />
                                 <Text style={styles.qrTapHint}>🔍 Tap to view full screen</Text>
                               </TouchableOpacity>
@@ -1554,10 +1556,10 @@ export default function CustomerDigitalMenuScreen() {
 
                           {paymentProofUrl ? (
                             <View style={styles.uploadedProofContainer}>
-                              <Image
-                                source={{ uri: paymentProofUrl }}
+                              <OptimizedImage
+                                source={paymentProofUrl}
                                 style={styles.uploadedProofThumbnail}
-                                resizeMode="cover"
+                                contentFit="cover"
                               />
                               <View style={styles.uploadedProofMeta}>
                                 <Text style={styles.uploadedProofSuccess}>✓ Payment Screenshot Attached</Text>
@@ -2044,10 +2046,10 @@ export default function CustomerDigitalMenuScreen() {
               </TouchableOpacity>
             </View>
             {(restSettingsData?.delivery_payment_qr_url || restSettingsData?.payment_qr_url) && (
-              <Image
-                source={{ uri: restSettingsData?.delivery_payment_qr_url || restSettingsData?.payment_qr_url }}
+              <OptimizedImage
+                source={restSettingsData?.delivery_payment_qr_url || restSettingsData?.payment_qr_url}
                 style={{ width: 280, height: 280, borderRadius: 12, backgroundColor: '#ffffff' }}
-                resizeMode="contain"
+                contentFit="contain"
               />
             )}
             <Text style={{ fontSize: 12, color: '#64748b', marginTop: 10, textAlign: 'center' }}>
@@ -2074,10 +2076,10 @@ export default function CustomerDigitalMenuScreen() {
               </TouchableOpacity>
             </View>
             {(restSettingsData?.delivery_sample_screenshot_url || restSettingsData?.sample_screenshot_url) && (
-              <Image
-                source={{ uri: restSettingsData?.delivery_sample_screenshot_url || restSettingsData?.sample_screenshot_url }}
+              <OptimizedImage
+                source={restSettingsData?.delivery_sample_screenshot_url || restSettingsData?.sample_screenshot_url}
                 style={{ width: 280, height: 360, borderRadius: 12, backgroundColor: '#ffffff' }}
-                resizeMode="contain"
+                contentFit="contain"
               />
             )}
             <Text style={{ fontSize: 12, color: '#64748b', marginTop: 10, textAlign: 'center' }}>

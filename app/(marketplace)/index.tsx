@@ -40,11 +40,15 @@ export default function MarketplaceHomeScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
   const { user } = useAuth();
-  const { setMarketplaceMode } = useStorefront();
+  const { isDedicated, dedicatedSlug, setMarketplaceMode } = useStorefront();
 
   useEffect(() => {
+    if (isDedicated && dedicatedSlug) {
+      router.replace(`/r/${encodeURIComponent(dedicatedSlug)}` as any);
+      return;
+    }
     setMarketplaceMode();
-  }, [setMarketplaceMode]);
+  }, [isDedicated, dedicatedSlug, router, setMarketplaceMode]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [restaurants, setRestaurants] = useState<

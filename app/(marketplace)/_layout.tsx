@@ -15,7 +15,7 @@ export default function MarketplaceLayout() {
   const isDesktop = width >= 768;
   const { itemCount } = useCustomerCart();
   const { user, role, loading, superAdminMarketplacePreview, setSuperAdminMarketplacePreview } = useAuth();
-  const { isDedicated, dedicatedRestaurant, getMenuRoute } = useStorefront();
+  const { isDedicated, dedicatedSlug, dedicatedRestaurantId, dedicatedRestaurant, getMenuRoute } = useStorefront();
 
   const menuRoute = getMenuRoute();
 
@@ -151,6 +151,17 @@ export default function MarketplaceLayout() {
   };
 
   const handleTabPress = (tab: { name: string; icon: string; route: string; path: string }) => {
+    if (tab.name === 'Login') {
+      const activeSlug = isDedicated ? (dedicatedSlug || dedicatedRestaurantId) : undefined;
+      router.push({
+        pathname: '/(auth)/login',
+        params: {
+          ...(activeSlug ? { redirectSlug: activeSlug } : {}),
+          ...(isDedicated ? { redirectUrl: menuRoute } : {}),
+        },
+      } as any);
+      return;
+    }
     try {
       router.push(tab.route as any);
     } catch {

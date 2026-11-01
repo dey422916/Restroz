@@ -28,7 +28,7 @@ export default function CustomerOrdersScreen() {
   const isDesktop = width >= 768;
   const { user, loading: authLoading } = useAuth();
   const { populateCart } = useCustomerCart();
-  const { isDedicated, dedicatedRestaurantId, dedicatedRestaurant, getMenuRoute } = useStorefront();
+  const { isDedicated, dedicatedSlug, dedicatedRestaurantId, dedicatedRestaurant, getMenuRoute } = useStorefront();
 
   const [activeTab, setActiveTab] = useState<'live' | 'history'>('live');
   const [liveOrders, setLiveOrders] = useState<Order[]>([]);
@@ -211,7 +211,16 @@ export default function CustomerOrdersScreen() {
         </Text>
         <TouchableOpacity
           style={styles.loginBtn}
-          onPress={() => router.push('/(auth)/login')}
+          onPress={() => {
+            const activeSlug = isDedicated ? (dedicatedSlug || dedicatedRestaurantId) : undefined;
+            router.push({
+              pathname: '/(auth)/login',
+              params: {
+                ...(activeSlug ? { redirectSlug: activeSlug } : {}),
+                redirectUrl: '/(marketplace)/orders',
+              },
+            } as any);
+          }}
         >
           <Text style={styles.loginBtnText}>Log In to Your Account</Text>
         </TouchableOpacity>

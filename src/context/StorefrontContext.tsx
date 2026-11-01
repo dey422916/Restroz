@@ -61,6 +61,11 @@ export const StorefrontProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (activeSlugOrId) {
             storedMode = 'dedicated';
             storedSlug = activeSlugOrId;
+          } else if (path === '/' || path === '/marketplace' || path === '/(marketplace)' || path === '/index') {
+            // Direct landing on marketplace root intentionally requests marketplace mode
+            storedMode = 'marketplace';
+            storedSlug = null;
+            storedRestId = null;
           }
         }
 
@@ -140,7 +145,7 @@ export const StorefrontProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const getMenuRoute = useCallback(() => {
     if (dedicatedSlug) {
-      return `/restaurant/${encodeURIComponent(dedicatedSlug)}`;
+      return `/r/${encodeURIComponent(dedicatedSlug)}`;
     }
     if (dedicatedRestaurantId) {
       return `/restaurant/${encodeURIComponent(dedicatedRestaurantId)}`;

@@ -24,6 +24,7 @@ import { productService } from '../../src/services/api/productService';
 import { tableService } from '../../src/services/api/tableService';
 import { kotService, clearKotsCache } from '../../src/services/api/kotService';
 import { printService, formatLogoDataUri, handleThermalPrintFallback } from '../../src/services/printService';
+import { OptimizedImage } from '../../src/components/common/OptimizedImage';
 import { isAutoPrintEnabled } from '../../src/services/directPrintService';
 import { Order, OrderItem, OrderStatus, PaymentStatus, OrderSource, Product, DiningTable, RestaurantSettings, PaymentMethod, CustomerWalletInfo } from '../../src/types';
 import { formatCurrency, numberToWords, roundToTwoDecimals, formatPrice } from '../../src/utils/currency';
@@ -34,6 +35,7 @@ import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { useAuth } from '../../src/context/AuthContext';
 import { useSettings } from '../../src/context/SettingsContext';
 import { printedKotTracker } from '../../src/utils/printedKotTracker';
+import { ManualPrintModal } from '../../src/components/pos/ManualPrintModal';
 import { cleanCustomerOrderNotes } from '../../src/utils/orderNotes';
 import { isValidPhoneNumber, normalizePhoneNumber } from '../../src/utils/phone';
 import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError } from '../../src/utils/validation';
@@ -47,7 +49,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function OrdersScreen() {
   const router = useRouter();
-  const { openOrderId } = useLocalSearchParams<{ openOrderId?: string }>();
+  const { openOrderId, showPrintModal } = useLocalSearchParams<{ openOrderId?: string; showPrintModal?: string }>();
+  const [manualPrintOrder, setManualPrintOrder] = useState<Order | null>(null);
   const { user, activeRestaurantId, activeRestaurant } = useAuth();
   const { settings } = useSettings();
   const { showToast, playOrderBell } = useNotification();
@@ -323,9 +326,12 @@ export default function OrdersScreen() {
           setCategoryTab('qr');
         }
         setTabFilter('active');
+        if (showPrintModal === '1' && !isAutoPrintEnabled(settings)) {
+          setManualPrintOrder(targetOrder);
+        }
       }
     }
-  }, [openOrderId, orders]);
+  }, [openOrderId, showPrintModal, orders, settings]);
 
   // Ensure full items list is populated when View Order / Retail Bill modal opens
   useEffect(() => {
@@ -1394,7 +1400,7 @@ export default function OrdersScreen() {
       setViewOrderModal(completed);
       await loadData();
 
-      // Auto print Bill upon settlement if auto print is enabled
+      // Auto print Bill upon settlement if auto print is enabled; otherwise present manual print options
       if (isAutoPrintEnabled(settings)) {
         try {
           const billedBy = getCurrentLoggedInUserDisplayName(user);
@@ -1402,6 +1408,9 @@ export default function OrdersScreen() {
         } catch (printErr) {
           console.warn('[orders.tsx] Auto print bill after settlement skipped/failed safely:', printErr);
         }
+      } else {
+        // Master Auto Print is OFF -> Present user with Manual Print Options (KOT, Bill, A4 Bill)
+        setManualPrintOrder(completed);
       }
     } catch (err: any) {
       Alert.alert('Settlement Failed', err.message);
@@ -2105,7 +2114,13 @@ export default function OrdersScreen() {
                               <TouchableOpacity
                                 testID={`order-reprint-kot-btn-${order.id}`}
                                 style={[styles.gridActionBtn, styles.actionKotBg, { backgroundColor: '#f1f5f9', borderColor: '#cbd5e1' }]}
-                                onPress={() => handlePrintOrGenerateKot(order)}
+                                onPress={() => {
+                                  if (!isAutoPrintEnabled(settings)) {
+                                    setManualPrintOrder(order);
+                                  } else {
+                                    handlePrintOrGenerateKot(order);
+                                  }
+                                }}
                               >
                                 <Text style={[styles.actionBtnTextKot, { color: '#334155' }]}>🖨️ Reprint KOT</Text>
                               </TouchableOpacity>
@@ -2113,7 +2128,13 @@ export default function OrdersScreen() {
                               <TouchableOpacity
                                 testID={`order-kot-btn-${order.id}`}
                                 style={[styles.gridActionBtn, styles.actionKotBg]}
-                                onPress={() => handlePrintOrGenerateKot(order)}
+                                onPress={() => {
+                                  if (!isAutoPrintEnabled(settings)) {
+                                    setManualPrintOrder(order);
+                                  } else {
+                                    handlePrintOrGenerateKot(order);
+                                  }
+                                }}
                               >
                                 <Text style={styles.actionBtnTextKot}>🖨️ KOT</Text>
                               </TouchableOpacity>
@@ -2280,6 +2301,10 @@ export default function OrdersScreen() {
                         <TouchableOpacity
                           style={[styles.gridActionBtn, styles.actionPrintThermalBg]}
                           onPress={async () => {
+                            if (!isAutoPrintEnabled(settings)) {
+                              setManualPrintOrder(order);
+                              return;
+                            }
                             try {
                               const billedBy = getCurrentLoggedInUserDisplayName(user);
                               const res = await printService.printFinalReceiptThermal(order, settings, billedBy, { isManual: true });
@@ -3858,10 +3883,11 @@ export default function OrdersScreen() {
                 <View style={styles.modalHeader}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, paddingRight: 8 }}>
                     {formatLogoDataUri(activeRestaurant?.logo_url || settings.logo_url) ? (
-                      <Image
-                        source={{ uri: formatLogoDataUri(activeRestaurant?.logo_url || settings.logo_url) }}
+                      <OptimizedImage
+                        source={formatLogoDataUri(activeRestaurant?.logo_url || settings.logo_url)}
                         style={{ width: 40, height: 40, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', flexShrink: 0 }}
-                        resizeMode="contain"
+                        contentFit="contain"
+                        type="logo"
                       />
                     ) : null}
                     <View style={{ flex: 1, minWidth: 0 }}>
@@ -4063,10 +4089,10 @@ export default function OrdersScreen() {
                         activeOpacity={0.85}
                         onPress={() => setFullScreenProofOrder(viewOrderModal)}
                       >
-                        <Image
-                          source={{ uri: viewOrderModal.payment_proof_url }}
+                        <OptimizedImage
+                          source={viewOrderModal.payment_proof_url}
                           style={{ width: '100%', height: 200, borderRadius: 8, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#e2e8f0' }}
-                          resizeMode="contain"
+                          contentFit="contain"
                         />
                       </TouchableOpacity>
                     </View>
@@ -4304,7 +4330,7 @@ export default function OrdersScreen() {
                         }
                       }}
                     >
-                      <Text style={styles.invoiceBtnText}>🖨️ Thermal Bill</Text>
+                      <Text style={styles.invoiceBtnText}>🧾 Print Bill</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -4329,7 +4355,7 @@ export default function OrdersScreen() {
                         }
                       }}
                     >
-                      <Text style={styles.invoiceBtnText}>🖨️ KOT Slip</Text>
+                      <Text style={styles.invoiceBtnText}>🍳 Print KOT</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -4339,7 +4365,7 @@ export default function OrdersScreen() {
                         printService.printTaxInvoiceA4(viewOrderModal, settings, billedBy);
                       }}
                     >
-                      <Text style={styles.invoiceBtnText}>📄 Tax Invoice A4</Text>
+                      <Text style={styles.invoiceBtnText}>📄 Print A4 Bill</Text>
                     </TouchableOpacity>
                   </View>
                 </ScrollView>
@@ -4440,14 +4466,14 @@ export default function OrdersScreen() {
                 padding: 12,
               }}
             >
-              <Image
-                source={{ uri: fullScreenProofOrder.payment_proof_url }}
+              <OptimizedImage
+                source={fullScreenProofOrder.payment_proof_url}
                 style={{
                   width: '100%',
                   height: '100%',
                   maxWidth: 800,
                 }}
-                resizeMode="contain"
+                contentFit="contain"
               />
             </View>
 
@@ -4507,6 +4533,15 @@ export default function OrdersScreen() {
           </View>
         </Modal>
       ) : null}
+
+      {/* Manual Print Options Modal (Active when Master Auto Print is OFF) */}
+      <ManualPrintModal
+        isOpen={Boolean(manualPrintOrder)}
+        onClose={() => setManualPrintOrder(null)}
+        order={manualPrintOrder}
+        settings={settings}
+        billedBy={getCurrentLoggedInUserDisplayName(user)}
+      />
     </View>
   );
 }

@@ -11,13 +11,14 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
 import { isValidEmail, normalizeEmail } from '../../src/utils/validation';
 
 export default function ForgotPasswordScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const params = useLocalSearchParams<{ redirectTableId?: string; redirectSlug?: string; redirectUrl?: string }>();
   const { resetPassword } = useAuth();
   const [email, setEmail] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
@@ -118,7 +119,7 @@ export default function ForgotPasswordScreen() {
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(auth)/login')}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.replace({ pathname: '/(auth)/login', params: { ...(params.redirectTableId ? { redirectTableId: params.redirectTableId } : {}), ...(params.redirectSlug ? { redirectSlug: params.redirectSlug } : {}), ...(params.redirectUrl ? { redirectUrl: params.redirectUrl } : {}) } as any })}>
             <Text style={styles.backBtnText}>← Back to Login</Text>
           </TouchableOpacity>
         </View>

@@ -16,7 +16,7 @@ import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
 export default function VerifyEmailScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const params = useLocalSearchParams<{ email?: string; redirectTableId?: string }>();
+  const params = useLocalSearchParams<{ email?: string; redirectTableId?: string; redirectSlug?: string; redirectUrl?: string }>();
   const email = params.email || 'your email address';
 
   const [loading, setLoading] = useState<boolean>(false);
@@ -110,7 +110,11 @@ export default function VerifyEmailScreen() {
             onPress={() =>
               router.replace({
                 pathname: '/(auth)/login',
-                params: params.redirectTableId ? { redirectTableId: params.redirectTableId } : undefined,
+                params: {
+                  ...(params.redirectTableId ? { redirectTableId: params.redirectTableId } : {}),
+                  ...(params.redirectSlug ? { redirectSlug: params.redirectSlug } : {}),
+                  ...(params.redirectUrl ? { redirectUrl: params.redirectUrl } : {}),
+                } as any,
               })
             }
           >

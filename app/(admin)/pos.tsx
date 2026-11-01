@@ -41,8 +41,6 @@ import { SplitBillModal } from '../../src/components/pos/SplitBillModal';
 import { HoldOrdersModal } from '../../src/components/pos/HoldOrdersModal';
 import { PaymentModal } from '../../src/components/pos/PaymentModal';
 import { QuickBillModal } from '../../src/components/pos/QuickBillModal';
-import { ManualPrintModal } from '../../src/components/pos/ManualPrintModal';
-import { isAutoPrintEnabled } from '../../src/services/directPrintService';
 import { isValidPhoneNumber, normalizePhoneNumber } from '../../src/utils/phone';
 import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError } from '../../src/utils/validation';
 import { naturalTableCompare } from '../../src/utils/sortUtils';
@@ -127,7 +125,6 @@ export default function PosScreen() {
   const [showQuickBillModal, setShowQuickBillModal] = useState<boolean>(false);
   const [showRegisterClosedModal, setShowRegisterClosedModal] = useState<boolean>(false);
   const [showClearCartModal, setShowClearCartModal] = useState<boolean>(false);
-  const [manualPrintOrder, setManualPrintOrder] = useState<Order | null>(null);
   const [openingFloatInput, setOpeningFloatInput] = useState<string>('0');
   const [isOpeningRegisterFromPos, setIsOpeningRegisterFromPos] = useState<boolean>(false);
 
@@ -548,7 +545,7 @@ export default function PosScreen() {
         setPosStep('choose_type');
         setMobileTab('menu');
         showToast('success', 'Order & KOT Dispatched!', `Order #${ord.order_number} updated in kitchen.`);
-        router.push({ pathname: '/(admin)/orders', params: { openOrderId: ord.id, showPrintModal: !isAutoPrintEnabled(settings) ? '1' : undefined } } as any);
+        router.push({ pathname: '/(admin)/orders', params: { openOrderId: ord.id } } as any);
       } else {
         // Brand new order creation
         ord = await confirmOrder();
@@ -593,10 +590,6 @@ export default function PosScreen() {
     if (!createdOrder) {
       if (Platform.OS === 'web') window.alert('Please generate KOT before printing the bill.');
       else Alert.alert('Order Required', 'Please generate KOT before printing the bill.');
-      return;
-    }
-    if (!isAutoPrintEnabled(settings)) {
-      setManualPrintOrder(createdOrder);
       return;
     }
     try {
@@ -2622,15 +2615,6 @@ export default function PosScreen() {
         </View>
       </Modal>
 
-      {/* Manual Print Options Modal (Active when Master Auto Print is OFF) */}
-      <ManualPrintModal
-        isOpen={Boolean(manualPrintOrder)}
-        onClose={() => setManualPrintOrder(null)}
-        order={manualPrintOrder}
-        settings={settings}
-        billedBy={getCurrentLoggedInUserDisplayName(user)}
-      />
-
       {/* Payment / Close Bill Settlement Modal */}
       {createdOrder && (
         <PaymentModal
@@ -2639,16 +2623,12 @@ export default function PosScreen() {
           order={createdOrder}
           initialRedeemLoyalty={isRedeemLoyalty}
           onProcessPayment={async (method, amt, ref, discountData) => {
-            const updated = await processPayment(createdOrder.id, method, amt, ref, discountData);
+            await processPayment(createdOrder.id, method, amt, ref, discountData);
             clearCart();
             setCashReceived('');
+            setCreatedOrder(null);
             setSelectedTable(null);
             setPosStep('choose_type');
-            if (!isAutoPrintEnabled(settings)) {
-              setManualPrintOrder(updated);
-            } else {
-              setCreatedOrder(null);
-            }
           }}
         />
       )}

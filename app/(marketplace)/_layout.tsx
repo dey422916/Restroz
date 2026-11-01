@@ -26,6 +26,9 @@ export default function MarketplaceLayout() {
     currentPath.startsWith('/pos/') ||
     currentPath === '/dashboard' ||
     currentPath.startsWith('/dashboard/') ||
+    currentPath === '/orders' ||
+    currentPath.startsWith('/orders/') ||
+    currentPath.startsWith('/(admin)/orders') ||
     currentPath === '/tables' ||
     currentPath.startsWith('/tables/') ||
     currentPath === '/products' ||
@@ -121,7 +124,7 @@ export default function MarketplaceLayout() {
     ? [
         { name: 'Menu', icon: '🍽️', route: effectiveMenuRoute, path: effectiveMenuRoute },
         { name: 'Cart', icon: '🛍️', route: '/cart', path: '/cart' },
-        { name: 'My Orders', icon: '📋', route: '/orders', path: '/orders' },
+        { name: 'My Orders', icon: '📋', route: '/(marketplace)/orders', path: '/(marketplace)/orders' },
         { name: 'Addresses', icon: '📍', route: '/addresses', path: '/addresses' },
         user
           ? { name: 'Profile', icon: '👤', route: '/profile', path: '/profile' }
@@ -130,7 +133,7 @@ export default function MarketplaceLayout() {
     : [
         { name: 'Explore', icon: '🏠', route: '/', path: '/' },
         { name: 'Cart', icon: '🛍️', route: '/cart', path: '/cart' },
-        { name: 'My Orders', icon: '📋', route: '/orders', path: '/orders' },
+        { name: 'My Orders', icon: '📋', route: '/(marketplace)/orders', path: '/(marketplace)/orders' },
         { name: 'Addresses', icon: '📍', route: '/addresses', path: '/addresses' },
         user
           ? { name: 'Profile', icon: '👤', route: '/profile', path: '/profile' }

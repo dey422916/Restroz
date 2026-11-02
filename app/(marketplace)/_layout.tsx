@@ -15,7 +15,7 @@ export default function MarketplaceLayout() {
   const isDesktop = width >= 768;
   const { itemCount } = useCustomerCart();
   const { user, role, loading, superAdminMarketplacePreview, setSuperAdminMarketplacePreview } = useAuth();
-  const { isDedicated, dedicatedRestaurant, getMenuRoute } = useStorefront();
+  const { isDedicated, dedicatedSlug, dedicatedRestaurantId, dedicatedRestaurant, getMenuRoute } = useStorefront();
 
   const menuRoute = getMenuRoute();
 
@@ -28,6 +28,7 @@ export default function MarketplaceLayout() {
     currentPath.startsWith('/dashboard/') ||
     currentPath === '/orders' ||
     currentPath.startsWith('/orders/') ||
+    currentPath.startsWith('/(admin)/orders') ||
     currentPath === '/tables' ||
     currentPath.startsWith('/tables/') ||
     currentPath === '/products' ||
@@ -50,7 +51,7 @@ export default function MarketplaceLayout() {
     currentPath.startsWith('/settings/');
 
   const isSuperAdminRoute = currentPath.startsWith('/super-admin') || currentPath.startsWith('/(super-admin)');
-  const isDedicatedWebsiteRoute = currentPath.startsWith('/r/');
+  const isDedicatedWebsiteRoute = currentPath.startsWith('/r/') || currentPath.startsWith('/restaurant/');
   const isMenuTableRoute = currentPath.startsWith('/menu/');
   const isAuthRoute =
     currentPath.startsWith('/(auth)') ||
@@ -61,7 +62,27 @@ export default function MarketplaceLayout() {
     currentPath === '/verify-email';
   const isInfoRoute = currentPath.startsWith('/info') || currentPath.startsWith('/(info)');
 
-  const isMarketplaceRoute =
+  // Extract dedicated slug or id from current path if directly visiting /r/:slug or /restaurant/:id
+  const matchR = currentPath.match(/^\/r\/([^\/?#]+)/i);
+  const matchRest = currentPath.match(/^\/restaurant\/([^\/?#]+)/i);
+  const pathSlug = matchR ? decodeURIComponent(matchR[1]) : null;
+  const pathRestId = matchRest ? decodeURIComponent(matchRest[1]) : null;
+
+  const effectiveIsDedicated = isDedicated || isDedicatedWebsiteRoute || Boolean(pathSlug || pathRestId);
+  const effectiveSlug = dedicatedSlug || pathSlug;
+  const effectiveRestaurantId = dedicatedRestaurantId || pathRestId;
+  const effectiveMenuRoute = effectiveSlug
+    ? `/r/${encodeURIComponent(effectiveSlug)}`
+    : effectiveRestaurantId
+    ? `/restaurant/${encodeURIComponent(effectiveRestaurantId)}`
+    : (menuRoute && menuRoute !== '/(marketplace)' ? menuRoute : (pathSlug ? `/r/${encodeURIComponent(pathSlug)}` : '/(marketplace)'));
+
+
+  // Authoritative Route Guard:
+  // 1. Restaurant ADMIN & STAFF must NEVER access customer marketplace directly -> Redirect to POS
+  // 2. SUPER_ADMIN must NEVER auto-land in customer marketplace unless explicit preview mode is active
+  // Note: Dedicated restaurant storefronts (/r/* and /restaurant/*) allow admin/staff previews without being redirected to POS.
+  const isGeneralMarketplaceGuardActive =
     !isAdminRoute &&
     !isSuperAdminRoute &&
     !isDedicatedWebsiteRoute &&
@@ -69,20 +90,17 @@ export default function MarketplaceLayout() {
     !isAuthRoute &&
     !isInfoRoute;
 
-  // Authoritative Route Guard:
-  // 1. Restaurant ADMIN & STAFF must NEVER access customer marketplace directly -> Redirect to POS
-  // 2. SUPER_ADMIN must NEVER auto-land in customer marketplace unless explicit preview mode is active
   useEffect(() => {
-    if (!loading && user && isMarketplaceRoute) {
+    if (!loading && user && isGeneralMarketplaceGuardActive) {
       if (role === 'ADMIN' || role === 'STAFF') {
         router.replace('/(admin)/pos' as any);
       } else if (role === 'SUPER_ADMIN' && !superAdminMarketplacePreview) {
         router.replace('/super-admin' as any);
       }
     }
-  }, [user, role, loading, superAdminMarketplacePreview, isMarketplaceRoute]);
+  }, [user, role, loading, superAdminMarketplacePreview, isGeneralMarketplaceGuardActive]);
 
-  if (isMarketplaceRoute && !loading && user && (role === 'ADMIN' || role === 'STAFF' || (role === 'SUPER_ADMIN' && !superAdminMarketplacePreview))) {
+  if (isGeneralMarketplaceGuardActive && !loading && user && (role === 'ADMIN' || role === 'STAFF' || (role === 'SUPER_ADMIN' && !superAdminMarketplacePreview))) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
         <ActivityIndicator size="large" color={customerColors.primary} />
@@ -90,36 +108,45 @@ export default function MarketplaceLayout() {
     );
   }
 
-  if (!isMarketplaceRoute) {
+  // Render marketplace layout (desktop top navbar and mobile bottom nav bar)
+  // for all customer marketplace and dedicated storefront routes
+  const shouldRenderMarketplaceLayout =
+    !isAdminRoute &&
+    !isSuperAdminRoute &&
+    !isMenuTableRoute &&
+    !isAuthRoute &&
+    !isInfoRoute;
+
+  if (!shouldRenderMarketplaceLayout) {
     return <Slot />;
   }
 
-  const tabs = isDedicated
+  const tabs = effectiveIsDedicated
     ? [
-        { name: 'Menu', icon: '🍽️', route: menuRoute, path: menuRoute },
-        { name: 'Cart', icon: '🛍️', route: '/(marketplace)/cart', path: '/cart' },
-        { name: 'My Orders', icon: '📋', route: '/(marketplace)/orders', path: '/orders' },
-        { name: 'Addresses', icon: '📍', route: '/(marketplace)/addresses', path: '/addresses' },
+        { name: 'Menu', icon: '🍽️', route: effectiveMenuRoute, path: effectiveMenuRoute },
+        { name: 'Cart', icon: '🛍️', route: '/cart', path: '/cart' },
+        { name: 'My Orders', icon: '📋', route: '/(marketplace)/orders', path: '/(marketplace)/orders' },
+        { name: 'Addresses', icon: '📍', route: '/addresses', path: '/addresses' },
         user
-          ? { name: 'Profile', icon: '👤', route: '/(marketplace)/profile', path: '/profile' }
-          : { name: 'Login', icon: '👤', route: '/(auth)/login', path: '/login' },
+          ? { name: 'Profile', icon: '👤', route: '/profile', path: '/profile' }
+          : { name: 'Login', icon: '👤', route: '/login', path: '/login' },
       ]
     : [
-        { name: 'Explore', icon: '🏠', route: '/(marketplace)', path: '/' },
-        { name: 'Cart', icon: '🛍️', route: '/(marketplace)/cart', path: '/cart' },
-        { name: 'My Orders', icon: '📋', route: '/(marketplace)/orders', path: '/orders' },
-        { name: 'Addresses', icon: '📍', route: '/(marketplace)/addresses', path: '/addresses' },
+        { name: 'Explore', icon: '🏠', route: '/', path: '/' },
+        { name: 'Cart', icon: '🛍️', route: '/cart', path: '/cart' },
+        { name: 'My Orders', icon: '📋', route: '/(marketplace)/orders', path: '/(marketplace)/orders' },
+        { name: 'Addresses', icon: '📍', route: '/addresses', path: '/addresses' },
         user
-          ? { name: 'Profile', icon: '👤', route: '/(marketplace)/profile', path: '/profile' }
-          : { name: 'Login', icon: '👤', route: '/(auth)/login', path: '/login' },
+          ? { name: 'Profile', icon: '👤', route: '/profile', path: '/profile' }
+          : { name: 'Login', icon: '👤', route: '/login', path: '/login' },
       ];
 
   const isTabActive = (tab: { name: string; icon: string; route: string; path: string }) => {
     if (tab.name === 'Menu') {
       return (
-        pathname.includes('/restaurant') ||
         pathname.includes('/r/') ||
-        pathname === menuRoute
+        pathname.includes('/restaurant') ||
+        pathname === effectiveMenuRoute
       );
     }
     if (tab.name === 'Explore') {
@@ -151,11 +178,23 @@ export default function MarketplaceLayout() {
   };
 
   const handleTabPress = (tab: { name: string; icon: string; route: string; path: string }) => {
+    if (tab.name === 'Login') {
+      const activeSlug = effectiveIsDedicated ? (effectiveSlug || effectiveRestaurantId) : undefined;
+      router.push({
+        pathname: '/(auth)/login',
+        params: {
+          ...(activeSlug ? { redirectSlug: activeSlug } : {}),
+          ...(effectiveIsDedicated ? { redirectUrl: effectiveMenuRoute } : {}),
+        },
+      } as any);
+      return;
+    }
+    const targetRoute = tab.route || tab.path;
     try {
-      router.push(tab.route as any);
+      router.push(targetRoute as any);
     } catch {
       try {
-        router.replace(tab.route as any);
+        router.replace(targetRoute as any);
       } catch {
         router.push(tab.path as any);
       }
@@ -195,10 +234,10 @@ export default function MarketplaceLayout() {
         {isDesktop && (
           <View style={styles.desktopNavbar}>
             <View style={styles.desktopNavInner}>
-              {isDedicated ? (
+              {effectiveIsDedicated ? (
                 <TouchableOpacity
                   style={styles.desktopLogoWrap}
-                  onPress={() => router.push(menuRoute as any)}
+                  onPress={() => router.push(effectiveMenuRoute as any)}
                   activeOpacity={0.8}
                 >
                   {dedicatedRestaurant?.logo_url ? (
@@ -214,7 +253,7 @@ export default function MarketplaceLayout() {
                   )}
                   <View>
                     <Text style={styles.desktopBrandName}>
-                      {dedicatedRestaurant?.name || 'Restaurant Online'}
+                      {dedicatedRestaurant?.name || (effectiveSlug ? effectiveSlug.replace(/-/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()) : 'Restaurant Online')}
                     </Text>
                     <Text style={styles.desktopBrandSub}>
                       {dedicatedRestaurant?.address || dedicatedRestaurant?.city || 'Online Ordering Storefront'}
@@ -251,6 +290,7 @@ export default function MarketplaceLayout() {
                       style={[styles.desktopNavLink, active && styles.desktopNavLinkActive]}
                       onPress={() => handleTabPress(tab)}
                       activeOpacity={0.8}
+                      testID={`desktop-nav-${tab.name.toLowerCase().replace(/\s+/g, '-')}`}
                     >
                       {isProfile && user?.avatar_url ? (
                         <Image source={{ uri: user.avatar_url }} style={styles.navAvatarDesktop} />
@@ -294,6 +334,7 @@ export default function MarketplaceLayout() {
                     onPress={() => handleTabPress(tab)}
                     activeOpacity={0.7}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    testID={`mobile-nav-${tab.name.toLowerCase().replace(/\s+/g, '-')}`}
                   >
                     <View style={styles.iconWrap}>
                       {isProfile && user?.avatar_url ? (

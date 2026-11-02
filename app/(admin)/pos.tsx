@@ -33,6 +33,7 @@ import { formatOrderDateTime } from '../../src/utils/dateUtils';
 import { consolidateOrderItems } from '../../src/utils/orderItemIdentity';
 import { printService, handleThermalPrintFallback } from '../../src/services/printService';
 import { dayRegisterService } from '../../src/services/api/dayRegisterService';
+import { OptimizedImage } from '../../src/components/common/OptimizedImage';
 import { subscriptionGuardService } from '../../src/services/api/subscriptionGuardService';
 import { isSupabaseConfigured } from '../../src/services/supabase';
 import { TableSelectorModal } from '../../src/components/pos/TableSelectorModal';
@@ -1829,10 +1830,11 @@ export default function PosScreen() {
                     {/* Item Image with Fallbacks */}
                     <View style={styles.productImageContainer}>
                       {item.image_url ? (
-                        <Image
-                          source={{ uri: item.image_url }}
+                        <OptimizedImage
+                          source={item.image_url}
                           style={[styles.productImage, !isItemAvailable && { opacity: 0.6 }]}
-                          resizeMode="cover"
+                          contentFit="cover"
+                          type="product"
                         />
                       ) : (
                         <View style={[styles.productImageFallback, isBeverage && { backgroundColor: '#fef2f2' }, !isItemAvailable && { opacity: 0.6 }]}>

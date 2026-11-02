@@ -41,7 +41,7 @@ export default function MarketplaceHomeScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
   const { user } = useAuth();
-  const { setMarketplaceMode } = useStorefront();
+  const { isDedicated, dedicatedSlug, setMarketplaceMode } = useStorefront();
 
   useEffect(() => {
     setMarketplaceMode();
@@ -411,7 +411,7 @@ export default function MarketplaceHomeScreen() {
                       numColumns === 1 && { marginBottom: 16 },
                       !isOpen && styles.restaurantCardDisabled,
                     ]}
-                    onPress={() => router.push(`/(marketplace)/restaurant/${r.id}` as any)}
+                    onPress={() => router.push(`/r/${encodeURIComponent(r.slug || r.id)}` as any)}
                     activeOpacity={isOpen ? 0.88 : 0.95}
                   >
                     {/* Image / Banner */}

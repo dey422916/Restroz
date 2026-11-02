@@ -48,6 +48,7 @@ export default function AdminLayout() {
     currentPath.startsWith('/dashboard/') ||
     currentPath === '/orders' ||
     currentPath.startsWith('/orders/') ||
+    currentPath.startsWith('/(admin)/orders') ||
     currentPath === '/tables' ||
     currentPath.startsWith('/tables/') ||
     currentPath === '/products' ||

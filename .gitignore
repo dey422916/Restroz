@@ -2,7 +2,7 @@ node_modules/
 
 screenshots/
 
-scripts/
+scripts/*
 
 !scripts/post-export-web.js
 !scripts/build-production-web.js
@@ -15,6 +15,8 @@ scripts/
 !scripts/test-printer-role-routing.js
 !scripts/test-settle-split-payment.js
 !scripts/test-reward-redemption-order-financial-display.js
+!scripts/test-dedicated-login-and-manual-print.js
+!scripts/test-dev-url-and-loop-fix.js
 android/
 ios/
 

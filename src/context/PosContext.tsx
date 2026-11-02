@@ -771,24 +771,38 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ? newOrder.kots[0]
       : await kotService.generateKot(newOrder, orderNotes);
 
-    // Print KOT slip upon order placement / KOT Print button action
+    // Print KOT slip upon order placement:
+    // If Auto Print is ON -> direct thermal printing (silent, no dialog).
+    // If Auto Print is OFF -> automatically open browser's native print preview dialog on Web.
     let kotWarning: string | null = null;
-    try {
-      const printResult = await printService.printKotThermal(newOrder, settings, initialKot, false);
-      if (printResult?.skipped && printResult?.code && ['NO_ELIGIBLE_PRINTER', 'NO_PAIRED_AGENT', 'AGENT_OFFLINE', 'NO_PRINTER'].includes(printResult.code)) {
-        kotWarning = 'Central Print Agent is not paired or no eligible printer is available.';
-      } else if (settings.auto_print_kot && printResult?.direct) {
-        await printedKotTracker.markKotAsAutoPrinted(initialKot.id, initialKot.kitchen_notes);
-      }
-    } catch (printErr: any) {
-      console.warn('[PosContext] KOT print handled safely:', printErr);
-      kotWarning = printErr?.message || 'Printer could not be reached.';
-      await handleThermalPrintFallback(printErr, 'KOT', async () => {
-        await printService.printKotThermalBrowser(newOrder, settings, initialKot, false);
-        if (settings.auto_print_kot) {
+    const autoPrintOn = isAutoPrintEnabled(settings);
+    if (autoPrintOn) {
+      try {
+        const printResult = await printService.printKotThermal(newOrder, settings, initialKot, false);
+        if (printResult?.skipped && printResult?.code && ['NO_ELIGIBLE_PRINTER', 'NO_PAIRED_AGENT', 'AGENT_OFFLINE', 'NO_PRINTER'].includes(printResult.code)) {
+          kotWarning = 'Central Print Agent is not paired or no eligible printer is available.';
+        } else if (settings.auto_print_kot && printResult?.direct) {
           await printedKotTracker.markKotAsAutoPrinted(initialKot.id, initialKot.kitchen_notes);
         }
-      });
+      } catch (printErr: any) {
+        console.warn('[PosContext] KOT print handled safely:', printErr);
+        kotWarning = printErr?.message || 'Printer could not be reached.';
+        await handleThermalPrintFallback(printErr, 'KOT', async () => {
+          await printService.printKotThermalBrowser(newOrder, settings, initialKot, false);
+          if (settings.auto_print_kot) {
+            await printedKotTracker.markKotAsAutoPrinted(initialKot.id, initialKot.kitchen_notes);
+          }
+        });
+      }
+    } else {
+      // Auto Print is OFF: Open browser native print preview automatically on Web
+      if (Platform.OS === 'web') {
+        try {
+          await printService.printKotThermalBrowser(newOrder, settings, initialKot, false);
+        } catch (previewErr) {
+          console.warn('[PosContext] Browser print preview for KOT skipped/failed safely:', previewErr);
+        }
+      }
     }
 
     if (kotWarning) {
@@ -888,22 +902,34 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if ((updated as any).latest_kot) {
       const deltaKot = (updated as any).latest_kot;
       let deltaKotWarning: string | null = null;
-      try {
-        const deltaResult = await printService.printKotThermal(updated, settings, deltaKot, false);
-        if (deltaResult?.skipped && deltaResult?.code && ['NO_ELIGIBLE_PRINTER', 'NO_PAIRED_AGENT', 'AGENT_OFFLINE', 'NO_PRINTER'].includes(deltaResult.code)) {
-          deltaKotWarning = 'Central Print Agent is not paired or no eligible printer is available.';
-        } else if (settings.auto_print_kot && deltaResult?.direct) {
-          await printedKotTracker.markKotAsAutoPrinted(deltaKot.id, deltaKot.kitchen_notes);
-        }
-      } catch (printErr: any) {
-        console.warn('[PosContext] Delta KOT print handled safely:', printErr);
-        deltaKotWarning = printErr?.message || 'Printer could not be reached.';
-        await handleThermalPrintFallback(printErr, 'KOT', async () => {
-          await printService.printKotThermalBrowser(updated, settings, deltaKot, false);
-          if (settings.auto_print_kot) {
+      const autoPrintOn = isAutoPrintEnabled(settings);
+      if (autoPrintOn) {
+        try {
+          const deltaResult = await printService.printKotThermal(updated, settings, deltaKot, false);
+          if (deltaResult?.skipped && deltaResult?.code && ['NO_ELIGIBLE_PRINTER', 'NO_PAIRED_AGENT', 'AGENT_OFFLINE', 'NO_PRINTER'].includes(deltaResult.code)) {
+            deltaKotWarning = 'Central Print Agent is not paired or no eligible printer is available.';
+          } else if (settings.auto_print_kot && deltaResult?.direct) {
             await printedKotTracker.markKotAsAutoPrinted(deltaKot.id, deltaKot.kitchen_notes);
           }
-        });
+        } catch (printErr: any) {
+          console.warn('[PosContext] Delta KOT print handled safely:', printErr);
+          deltaKotWarning = printErr?.message || 'Printer could not be reached.';
+          await handleThermalPrintFallback(printErr, 'KOT', async () => {
+            await printService.printKotThermalBrowser(updated, settings, deltaKot, false);
+            if (settings.auto_print_kot) {
+              await printedKotTracker.markKotAsAutoPrinted(deltaKot.id, deltaKot.kitchen_notes);
+            }
+          });
+        }
+      } else {
+        // Auto Print is OFF: Open browser native print preview automatically on Web
+        if (Platform.OS === 'web') {
+          try {
+            await printService.printKotThermalBrowser(updated, settings, deltaKot, false);
+          } catch (previewErr) {
+            console.warn('[PosContext] Browser print preview for delta KOT skipped/failed safely:', previewErr);
+          }
+        }
       }
       const hasCancellations = deltaKot.items?.some((i: any) => i.quantity < 0 || (i.notes && i.notes.includes('[CANCELLED]')));
       if (deltaKotWarning) {
@@ -1037,7 +1063,7 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     clearCart();
     await refreshOrders();
 
-    // Auto print Bill upon settlement if auto print is enabled
+    // Auto print Bill upon settlement if auto print is enabled; otherwise open browser print preview on Web
     if (isAutoPrintEnabled(settings)) {
       try {
         const billedBy = getCurrentLoggedInUserDisplayName(user);
@@ -1047,6 +1073,16 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       } catch (printErr) {
         console.warn('[PosContext] Auto print bill after payment settlement skipped/failed safely:', printErr);
+      }
+    } else {
+      // Auto Print is OFF: Open browser native print preview automatically on Web
+      if (Platform.OS === 'web') {
+        try {
+          const billedBy = getCurrentLoggedInUserDisplayName(user);
+          await printService.printFinalReceiptThermalBrowser(updatedOrder, settings, billedBy);
+        } catch (printErr) {
+          console.warn('[PosContext] Browser print preview for bill skipped/failed safely:', printErr);
+        }
       }
     }
 

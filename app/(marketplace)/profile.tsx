@@ -25,7 +25,7 @@ import { CustomerMarketplaceWalletsResponse } from '../../src/types';
 export default function CustomerProfileScreen() {
   const router = useRouter();
   const { user, logout, loading: authLoading, updateUserProfileState } = useAuth();
-  const { isDedicated, dedicatedRestaurantId, dedicatedRestaurant } = useStorefront();
+  const { isDedicated, dedicatedSlug, dedicatedRestaurantId, dedicatedRestaurant } = useStorefront();
 
   const [fullName, setFullName] = useState(user?.full_name || '');
   const [phone, setPhone] = useState(user?.phone || '');
@@ -132,14 +132,23 @@ export default function CustomerProfileScreen() {
   };
 
   const handleLogout = async () => {
+    const slug = isDedicated ? (dedicatedSlug || dedicatedRestaurantId) : null;
     if (Platform.OS === 'web') {
       const confirmed = typeof window !== 'undefined' ? window.confirm('Are you sure you want to sign out?') : true;
       if (!confirmed) return;
       await logout();
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
+      if (slug) {
+        if (typeof window !== 'undefined') {
+          window.location.href = `/r/${encodeURIComponent(slug)}`;
+        } else {
+          router.replace(`/r/${encodeURIComponent(slug)}` as any);
+        }
       } else {
-        router.replace('/(auth)/login' as any);
+        if (typeof window !== 'undefined') {
+          window.location.href = '/login';
+        } else {
+          router.replace('/(auth)/login' as any);
+        }
       }
       return;
     }
@@ -151,7 +160,11 @@ export default function CustomerProfileScreen() {
         style: 'destructive',
         onPress: async () => {
           await logout();
-          router.replace('/(auth)/login' as any);
+          if (slug) {
+            router.replace(`/r/${encodeURIComponent(slug)}` as any);
+          } else {
+            router.replace('/(auth)/login' as any);
+          }
         },
       },
     ]);
@@ -173,7 +186,16 @@ export default function CustomerProfileScreen() {
         <Text style={styles.authSub}>Sign in to view your profile, manage addresses, and track rewards.</Text>
         <TouchableOpacity
           style={styles.loginBtn}
-          onPress={() => router.push('/(auth)/login')}
+          onPress={() => {
+            const activeSlug = isDedicated ? (dedicatedSlug || dedicatedRestaurantId) : undefined;
+            router.push({
+              pathname: '/(auth)/login',
+              params: {
+                ...(activeSlug ? { redirectSlug: activeSlug } : {}),
+                redirectUrl: '/(marketplace)/profile',
+              },
+            } as any);
+          }}
         >
           <Text style={styles.loginBtnText}>Log In to Your Account</Text>
         </TouchableOpacity>

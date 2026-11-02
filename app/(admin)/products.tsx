@@ -24,6 +24,7 @@ import { useAuth } from '../../src/context/AuthContext';
 import { Product, Category, FoodType } from '../../src/types';
 import { formatCurrency } from '../../src/utils/currency';
 import { subscriptionGuardService } from '../../src/services/api/subscriptionGuardService';
+import { OptimizedImage } from '../../src/components/common/OptimizedImage';
 import { downloadSampleProductsCsv } from '../../src/utils/sampleCsv';
 import { useHorizontalScroll } from '../../src/hooks/useHorizontalScroll';
 
@@ -684,14 +685,11 @@ export default function ProductsScreen() {
                 >
                   {/* Image & Indicators */}
                   <View style={[styles.imgContainer, isWideGrid && styles.imgContainerWeb]}>
-                    <Image
-                      source={{
-                        uri:
-                          prod.image_url ||
-                          'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=600&q=80',
-                      }}
+                    <OptimizedImage
+                      source={prod.image_url}
                       style={styles.img}
-                      resizeMode="cover"
+                      contentFit="cover"
+                      type="product"
                     />
 
                     {/* Checkbox (Bulk Selection) */}
@@ -931,7 +929,7 @@ export default function ProductsScreen() {
                 {/* Image Upload / Preview Area */}
                 <View style={styles.imageUploadSection}>
                   {formImageUrl ? (
-                    <Image source={{ uri: formImageUrl }} style={styles.previewImage} />
+                    <OptimizedImage source={formImageUrl} style={styles.previewImage} contentFit="cover" type="product" />
                   ) : (
                     <View style={styles.placeholderImgBox}>
                       <Text style={{ fontSize: 28 }}>📷</Text>

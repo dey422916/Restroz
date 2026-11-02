@@ -24,6 +24,7 @@ import { productService } from '../../src/services/api/productService';
 import { tableService } from '../../src/services/api/tableService';
 import { kotService, clearKotsCache } from '../../src/services/api/kotService';
 import { printService, formatLogoDataUri, handleThermalPrintFallback } from '../../src/services/printService';
+import { OptimizedImage } from '../../src/components/common/OptimizedImage';
 import { isAutoPrintEnabled } from '../../src/services/directPrintService';
 import { Order, OrderItem, OrderStatus, PaymentStatus, OrderSource, Product, DiningTable, RestaurantSettings, PaymentMethod, CustomerWalletInfo } from '../../src/types';
 import { formatCurrency, numberToWords, roundToTwoDecimals, formatPrice } from '../../src/utils/currency';
@@ -299,7 +300,7 @@ export default function OrdersScreen() {
               playOrderBellRef.current();
             }
           }
-          loadDataRef.current(false);
+          loadDataRef.current(true);
         }
       )
       .subscribe();
@@ -707,13 +708,25 @@ export default function OrdersScreen() {
       });
 
       if ((updated as any).latest_kot) {
-        try {
-          await printService.printKotThermal(updated, settings, (updated as any).latest_kot);
-        } catch (e: any) {
-          console.warn('KOT Print warning:', e);
-          await handleThermalPrintFallback(e, 'KOT', async () => {
-            await printService.printKotThermalBrowser(updated, settings, (updated as any).latest_kot);
-          });
+        const autoPrintOn = isAutoPrintEnabled(settings);
+        if (autoPrintOn) {
+          try {
+            await printService.printKotThermal(updated, settings, (updated as any).latest_kot);
+          } catch (e: any) {
+            console.warn('KOT Print warning:', e);
+            await handleThermalPrintFallback(e, 'KOT', async () => {
+              await printService.printKotThermalBrowser(updated, settings, (updated as any).latest_kot);
+            });
+          }
+        } else {
+          // Auto Print is OFF: Open browser native print preview automatically on Web
+          if (Platform.OS === 'web') {
+            try {
+              await printService.printKotThermalBrowser(updated, settings, (updated as any).latest_kot);
+            } catch (previewErr) {
+              console.warn('[orders.tsx] Browser print preview for edited KOT skipped/failed safely:', previewErr);
+            }
+          }
         }
       }
 
@@ -962,25 +975,37 @@ export default function OrdersScreen() {
         clearKotsCache(order.restaurant_id || activeRestaurantId);
         await loadData(true);
 
-        try {
-          const res = await printService.printKotThermal(order, settings, newKot, false);
-          if (res && res.direct) {
-            await printedKotTracker.markKotAsAutoPrinted(newKot.id, newKot.kitchen_notes);
-            if (!settings.auto_print_kot) {
-              showAlert(
-                '🖨️ KOT Generated & Printed',
-                hasExistingKot
-                  ? `Supplementary KOT #${newKot.kot_number} generated for new items.`
-                  : `KOT #${newKot.kot_number} generated for kitchen.`
-              );
+        const autoPrintOn = isAutoPrintEnabled(settings);
+        if (autoPrintOn) {
+          try {
+            const res = await printService.printKotThermal(order, settings, newKot, false);
+            if (res && res.direct) {
+              await printedKotTracker.markKotAsAutoPrinted(newKot.id, newKot.kitchen_notes);
+              if (!settings.auto_print_kot) {
+                showAlert(
+                  '🖨️ KOT Generated & Printed',
+                  hasExistingKot
+                    ? `Supplementary KOT #${newKot.kot_number} generated for new items.`
+                    : `KOT #${newKot.kot_number} generated for kitchen.`
+                );
+              }
+            }
+          } catch (printErr: any) {
+            console.warn('[orders.tsx] Direct KOT print failed:', printErr);
+            await handleThermalPrintFallback(printErr, 'KOT', async () => {
+              await printService.printKotThermalBrowser(order, settings, newKot, false);
+              await printedKotTracker.markKotAsAutoPrinted(newKot.id, newKot.kitchen_notes);
+            });
+          }
+        } else {
+          // Auto Print is OFF: Open browser native print preview automatically on Web
+          if (Platform.OS === 'web') {
+            try {
+              await printService.printKotThermalBrowser(order, settings, newKot, false);
+            } catch (previewErr) {
+              console.warn('[orders.tsx] Browser print preview for new KOT skipped/failed safely:', previewErr);
             }
           }
-        } catch (printErr: any) {
-          console.warn('[orders.tsx] Direct KOT print failed:', printErr);
-          await handleThermalPrintFallback(printErr, 'KOT', async () => {
-            await printService.printKotThermalBrowser(order, settings, newKot, false);
-            await printedKotTracker.markKotAsAutoPrinted(newKot.id, newKot.kitchen_notes);
-          });
         }
       } else {
         // Manual reprint of existing KOT - same KOT is printed
@@ -1395,13 +1420,23 @@ export default function OrdersScreen() {
       setViewOrderModal(completed);
       await loadData();
 
-      // Auto print Bill upon settlement if auto print is enabled
+      // Auto print Bill upon settlement if auto print is enabled; otherwise open browser print preview on Web
       if (isAutoPrintEnabled(settings)) {
         try {
           const billedBy = getCurrentLoggedInUserDisplayName(user);
           await printService.printBillThermal(completed, settings, billedBy);
         } catch (printErr) {
           console.warn('[orders.tsx] Auto print bill after settlement skipped/failed safely:', printErr);
+        }
+      } else {
+        // Auto Print is OFF: Open browser native print preview automatically on Web
+        if (Platform.OS === 'web') {
+          try {
+            const billedBy = getCurrentLoggedInUserDisplayName(user);
+            await printService.printFinalReceiptThermalBrowser(completed, settings, billedBy);
+          } catch (printErr) {
+            console.warn('[orders.tsx] Auto print bill browser preview skipped/failed safely:', printErr);
+          }
         }
       }
     } catch (err: any) {
@@ -3859,10 +3894,11 @@ export default function OrdersScreen() {
                 <View style={styles.modalHeader}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, paddingRight: 8 }}>
                     {formatLogoDataUri(activeRestaurant?.logo_url || settings.logo_url) ? (
-                      <Image
-                        source={{ uri: formatLogoDataUri(activeRestaurant?.logo_url || settings.logo_url) }}
+                      <OptimizedImage
+                        source={formatLogoDataUri(activeRestaurant?.logo_url || settings.logo_url)}
                         style={{ width: 40, height: 40, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', flexShrink: 0 }}
-                        resizeMode="contain"
+                        contentFit="contain"
+                        type="logo"
                       />
                     ) : null}
                     <View style={{ flex: 1, minWidth: 0 }}>
@@ -4064,10 +4100,10 @@ export default function OrdersScreen() {
                         activeOpacity={0.85}
                         onPress={() => setFullScreenProofOrder(viewOrderModal)}
                       >
-                        <Image
-                          source={{ uri: viewOrderModal.payment_proof_url }}
+                        <OptimizedImage
+                          source={viewOrderModal.payment_proof_url}
                           style={{ width: '100%', height: 200, borderRadius: 8, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#e2e8f0' }}
-                          resizeMode="contain"
+                          contentFit="contain"
                         />
                       </TouchableOpacity>
                     </View>
@@ -4441,14 +4477,14 @@ export default function OrdersScreen() {
                 padding: 12,
               }}
             >
-              <Image
-                source={{ uri: fullScreenProofOrder.payment_proof_url }}
+              <OptimizedImage
+                source={fullScreenProofOrder.payment_proof_url}
                 style={{
                   width: '100%',
                   height: '100%',
                   maxWidth: 800,
                 }}
-                resizeMode="contain"
+                contentFit="contain"
               />
             </View>
 
@@ -4508,6 +4544,7 @@ export default function OrdersScreen() {
           </View>
         </Modal>
       ) : null}
+
     </View>
   );
 }

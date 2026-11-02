@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
+import { useStorefront } from '../../src/context/StorefrontContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { CustomerAddress } from '../../src/types';
 import { customerColors } from '../../src/utils/colors';
@@ -23,6 +24,7 @@ import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError
 
 export default function CustomerAddressesScreen() {
   const router = useRouter();
+  const { isDedicated, dedicatedSlug, dedicatedRestaurantId } = useStorefront();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
   const { user, loading: authLoading } = useAuth();
@@ -263,7 +265,16 @@ export default function CustomerAddressesScreen() {
         <Text style={styles.authSub}>Please log in to manage your delivery addresses.</Text>
         <TouchableOpacity
           style={styles.loginBtn}
-          onPress={() => router.push('/(auth)/login')}
+          onPress={() => {
+            const activeSlug = isDedicated ? (dedicatedSlug || dedicatedRestaurantId) : undefined;
+            router.push({
+              pathname: '/(auth)/login',
+              params: {
+                ...(activeSlug ? { redirectSlug: activeSlug } : {}),
+                redirectUrl: '/(marketplace)/addresses',
+              },
+            } as any);
+          }}
         >
           <Text style={styles.loginBtnText}>Log In</Text>
         </TouchableOpacity>

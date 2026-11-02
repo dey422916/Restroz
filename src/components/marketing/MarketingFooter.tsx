@@ -77,6 +77,9 @@ export function MarketingFooter() {
             <TouchableOpacity onPress={() => handleNav('/info/features/pos-billing')}>
               <Text style={styles.colLink}>POS Billing Engine</Text>
             </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleNav('/info/features/gst-billing')}>
+              <Text style={styles.colLink}>GST Billing & Invoicing</Text>
+            </TouchableOpacity>
             <TouchableOpacity onPress={() => handleNav('/info/features/kot-kitchen')}>
               <Text style={styles.colLink}>KOT & Kitchen Display</Text>
             </TouchableOpacity>
@@ -122,6 +125,9 @@ export function MarketingFooter() {
             <Text style={styles.colTitle}>Company & Legal</Text>
             <TouchableOpacity onPress={() => handleNav('/info/pricing')}>
               <Text style={styles.colLink}>Plans & Pricing</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleNav('/info/locations')}>
+              <Text style={styles.colLink}>India Service Locations</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => handleNav('/info/about')}>
               <Text style={styles.colLink}>About RestroZ</Text>

@@ -14,6 +14,8 @@ export interface NewOrderCounts {
   totalNewCount: number;
 }
 
+export type TrackableOrder = Partial<Order> & { id: string; order_source?: any; status?: any };
+
 export const newOrderNotificationService = {
   /**
    * Subscribe to seen order changes
@@ -123,7 +125,7 @@ export const newOrderNotificationService = {
    * Check if an order is genuinely new and unread
    * Applies ONLY to Online Marketplace and QR Digital Menu orders
    */
-  isOrderNew(order: Order, seenIds: Set<string>): boolean {
+  isOrderNew(order: TrackableOrder, seenIds: Set<string>): boolean {
     if (!order || !order.id) return false;
 
     // Exclude terminal/inactive orders (completed, delivered, cancelled)
@@ -135,7 +137,7 @@ export const newOrderNotificationService = {
       return false;
     }
 
-    const source = resolveOrderSource(order);
+    const source = resolveOrderSource(order as Order);
     const isApplicable = source === 'CUSTOMER_APP' || source === 'CUSTOMER_QR';
     if (!isApplicable) return false;
 
@@ -145,13 +147,13 @@ export const newOrderNotificationService = {
   /**
    * Compute new unread order counts for Online Delivery and QR Digital Menu
    */
-  computeNewCounts(orders: Order[], seenIds: Set<string>): NewOrderCounts {
+  computeNewCounts(orders: TrackableOrder[], seenIds: Set<string>): NewOrderCounts {
     let onlineNewCount = 0;
     let qrNewCount = 0;
 
     for (const order of orders) {
       if (this.isOrderNew(order, seenIds)) {
-        const source = resolveOrderSource(order);
+        const source = resolveOrderSource(order as Order);
         if (source === 'CUSTOMER_APP') {
           onlineNewCount++;
         } else if (source === 'CUSTOMER_QR') {

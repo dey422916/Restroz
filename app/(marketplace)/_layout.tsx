@@ -77,6 +77,7 @@ export default function MarketplaceLayout() {
     ? `/restaurant/${encodeURIComponent(effectiveRestaurantId)}`
     : (menuRoute && menuRoute !== '/(marketplace)' ? menuRoute : (pathSlug ? `/r/${encodeURIComponent(pathSlug)}` : '/(marketplace)'));
 
+
   // Authoritative Route Guard:
   // 1. Restaurant ADMIN & STAFF must NEVER access customer marketplace directly -> Redirect to POS
   // 2. SUPER_ADMIN must NEVER auto-land in customer marketplace unless explicit preview mode is active

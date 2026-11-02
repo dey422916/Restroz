@@ -43,6 +43,7 @@ import { supabase, isSupabaseConfigured } from '../../src/services/supabase';
 import { createSafeRealtimeChannel, removeSafeRealtimeChannel } from '../../src/utils/realtime';
 import { useNotification } from '../../src/context/NotificationContext';
 import { useNewOrderTracker } from '../../src/hooks/useNewOrderTracker';
+import { TrackableOrder } from '../../src/services/newOrderNotificationService';
 import { getCurrentLoggedInUserDisplayName } from '../../src/utils/receiptIdentity';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -53,7 +54,7 @@ export default function OrdersScreen() {
   const { settings } = useSettings();
   const { showToast, playOrderBell } = useNotification();
   const [orders, setOrders] = useState<Order[]>([]);
-  const [allTenantOrders, setAllTenantOrders] = useState<Order[]>([]);
+  const [allTenantOrders, setAllTenantOrders] = useState<TrackableOrder[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [tables, setTables] = useState<DiningTable[]>([]);
 
@@ -190,12 +191,12 @@ export default function OrdersScreen() {
       try {
         if (isRefresh) {
           setRefreshing(true);
+          clearOrdersCache(activeRestaurantId);
         } else {
           setLoading(true);
         }
-        clearOrdersCache(activeRestaurantId);
 
-        const [ordersRes, prodList, tableList, fullTenantOrders] = await Promise.all([
+        const [ordersRes, prodList, tableList, unreadSummary] = await Promise.all([
           orderService.getOrdersPaginated({
             restaurantId: activeRestaurantId,
             page: 1,
@@ -205,12 +206,12 @@ export default function OrdersScreen() {
             search: debouncedSearch.trim() || undefined,
           }),
           productService.getProducts(activeRestaurantId),
-          tableService.getTables(activeRestaurantId),
-          orderService.getOrders(activeRestaurantId, isRefresh),
+          tableService.getTables(activeRestaurantId, isRefresh),
+          orderService.getUnreadOrderSummary(activeRestaurantId),
         ]);
 
         setOrders(ordersRes.orders);
-        setAllTenantOrders(fullTenantOrders || []);
+        setAllTenantOrders(unreadSummary || []);
         setOrdersPage(1);
         setHasMoreOrders(ordersRes.hasMore);
         setProducts(prodList);
@@ -263,7 +264,7 @@ export default function OrdersScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      loadData(true);
+      loadData(false);
     }, [loadData])
   );
 

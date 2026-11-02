@@ -1,14 +1,57 @@
+# ==============================================================================
+# RestroZ — Cloud Restaurant POS & Management Platform
+# Canonical Website: https://restroz.shop/
+# ==============================================================================
+
 User-agent: *
 Allow: /
 Allow: /info
 Allow: /info/*
+Allow: /_expo/
+Allow: /assets/
+Allow: /banners/
+Allow: /restroz-logo.png
+Allow: /favicon.ico
+Allow: /sitemap.xml
+
+# Exclude Private Operations, POS Billing & Terminal Routes
+Disallow: /dashboard
+Disallow: /pos
+Disallow: /orders
+Disallow: /products
+Disallow: /categories
+Disallow: /tables
+Disallow: /kot-screen
+Disallow: /staff
+Disallow: /settings
+Disallow: /printers
+Disallow: /coupons
+Disallow: /my-plan
+Disallow: /bulk-import
+
+# Exclude Super Admin Platform Management
 Disallow: /super-admin/
 Disallow: /super-admin
+
+# Exclude Authentication & Session Routes
+Disallow: /login
+Disallow: /signup
+Disallow: /forgot-password
+Disallow: /reset-password
+Disallow: /verify-email
+
+# Exclude Customer Account & Checkout Routes
+Disallow: /cart
+Disallow: /checkout
+Disallow: /profile
+Disallow: /addresses
+Disallow: /order/
+
+# Exclude Internal API & Route Group Syntaxes
+Disallow: /api/
 Disallow: /(admin)/
 Disallow: /(auth)/
-Disallow: /admin/
-Disallow: /checkout
-Disallow: /api/
+Disallow: /(marketplace)/
 
+# Canonical XML Sitemap
 Sitemap: https://restroz.shop/sitemap.xml
-Sitemap: https://restroz.shop/info/sitemap.xml

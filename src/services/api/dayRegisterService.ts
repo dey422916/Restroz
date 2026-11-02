@@ -9,6 +9,21 @@ import { resolveOrderFinancials } from '../../utils/orderFinancials';
 
 const STORAGE_KEY_REGISTERS = '@kullad_chai_day_registers';
 
+// In-memory cache for day registers (15s TTL)
+const inMemoryRegistersCache: Record<string, { timestamp: number; data: DayRegister[] }> = {};
+const inFlightRegistersRequests: Record<string, Promise<DayRegister[]> | undefined> = {};
+const REGISTERS_CACHE_TTL = 15 * 1000;
+
+export function clearRegistersCache(restaurantId?: string) {
+  if (restaurantId) {
+    delete inMemoryRegistersCache[restaurantId];
+    delete inFlightRegistersRequests[restaurantId];
+  } else {
+    Object.keys(inMemoryRegistersCache).forEach((k) => delete inMemoryRegistersCache[k]);
+    Object.keys(inFlightRegistersRequests).forEach((k) => delete inFlightRegistersRequests[k]);
+  }
+}
+
 /**
  * Returns YYYY-MM-DD formatted date in local restaurant timezone.
  */
@@ -20,56 +35,90 @@ export function getLocalRestaurantDate(dateInput: Date = new Date()): string {
 }
 
 export const dayRegisterService = {
+  clearRegistersCache,
+
   /**
    * Get all registers from storage scoped by restaurant
    */
-  async getRegisters(restaurantId?: string): Promise<DayRegister[]> {
+  async getRegisters(restaurantId?: string, forceRefresh = false): Promise<DayRegister[]> {
     const targetRestId = restaurantId || (await restaurantService.getDefaultRestaurant())?.id || '';
-    if (isSupabaseConfigured && targetRestId) {
-      try {
-        const { data, error } = await supabase
-          .from('day_registers')
-          .select('*')
-          .eq('restaurant_id', targetRestId)
-          .order('opened_at', { ascending: false });
+    if (!targetRestId) return [];
 
-        if (!error && data && data.length > 0) {
-          const mapped = data.map((r: any) => ({
-            id: r.id,
-            restaurant_id: r.restaurant_id || targetRestId,
-            register_date: r.register_date || (r.opened_at ? getLocalRestaurantDate(new Date(r.opened_at)) : getLocalRestaurantDate()),
-            status: (r.status || 'open').toLowerCase() as 'open' | 'closed',
-            opening_cash_float: Number(r.opening_cash ?? r.opening_cash_float) || 0,
-            cash_sales: Number(r.cash_sales) || 0,
-            upi_sales: Number(r.upi_sales) || 0,
-            card_sales: Number(r.card_sales) || 0,
-            total_sales: Number(r.total_sales) || 0,
-            expected_cash: Number(r.expected_cash) || 0,
-            actual_cash_counted: r.actual_cash != null ? Number(r.actual_cash) : (r.actual_cash_counted != null ? Number(r.actual_cash_counted) : undefined),
-            cash_difference: r.difference != null ? Number(r.difference) : (r.cash_difference != null ? Number(r.cash_difference) : undefined),
-            notes: r.notes || undefined,
-            opened_at: r.opened_at,
-            opened_by: r.opened_by,
-            closed_at: r.closed_at || undefined,
-            closed_by: r.closed_by || undefined,
-          }));
-          await AsyncStorage.setItem(`${STORAGE_KEY_REGISTERS}_${targetRestId}`, JSON.stringify(mapped));
-          return mapped;
+    if (!forceRefresh && inMemoryRegistersCache[targetRestId]) {
+      const entry = inMemoryRegistersCache[targetRestId];
+      if (Date.now() - entry.timestamp < REGISTERS_CACHE_TTL) {
+        return entry.data;
+      }
+    }
+
+    if (inFlightRegistersRequests[targetRestId]) {
+      return inFlightRegistersRequests[targetRestId];
+    }
+
+    const fetchPromise = (async () => {
+      if (isSupabaseConfigured && targetRestId) {
+        try {
+          const { data, error } = await supabase
+            .from('day_registers')
+            .select('*')
+            .eq('restaurant_id', targetRestId)
+            .order('opened_at', { ascending: false })
+            .limit(15);
+
+          if (!error && data && data.length > 0) {
+            const mapped = data.map((r: any) => ({
+              id: r.id,
+              restaurant_id: r.restaurant_id || targetRestId,
+              register_date: r.register_date || (r.opened_at ? getLocalRestaurantDate(new Date(r.opened_at)) : getLocalRestaurantDate()),
+              status: (r.status || 'open').toLowerCase() as 'open' | 'closed',
+              opening_cash_float: Number(r.opening_cash ?? r.opening_cash_float) || 0,
+              cash_sales: Number(r.cash_sales) || 0,
+              upi_sales: Number(r.upi_sales) || 0,
+              card_sales: Number(r.card_sales) || 0,
+              total_sales: Number(r.total_sales) || 0,
+              expected_cash: Number(r.expected_cash) || 0,
+              actual_cash_counted: r.actual_cash != null ? Number(r.actual_cash) : (r.actual_cash_counted != null ? Number(r.actual_cash_counted) : undefined),
+              cash_difference: r.difference != null ? Number(r.difference) : (r.cash_difference != null ? Number(r.cash_difference) : undefined),
+              notes: r.notes || undefined,
+              opened_at: r.opened_at,
+              opened_by: r.opened_by,
+              closed_at: r.closed_at || undefined,
+              closed_by: r.closed_by || undefined,
+            }));
+            inMemoryRegistersCache[targetRestId] = {
+              timestamp: Date.now(),
+              data: mapped,
+            };
+            await AsyncStorage.setItem(`${STORAGE_KEY_REGISTERS}_${targetRestId}`, JSON.stringify(mapped));
+            return mapped;
+          }
+        } catch (e) {
+          console.warn('Supabase fetch day_registers failed, falling back to local storage:', e);
+        }
+      }
+
+      try {
+        const data = await AsyncStorage.getItem(`${STORAGE_KEY_REGISTERS}_${targetRestId}`);
+        if (data) {
+          const parsed = JSON.parse(data) as DayRegister[];
+          inMemoryRegistersCache[targetRestId] = {
+            timestamp: Date.now(),
+            data: parsed,
+          };
+          return parsed;
         }
       } catch (e) {
-        console.warn('Supabase fetch day_registers failed, falling back to local storage:', e);
+        console.warn('Failed to load registers from storage:', e);
       }
-    }
+      return [];
+    })();
 
+    inFlightRegistersRequests[targetRestId] = fetchPromise;
     try {
-      const data = await AsyncStorage.getItem(`${STORAGE_KEY_REGISTERS}_${targetRestId}`);
-      if (data) {
-        return JSON.parse(data) as DayRegister[];
-      }
-    } catch (e) {
-      console.warn('Failed to load registers from storage:', e);
+      return await fetchPromise;
+    } finally {
+      delete inFlightRegistersRequests[targetRestId];
     }
-    return [];
   },
 
   /**
@@ -79,6 +128,7 @@ export const dayRegisterService = {
     try {
       const targetRestId = restaurantId || registers[0]?.restaurant_id || '';
       if (targetRestId) {
+        clearRegistersCache(targetRestId);
         await AsyncStorage.setItem(`${STORAGE_KEY_REGISTERS}_${targetRestId}`, JSON.stringify(registers));
       }
     } catch (e) {
@@ -137,7 +187,8 @@ export const dayRegisterService = {
    */
   async calculateRegisterReconciliation(
     register: DayRegister,
-    restaurantId?: string
+    restaurantId?: string,
+    cachedOrders?: Order[]
   ): Promise<{
     cash_sales: number;
     upi_sales: number;
@@ -152,7 +203,7 @@ export const dayRegisterService = {
     expected_cash: number;
   }> {
     const targetRestId = register.restaurant_id || restaurantId;
-    const allOrders = await orderService.getOrders(targetRestId);
+    const allOrders = cachedOrders || (await orderService.getOrders(targetRestId));
     const openTime = new Date(register.opened_at).getTime();
     const closeTime = register.closed_at ? new Date(register.closed_at).getTime() : Date.now();
 
@@ -424,8 +475,8 @@ export const dayRegisterService = {
    *
    * Optionally filtered by registerOpenedAt so only orders from the current open shift are considered.
    */
-  async getUnsettledOrders(restaurantId?: string, registerOpenedAt?: string): Promise<Order[]> {
-    const allOrders = await orderService.getOrders(restaurantId);
+  async getUnsettledOrders(restaurantId?: string, registerOpenedAt?: string, cachedOrders?: Order[]): Promise<Order[]> {
+    const allOrders = cachedOrders || (await orderService.getOrders(restaurantId));
     return allOrders.filter((ord) => {
       if (ord.status === 'cancelled') return false;
       if (ord.status === 'completed' || ord.status === 'delivered' || (ord.status as string) === 'settled') {

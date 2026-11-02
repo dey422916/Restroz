@@ -24,6 +24,7 @@ const NAV_ITEMS: NavItem[] = [
     route: '/info/features',
     children: [
       { label: 'POS Billing', route: '/info/features/pos-billing', description: 'Fast dine-in, takeaway & delivery billing', icon: '⚡' },
+      { label: 'GST Billing & Taxes', route: '/info/features/gst-billing', description: 'Indian GST compliant invoices & split tax', icon: '🧾' },
       { label: 'KOT & Kitchen', route: '/info/features/kot-kitchen', description: 'Real-time kitchen order tickets & display', icon: '👨‍🍳' },
       { label: 'Waiter Mobile App', route: '/info/features/waiter-mobile-app', description: 'Table-side ordering directly from phones', icon: '📱' },
       { label: 'QR Digital Menu', route: '/info/features/qr-digital-menu', description: 'Contactless scan, browse & order at tables', icon: '📲' },
@@ -50,8 +51,9 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   { label: 'Pricing', route: '/info/pricing' },
-  { label: 'About', route: '/info/about' },
+  { label: 'India Coverage', route: '/info/locations' },
   { label: 'Blog', route: '/info/blog' },
+  { label: 'About', route: '/info/about' },
   { label: 'FAQ', route: '/info/faq' },
   { label: 'Contact', route: '/info/contact' },
 ];

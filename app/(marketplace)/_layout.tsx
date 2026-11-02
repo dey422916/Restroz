@@ -4,6 +4,7 @@ import { Slot, useRouter, usePathname } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCustomerCart } from '../../src/context/CustomerCartContext';
 import { useAuth } from '../../src/context/AuthContext';
+import { OptimizedImage } from '../../src/components/common/OptimizedImage';
 import { useStorefront } from '../../src/context/StorefrontContext';
 import { customerColors } from '../../src/utils/colors';
 
@@ -241,11 +242,7 @@ export default function MarketplaceLayout() {
                   activeOpacity={0.8}
                 >
                   {dedicatedRestaurant?.logo_url ? (
-                    <Image
-                      source={{ uri: dedicatedRestaurant.logo_url }}
-                      style={styles.desktopLogo}
-                      resizeMode="contain"
-                    />
+                    <OptimizedImage source={dedicatedRestaurant.logo_url} style={styles.desktopLogo} contentFit="contain" type="logo" />
                   ) : (
                     <View style={[styles.desktopLogo, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#EFF6FF', borderRadius: 8 }]}>
                       <Text style={{ fontSize: 20 }}>🍽️</Text>
@@ -293,7 +290,7 @@ export default function MarketplaceLayout() {
                       testID={`desktop-nav-${tab.name.toLowerCase().replace(/\s+/g, '-')}`}
                     >
                       {isProfile && user?.avatar_url ? (
-                        <Image source={{ uri: user.avatar_url }} style={styles.navAvatarDesktop} />
+                        <OptimizedImage source={user.avatar_url} style={styles.navAvatarDesktop} contentFit="cover" type="avatar" />
                       ) : (
                         <Text style={styles.desktopNavIcon}>{tab.icon}</Text>
                       )}
@@ -338,7 +335,7 @@ export default function MarketplaceLayout() {
                   >
                     <View style={styles.iconWrap}>
                       {isProfile && user?.avatar_url ? (
-                        <Image source={{ uri: user.avatar_url }} style={styles.navAvatarMobile} />
+                        <OptimizedImage source={user.avatar_url} style={styles.navAvatarMobile} contentFit="cover" type="avatar" />
                       ) : (
                         <Text style={{ fontSize: 20 }}>{tab.icon}</Text>
                       )}

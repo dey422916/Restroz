@@ -862,7 +862,7 @@ export default function SettingsScreen() {
 
                     <View style={styles.logoContentRow}>
                       {logoUrl ? (
-                        <Image source={{ uri: logoUrl }} style={styles.logoPreview} resizeMode="contain" />
+                        <OptimizedImage source={logoUrl} style={styles.logoPreview} contentFit="contain" type="logo" />
                       ) : (
                         <View style={styles.logoPlaceholder}>
                           <Text style={{ fontSize: 20 }}>🍽️</Text>
@@ -1266,7 +1266,7 @@ export default function SettingsScreen() {
                             <View style={styles.mockupBottomInfo}>
                               <View style={styles.mockupTitleRow}>
                                 {logoUrl ? (
-                                  <Image source={{ uri: logoUrl }} style={styles.mockupLogo} resizeMode="contain" />
+                                  <OptimizedImage source={logoUrl} style={styles.mockupLogo} contentFit="contain" type="logo" />
                                 ) : null}
                                 <Text style={styles.mockupTitle} numberOfLines={1}>
                                   {name || 'Crunchy Dosa'}
@@ -1660,7 +1660,7 @@ export default function SettingsScreen() {
                     <Text style={styles.label}>Payment QR Code</Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
                       {deliveryPaymentQrUrl ? (
-                        <Image source={{ uri: deliveryPaymentQrUrl }} style={{ width: 64, height: 64, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }} resizeMode="contain" />
+                        <OptimizedImage source={deliveryPaymentQrUrl} style={{ width: 64, height: 64, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }} contentFit="contain" />
                       ) : (
                         <View style={{ width: 64, height: 64, borderRadius: 8, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' }}>
                           <Text style={{ fontSize: 20 }}>📱</Text>
@@ -1699,7 +1699,7 @@ export default function SettingsScreen() {
                     <Text style={styles.label}>Sample Payment Screenshot</Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
                       {deliverySampleScreenshotUrl ? (
-                        <Image source={{ uri: deliverySampleScreenshotUrl }} style={{ width: 64, height: 64, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }} resizeMode="cover" />
+                        <OptimizedImage source={deliverySampleScreenshotUrl} style={{ width: 64, height: 64, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }} contentFit="cover" />
                       ) : (
                         <View style={{ width: 64, height: 64, borderRadius: 8, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' }}>
                           <Text style={{ fontSize: 20 }}>🖼️</Text>

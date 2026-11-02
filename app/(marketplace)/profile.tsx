@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
+import { OptimizedImage } from '../../src/components/common/OptimizedImage';
 import { useStorefront } from '../../src/context/StorefrontContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
 import { storageService } from '../../src/services/api/storageService';
@@ -224,11 +225,7 @@ export default function CustomerProfileScreen() {
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               {isDedicated && dedicatedRestaurant?.logo_url ? (
-                <Image
-                  source={{ uri: dedicatedRestaurant.logo_url }}
-                  style={styles.headerLogo}
-                  resizeMode="contain"
-                />
+                <OptimizedImage source={dedicatedRestaurant.logo_url} style={styles.headerLogo} contentFit="contain" type="logo" />
               ) : isDedicated ? (
                 <View style={[styles.headerLogo, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#EFF6FF', borderRadius: 8 }]}>
                   <Text style={{ fontSize: 20 }}>🍽️</Text>
@@ -279,7 +276,7 @@ export default function CustomerProfileScreen() {
             <View style={styles.avatarSection}>
               <View style={styles.avatarWrap}>
                 {avatarUrl ? (
-                  <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
+                  <OptimizedImage source={avatarUrl} style={styles.avatarImage} contentFit="cover" type="avatar" />
                 ) : (
                   <Text style={styles.avatarText}>
                     {(fullName || user.email || 'U').charAt(0).toUpperCase()}

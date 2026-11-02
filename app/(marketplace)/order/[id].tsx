@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '../../../src/context/AuthContext';
+import { OptimizedImage } from '../../../src/components/common/OptimizedImage';
 import { useCustomerCart } from '../../../src/context/CustomerCartContext';
 import { marketplaceService } from '../../../src/services/api/marketplaceService';
 import { supabase } from '../../../src/services/supabase';
@@ -216,11 +217,7 @@ export default function CustomerOrderDetailsScreen() {
               <Text style={{ fontSize: 18, color: '#0F172A', fontWeight: '700' }}>←</Text>
             </TouchableOpacity>
             {rest?.logo_url ? (
-              <Image
-                source={{ uri: rest.logo_url }}
-                style={{ width: 38, height: 38, borderRadius: 8, marginLeft: 6 }}
-                resizeMode="contain"
-              />
+              <OptimizedImage source={rest.logo_url} style={{ width: 38, height: 38, borderRadius: 8, marginLeft: 6 }} contentFit="contain" type="logo" />
             ) : null}
             <View style={{ flex: 1, marginLeft: 10 }}>
               <Text style={styles.headerTitle} numberOfLines={1}>
@@ -448,11 +445,7 @@ export default function CustomerOrderDetailsScreen() {
                 {order.payment_proof_url ? (
                   <View style={[styles.infoBlock, { marginTop: 8 }]}>
                     <Text style={styles.infoLabel}>Payment Screenshot Proof</Text>
-                    <Image
-                      source={{ uri: order.payment_proof_url }}
-                      style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 4, backgroundColor: '#F1F5F9' }}
-                      resizeMode="contain"
-                    />
+                    <OptimizedImage source={order.payment_proof_url} style={{ width: '100%', height: 160, borderRadius: 8, marginTop: 4, backgroundColor: '#F1F5F9' }} contentFit="contain" />
                   </View>
                 ) : null}
               </View>

@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/context/AuthContext';
+import { OptimizedImage } from '../../src/components/common/OptimizedImage';
 import { useCustomerCart } from '../../src/context/CustomerCartContext';
 import { useStorefront } from '../../src/context/StorefrontContext';
 import { marketplaceService } from '../../src/services/api/marketplaceService';
@@ -286,11 +287,7 @@ export default function CustomerOrdersScreen() {
           <View style={styles.header}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               {isDedicated && dedicatedRestaurant?.logo_url ? (
-                <Image
-                  source={{ uri: dedicatedRestaurant.logo_url }}
-                  style={styles.headerLogo}
-                  resizeMode="contain"
-                />
+                <OptimizedImage source={dedicatedRestaurant.logo_url} style={styles.headerLogo} contentFit="contain" type="logo" />
               ) : isDedicated ? (
                 <View style={[styles.headerLogo, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#EFF6FF', borderRadius: 8 }]}>
                   <Text style={{ fontSize: 20 }}>🍽️</Text>

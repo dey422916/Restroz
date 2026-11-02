@@ -25,6 +25,7 @@ import { customerColors } from '../../src/utils/colors';
 import { isValidPhoneNumber, normalizePhoneNumber } from '../../src/utils/phone';
 import { isValidIndianPhone, normalizeIndianPhone, getIndianPhoneValidationError } from '../../src/utils/validation';
 import { formatPrice } from '../../src/utils/currency';
+import { OptimizedImage } from '../../src/components/common/OptimizedImage';
 
 export default function DeliveryCheckoutScreen() {
   const router = useRouter();
@@ -603,11 +604,7 @@ export default function DeliveryCheckoutScreen() {
                             activeOpacity={0.85}
                             style={styles.qrTouchable}
                           >
-                            <Image
-                              source={{ uri: cart.delivery_payment_qr_url }}
-                              style={styles.qrImage}
-                              resizeMode="contain"
-                            />
+                            <OptimizedImage source={cart.delivery_payment_qr_url} style={styles.qrImage} contentFit="contain" />
                             <Text style={styles.qrTapHint}>🔍 Tap to view full screen</Text>
                           </TouchableOpacity>
                         </View>
@@ -671,11 +668,7 @@ export default function DeliveryCheckoutScreen() {
 
                       {paymentProofUrl ? (
                         <View style={styles.uploadedProofContainer}>
-                          <Image
-                            source={{ uri: paymentProofUrl }}
-                            style={styles.uploadedProofThumbnail}
-                            resizeMode="cover"
-                          />
+                          <OptimizedImage source={paymentProofUrl} style={styles.uploadedProofThumbnail} contentFit="cover" />
                           <View style={{ flex: 1, marginLeft: 12 }}>
                             <Text style={styles.uploadedProofLabel}>Payment Proof Attached</Text>
                             <Text style={styles.uploadedProofSub}>Ready for restaurant verification</Text>
@@ -1096,11 +1089,7 @@ export default function DeliveryCheckoutScreen() {
               </TouchableOpacity>
             </View>
             {cart.delivery_payment_qr_url ? (
-              <Image
-                source={{ uri: cart.delivery_payment_qr_url }}
-                style={{ width: 280, height: 280, borderRadius: 12, backgroundColor: '#F8FAFC' }}
-                resizeMode="contain"
-              />
+              <OptimizedImage source={cart.delivery_payment_qr_url} style={{ width: 280, height: 280, borderRadius: 12, backgroundColor: '#F8FAFC' }} contentFit="contain" />
             ) : null}
             {cart.delivery_upi_id ? (
               <View style={{ marginTop: 12, alignItems: 'center', width: '100%', gap: 8 }}>
@@ -1142,11 +1131,7 @@ export default function DeliveryCheckoutScreen() {
               Reference screenshot of what a successful payment confirmation looks like:
             </Text>
             {cart.delivery_sample_screenshot_url ? (
-              <Image
-                source={{ uri: cart.delivery_sample_screenshot_url }}
-                style={{ width: 320, height: 380, borderRadius: 12, backgroundColor: '#F8FAFC' }}
-                resizeMode="contain"
-              />
+              <OptimizedImage source={cart.delivery_sample_screenshot_url} style={{ width: 320, height: 380, borderRadius: 12, backgroundColor: '#F8FAFC' }} contentFit="contain" />
             ) : null}
             <TouchableOpacity
               style={[styles.modalSaveBtn, { width: '100%', alignItems: 'center', marginTop: 16 }]}

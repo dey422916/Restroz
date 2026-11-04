@@ -101,7 +101,7 @@ interface AndroidPrintDiagnosticParams {
 
 function logAndroidPrintDiagnostic(params: AndroidPrintDiagnosticParams) {
   console.log(
-`[ANDROID_PRINT]
+    `[ANDROID_PRINT]
 Job: ${params.job}
 Source: ${params.source}
 Mode: DIRECT_DEVICE
@@ -153,7 +153,7 @@ export const androidPrintRouter = {
   async resetDedupCache(): Promise<void> {
     inMemoryPrintedJobs.clear();
     isDedupInitialized = true;
-    await AsyncStorage.removeItem(STORAGE_KEY_PRINTED_JOBS).catch(() => {});
+    await AsyncStorage.removeItem(STORAGE_KEY_PRINTED_JOBS).catch(() => { });
   },
 
   /**

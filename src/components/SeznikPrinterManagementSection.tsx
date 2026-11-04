@@ -10,15 +10,19 @@ import {
   Platform,
   TextInput,
 } from 'react-native';
-import { RestaurantSettings } from '../types';
+import { RestaurantSettings, RestaurantPrinter } from '../types';
 import {
   webDirectPrintService,
   ConfiguredDirectPrinter,
   DirectPrinterRole,
   DirectPaperWidth,
+  DirectPrinterStatus,
   PrintAgentInfo,
 } from '../services/webDirectPrintService';
 import { setLocalKotPrinter, setLocalBillPrinter } from '../services/directPrintService';
+import { printerManager } from '../services/printerManager';
+import { devicePrinterBindingService } from '../services/printerManager/devicePrinterBindings';
+import { BluetoothDeviceInfo, UsbDeviceInfo } from '../services/printerManager/transports/types';
 
 interface Props {
   restaurantId: string;
@@ -27,7 +31,17 @@ interface Props {
   showToast: (type: 'success' | 'error' | 'info', title: string, message: string) => void;
 }
 
-type WizardStep = 'choose_type' | 'bluetooth_pair' | 'usb_detect' | 'serial_detect' | 'windows_agent_pair' | 'windows_select' | 'configure_test';
+type WizardStep =
+  | 'choose_type'
+  | 'bluetooth_pair'
+  | 'usb_detect'
+  | 'serial_detect'
+  | 'windows_agent_pair'
+  | 'windows_select'
+  | 'android_bluetooth_scan'
+  | 'android_usb_select'
+  | 'android_network_input'
+  | 'configure_test';
 
 export const SeznikPrinterManagementSection: React.FC<Props> = ({
   restaurantId,
@@ -60,6 +74,16 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
   const [wizardNotice, setWizardNotice] = useState<string | null>(null);
   const [wizardSearchQuery, setWizardSearchQuery] = useState('');
 
+  // Native Android Bluetooth & Hardware State
+  const [discoveredBluetoothDevices, setDiscoveredBluetoothDevices] = useState<BluetoothDeviceInfo[]>([]);
+  const [isScanningBt, setIsScanningBt] = useState(false);
+  const [btScanComplete, setBtScanComplete] = useState(false);
+  const [selectedBtDevice, setSelectedBtDevice] = useState<BluetoothDeviceInfo | null>(null);
+  const [discoveredUsbDevices, setDiscoveredUsbDevices] = useState<UsbDeviceInfo[]>([]);
+  const [pendingUsbInfo, setPendingUsbInfo] = useState<UsbDeviceInfo | null>(null);
+  const [ipAddressInput, setIpAddressInput] = useState('');
+  const [portInput, setPortInput] = useState('9100');
+
   // Edit Modal State
   const [editingPrinter, setEditingPrinter] = useState<ConfiguredDirectPrinter | null>(null);
   const [editRole, setEditRole] = useState<DirectPrinterRole>('both');
@@ -73,11 +97,74 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
   const loadPrintersAndAgent = useCallback(async () => {
     setIsLoading(true);
     try {
-      const list = await webDirectPrintService.restorePrinters(restaurantId);
-      setPrinters(list);
+      if (Platform.OS === 'web') {
+        const list = await webDirectPrintService.restorePrinters(restaurantId);
+        setPrinters(list);
 
-      const agent = await webDirectPrintService.getPairedAgent(restaurantId);
-      setPairedAgent(agent);
+        const agent = await webDirectPrintService.getPairedAgent(restaurantId);
+        setPairedAgent(agent);
+      } else {
+        const devicePrinters = await devicePrinterBindingService.getDevicePrinters();
+        const bindings = await devicePrinterBindingService.getAllDeviceBindings();
+        const defaults = await devicePrinterBindingService.getDeviceDefaults();
+
+        let btOn = true;
+        try {
+          btOn = await printerManager.isBluetoothEnabled();
+        } catch (_) {}
+
+        const mapped: ConfiguredDirectPrinter[] = devicePrinters
+          .filter(
+            (p) =>
+              !restaurantId ||
+              !p.restaurant_id ||
+              p.restaurant_id === restaurantId ||
+              p.connection_type === 'bluetooth' ||
+              p.connection_type === 'usb'
+          )
+          .map((p) => {
+            const binding = bindings[p.id];
+            const isPrimary = Boolean(
+              p.is_primary ||
+                defaults.default_kot_printer_id === p.id ||
+                defaults.default_bill_printer_id === p.id
+            );
+
+            let status: DirectPrinterStatus = 'connected';
+            let statusMessage: string | undefined;
+
+            if (p.connection_type === 'bluetooth') {
+              const mac = binding?.bluetooth_mac_address || (p as any).bluetooth_mac_address;
+              if (!mac) {
+                status = 'reconnect_required';
+                statusMessage = 'Bluetooth printer not bound to this device.';
+              } else if (!btOn) {
+                status = 'offline';
+                statusMessage = 'Bluetooth is turned OFF in Android settings.';
+              }
+            }
+
+            return {
+              id: p.id,
+              name: p.name,
+              transport:
+                p.connection_type === 'bluetooth'
+                  ? 'bluetooth'
+                  : p.connection_type === 'usb'
+                  ? 'usb'
+                  : (p.connection_type as any),
+              paperWidth: p.paper_width || '80mm',
+              role: p.printer_role || 'both',
+              isPrimary,
+              status,
+              statusMessage,
+              deviceId: binding?.bluetooth_mac_address || (p as any).bluetooth_mac_address || p.ip_address || undefined,
+              bluetoothDeviceId: binding?.bluetooth_mac_address || (p as any).bluetooth_mac_address || undefined,
+            };
+          });
+
+        setPrinters(mapped);
+      }
     } catch (err: any) {
       console.warn('[SeznikPrinterManagement] Error loading printers/agent:', err);
     } finally {
@@ -90,6 +177,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
   }, [loadPrintersAndAgent]);
 
   useEffect(() => {
+    if (Platform.OS !== 'web') return;
     const unsubscribe = webDirectPrintService.onPrinterStatusChange((printer, status, message) => {
       if (status === 'disconnected') {
         showToast(
@@ -115,6 +203,12 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
     setWizardIsPrimary(printers.length === 0);
     setPairingCodeInput('');
     setDetectedAgentName(null);
+    setDiscoveredBluetoothDevices([]);
+    setSelectedBtDevice(null);
+    setDiscoveredUsbDevices([]);
+    setPendingUsbInfo(null);
+    setIpAddressInput('');
+    setPortInput('9100');
     setWizardVisible(true);
   };
 
@@ -192,6 +286,138 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
     } finally {
       setIsWizardLoading(false);
     }
+  };
+
+  // Android Bluetooth Discovery & Pairing Flow
+  const handleStartBluetoothAndroid = async () => {
+    setWizardStep('android_bluetooth_scan');
+    setIsScanningBt(true);
+    setBtScanComplete(false);
+    setWizardNotice(null);
+    setDiscoveredBluetoothDevices([]);
+    try {
+      const devices = await printerManager.getUnifiedBluetoothDevices({
+        timeoutMs: 12000,
+        onProgress: (live) => {
+          setDiscoveredBluetoothDevices([...live]);
+        },
+      });
+      setDiscoveredBluetoothDevices(devices);
+      if (devices.length === 0) {
+        setWizardNotice('No Bluetooth devices found. Ensure printer is ON and Bluetooth is enabled in Android Settings.');
+      }
+    } catch (err: any) {
+      const msg = err?.message || '';
+      if (msg === 'BLUETOOTH_POWERED_OFF' || /power|disabled|turn on/i.test(msg)) {
+        setWizardNotice('Bluetooth is turned OFF. Please turn ON Bluetooth in Android Settings and try again.');
+      } else if (msg === 'BLUETOOTH_PERMISSION_DENIED' || /permission/i.test(msg)) {
+        setWizardNotice('Bluetooth permissions are required to scan printers. Please allow permissions in Android Settings.');
+      } else {
+        setWizardNotice(err?.message || 'Bluetooth scan failed.');
+      }
+    } finally {
+      setIsScanningBt(false);
+      setBtScanComplete(true);
+    }
+  };
+
+  const handleSelectBtDevice = (device: BluetoothDeviceInfo) => {
+    setSelectedBtDevice(device);
+    const isSeznik = /seznik|925|9394/i.test(device.name || '');
+    const is58 = isSeznik || /58/i.test(device.name || '');
+    const pWidth: DirectPaperWidth = is58 ? '58mm' : '80mm';
+    const printerId = `bt_${(device.address || 'printer').replace(/[^a-zA-Z0-9]/g, '_')}`;
+
+    const configured: ConfiguredDirectPrinter = {
+      id: printerId,
+      name: device.name || 'Bluetooth Thermal Printer',
+      transport: 'bluetooth',
+      deviceId: device.address,
+      bluetoothDeviceId: device.address,
+      paperWidth: pWidth,
+      role: wizardRole,
+      isPrimary: wizardIsPrimary || printers.length === 0,
+      status: 'connected',
+    };
+
+    setPendingPrinter(configured);
+    setWizardPaperWidth(pWidth);
+    setWizardStep('configure_test');
+  };
+
+  // Android USB Detection Flow
+  const handleStartUsbAndroid = async () => {
+    setWizardStep('android_usb_select');
+    setIsWizardLoading(true);
+    setWizardNotice(null);
+    try {
+      const devices = await printerManager.getAttachedUsbDevices();
+      setDiscoveredUsbDevices(devices);
+      if (devices.length === 0) {
+        setWizardNotice('No USB thermal printers detected. Connect printer via USB OTG cable and power it on.');
+      }
+    } catch (err: any) {
+      setWizardNotice(err?.message || 'Failed to detect USB devices.');
+    } finally {
+      setIsWizardLoading(false);
+    }
+  };
+
+  const handleSelectUsbDevice = (device: UsbDeviceInfo) => {
+    setPendingUsbInfo(device);
+    const is58 = /58/i.test(device.deviceName || '');
+    const pWidth: DirectPaperWidth = is58 ? '58mm' : '80mm';
+    const printerId = `usb_${device.vendorId}_${device.productId}`;
+
+    const configured: ConfiguredDirectPrinter = {
+      id: printerId,
+      name: device.deviceName || `USB Printer (${device.vendorId}:${device.productId})`,
+      transport: 'usb',
+      deviceId: String(device.deviceId),
+      vendorId: device.vendorId,
+      productId: device.productId,
+      serialNumber: device.serialNumber,
+      paperWidth: pWidth,
+      role: wizardRole,
+      isPrimary: wizardIsPrimary || printers.length === 0,
+      status: 'connected',
+    };
+
+    setPendingPrinter(configured);
+    setWizardPaperWidth(pWidth);
+    setWizardStep('configure_test');
+  };
+
+  // Android Network (LAN / Wi-Fi) Flow
+  const handleStartNetworkAndroid = () => {
+    setWizardStep('android_network_input');
+    setWizardNotice(null);
+    setIpAddressInput('');
+    setPortInput('9100');
+  };
+
+  const handleConfirmNetwork = () => {
+    const ip = ipAddressInput.trim();
+    if (!ip) {
+      setWizardNotice('Please enter the printer IP address (e.g. 192.168.1.100).');
+      return;
+    }
+    const port = parseInt(portInput.trim() || '9100', 10);
+    const printerId = `net_${ip.replace(/[^a-zA-Z0-9]/g, '_')}_${port}`;
+
+    const configured: ConfiguredDirectPrinter = {
+      id: printerId,
+      name: `Network Printer (${ip})`,
+      transport: 'lan' as any,
+      deviceId: `${ip}:${port}`,
+      paperWidth: wizardPaperWidth,
+      role: wizardRole,
+      isPrimary: wizardIsPrimary || printers.length === 0,
+      status: 'connected',
+    };
+
+    setPendingPrinter(configured);
+    setWizardStep('configure_test');
   };
 
   const [isPollingQueues, setIsPollingQueues] = useState(false);
@@ -355,20 +581,77 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
     if (!pendingPrinter) return;
     setIsWizardLoading(true);
     try {
-      const updatedPending: ConfiguredDirectPrinter = {
-        ...pendingPrinter,
-        role: wizardRole,
-        paperWidth: wizardPaperWidth,
-        isPrimary: wizardIsPrimary,
-      };
-      const result = await webDirectPrintService.printTest(updatedPending, settings, restaurantId);
-      showToast('success', 'Test Print Sent', result.message || 'Test receipt dispatched successfully!');
-      const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
-      setPrinters(updatedList);
+      if (Platform.OS === 'web') {
+        const updatedPending: ConfiguredDirectPrinter = {
+          ...pendingPrinter,
+          role: wizardRole,
+          paperWidth: wizardPaperWidth,
+          isPrimary: wizardIsPrimary,
+        };
+        const result = await webDirectPrintService.printTest(updatedPending, settings, restaurantId);
+        showToast('success', 'Test Print Sent', result.message || 'Test receipt dispatched successfully!');
+        const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
+        setPrinters(updatedList);
+      } else {
+        const isSeznik =
+          /seznik|925|9394/i.test(pendingPrinter.name) ||
+          /seznik|925|9394/i.test(selectedBtDevice?.name || '');
+        const isBle = isSeznik || selectedBtDevice?.transportType === 'ble_gatt';
+
+        const connType: any =
+          pendingPrinter.transport === 'usb'
+            ? 'usb'
+            : (pendingPrinter.transport as string) === 'lan' || (pendingPrinter.transport as any) === 'wifi'
+            ? 'lan'
+            : 'bluetooth';
+
+        const tempPrinter: RestaurantPrinter = {
+          id: pendingPrinter.id,
+          restaurant_id: restaurantId,
+          name: pendingPrinter.name,
+          connection_type: connType,
+          paper_width: wizardPaperWidth as any,
+          printer_role: wizardRole as any,
+          is_active: true,
+          is_primary: wizardIsPrimary,
+          bluetooth_device_name: selectedBtDevice?.name || pendingPrinter.name,
+          ip_address: pendingPrinter.deviceId?.includes('.') ? pendingPrinter.deviceId.split(':')[0] : undefined,
+          port: pendingPrinter.deviceId?.includes(':') ? parseInt(pendingPrinter.deviceId.split(':')[1], 10) : undefined,
+          alignment: 'center',
+          horizontal_shift_mm: 0,
+          margin_left_mm: 0,
+          margin_right_mm: 0,
+          margin_top_mm: 0,
+          margin_bottom_mm: 0,
+        };
+
+        if (pendingPrinter.transport === 'bluetooth') {
+          await devicePrinterBindingService.saveDeviceBinding({
+            restaurant_printer_id: tempPrinter.id,
+            connection_type: 'bluetooth',
+            bluetooth_mac_address: pendingPrinter.bluetoothDeviceId || pendingPrinter.deviceId || selectedBtDevice?.address,
+            bluetooth_device_name: selectedBtDevice?.name || pendingPrinter.name,
+            bluetooth_transport_type: isBle ? 'ble_gatt' : 'spp',
+          });
+        } else if (pendingPrinter.transport === 'usb' && pendingUsbInfo) {
+          await devicePrinterBindingService.saveDeviceBinding({
+            restaurant_printer_id: tempPrinter.id,
+            connection_type: 'usb',
+            usb_vendor_id: pendingUsbInfo.vendorId,
+            usb_product_id: pendingUsbInfo.productId,
+            usb_serial_number: pendingUsbInfo.serialNumber,
+          });
+        }
+
+        const result = await printerManager.printTestReceipt(tempPrinter);
+        if (result.success) {
+          showToast('success', 'Test Print Sent', result.message || 'Test receipt dispatched successfully!');
+        } else {
+          showToast('error', 'Test Print Failed', result.message || 'Could not print test receipt.');
+        }
+      }
     } catch (err: any) {
       showToast('error', 'Test Print Failed', err.message || 'Test print failed.');
-      const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
-      setPrinters(updatedList);
     } finally {
       setIsWizardLoading(false);
     }
@@ -380,50 +663,156 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
       setWizardVisible(false);
       return;
     }
-    const updated: ConfiguredDirectPrinter = {
-      ...pendingPrinter,
-      role: wizardRole,
-      paperWidth: wizardPaperWidth,
-      isPrimary: wizardIsPrimary,
-    };
-    webDirectPrintService.updatePrinter(updated, restaurantId);
-    if (updated.transport === 'agent' && (wizardIsPrimary || updated.isPrimary)) {
-      const qName = updated.windowsQueueName || updated.name;
-      if (updated.role === 'kot' || updated.role === 'both') {
-        setLocalKotPrinter(qName, restaurantId);
-      } else {
-        setLocalKotPrinter('', restaurantId);
+    if (Platform.OS === 'web') {
+      const updated: ConfiguredDirectPrinter = {
+        ...pendingPrinter,
+        role: wizardRole,
+        paperWidth: wizardPaperWidth,
+        isPrimary: wizardIsPrimary,
+      };
+      webDirectPrintService.updatePrinter(updated, restaurantId);
+      if (updated.transport === 'agent' && (wizardIsPrimary || updated.isPrimary)) {
+        const qName = updated.windowsQueueName || updated.name;
+        if (updated.role === 'kot' || updated.role === 'both') {
+          setLocalKotPrinter(qName, restaurantId);
+        } else {
+          setLocalKotPrinter('', restaurantId);
+        }
+        if (updated.role === 'bill' || updated.role === 'both') {
+          setLocalBillPrinter(qName, restaurantId);
+        } else {
+          setLocalBillPrinter('', restaurantId);
+        }
       }
-      if (updated.role === 'bill' || updated.role === 'both') {
-        setLocalBillPrinter(qName, restaurantId);
-      } else {
-        setLocalBillPrinter('', restaurantId);
+      await loadPrintersAndAgent();
+      setWizardVisible(false);
+      showToast('success', 'Printer Setup Complete', `"${updated.name}" is now ready for POS printing.`);
+    } else {
+      const isSeznik =
+        /seznik|925|9394/i.test(pendingPrinter.name) ||
+        /seznik|925|9394/i.test(selectedBtDevice?.name || '');
+      const isBle = isSeznik || selectedBtDevice?.transportType === 'ble_gatt';
+
+      const connType: any =
+        pendingPrinter.transport === 'usb'
+          ? 'usb'
+          : (pendingPrinter.transport as string) === 'lan' || (pendingPrinter.transport as any) === 'wifi'
+          ? 'lan'
+          : 'bluetooth';
+
+      const restaurantPrinter: RestaurantPrinter = {
+        id: pendingPrinter.id,
+        restaurant_id: restaurantId,
+        name: pendingPrinter.name,
+        connection_type: connType,
+        paper_width: wizardPaperWidth as any,
+        printer_role: wizardRole as any,
+        is_active: true,
+        is_primary: wizardIsPrimary,
+        bluetooth_device_name: selectedBtDevice?.name || pendingPrinter.name,
+        ip_address: pendingPrinter.deviceId?.includes('.') ? pendingPrinter.deviceId.split(':')[0] : undefined,
+        port: pendingPrinter.deviceId?.includes(':') ? parseInt(pendingPrinter.deviceId.split(':')[1], 10) : undefined,
+        alignment: 'center',
+        horizontal_shift_mm: 0,
+        margin_left_mm: 0,
+        margin_right_mm: 0,
+        margin_top_mm: 0,
+        margin_bottom_mm: 0,
+      };
+
+      await devicePrinterBindingService.saveDevicePrinter(restaurantPrinter);
+
+      if (pendingPrinter.transport === 'bluetooth') {
+        await devicePrinterBindingService.saveDeviceBinding({
+          restaurant_printer_id: restaurantPrinter.id,
+          connection_type: 'bluetooth',
+          bluetooth_mac_address: pendingPrinter.bluetoothDeviceId || pendingPrinter.deviceId || selectedBtDevice?.address,
+          bluetooth_device_name: selectedBtDevice?.name || pendingPrinter.name,
+          bluetooth_transport_type: isBle ? 'ble_gatt' : 'spp',
+        });
+      } else if (pendingPrinter.transport === 'usb' && pendingUsbInfo) {
+        await devicePrinterBindingService.saveDeviceBinding({
+          restaurant_printer_id: restaurantPrinter.id,
+          connection_type: 'usb',
+          usb_vendor_id: pendingUsbInfo.vendorId,
+          usb_product_id: pendingUsbInfo.productId,
+          usb_serial_number: pendingUsbInfo.serialNumber,
+        });
       }
+
+      if (wizardIsPrimary) {
+        const defaults = await devicePrinterBindingService.getDeviceDefaults();
+        if (wizardRole === 'kot' || wizardRole === 'both') {
+          defaults.default_kot_printer_id = restaurantPrinter.id;
+        }
+        if (wizardRole === 'bill' || wizardRole === 'both') {
+          defaults.default_bill_printer_id = restaurantPrinter.id;
+        }
+        await devicePrinterBindingService.saveDeviceDefaults(defaults);
+      }
+
+      await devicePrinterBindingService.setDevicePrintMode('DIRECT_DEVICE');
+      await loadPrintersAndAgent();
+      setWizardVisible(false);
+      showToast('success', 'Printer Setup Complete', `"${restaurantPrinter.name}" is now ready for POS printing.`);
     }
-    await loadPrintersAndAgent();
-    setWizardVisible(false);
-    showToast('success', 'Printer Setup Complete', `"${updated.name}" is now ready for POS printing.`);
   };
 
   // Card Action Handlers
   const handleCardTestPrint = async (printer: ConfiguredDirectPrinter) => {
     setTestingPrinterId(printer.id);
     try {
-      console.log(
-        `[PRINTER_IDENTITY_AUDIT]\n` +
-        `UI Printer ID: ${printer.id}\n` +
-        `UI Printer Name: ${printer.name}\n` +
-        `UI deviceId: ${printer.deviceId || 'N/A'}\n` +
-        `UI bluetoothDeviceId: ${printer.bluetoothDeviceId || 'N/A'}`
-      );
-      const result = await webDirectPrintService.printTest(printer, settings, restaurantId);
-      showToast('success', 'Test Print Sent', result.message || 'Test print dispatched successfully!');
-      const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
-      setPrinters(updatedList);
+      if (Platform.OS === 'web') {
+        console.log(
+          `[PRINTER_IDENTITY_AUDIT]\n` +
+          `UI Printer ID: ${printer.id}\n` +
+          `UI Printer Name: ${printer.name}\n` +
+          `UI deviceId: ${printer.deviceId || 'N/A'}\n` +
+          `UI bluetoothDeviceId: ${printer.bluetoothDeviceId || 'N/A'}`
+        );
+        const result = await webDirectPrintService.printTest(printer, settings, restaurantId);
+        showToast('success', 'Test Print Sent', result.message || 'Test print dispatched successfully!');
+        const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
+        setPrinters(updatedList);
+      } else {
+        const devicePrinters = await devicePrinterBindingService.getDevicePrinters();
+        const binding = await devicePrinterBindingService.getDeviceBinding(printer.id);
+        let target = devicePrinters.find((p) => p.id === printer.id);
+        if (!target) {
+          const connType: any =
+            printer.transport === 'usb'
+              ? 'usb'
+              : (printer.transport as string) === 'lan' || (printer.transport as any) === 'wifi'
+              ? 'lan'
+              : 'bluetooth';
+          target = {
+            id: printer.id,
+            restaurant_id: restaurantId,
+            name: printer.name,
+            connection_type: connType,
+            paper_width: printer.paperWidth as any,
+            printer_role: printer.role as any,
+            is_active: true,
+            is_primary: Boolean(printer.isPrimary),
+            bluetooth_device_name: binding?.bluetooth_device_name || printer.name,
+            ip_address: printer.deviceId?.includes('.') ? printer.deviceId.split(':')[0] : undefined,
+            alignment: 'center',
+            horizontal_shift_mm: 0,
+            margin_left_mm: 0,
+            margin_right_mm: 0,
+            margin_top_mm: 0,
+            margin_bottom_mm: 0,
+          };
+        }
+        const result = await printerManager.printTestReceipt(target);
+        if (result.success) {
+          showToast('success', 'Test Print Sent', result.message || 'Test print dispatched successfully!');
+        } else {
+          showToast('error', 'Test Print Failed', result.message || 'Failed to print test receipt.');
+        }
+      }
     } catch (err: any) {
       showToast('error', 'Test Print Failed', err.message || 'Failed to print test receipt.');
-      const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
-      setPrinters(updatedList);
     } finally {
       setTestingPrinterId(null);
     }
@@ -432,9 +821,13 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
   const handleDisconnect = async (printer: ConfiguredDirectPrinter) => {
     if (!canManage) return;
     try {
-      await webDirectPrintService.disconnectPrinter(printer.id, restaurantId);
-      const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
-      setPrinters(updatedList);
+      if (Platform.OS === 'web') {
+        await webDirectPrintService.disconnectPrinter(printer.id, restaurantId);
+        const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
+        setPrinters(updatedList);
+      } else {
+        await devicePrinterBindingService.removeDevicePrinter(printer.id);
+      }
       showToast('info', 'Printer Removed', `Removed "${printer.name}" from configured printers.`);
       await loadPrintersAndAgent();
     } catch (err: any) {
@@ -449,31 +842,63 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
     setEditIsPrimary(Boolean(printer.isPrimary));
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editingPrinter) return;
-    const updated: ConfiguredDirectPrinter = {
-      ...editingPrinter,
-      role: editRole,
-      paperWidth: editPaperWidth,
-      isPrimary: editIsPrimary,
-    };
-    webDirectPrintService.updatePrinter(updated, restaurantId);
-    if (updated.transport === 'agent' && (editIsPrimary || editingPrinter.isPrimary)) {
-      const qName = updated.windowsQueueName || updated.name;
-      if (updated.role === 'kot' || updated.role === 'both') {
-        setLocalKotPrinter(qName, restaurantId);
-      } else {
-        setLocalKotPrinter('', restaurantId);
+    if (Platform.OS === 'web') {
+      const updated: ConfiguredDirectPrinter = {
+        ...editingPrinter,
+        role: editRole,
+        paperWidth: editPaperWidth,
+        isPrimary: editIsPrimary,
+      };
+      webDirectPrintService.updatePrinter(updated, restaurantId);
+      if (updated.transport === 'agent' && (editIsPrimary || editingPrinter.isPrimary)) {
+        const qName = updated.windowsQueueName || updated.name;
+        if (updated.role === 'kot' || updated.role === 'both') {
+          setLocalKotPrinter(qName, restaurantId);
+        } else {
+          setLocalKotPrinter('', restaurantId);
+        }
+        if (updated.role === 'bill' || updated.role === 'both') {
+          setLocalBillPrinter(qName, restaurantId);
+        } else {
+          setLocalBillPrinter('', restaurantId);
+        }
       }
-      if (updated.role === 'bill' || updated.role === 'both') {
-        setLocalBillPrinter(qName, restaurantId);
-      } else {
-        setLocalBillPrinter('', restaurantId);
+    } else {
+      const currentPrinters = await devicePrinterBindingService.getDevicePrinters();
+      const existing = currentPrinters.find((p) => p.id === editingPrinter.id);
+      if (existing) {
+        const updatedPrinter: RestaurantPrinter = {
+          ...existing,
+          printer_role: editRole as any,
+          paper_width: editPaperWidth as any,
+          is_primary: editIsPrimary,
+        };
+        await devicePrinterBindingService.saveDevicePrinter(updatedPrinter);
+
+        const defaults = await devicePrinterBindingService.getDeviceDefaults();
+        if (editIsPrimary) {
+          if (editRole === 'kot' || editRole === 'both') {
+            defaults.default_kot_printer_id = updatedPrinter.id;
+          }
+          if (editRole === 'bill' || editRole === 'both') {
+            defaults.default_bill_printer_id = updatedPrinter.id;
+          }
+        } else {
+          if (defaults.default_kot_printer_id === updatedPrinter.id && editRole !== 'kot' && editRole !== 'both') {
+            defaults.default_kot_printer_id = undefined;
+          }
+          if (defaults.default_bill_printer_id === updatedPrinter.id && editRole !== 'bill' && editRole !== 'both') {
+            defaults.default_bill_printer_id = undefined;
+          }
+        }
+        await devicePrinterBindingService.saveDeviceDefaults(defaults);
       }
     }
     setEditingPrinter(null);
-    showToast('success', 'Printer Updated', `Configuration updated for "${updated.name}".`);
-    loadPrintersAndAgent();
+    showToast('success', 'Printer Updated', `Configuration updated for "${editingPrinter.name}".`);
+    await loadPrintersAndAgent();
   };
 
   const getStatusBadge = (printer: ConfiguredDirectPrinter) => {
@@ -515,13 +940,16 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
   const getTransportBadge = (transport: string) => {
     switch (transport) {
       case 'bluetooth':
-        return <Text style={styles.transportBadgeBt}>BLUETOOTH (BLE)</Text>;
+        return <Text style={styles.transportBadgeBt}>BLUETOOTH</Text>;
       case 'usb':
-        return <Text style={styles.transportBadgeUsb}>WEBUSB DIRECT</Text>;
+        return <Text style={styles.transportBadgeUsb}>USB DIRECT</Text>;
       case 'serial':
         return <Text style={styles.transportBadgeSerial}>WEB SERIAL (COM)</Text>;
       case 'agent':
         return <Text style={styles.transportBadgeAgent}>RESTROZ PRINT AGENT</Text>;
+      case 'lan':
+      case 'wifi':
+        return <Text style={styles.transportBadgeTcp}>NETWORK (LAN/WIFI)</Text>;
       default:
         return <Text style={styles.transportBadge}>{transport.toUpperCase()}</Text>;
     }
@@ -538,7 +966,9 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
         <View style={styles.headerTitleBox}>
           <Text style={styles.title}>Printer Devices</Text>
           <Text style={styles.subtitle}>
-            Connect thermal receipt printers via Web Bluetooth, WebUSB, Serial, or RestroZ Print Agent.
+            {Platform.OS === 'web'
+              ? 'Connect thermal receipt printers via Web Bluetooth, WebUSB, Serial, or RestroZ Print Agent.'
+              : 'Connect thermal receipt printers via Bluetooth (BLE/SPP), USB OTG, or Network LAN.'}
           </Text>
         </View>
         {canManage && (
@@ -612,7 +1042,9 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
         <View style={styles.emptyCard}>
           <Text style={styles.emptyTitle}>No Printers Connected</Text>
           <Text style={styles.emptyText}>
-            Click "+ Connect Printer" above to pair a Bluetooth, USB, Serial, or Windows Print Agent thermal printer.
+            {Platform.OS === 'web'
+              ? 'Click "+ Connect Printer" above to pair a Bluetooth, USB, Serial, or Windows Print Agent thermal printer.'
+              : 'Click "+ Connect Printer" above to pair a Bluetooth (BLE/SPP), USB, or Network thermal printer.'}
           </Text>
         </View>
       ) : (
@@ -707,6 +1139,9 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {wizardStep === 'choose_type' && 'Connect New Printer'}
+                {wizardStep === 'android_bluetooth_scan' && 'Scan Bluetooth Printers'}
+                {wizardStep === 'android_usb_select' && 'Select USB Printer'}
+                {wizardStep === 'android_network_input' && 'Enter Network Printer Details'}
                 {wizardStep === 'windows_agent_pair' && 'Pair RestroZ Print Agent'}
                 {wizardStep === 'windows_select' && 'Select Windows Printer Queue'}
                 {wizardStep === 'configure_test' && 'Configure & Test Printer'}
@@ -728,53 +1163,107 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
               <View style={styles.wizardBody}>
                 <Text style={styles.stepTitle}>Select your printer connection type:</Text>
 
-                {/* Option 1: Web Bluetooth */}
-                <TouchableOpacity
-                  style={[styles.optionCard, !isBtSupported && styles.optionDisabled]}
-                  onPress={handleStartBluetooth}
-                  disabled={isWizardLoading || !isBtSupported}
-                >
-                  <Text style={styles.optionTitle}>Bluetooth Printer</Text>
-                  <Text style={styles.optionDesc}>
-                    Direct connection to BLE 58mm / 80mm thermal printers using Chrome / Edge Web Bluetooth.
-                  </Text>
-                </TouchableOpacity>
+                {Platform.OS === 'web' ? (
+                  <>
+                    {/* Option 1: Web Bluetooth */}
+                    <TouchableOpacity
+                      style={[styles.optionCard, !isBtSupported && styles.optionDisabled]}
+                      onPress={handleStartBluetooth}
+                      disabled={isWizardLoading || !isBtSupported}
+                    >
+                      <Text style={styles.optionTitle}>Bluetooth Printer</Text>
+                      <Text style={styles.optionDesc}>
+                        Direct connection to BLE 58mm / 80mm thermal printers using Chrome / Edge Web Bluetooth.
+                      </Text>
+                    </TouchableOpacity>
 
-                {/* Option 2: Direct USB */}
-                <TouchableOpacity
-                  style={[styles.optionCard, !isUsbSupported && styles.optionDisabled]}
-                  onPress={handleStartUsb}
-                  disabled={isWizardLoading || !isUsbSupported}
-                >
-                  <Text style={styles.optionTitle}>USB Printer</Text>
-                  <Text style={styles.optionDesc}>
-                    Direct connection to USB ESC/POS thermal printers via WebUSB.
-                  </Text>
-                </TouchableOpacity>
+                    {/* Option 2: Direct USB */}
+                    <TouchableOpacity
+                      style={[styles.optionCard, !isUsbSupported && styles.optionDisabled]}
+                      onPress={handleStartUsb}
+                      disabled={isWizardLoading || !isUsbSupported}
+                    >
+                      <Text style={styles.optionTitle}>USB Printer</Text>
+                      <Text style={styles.optionDesc}>
+                        Direct connection to USB ESC/POS thermal printers via WebUSB.
+                      </Text>
+                    </TouchableOpacity>
 
-                {/* Option 3: Web Serial / COM */}
-                <TouchableOpacity
-                  style={[styles.optionCard, !isSerialSupported && styles.optionDisabled]}
-                  onPress={handleStartSerial}
-                  disabled={isWizardLoading || !isSerialSupported}
-                >
-                  <Text style={styles.optionTitle}>Serial / COM Port Printer</Text>
-                  <Text style={styles.optionDesc}>
-                    Direct connection to printers exposed on a serial/COM port via Web Serial.
-                  </Text>
-                </TouchableOpacity>
+                    {/* Option 3: Web Serial / COM */}
+                    <TouchableOpacity
+                      style={[styles.optionCard, !isSerialSupported && styles.optionDisabled]}
+                      onPress={handleStartSerial}
+                      disabled={isWizardLoading || !isSerialSupported}
+                    >
+                      <Text style={styles.optionTitle}>Serial / COM Port Printer</Text>
+                      <Text style={styles.optionDesc}>
+                        Direct connection to printers exposed on a serial/COM port via Web Serial.
+                      </Text>
+                    </TouchableOpacity>
 
-                {/* Option 4: Windows Printer (Print Agent) */}
-                <TouchableOpacity
-                  style={styles.optionCard}
-                  onPress={handleStartWindows}
-                  disabled={isWizardLoading}
-                >
-                  <Text style={styles.optionTitle}>Windows Printer (RestroZ Print Agent)</Text>
-                  <Text style={styles.optionDesc}>
-                    Silent thermal printing to any Windows driver queue (POS58, POS80, EPSON) via lightweight Print Agent.
-                  </Text>
-                </TouchableOpacity>
+                    {/* Option 4: Windows Printer (Print Agent) */}
+                    <TouchableOpacity
+                      style={styles.optionCard}
+                      onPress={handleStartWindows}
+                      disabled={isWizardLoading}
+                    >
+                      <Text style={styles.optionTitle}>Windows Printer (RestroZ Print Agent)</Text>
+                      <Text style={styles.optionDesc}>
+                        Silent thermal printing to any Windows driver queue (POS58, POS80, EPSON) via lightweight Print Agent.
+                      </Text>
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <>
+                    {/* Option 1: Android Bluetooth */}
+                    <TouchableOpacity
+                      style={styles.optionCard}
+                      onPress={handleStartBluetoothAndroid}
+                      disabled={isWizardLoading}
+                    >
+                      <Text style={styles.optionTitle}>Bluetooth Printer (BLE & Classic)</Text>
+                      <Text style={styles.optionDesc}>
+                        Scan and pair nearby Bluetooth thermal receipt printers (Seznik, RPP02N, PT-210, MPT-II, POS-58, POS-80).
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* Option 2: Android USB OTG */}
+                    <TouchableOpacity
+                      style={styles.optionCard}
+                      onPress={handleStartUsbAndroid}
+                      disabled={isWizardLoading}
+                    >
+                      <Text style={styles.optionTitle}>USB Printer (OTG / Host)</Text>
+                      <Text style={styles.optionDesc}>
+                        Direct connection to USB ESC/POS thermal printers connected via USB OTG cable.
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* Option 3: Android Network LAN */}
+                    <TouchableOpacity
+                      style={styles.optionCard}
+                      onPress={handleStartNetworkAndroid}
+                      disabled={isWizardLoading}
+                    >
+                      <Text style={styles.optionTitle}>Network Printer (LAN / Wi-Fi)</Text>
+                      <Text style={styles.optionDesc}>
+                        Connect to ESC/POS thermal printer over local Wi-Fi or Ethernet network (Port 9100).
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* Option 4: Desktop Print Agent (Optional) */}
+                    <TouchableOpacity
+                      style={styles.optionCard}
+                      onPress={handleStartWindows}
+                      disabled={isWizardLoading}
+                    >
+                      <Text style={styles.optionTitle}>Windows Print Agent (Central Station)</Text>
+                      <Text style={styles.optionDesc}>
+                        Pair with a desktop RestroZ Print Agent if using a central PC station.
+                      </Text>
+                    </TouchableOpacity>
+                  </>
+                )}
 
                 {isWizardLoading && (
                   <View style={styles.wizardLoadingOverlay}>
@@ -782,6 +1271,174 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
                     <Text style={styles.wizardLoadingText}>Connecting hardware...</Text>
                   </View>
                 )}
+              </View>
+            )}
+
+            {/* STEP: ANDROID BLUETOOTH SCAN */}
+            {wizardStep === 'android_bluetooth_scan' && (
+              <View style={styles.wizardBody}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <Text style={[styles.stepTitle, { flex: 1, marginBottom: 0 }]}>
+                    Discovered Bluetooth Printers:
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.smallRefreshBtn, isScanningBt && { opacity: 0.6 }]}
+                    onPress={handleStartBluetoothAndroid}
+                    disabled={isScanningBt}
+                  >
+                    <Text style={styles.smallRefreshBtnText}>⟳ Rescan</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {isScanningBt ? (
+                  <View style={{ padding: 24, alignItems: 'center', gap: 12 }}>
+                    <ActivityIndicator color="#f97316" size="large" />
+                    <Text style={{ color: '#a1a1aa', fontSize: 13 }}>Scanning nearby Bluetooth printers...</Text>
+                  </View>
+                ) : discoveredBluetoothDevices.length === 0 ? (
+                  <View style={{ padding: 20, alignItems: 'center' }}>
+                    <Text style={styles.emptyQueueText}>
+                      No Bluetooth devices found. Ensure your thermal printer is turned ON, within range, and Bluetooth is enabled.
+                    </Text>
+                    <TouchableOpacity
+                      style={[styles.primaryActionBtn, { marginTop: 12, paddingHorizontal: 20 }]}
+                      onPress={handleStartBluetoothAndroid}
+                    >
+                      <Text style={styles.primaryActionBtnText}>Retry Scan</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <ScrollView style={styles.queueList}>
+                    {discoveredBluetoothDevices.map((dev) => {
+                      const isSeznik = /seznik|925|9394/i.test(dev.name || '');
+                      return (
+                        <TouchableOpacity
+                          key={dev.address}
+                          style={styles.deviceItemCard}
+                          onPress={() => handleSelectBtDevice(dev)}
+                        >
+                          <View style={styles.deviceItemHeader}>
+                            <Text style={styles.deviceNameText}>{dev.name || 'Unnamed Bluetooth Device'}</Text>
+                            <Text style={{ color: '#f97316', fontSize: 12, fontWeight: '700' }}>Select →</Text>
+                          </View>
+                          <Text style={styles.deviceAddressText}>{dev.address}</Text>
+                          <View style={styles.deviceBadgeRow}>
+                            <View style={dev.transportType === 'ble_gatt' ? styles.bleBadge : styles.sppBadge}>
+                              <Text style={dev.transportType === 'ble_gatt' ? styles.bleBadgeText : styles.sppBadgeText}>
+                                {dev.transportType === 'ble_gatt' ? 'BLE (GATT)' : 'CLASSIC (SPP)'}
+                              </Text>
+                            </View>
+                            {isSeznik && (
+                              <View style={styles.thermal58Badge}>
+                                <Text style={styles.thermal58BadgeText}>58MM SEZNIK</Text>
+                              </View>
+                            )}
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                )}
+              </View>
+            )}
+
+            {/* STEP: ANDROID USB SELECT */}
+            {wizardStep === 'android_usb_select' && (
+              <View style={styles.wizardBody}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <Text style={[styles.stepTitle, { flex: 1, marginBottom: 0 }]}>
+                    Attached USB Printers:
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.smallRefreshBtn, isWizardLoading && { opacity: 0.6 }]}
+                    onPress={handleStartUsbAndroid}
+                    disabled={isWizardLoading}
+                  >
+                    <Text style={styles.smallRefreshBtnText}>⟳ Detect</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {isWizardLoading ? (
+                  <View style={{ padding: 24, alignItems: 'center', gap: 12 }}>
+                    <ActivityIndicator color="#f97316" size="large" />
+                    <Text style={{ color: '#a1a1aa', fontSize: 13 }}>Detecting USB printers...</Text>
+                  </View>
+                ) : discoveredUsbDevices.length === 0 ? (
+                  <View style={{ padding: 20, alignItems: 'center' }}>
+                    <Text style={styles.emptyQueueText}>
+                      No USB thermal printers detected. Connect printer via USB OTG cable and power it ON.
+                    </Text>
+                    <TouchableOpacity
+                      style={[styles.primaryActionBtn, { marginTop: 12, paddingHorizontal: 20 }]}
+                      onPress={handleStartUsbAndroid}
+                    >
+                      <Text style={styles.primaryActionBtnText}>Retry Detection</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <ScrollView style={styles.queueList}>
+                    {discoveredUsbDevices.map((dev) => (
+                      <TouchableOpacity
+                        key={`${dev.vendorId}_${dev.productId}_${dev.deviceId}`}
+                        style={styles.deviceItemCard}
+                        onPress={() => handleSelectUsbDevice(dev)}
+                      >
+                        <View style={styles.deviceItemHeader}>
+                          <Text style={styles.deviceNameText}>
+                            {dev.deviceName || `USB Thermal Printer (${dev.vendorId}:${dev.productId})`}
+                          </Text>
+                          <Text style={{ color: '#f97316', fontSize: 12, fontWeight: '700' }}>Select →</Text>
+                        </View>
+                        <Text style={styles.deviceAddressText}>
+                          VID: 0x{dev.vendorId.toString(16).toUpperCase()} | PID: 0x{dev.productId.toString(16).toUpperCase()}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                )}
+              </View>
+            )}
+
+            {/* STEP: ANDROID NETWORK INPUT */}
+            {wizardStep === 'android_network_input' && (
+              <View style={styles.wizardBody}>
+                <Text style={styles.stepTitle}>Network Thermal Printer (LAN / Wi-Fi):</Text>
+                <Text style={styles.stepDesc}>
+                  Enter the IP address of your ESC/POS network thermal printer:
+                </Text>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Printer IP Address:</Text>
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="e.g. 192.168.1.100"
+                    placeholderTextColor="#71717a"
+                    keyboardType="numbers-and-punctuation"
+                    value={ipAddressInput}
+                    onChangeText={setIpAddressInput}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Port (Default: 9100):</Text>
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="9100"
+                    placeholderTextColor="#71717a"
+                    keyboardType="number-pad"
+                    value={portInput}
+                    onChangeText={setPortInput}
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={styles.primaryActionBtn}
+                  onPress={handleConfirmNetwork}
+                >
+                  <Text style={styles.primaryActionBtnText}>Continue to Configuration →</Text>
+                </TouchableOpacity>
               </View>
             )}
 
@@ -1704,6 +2361,75 @@ const styles = StyleSheet.create({
   primaryActionBtnText: {
     color: '#ffffff',
     fontSize: 14,
+    fontWeight: '700',
+  },
+  transportBadgeTcp: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#06b6d4',
+  },
+  deviceItemCard: {
+    backgroundColor: '#27272a',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+  },
+  deviceItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  deviceNameText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ffffff',
+    flex: 1,
+  },
+  deviceAddressText: {
+    fontSize: 11,
+    color: '#a1a1aa',
+    marginTop: 3,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  deviceBadgeRow: {
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  bleBadge: {
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  bleBadgeText: {
+    color: '#3b82f6',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  sppBadge: {
+    backgroundColor: 'rgba(234, 179, 8, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  sppBadgeText: {
+    color: '#eab308',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  thermal58Badge: {
+    backgroundColor: 'rgba(34, 197, 94, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  thermal58BadgeText: {
+    color: '#22c55e',
+    fontSize: 10,
     fontWeight: '700',
   },
 });

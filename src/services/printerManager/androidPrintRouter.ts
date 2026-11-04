@@ -23,6 +23,7 @@ import { generateEscPosLogoRaster } from './escpos/logoRaster';
 import { tcpTransport, bluetoothTransport, bleGattTransport, usbTransport } from './transports';
 import { isAutoPrintEnabled } from '../directPrintService';
 import { printedKotTracker } from '../../utils/printedKotTracker';
+import { cleanKotItemName } from '../../utils/kotUtils';
 
 export type PrintDestinationStatus =
   | 'success'
@@ -100,7 +101,7 @@ interface AndroidPrintDiagnosticParams {
 
 function logAndroidPrintDiagnostic(params: AndroidPrintDiagnosticParams) {
   console.log(
-`[ANDROID_PRINT]
+    `[ANDROID_PRINT]
 Job: ${params.job}
 Source: ${params.source}
 Mode: DIRECT_DEVICE
@@ -152,7 +153,7 @@ export const androidPrintRouter = {
   async resetDedupCache(): Promise<void> {
     inMemoryPrintedJobs.clear();
     isDedupInitialized = true;
-    await AsyncStorage.removeItem(STORAGE_KEY_PRINTED_JOBS).catch(() => {});
+    await AsyncStorage.removeItem(STORAGE_KEY_PRINTED_JOBS).catch(() => { });
   },
 
   /**
@@ -223,8 +224,8 @@ export const androidPrintRouter = {
       const isBle =
         (binding as any)?.bluetooth_transport_type === 'ble_gatt' ||
         (printer as any).bluetooth_transport_type === 'ble_gatt' ||
-        /seznik|925/i.test(printer.name) ||
-        /seznik|925/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '');
+        /seznik|925|9394/i.test(printer.name) ||
+        /seznik|925|9394/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '');
 
       resolvedTransport = isBle ? 'BLE_GATT' : 'BLUETOOTH_SPP';
 
@@ -677,7 +678,7 @@ export const androidPrintRouter = {
         items: targetItems.map((ti: OrderItem) => ({
           id: ti.id,
           kot_id: kot?.id || 'temp-kot',
-          product_name: ti.product_name,
+          product_name: cleanKotItemName(ti.product_name, settings?.name),
           quantity: ti.quantity,
           notes: ti.item_notes,
         })),
@@ -688,8 +689,8 @@ export const androidPrintRouter = {
         const isBleTarget =
           (targetPrinter as any).bluetooth_transport_type === 'ble_gatt' ||
           targetPrinter.connection_type === 'bluetooth' ||
-          /seznik|925/i.test(targetPrinter.name) ||
-          /seznik|925/i.test((targetPrinter as any).bluetooth_device_name || '');
+          /seznik|925|9394/i.test(targetPrinter.name) ||
+          /seznik|925|9394/i.test((targetPrinter as any).bluetooth_device_name || '');
 
         doc = renderKotToEscPos(order, settings, targetedKot, {
           printer: {
@@ -944,8 +945,8 @@ export const androidPrintRouter = {
       const isBleTarget =
         (targetPrinter as any).bluetooth_transport_type === 'ble_gatt' ||
         targetPrinter.connection_type === 'bluetooth' ||
-        /seznik|925/i.test(targetPrinter.name) ||
-        /seznik|925/i.test((targetPrinter as any).bluetooth_device_name || '');
+        /seznik|925|9394/i.test(targetPrinter.name) ||
+        /seznik|925|9394/i.test((targetPrinter as any).bluetooth_device_name || '');
 
       doc = renderBillToEscPos(order, settings, billedBy || 'Staff', {
         printer: {

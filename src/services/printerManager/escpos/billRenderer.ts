@@ -35,7 +35,7 @@ export function renderBillToEscPos(
     options.printer?.paper_width === '58mm' ||
     settings.bill_paper_size === '58mm' ||
     settings.kot_paper_size === '58mm' ||
-    /58|seznik|925|rpp|mpt|mini/i.test(printerName);
+    /58|seznik|925|9394|rpp|mpt|mini/i.test(printerName);
   const paperSize: PrinterPaperWidth = is58mm ? '58mm' : '80mm';
   const effectivePrinterName = printerName || (paperSize === '58mm' ? 'POS58 Printer' : 'POS80 Printer');
   const transport = (options.printer as any)?.transport || ((options.printer as any)?.connection_type === 'bluetooth' || options.isBle ? 'bluetooth' : 'agent');

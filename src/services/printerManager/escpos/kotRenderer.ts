@@ -8,6 +8,7 @@ import { Order, KOT, RestaurantSettings, RestaurantPrinter, PrinterCalibration, 
 import { formatOrderDateTime, formatOrderDate, formatOrderTime } from '../../../utils/dateUtils';
 import { EscPosDocument } from './encoder';
 import { EscPosTextBuilder } from './escposBuilder';
+import { cleanKotItemName } from '../../../utils/kotUtils';
 
 export interface KotRenderOptions {
   printer?: RestaurantPrinter | { paper_width?: PrinterPaperWidth; name?: string; transport?: string; isBle?: boolean };
@@ -55,12 +56,14 @@ export function renderKotToEscPos(
       Boolean(order.kots && order.kots.length > 1 && activeKot.id !== order.kots[0]?.id)
     : false;
 
+  const restaurantName = settings.name || (settings as any).restaurant_name || (order as any).restaurant_name;
+
   // Extract items for KOT
   const itemsToPrint: Array<{ name: string; quantity: number; notes?: string }> = [];
   if (activeKot && activeKot.items && activeKot.items.length > 0) {
     for (const item of activeKot.items) {
       itemsToPrint.push({
-        name: item.product_name,
+        name: cleanKotItemName(item.product_name, restaurantName),
         quantity: item.quantity,
         notes: item.notes,
       });
@@ -69,7 +72,7 @@ export function renderKotToEscPos(
     for (const item of order.items) {
       if (item.quantity > 0) {
         itemsToPrint.push({
-          name: item.product_name,
+          name: cleanKotItemName(item.product_name, restaurantName),
           quantity: item.quantity,
           notes: item.item_notes || (item as any).notes,
         });
@@ -80,7 +83,7 @@ export function renderKotToEscPos(
   const builder = new EscPosTextBuilder(paperSize, effectivePrinterName, { isBle, transport });
 
   // 1. Restaurant Name (Centered, Bold, Normal Font A)
-  const restaurantName = settings.name || (settings as any).restaurant_name;
+
   if (restaurantName) {
     builder.addLine(restaurantName.toUpperCase(), { align: 'center', bold: true });
   }
@@ -153,7 +156,7 @@ export function renderKotToEscPos(
     builder.addKotTableHeader();
     builder.addDivider('-');
     for (const item of cancelledItems) {
-      const cleanName = item.name.replace('[CANCELLED]', '').trim();
+      const cleanName = cleanKotItemName(item.name.replace('[CANCELLED]', '').trim(), restaurantName);
       const cleanNotes = item.notes?.replace('[CANCELLED]', '').trim();
       builder.addKotItem({
         name: cleanName,

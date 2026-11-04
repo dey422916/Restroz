@@ -15,6 +15,7 @@ import { KOT, RestaurantSettings } from '../../src/types';
 import { useSettings } from '../../src/context/SettingsContext';
 import { useAuth } from '../../src/context/AuthContext';
 import { formatOrderDateTime } from '../../src/utils/dateUtils';
+import { cleanKotItemName } from '../../src/utils/kotUtils';
 
 export default function KotScreen() {
   const { settings } = useSettings();
@@ -207,7 +208,7 @@ export default function KotScreen() {
                                 isItemCancelled && styles.itemNameCancelled,
                               ]}
                             >
-                              {item.product_name}
+                              {cleanKotItemName(item.product_name, settings?.name)}
                             </Text>
                             {Boolean(item.notes) && (
                               <Text style={styles.itemNote}>Note: {item.notes}</Text>

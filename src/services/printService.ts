@@ -13,6 +13,7 @@ import { supabase } from './supabase';
 import { resolveReceiptIdentity } from '../utils/receiptIdentity';
 import { consolidateOrderItems } from '../utils/orderItemIdentity';
 import { isValidGSTIN, getStateFromGSTIN } from '../utils/validators';
+import { cleanKotItemName } from '../utils/kotUtils';
 
 function escapeHtml(str?: string | null): string {
   if (!str) return '';
@@ -296,12 +297,13 @@ export const printService = {
     // 1. If a specific KOT was provided (e.g. delta KOT on edit or specific reprint), print that KOT's items.
     // 2. If no specific KOT was provided (e.g. viewing/printing KOT Slip from the order view modal or table view),
     //    print ALL items currently present in the updated order.
+    const restaurantName = settings.name || (settings as any).restaurant_name || (order as any).restaurant_name;
     const itemsToPrint: Array<{ name: string; quantity: number; notes?: string }> = [];
 
     if (activeKot && activeKot.items && activeKot.items.length > 0) {
       activeKot.items.forEach((ki) => {
         itemsToPrint.push({
-          name: ki.product_name.replace('[CANCELLED]', '').trim(),
+          name: cleanKotItemName(ki.product_name.replace('[CANCELLED]', '').trim(), restaurantName),
           quantity: ki.quantity,
           notes: ki.notes,
         });
@@ -309,7 +311,7 @@ export const printService = {
     } else if (order.items && order.items.length > 0) {
       consolidateOrderItems(order.items).forEach((oi) => {
         itemsToPrint.push({
-          name: oi.product_name,
+          name: cleanKotItemName(oi.product_name, restaurantName),
           quantity: oi.quantity,
           notes: oi.item_notes,
         });
@@ -320,7 +322,7 @@ export const printService = {
         if (k.items) {
           k.items.forEach((ki) => {
             itemsToPrint.push({
-              name: ki.product_name.replace('[CANCELLED]', '').trim(),
+              name: cleanKotItemName(ki.product_name.replace('[CANCELLED]', '').trim(), restaurantName),
               quantity: ki.quantity,
               notes: ki.notes,
             });
@@ -341,7 +343,7 @@ export const printService = {
     const hasCancellation = cancelledItems.length > 0;
 
     const renderRow = (item: { name: string; quantity: number; notes?: string }, isCancel: boolean) => {
-      const cleanName = item.name.replace('[CANCELLED]', '').trim();
+      const cleanName = cleanKotItemName(item.name.replace('[CANCELLED]', '').trim(), restaurantName);
       const cleanNotes = item.notes?.replace('[CANCELLED]', '').trim();
       const displayQty = Math.abs(item.quantity);
       const textStyle = isCancel ? 'color: #991b1b;' : 'color: #000;';

@@ -23,6 +23,7 @@ import { generateEscPosLogoRaster } from './escpos/logoRaster';
 import { tcpTransport, bluetoothTransport, bleGattTransport, usbTransport } from './transports';
 import { isAutoPrintEnabled } from '../directPrintService';
 import { printedKotTracker } from '../../utils/printedKotTracker';
+import { cleanKotItemName } from '../../utils/kotUtils';
 
 export type PrintDestinationStatus =
   | 'success'
@@ -677,7 +678,7 @@ export const androidPrintRouter = {
         items: targetItems.map((ti: OrderItem) => ({
           id: ti.id,
           kot_id: kot?.id || 'temp-kot',
-          product_name: ti.product_name,
+          product_name: cleanKotItemName(ti.product_name, settings?.name),
           quantity: ti.quantity,
           notes: ti.item_notes,
         })),

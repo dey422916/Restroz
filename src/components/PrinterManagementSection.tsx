@@ -333,8 +333,8 @@ export const PrinterManagementSection: React.FC<Props> = ({
 
     const b = deviceBindings[printer.id];
     const isSez =
-      /seznik|925/i.test(printer.name) ||
-      /seznik|925/i.test(printer.bluetooth_device_name || '') ||
+      /seznik|925|9394/i.test(printer.name) ||
+      /seznik|925|9394/i.test(printer.bluetooth_device_name || '') ||
       (b as any)?.bluetooth_transport_type === 'ble_gatt';
     setBtTransportType(
       (b?.bluetooth_transport_type as any) || (isSez ? 'ble_gatt' : 'spp')
@@ -458,8 +458,8 @@ export const PrinterManagementSection: React.FC<Props> = ({
       // Save device-local Bluetooth binding if configured
       if (savedPrinterId && connectionType === 'bluetooth' && selectedBluetoothMac) {
         const isSeznik =
-          /seznik|925/i.test(name) ||
-          /seznik|925/i.test(bluetoothDeviceName) ||
+          /seznik|925|9394/i.test(name) ||
+          /seznik|925|9394/i.test(bluetoothDeviceName) ||
           btTransportType === 'ble_gatt';
 
         await printerManager.saveDeviceBinding({
@@ -669,8 +669,8 @@ export const PrinterManagementSection: React.FC<Props> = ({
       if (connectionType === 'bluetooth') {
         (candidate as any).bluetooth_mac_address = selectedBluetoothMac;
         const isSeznik =
-          /seznik|925/i.test(candidate.name) ||
-          /seznik|925/i.test(bluetoothDeviceName) ||
+          /seznik|925|9394/i.test(candidate.name) ||
+          /seznik|925|9394/i.test(bluetoothDeviceName) ||
           btTransportType === 'ble_gatt';
         (candidate as any).bluetooth_transport_type = isSeznik ? 'ble_gatt' : 'spp';
       } else if (connectionType === 'usb') {
@@ -1095,7 +1095,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
                     {deviceBindings[p.id]?.bluetooth_mac_address
                       ? `(${deviceBindings[p.id]?.bluetooth_mac_address})`
                       : '(⚠️ Not bound on this tablet)'}
-                    {deviceBindings[p.id]?.bluetooth_transport_type === 'ble_gatt' || /seznik|925/i.test(p.name)
+                    {deviceBindings[p.id]?.bluetooth_transport_type === 'ble_gatt' || /seznik|925|9394/i.test(p.name)
                       ? ' • BLE GATT'
                       : ' • SPP'}
                   </Text>
@@ -2010,7 +2010,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
 
                       {discoveredBluetoothDevices.map((d) => {
                         const isSelected = selectedBluetoothMac === d.address;
-                        const isSez = /seznik|925/i.test(d.name) || (isSelected && btTransportType === 'ble_gatt');
+                        const isSez = /seznik|925|9394/i.test(d.name) || (isSelected && btTransportType === 'ble_gatt');
                         return (
                           <TouchableOpacity
                             key={d.address || d.id}
@@ -2029,7 +2029,7 @@ export const PrinterManagementSection: React.FC<Props> = ({
                               const devName = d.name || 'Thermal Printer';
                               setName(devName);
                               setBluetoothDeviceName(devName);
-                              const selectedIsSez = /seznik|925/i.test(devName) || d.transportType === 'ble_gatt';
+                              const selectedIsSez = /seznik|925|9394/i.test(devName) || d.transportType === 'ble_gatt';
                               setBtTransportType(selectedIsSez ? 'ble_gatt' : 'spp');
                               if (selectedIsSez) {
                                 setPaperWidth('58mm');

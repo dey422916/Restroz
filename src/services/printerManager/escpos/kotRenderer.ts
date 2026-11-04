@@ -43,7 +43,7 @@ export function renderKotToEscPos(
   const is58mm =
     options.printer?.paper_width === '58mm' ||
     settings.kot_paper_size === '58mm' ||
-    /58|seznik|925|rpp|mpt|mini/i.test(printerName);
+    /58|seznik|925|9394|rpp|mpt|mini/i.test(printerName);
   const paperSize: PrinterPaperWidth = is58mm ? '58mm' : '80mm';
   const effectivePrinterName = printerName || (paperSize === '58mm' ? 'POS58 Printer' : 'POS80 Printer');
   const transport = (options.printer as any)?.transport || ((options.printer as any)?.connection_type === 'bluetooth' || options.isBle ? 'bluetooth' : 'agent');
@@ -52,8 +52,8 @@ export function renderKotToEscPos(
   const isReprint = options.isReprint || Boolean(activeKot?.kitchen_notes && activeKot.kitchen_notes.includes('[AUTO_PRINTED]'));
   const isSupplementary = activeKot
     ? Boolean(kotNum.includes('SUP')) ||
-      Boolean(activeKot.kitchen_notes && activeKot.kitchen_notes.toUpperCase().includes('SUP')) ||
-      Boolean(order.kots && order.kots.length > 1 && activeKot.id !== order.kots[0]?.id)
+    Boolean(activeKot.kitchen_notes && activeKot.kitchen_notes.toUpperCase().includes('SUP')) ||
+    Boolean(order.kots && order.kots.length > 1 && activeKot.id !== order.kots[0]?.id)
     : false;
 
   const restaurantName = settings.name || (settings as any).restaurant_name || (order as any).restaurant_name;

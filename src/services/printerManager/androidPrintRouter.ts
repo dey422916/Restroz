@@ -224,8 +224,8 @@ export const androidPrintRouter = {
       const isBle =
         (binding as any)?.bluetooth_transport_type === 'ble_gatt' ||
         (printer as any).bluetooth_transport_type === 'ble_gatt' ||
-        /seznik|925/i.test(printer.name) ||
-        /seznik|925/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '');
+        /seznik|925|9394/i.test(printer.name) ||
+        /seznik|925|9394/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '');
 
       resolvedTransport = isBle ? 'BLE_GATT' : 'BLUETOOTH_SPP';
 
@@ -689,8 +689,8 @@ export const androidPrintRouter = {
         const isBleTarget =
           (targetPrinter as any).bluetooth_transport_type === 'ble_gatt' ||
           targetPrinter.connection_type === 'bluetooth' ||
-          /seznik|925/i.test(targetPrinter.name) ||
-          /seznik|925/i.test((targetPrinter as any).bluetooth_device_name || '');
+          /seznik|925|9394/i.test(targetPrinter.name) ||
+          /seznik|925|9394/i.test((targetPrinter as any).bluetooth_device_name || '');
 
         doc = renderKotToEscPos(order, settings, targetedKot, {
           printer: {
@@ -945,8 +945,8 @@ export const androidPrintRouter = {
       const isBleTarget =
         (targetPrinter as any).bluetooth_transport_type === 'ble_gatt' ||
         targetPrinter.connection_type === 'bluetooth' ||
-        /seznik|925/i.test(targetPrinter.name) ||
-        /seznik|925/i.test((targetPrinter as any).bluetooth_device_name || '');
+        /seznik|925|9394/i.test(targetPrinter.name) ||
+        /seznik|925|9394/i.test((targetPrinter as any).bluetooth_device_name || '');
 
       doc = renderBillToEscPos(order, settings, billedBy || 'Staff', {
         printer: {

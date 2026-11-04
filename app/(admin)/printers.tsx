@@ -467,7 +467,7 @@ export default function PrintersScreen() {
           </View>
 
           {/* Web-Only Seznik Chrome/Edge Web Bluetooth & WebUSB */}
-          {Platform.OS === 'web' && effectiveRestaurantId ? (
+          {effectiveRestaurantId ? (
             <SeznikPrinterManagementSection
               restaurantId={effectiveRestaurantId}
               canManage={canManage}

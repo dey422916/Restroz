@@ -141,7 +141,7 @@ interface PosContextType {
 const PosContext = createContext<PosContextType | undefined>(undefined);
 
 export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { settings } = useSettings();
+  const { settings, isSettingsVerified, isTaxConfigReady, loading: settingsLoading } = useSettings();
   const { showToast, playOrderBell } = useNotification();
   const { activeRestaurantId, user } = useAuth();
 
@@ -288,6 +288,58 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCustomerInfoState((prev) => ({ ...prev, ...info }));
   };
 
+  // Dynamically synchronize cart items tax rates when authoritative restaurant settings load or update
+  useEffect(() => {
+    const targetRestId = activeRestaurantId || settings.restaurant_id;
+    if (!targetRestId) return;
+
+    const isLoadedOrderTaxPresent = loadedOrder ? (
+      (loadedOrder.cgst_amount !== undefined && Number(loadedOrder.cgst_amount) > 0) ||
+      (loadedOrder.sgst_amount !== undefined && Number(loadedOrder.sgst_amount) > 0) ||
+      ((loadedOrder as any)?.tax_rate !== undefined && (loadedOrder as any)?.tax_rate !== null && Number((loadedOrder as any).tax_rate) > 0)
+    ) : false;
+
+    const isGstActive = isLoadedOrderTaxPresent || Boolean(
+      settings.is_gst_enabled &&
+      (settings.gst_registered !== false) &&
+      Number(settings.default_tax_rate || 0) > 0
+    );
+    const defaultTax = isLoadedOrderTaxPresent
+      ? Number((loadedOrder as any)?.tax_rate || 5.0)
+      : (isGstActive ? Number(settings.default_tax_rate || 5.0) : 0);
+
+    setCartItems((prevItems) => {
+      if (prevItems.length === 0) return prevItems;
+      let hasChanged = false;
+      const updated = prevItems.map((item) => {
+        const productTaxRate = (item.product?.tax_rate !== undefined && item.product?.tax_rate !== null && !isNaN(Number(item.product.tax_rate)))
+          ? Number(item.product.tax_rate)
+          : defaultTax;
+        const targetTaxRate = isGstActive ? productTaxRate : 0;
+
+        if (item.tax_rate !== targetTaxRate) {
+          hasChanged = true;
+          const subtotal = Number((item.quantity * item.unit_price).toFixed(2));
+          const taxAmount = Number(((subtotal * targetTaxRate) / 100).toFixed(2));
+          return {
+            ...item,
+            tax_rate: targetTaxRate,
+            tax_amount: taxAmount,
+          };
+        }
+        return item;
+      });
+      return hasChanged ? updated : prevItems;
+    });
+  }, [
+    isSettingsVerified,
+    settings.is_gst_enabled,
+    settings.gst_registered,
+    settings.default_tax_rate,
+    activeRestaurantId,
+    loadedOrder,
+  ]);
+
   const addToCart = (product: Product, quantity = 1, notes = '') => {
     if (orderType === 'dine_in' && !selectedTable) {
       showToast('error', 'Select Table First', 'Please select a dining table before adding items for Dine In.');
@@ -309,13 +361,13 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const defaultTax = isLoadedOrderTaxPresent
         ? Number((loadedOrder as any)?.tax_rate || 5.0)
-        : (isGstActive ? Number(settings.default_tax_rate || 0) : 0);
+        : (isGstActive ? Number(settings.default_tax_rate || 5.0) : 0);
 
-      const taxRate = isGstActive
-        ? ((product.tax_rate !== undefined && product.tax_rate !== null && !isNaN(Number(product.tax_rate)))
-            ? Number(product.tax_rate)
-            : defaultTax)
-        : 0;
+      const productTaxRate = (product.tax_rate !== undefined && product.tax_rate !== null && !isNaN(Number(product.tax_rate)))
+        ? Number(product.tax_rate)
+        : defaultTax;
+
+      const taxRate = isGstActive ? productTaxRate : 0;
 
       const existingSameProd = prev.find((i) => {
         const aId = (i.product_id || '').trim();
@@ -619,6 +671,10 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const holdCurrentOrder = async (): Promise<Order | null> => {
     if (cartItems.length === 0) return null;
 
+    if (!isTaxConfigReady && settingsLoading) {
+      throw new Error('Authoritative tax settings are currently synchronizing with the cloud. Please wait a moment before holding the order.');
+    }
+
     const targetRestId = activeRestaurantId || settings.restaurant_id;
     if (!targetRestId) {
       throw new Error('No active restaurant context found. Please ensure you are logged into an authorized restaurant.');
@@ -691,6 +747,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const confirmOrder = async (): Promise<Order> => {
+    if (!isTaxConfigReady && settingsLoading) {
+      throw new Error('Authoritative tax settings are currently synchronizing with the cloud. Please wait a moment before sending to kitchen.');
+    }
     const targetRestId = activeRestaurantId || settings.restaurant_id;
     if (!targetRestId) {
       throw new Error('No active restaurant context found. Please ensure you are logged into an authorized restaurant.');
@@ -871,6 +930,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (cartItems.length === 0) {
       throw new Error('Order must contain at least one item.');
     }
+    if (!isTaxConfigReady && settingsLoading) {
+      throw new Error('Authoritative tax settings are currently synchronizing with the cloud. Please wait a moment before updating the order.');
+    }
 
     if (orderType === 'delivery') {
       validatePhoneNumberOrThrow(customerInfo.phone, 'Delivery Customer Phone Number');
@@ -959,6 +1021,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (cartItems.length === 0) {
       throw new Error('Order must contain at least one item.');
     }
+    if (!isTaxConfigReady && settingsLoading) {
+      throw new Error('Authoritative tax settings are currently synchronizing with the cloud. Please wait a moment before updating the order.');
+    }
 
     const updated = await orderService.editActiveOrder({
       orderId,
@@ -1035,6 +1100,9 @@ export const PosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       splitPayments?: Array<{ payment_method: PaymentMethod; amount: number; reference_number?: string }>;
     }
   ): Promise<Order> => {
+    if (!isTaxConfigReady && settingsLoading) {
+      throw new Error('Authoritative tax settings are currently synchronizing with the cloud. Please wait a moment before finalizing the payment.');
+    }
     const effectiveWalletRedeem = discountData?.wallet_redeem_amount !== undefined
       ? discountData.wallet_redeem_amount
       : (isRedeemLoyalty ? walletRedeemAmount : 0);

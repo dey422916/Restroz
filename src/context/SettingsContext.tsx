@@ -23,11 +23,11 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [settings, setSettings] = useState<RestaurantSettings>({
     id: activeRestaurantId || '',
     name: activeRestaurant?.name || 'Restaurant POS',
-    legal_name: activeRestaurant?.legal_name || activeRestaurant?.name || 'Restaurant POS Pvt Ltd',
-    address: activeRestaurant?.address || 'Main Road',
-    phone: activeRestaurant?.phone || '+91 9876543210',
-    email: activeRestaurant?.email || 'contact@restaurant.com',
-    gstin: '36AAAAA0000A1Z5',
+    legal_name: activeRestaurant?.legal_name || activeRestaurant?.name || '',
+    address: activeRestaurant?.address || '',
+    phone: activeRestaurant?.phone || '',
+    email: activeRestaurant?.email || '',
+    gstin: '',
     state: 'West Bengal',
     logo_url: activeRestaurant?.logo_url || '',
     invoice_prefix: 'INV-',
@@ -55,7 +55,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
   }, []);
 
-  const fetchLatestSettings = useCallback(async (targetRestId?: string) => {
+  const fetchLatestSettings = useCallback(async (targetRestId?: string, forceRefresh: boolean = false) => {
     const idToFetch = targetRestId || activeRestaurantId;
     if (!idToFetch || !user?.id) {
       setLoading(false);
@@ -63,7 +63,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
     try {
       const [s, onlineStatus] = await Promise.all([
-        settingsService.getSettings(idToFetch),
+        settingsService.getSettings(idToFetch, forceRefresh),
         marketplaceService.getRestaurantOnlineStatus(idToFetch),
       ]);
 
@@ -74,6 +74,12 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setSettings((prev) => ({
         ...prev,
         ...s,
+        gst_registered: s.gst_registered,
+        is_gst_enabled: s.is_gst_enabled,
+        tax_invoice_enabled: s.tax_invoice_enabled,
+        default_tax_rate: s.default_tax_rate,
+        tax_rate: s.tax_rate,
+        gstin: s.gstin || '',
         name: activeRestaurantRef.current?.name || s.name || prev.name || 'Restaurant POS',
         legal_name: s.legal_name || activeRestaurantRef.current?.legal_name || s.name || activeRestaurantRef.current?.name || prev.legal_name || '',
         email: s.email || activeRestaurantRef.current?.email || prev.email || '',
@@ -103,8 +109,10 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return;
     }
 
-    // Initial fetch once per restaurant
-    fetchLatestSettings(activeRestaurantId);
+    setLoading(true);
+    // Invalidate in-memory settings cache on restaurant switch to ensure fresh load
+    settingsService.clearSettingsCache(activeRestaurantId);
+    fetchLatestSettings(activeRestaurantId, true);
 
     // Exactly one single Realtime channel per activeRestaurantId
     if (isSupabaseConfigured) {
@@ -129,6 +137,9 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 cgst_rate: newRec.cgst_rate !== undefined ? Number(newRec.cgst_rate) : prev.cgst_rate,
                 sgst_rate: newRec.sgst_rate !== undefined ? Number(newRec.sgst_rate) : prev.sgst_rate,
                 gstin: newRec.gstin !== undefined ? newRec.gstin : prev.gstin,
+                gst_registered: newRec.gst_registered !== undefined ? Boolean(newRec.gst_registered) : prev.gst_registered,
+                is_gst_enabled: newRec.is_gst_enabled !== undefined ? Boolean(newRec.is_gst_enabled) : prev.is_gst_enabled,
+                tax_invoice_enabled: newRec.tax_invoice_enabled !== undefined ? Boolean(newRec.tax_invoice_enabled) : prev.tax_invoice_enabled,
                 auto_print_kot: newRec.kot_auto_print !== undefined ? Boolean(newRec.kot_auto_print) : prev.auto_print_kot,
               }));
             }
@@ -207,7 +218,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const refreshSettings = async (): Promise<RestaurantSettings> => {
     setLoading(true);
-    await fetchLatestSettings();
+    await fetchLatestSettings(activeRestaurantId, true);
     return settings;
   };
 

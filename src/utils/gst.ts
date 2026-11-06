@@ -354,8 +354,8 @@ export function getOrderInvoiceTotals(
     ? Boolean(settings.gst_registered)
     : Boolean((settings?.gstin || '').trim());
 
-  // Check if order has an existing persisted tax snapshot
-  const hasExistingTaxSnapshot = (
+  // Check if order has an existing persisted tax snapshot (only applies to persisted orders with id)
+  const hasExistingTaxSnapshot = Boolean(order.id) && (
     (order.cgst_amount !== undefined && Number(order.cgst_amount) > 0) ||
     (order.sgst_amount !== undefined && Number(order.sgst_amount) > 0) ||
     ((order as any)?.tax_rate !== undefined && (order as any)?.tax_rate !== null && Number((order as any).tax_rate) > 0)

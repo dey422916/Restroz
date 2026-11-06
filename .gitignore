@@ -17,6 +17,8 @@ scripts/*
 !scripts/test-reward-redemption-order-financial-display.js
 !scripts/test-dedicated-login-and-manual-print.js
 !scripts/test-dev-url-and-loop-fix.js
+!scripts/test-gst-admin-superadmin-parity.js
+!scripts/test-bluetooth-transport-dual-resolution.js
 android/
 ios/
 

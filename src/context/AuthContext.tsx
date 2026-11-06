@@ -6,6 +6,7 @@ import { authService } from '../services/api/authService';
 import { restaurantService } from '../services/api/restaurantService';
 import { staffService } from '../services/api/staffService';
 import { registerReminderService } from '../services/api/registerReminderService';
+import { settingsService } from '../services/api/settingsService';
 import { supabase, isSupabaseConfigured } from '../services/supabase';
 import { pendingRedirectUtil } from '../utils/pendingRedirect';
 
@@ -352,6 +353,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const setCustomActiveRestaurantId = async (restaurantId: string) => {
     activeRestaurantIdRef.current = restaurantId;
+    settingsService.clearSettingsCache();
     setActiveRestaurantId(restaurantId);
     if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
       try {

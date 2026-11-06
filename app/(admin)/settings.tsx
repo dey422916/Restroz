@@ -27,6 +27,8 @@ import {
   normalizeIndianPhone,
   getEmailValidationError,
   getIndianPhoneValidationError,
+  isValidGSTIN,
+  getGSTINValidationError,
 } from '../../src/utils/validation';
 
 import {
@@ -144,6 +146,11 @@ export default function SettingsScreen() {
   const [showUrlModal, setShowUrlModal] = useState(false);
   const [customBannerUrl, setCustomBannerUrl] = useState('');
 
+
+  // Reset dirty state on restaurant switch so form values reload cleanly from settings
+  useEffect(() => {
+    setIsDirty(false);
+  }, [effectiveRestaurantId]);
 
   // Sync form values from settings whenever settings change, unless user is actively editing
   useEffect(() => {
@@ -705,6 +712,11 @@ export default function SettingsScreen() {
         Alert.alert('GSTIN Required', 'Please enter a valid GSTIN before enabling GST billing.');
         return;
       }
+      if (!isValidGSTIN(gstin.trim())) {
+        showToast('error', 'Invalid GSTIN Format', 'GSTIN must be a valid 15-character Indian GST identification number (e.g. 36AAAAA0000A1Z5).');
+        Alert.alert('Invalid GSTIN Format', 'GSTIN must be a valid 15-character Indian GST identification number (e.g. 36AAAAA0000A1Z5).');
+        return;
+      }
     }
 
     const validatedRate = !isNaN(numRate) && numRate > 0 && numRate <= 100 ? numRate : 0.0;
@@ -825,6 +837,15 @@ export default function SettingsScreen() {
       setIsCreatingAccount(false);
     }
   };
+
+  if (settingsLoading && !settings.id && !settings.restaurant_id) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#f97316" />
+        <Text style={{ marginTop: 12, color: '#64748b', fontSize: 14 }}>Loading restaurant settings...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>

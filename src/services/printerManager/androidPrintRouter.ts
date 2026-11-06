@@ -221,13 +221,12 @@ export const androidPrintRouter = {
       resolvedDeviceId = address || 'NOT_BOUND';
       bindingFound = Boolean(address);
 
-      const isBle =
+      // Dual-transport resolution: supports Seznik-Veer_9394, Seznik-Veer_925C, and all thermal models
+      const preferBle =
         (binding as any)?.bluetooth_transport_type === 'ble_gatt' ||
-        (printer as any).bluetooth_transport_type === 'ble_gatt' ||
-        /seznik|925|9394/i.test(printer.name) ||
-        /seznik|925|9394/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '');
+        (printer as any).bluetooth_transport_type === 'ble_gatt';
 
-      resolvedTransport = isBle ? 'BLE_GATT' : 'BLUETOOTH_SPP';
+      resolvedTransport = preferBle ? 'BLE_GATT' : 'BLUETOOTH_SPP';
 
       if (!address) {
         transportRes = {
@@ -240,48 +239,94 @@ export const androidPrintRouter = {
           errorCode: 'DEVICE_BINDING_MISSING',
         };
       } else {
-        if (isBle) {
-          if (!bleGattTransport.isAvailable()) {
-            transportRes = {
-              success: false,
-              status: 'failed_before_write',
-              bytesSent: 0,
-              totalBytes: bytes.length,
-              message: `Native BLE GATT transport is not available in this environment. Install a RestroZ development or production APK to print.`,
-              durationMs: 0,
-              errorCode: 'BLE_CONNECTION_FAILED',
-            };
-          } else {
+        const deviceName = binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined;
+        if (preferBle) {
+          // Attempt BLE GATT first, then fallback to Bluetooth Classic SPP
+          if (bleGattTransport.isAvailable()) {
             transportRes = await bleGattTransport.sendPayload(
               {
                 address,
-                name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+                name: deviceName,
                 transportType: 'ble_gatt',
               },
               bytes,
               printer.id
             );
-          }
-        } else {
-          if (!bluetoothTransport.isAvailable()) {
+            if (!transportRes.success && bluetoothTransport.isAvailable()) {
+              console.warn('[androidPrintRouter] BLE GATT send failed, trying Classic SPP fallback:', transportRes.message);
+              const sppRes = await bluetoothTransport.sendPayload(
+                { address, name: deviceName },
+                bytes,
+                printer.id
+              );
+              if (sppRes.success) {
+                resolvedTransport = 'BLUETOOTH_SPP';
+                transportRes = sppRes;
+              }
+            }
+          } else if (bluetoothTransport.isAvailable()) {
+            resolvedTransport = 'BLUETOOTH_SPP';
+            transportRes = await bluetoothTransport.sendPayload(
+              { address, name: deviceName },
+              bytes,
+              printer.id
+            );
+          } else {
             transportRes = {
               success: false,
               status: 'failed_before_write',
               bytesSent: 0,
               totalBytes: bytes.length,
-              message: `Native Bluetooth Classic SPP transport is not available in this environment. Install a RestroZ development or production APK to print.`,
+              message: `Native Bluetooth transports are not available in this environment. Install a RestroZ development or production APK to print.`,
               durationMs: 0,
               errorCode: 'BLE_CONNECTION_FAILED',
             };
-          } else {
+          }
+        } else {
+          // Default: Attempt Bluetooth Classic SPP first, then fallback to BLE GATT
+          if (bluetoothTransport.isAvailable()) {
             transportRes = await bluetoothTransport.sendPayload(
+              { address, name: deviceName },
+              bytes,
+              printer.id
+            );
+            if (!transportRes.success && bleGattTransport.isAvailable()) {
+              console.warn('[androidPrintRouter] Classic SPP send failed, trying BLE GATT fallback:', transportRes.message);
+              const bleRes = await bleGattTransport.sendPayload(
+                {
+                  address,
+                  name: deviceName,
+                  transportType: 'ble_gatt',
+                },
+                bytes,
+                printer.id
+              );
+              if (bleRes.success) {
+                resolvedTransport = 'BLE_GATT';
+                transportRes = bleRes;
+              }
+            }
+          } else if (bleGattTransport.isAvailable()) {
+            resolvedTransport = 'BLE_GATT';
+            transportRes = await bleGattTransport.sendPayload(
               {
                 address,
-                name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+                name: deviceName,
+                transportType: 'ble_gatt',
               },
               bytes,
               printer.id
             );
+          } else {
+            transportRes = {
+              success: false,
+              status: 'failed_before_write',
+              bytesSent: 0,
+              totalBytes: bytes.length,
+              message: `Native Bluetooth transports are not available in this environment. Install a RestroZ development or production APK to print.`,
+              durationMs: 0,
+              errorCode: 'BLE_CONNECTION_FAILED',
+            };
           }
         }
       }
@@ -688,9 +733,7 @@ export const androidPrintRouter = {
       try {
         const isBleTarget =
           (targetPrinter as any).bluetooth_transport_type === 'ble_gatt' ||
-          targetPrinter.connection_type === 'bluetooth' ||
-          /seznik|925|9394/i.test(targetPrinter.name) ||
-          /seznik|925|9394/i.test((targetPrinter as any).bluetooth_device_name || '');
+          targetPrinter.connection_type === 'bluetooth';
 
         doc = renderKotToEscPos(order, settings, targetedKot, {
           printer: {
@@ -944,9 +987,7 @@ export const androidPrintRouter = {
     try {
       const isBleTarget =
         (targetPrinter as any).bluetooth_transport_type === 'ble_gatt' ||
-        targetPrinter.connection_type === 'bluetooth' ||
-        /seznik|925|9394/i.test(targetPrinter.name) ||
-        /seznik|925|9394/i.test((targetPrinter as any).bluetooth_device_name || '');
+        targetPrinter.connection_type === 'bluetooth';
 
       doc = renderBillToEscPos(order, settings, billedBy || 'Staff', {
         printer: {

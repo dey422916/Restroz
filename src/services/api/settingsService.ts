@@ -235,6 +235,19 @@ export const settingsService = {
           data = res.data;
           error = res.error;
           publicProf = profRes.data;
+
+          // If restaurant_settings query returned null, fetch public info RPC fallback (has complete tax & GST columns)
+          if (!data) {
+            try {
+              const fallbackData = await this.getPublicRestaurantInfo(targetRestId);
+              if (fallbackData && Object.keys(fallbackData).length > 0) {
+                data = fallbackData;
+                publicProf = publicProf || fallbackData;
+              }
+            } catch (fbErr) {
+              console.warn('Fallback getPublicRestaurantInfo error:', fbErr);
+            }
+          }
         } else {
           data = await this.getPublicRestaurantInfo(targetRestId);
           publicProf = data;
@@ -289,9 +302,12 @@ export const settingsService = {
           : (data?.tax_rate !== undefined && data?.tax_rate !== null ? Number(data.tax_rate) : 0);
         const resolvedTaxRate = (!isNaN(rawTaxRate) && rawTaxRate > 0 && rawTaxRate <= 100) ? rawTaxRate : 0;
 
-        const resolvedGstRegistered: boolean = localGstSettings?.gst_registered !== undefined
-          ? localGstSettings.gst_registered
-          : (data?.gst_registered !== undefined ? Boolean(data.gst_registered) : Boolean(effectiveGstin));
+        // Supabase database record is authoritative. localGstSettings serves as offline/fallback cache only.
+        const resolvedGstRegistered: boolean = data?.gst_registered !== undefined && data?.gst_registered !== null
+          ? Boolean(data.gst_registered)
+          : (effectiveGstin
+              ? true
+              : (localGstSettings?.gst_registered !== undefined ? Boolean(localGstSettings.gst_registered) : false));
 
         const resolvedIsGstEnabled: boolean = (data?.is_gst_enabled !== undefined && data?.is_gst_enabled !== null
           ? Boolean(data.is_gst_enabled)

@@ -95,10 +95,9 @@ export const printerManager = {
     try {
       const paired = await bluetoothTransport.getPairedDevices().catch(() => []);
       for (const d of paired) {
-        const isSez = /seznik|925|9394/i.test(d.name);
         map.set(d.address || d.id, {
           ...d,
-          transportType: isSez ? 'ble_gatt' : 'spp',
+          transportType: 'spp',
         });
       }
       if (onProgress && map.size > 0) {
@@ -119,11 +118,9 @@ export const printerManager = {
             if (!existing) {
               map.set(key, bleDev);
             } else {
-              const isSez = /seznik|925|9394/i.test(bleDev.name) || /seznik|925|9394/i.test(existing.name);
               map.set(key, {
                 ...existing,
                 name: existing.name.startsWith('Unnamed') && !bleDev.name.startsWith('Unnamed') ? bleDev.name : existing.name,
-                transportType: isSez ? 'ble_gatt' : existing.transportType,
               });
             }
             if (onProgress) {
@@ -170,12 +167,42 @@ export const printerManager = {
         };
       }
 
-      const isSeznik =
-        /seznik|925|9394/i.test(printer.name) ||
-        /seznik|925|9394/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '') ||
-        (binding as any)?.bluetooth_transport_type === 'ble_gatt';
+      const isBle = (binding as any)?.bluetooth_transport_type === 'ble_gatt';
 
-      if (isSeznik && bleGattTransport.isAvailable()) {
+      if (isBle) {
+        if (bleGattTransport.isAvailable()) {
+          const bleRes = await bleGattTransport.testConnection({
+            address,
+            name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+            transportType: 'ble_gatt',
+          });
+          if (bleRes.reachable) return bleRes;
+        }
+        if (bluetoothTransport.isAvailable()) {
+          const sppRes = await bluetoothTransport.testConnection({
+            address,
+            name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+          });
+          if (sppRes.reachable) return sppRes;
+        }
+        return {
+          reachable: false,
+          status: 'unreachable',
+          message: `Could not reach Bluetooth device (${address}). Verify printer is turned ON and in range.`,
+          latencyMs: 0,
+        };
+      }
+
+      // Default: Bluetooth Classic SPP with BLE fallback
+      if (bluetoothTransport.isAvailable()) {
+        const sppRes = await bluetoothTransport.testConnection({
+          address,
+          name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+        });
+        if (sppRes.reachable) return sppRes;
+      }
+
+      if (bleGattTransport.isAvailable()) {
         return bleGattTransport.testConnection({
           address,
           name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
@@ -183,10 +210,12 @@ export const printerManager = {
         });
       }
 
-      return bluetoothTransport.testConnection({
-        address,
-        name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
-      });
+      return {
+        reachable: false,
+        status: 'unsupported',
+        message: 'No supported native Bluetooth transport available on this device.',
+        latencyMs: 0,
+      };
     }
 
     if (printer.connection_type === 'usb') {
@@ -247,23 +276,54 @@ export const printerManager = {
         };
       }
 
+      // Dual-transport resolution: supports Seznik-Veer_9394, Seznik-Veer_925C, and all thermal models
       const isBle =
         (binding as any)?.bluetooth_transport_type === 'ble_gatt' ||
-        (printer as any).bluetooth_transport_type === 'ble_gatt' ||
-        /seznik|925|9394/i.test(printer.name) ||
-        /seznik|925|9394/i.test(binding?.bluetooth_device_name || (printer as any).bluetooth_device_name || '');
+        (printer as any).bluetooth_transport_type === 'ble_gatt';
 
       if (isBle) {
-        if (!bleGattTransport.isAvailable()) {
-          return {
-            success: false,
-            status: 'unsupported',
-            bytesSent: 0,
-            totalBytes: doc.bytes.length,
-            message: 'Native BLE GATT transport is not available in this environment. Install a RestroZ development or production APK to test print.',
-            durationMs: 0,
-          };
+        if (bleGattTransport.isAvailable()) {
+          const res = await bleGattTransport.sendPayload(
+            {
+              address,
+              name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined,
+              transportType: 'ble_gatt',
+            },
+            doc.bytes,
+            printer.id
+          );
+          if (res.success) return res;
+          console.warn('[printerManager] BLE GATT print failed, falling back to Classic SPP:', res.message);
         }
+        if (bluetoothTransport.isAvailable()) {
+          return bluetoothTransport.sendPayload(
+            { address, name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined },
+            doc.bytes,
+            printer.id
+          );
+        }
+        return {
+          success: false,
+          status: 'unsupported',
+          bytesSent: 0,
+          totalBytes: doc.bytes.length,
+          message: 'Native BLE GATT transport failed and Bluetooth Classic SPP is not available.',
+          durationMs: 0,
+        };
+      }
+
+      // Default: Bluetooth Classic SPP with BLE fallback
+      if (bluetoothTransport.isAvailable()) {
+        const res = await bluetoothTransport.sendPayload(
+          { address, name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined },
+          doc.bytes,
+          printer.id
+        );
+        if (res.success) return res;
+        console.warn('[printerManager] Bluetooth Classic SPP print failed, falling back to BLE GATT:', res.message);
+      }
+
+      if (bleGattTransport.isAvailable()) {
         return bleGattTransport.sendPayload(
           {
             address,
@@ -275,22 +335,14 @@ export const printerManager = {
         );
       }
 
-      if (!bluetoothTransport.isAvailable()) {
-        return {
-          success: false,
-          status: 'unsupported',
-          bytesSent: 0,
-          totalBytes: doc.bytes.length,
-          message: 'Native Bluetooth Classic SPP transport is not available in this environment. Install a RestroZ development or production APK to test print.',
-          durationMs: 0,
-        };
-      }
-
-      return bluetoothTransport.sendPayload(
-        { address, name: binding?.bluetooth_device_name || printer.bluetooth_device_name || undefined },
-        doc.bytes,
-        printer.id
-      );
+      return {
+        success: false,
+        status: 'unsupported',
+        bytesSent: 0,
+        totalBytes: doc.bytes.length,
+        message: 'No supported native Bluetooth transport available on this device.',
+        durationMs: 0,
+      };
     }
 
     if (printer.connection_type === 'usb') {

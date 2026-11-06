@@ -51,7 +51,7 @@ import { useHorizontalScroll } from '../../src/hooks/useHorizontalScroll';
 export default function PosScreen() {
   const router = useRouter();
   const categoryScrollRef = useHorizontalScroll();
-  const { settings, isOnlineOrdersEnabled, toggleOnlineOrders } = useSettings();
+  const { settings, isOnlineOrdersEnabled, toggleOnlineOrders, isTaxConfigReady, loading: settingsLoading } = useSettings();
   const { user, role, isSuperAdmin, activeRestaurantId, activeRestaurant, hasPermission } = useAuth();
   const { showToast } = useNotification();
   const [togglingOnline, setTogglingOnline] = useState<boolean>(false);
@@ -1543,6 +1543,12 @@ export default function PosScreen() {
                 <Text style={[styles.summaryVal, { color: '#16a34a' }]}>
                   -{formatCurrency(totals.couponDiscount)}
                 </Text>
+              </View>
+            )}
+
+            {!isTaxConfigReady && settingsLoading && (
+              <View style={[styles.summaryRow, { backgroundColor: '#fef3c7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginVertical: 2 }]}>
+                <Text style={[styles.summaryLabel, { color: '#92400e', fontSize: 11 }]}>⏳ Syncing tax configuration...</Text>
               </View>
             )}
 

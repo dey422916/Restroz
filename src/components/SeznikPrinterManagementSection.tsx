@@ -130,7 +130,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
                 defaults.default_bill_printer_id === p.id
             );
 
-            let status: DirectPrinterStatus = 'connected';
+            let status: DirectPrinterStatus = 'configured';
             let statusMessage: string | undefined;
 
             if (p.connection_type === 'bluetooth') {
@@ -141,6 +141,17 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
               } else if (!btOn) {
                 status = 'offline';
                 statusMessage = 'Bluetooth is turned OFF in Android settings.';
+              } else {
+                status = 'configured';
+                statusMessage = 'Configured • Tap Test Print to verify';
+              }
+            } else if (p.connection_type === 'usb') {
+              const vid = binding?.usb_vendor_id ?? (p as any).usb_vendor_id;
+              if (vid === undefined || vid === null) {
+                status = 'reconnect_required';
+                statusMessage = 'USB printer not bound to this device.';
+              } else {
+                status = 'configured';
               }
             }
 
@@ -337,7 +348,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
       paperWidth: pWidth,
       role: wizardRole,
       isPrimary: wizardIsPrimary || printers.length === 0,
-      status: 'connected',
+      status: 'configured',
     };
 
     setPendingPrinter(configured);
@@ -380,7 +391,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
       paperWidth: pWidth,
       role: wizardRole,
       isPrimary: wizardIsPrimary || printers.length === 0,
-      status: 'connected',
+      status: 'configured',
     };
 
     setPendingPrinter(configured);
@@ -413,7 +424,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
       paperWidth: wizardPaperWidth,
       role: wizardRole,
       isPrimary: wizardIsPrimary || printers.length === 0,
-      status: 'connected',
+      status: 'configured',
     };
 
     setPendingPrinter(configured);
@@ -593,10 +604,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
         const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
         setPrinters(updatedList);
       } else {
-        const isSeznik =
-          /seznik|925|9394/i.test(pendingPrinter.name) ||
-          /seznik|925|9394/i.test(selectedBtDevice?.name || '');
-        const isBle = isSeznik || selectedBtDevice?.transportType === 'ble_gatt';
+        const isBle = selectedBtDevice?.transportType === 'ble_gatt';
 
         const connType: any =
           pendingPrinter.transport === 'usb'
@@ -688,10 +696,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
       setWizardVisible(false);
       showToast('success', 'Printer Setup Complete', `"${updated.name}" is now ready for POS printing.`);
     } else {
-      const isSeznik =
-        /seznik|925|9394/i.test(pendingPrinter.name) ||
-        /seznik|925|9394/i.test(selectedBtDevice?.name || '');
-      const isBle = isSeznik || selectedBtDevice?.transportType === 'ble_gatt';
+      const isBle = selectedBtDevice?.transportType === 'ble_gatt';
 
       const connType: any =
         pendingPrinter.transport === 'usb'
@@ -775,6 +780,14 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
         const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
         setPrinters(updatedList);
       } else {
+        setPrinters((prev) =>
+          prev.map((p) =>
+            p.id === printer.id
+              ? { ...p, status: 'connecting', statusMessage: 'Connecting & transmitting test receipt...' }
+              : p
+          )
+        );
+
         const devicePrinters = await devicePrinterBindingService.getDevicePrinters();
         const binding = await devicePrinterBindingService.getDeviceBinding(printer.id);
         let target = devicePrinters.find((p) => p.id === printer.id);
@@ -806,12 +819,35 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
         }
         const result = await printerManager.printTestReceipt(target);
         if (result.success) {
+          setPrinters((prev) =>
+            prev.map((p) =>
+              p.id === printer.id
+                ? { ...p, status: 'connected', statusMessage: 'Hardware verified & ready' }
+                : p
+            )
+          );
           showToast('success', 'Test Print Sent', result.message || 'Test print dispatched successfully!');
         } else {
+          setPrinters((prev) =>
+            prev.map((p) =>
+              p.id === printer.id
+                ? { ...p, status: 'error', statusMessage: result.message || 'Test print failed' }
+                : p
+            )
+          );
           showToast('error', 'Test Print Failed', result.message || 'Failed to print test receipt.');
         }
       }
     } catch (err: any) {
+      if (Platform.OS !== 'web') {
+        setPrinters((prev) =>
+          prev.map((p) =>
+            p.id === printer.id
+              ? { ...p, status: 'error', statusMessage: err?.message || 'Print dispatch failed' }
+              : p
+          )
+        );
+      }
       showToast('error', 'Test Print Failed', err.message || 'Failed to print test receipt.');
     } finally {
       setTestingPrinterId(null);
@@ -909,10 +945,31 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
         </View>
       );
     }
-    if (printer.status === 'disconnected') {
+    if (printer.status === 'configured') {
+      return (
+        <View style={styles.badgeConfigured}>
+          <Text style={styles.badgeConfiguredText}>● CONFIGURED</Text>
+        </View>
+      );
+    }
+    if (printer.status === 'connecting') {
       return (
         <View style={styles.badgeWarning}>
-          <Text style={styles.badgeWarningText}>⚠ DISCONNECTED</Text>
+          <Text style={styles.badgeWarningText}>CONNECTING...</Text>
+        </View>
+      );
+    }
+    if (printer.status === 'error') {
+      return (
+        <View style={styles.badgeError}>
+          <Text style={styles.badgeErrorText}>⚠ ERROR</Text>
+        </View>
+      );
+    }
+    if (printer.status === 'disconnected') {
+      return (
+        <View style={styles.badgeOffline}>
+          <Text style={styles.badgeOfflineText}>○ DISCONNECTED</Text>
         </View>
       );
     }
@@ -1060,8 +1117,10 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
                         style={
                           p.status === 'reconnect_required' || p.status === 'disconnected'
                             ? styles.primaryWarningBadge
-                            : p.status === 'offline' || p.status === 'unsupported'
+                            : p.status === 'offline' || p.status === 'unsupported' || p.status === 'error'
                             ? styles.primaryOfflineBadge
+                            : p.status === 'configured'
+                            ? styles.primaryConfiguredBadge
                             : styles.primaryBadge
                         }
                       >
@@ -1073,6 +1132,12 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
                           ? 'PRIMARY • OFFLINE'
                           : p.status === 'unsupported'
                           ? 'PRIMARY • UNSUPPORTED'
+                          : p.status === 'error'
+                          ? 'PRIMARY • ERROR'
+                          : p.status === 'connecting'
+                          ? 'PRIMARY • CONNECTING'
+                          : p.status === 'configured'
+                          ? 'PRIMARY • CONFIGURED'
                           : 'PRIMARY • READY'}
                       </Text>
                     )}
@@ -1965,6 +2030,18 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
   },
+  primaryConfiguredBadge: {
+    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+    borderWidth: 1,
+    borderColor: '#3b82f6',
+    color: '#60a5fa',
+    fontSize: 10,
+    fontWeight: '800',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
+  },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2009,6 +2086,17 @@ const styles = StyleSheet.create({
   },
   badgeConnectedText: {
     color: '#22c55e',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  badgeConfigured: {
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  badgeConfiguredText: {
+    color: '#60a5fa',
     fontSize: 11,
     fontWeight: '700',
   },

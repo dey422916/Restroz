@@ -1,14 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RestaurantSettings, PaperSize } from '../../types';
 import { mockStorage } from '../mockStorage';
-import { supabase, isSupabaseConfigured } from '../supabase';
+import { supabase, isSupabaseConfigured, APP_ENV } from '../supabase';
 import { restaurantService } from './restaurantService';
 import { parseBannerUrls } from '../../utils/mediaUtils';
 import { storageService } from './storageService';
 import { clearMarketplaceRestaurantCache } from './sharedRestaurantUtils';
 
-const STORAGE_KEY_PRINTER_PREFIX = '@restaurant_printer_settings_';
-const STORAGE_KEY_GST_PREFIX = '@restaurant_gst_settings_';
+const STORAGE_KEY_PRINTER_PREFIX = `@restaurant_printer_settings_${APP_ENV}_`;
+const STORAGE_KEY_GST_PREFIX = `@restaurant_gst_settings_${APP_ENV}_`;
+const STORAGE_KEY_FULL_SETTINGS_PREFIX = `@restaurant_full_settings_${APP_ENV}_`;
+
+const LEGACY_STORAGE_KEY_PRINTER_PREFIX = '@restaurant_printer_settings_';
+const LEGACY_STORAGE_KEY_GST_PREFIX = '@restaurant_gst_settings_';
 
 const SETTINGS_CACHE_TTL = 30000; // 30s in-memory cache
 const inMemorySettingsCache: Record<string, { timestamp: number; data: RestaurantSettings }> = {};
@@ -182,7 +186,7 @@ export const settingsService = {
     if (!forceRefresh && inMemorySettingsCache[targetRestId] && (now - inMemorySettingsCache[targetRestId].timestamp < SETTINGS_CACHE_TTL)) {
       return inMemorySettingsCache[targetRestId].data;
     }
-    // 0. Load local printer & GST settings cache if available
+    // 0. Load local printer, GST, and verified full settings cache if available
     let localPrinterSettings: {
       kot_paper_size?: PaperSize;
       bill_paper_size?: PaperSize;
@@ -192,18 +196,27 @@ export const settingsService = {
       bill_payment_qr_url?: string;
       print_bill_payment_qr?: boolean;
     } | null = null;
-    let localGstSettings: { gst_registered?: boolean; is_gst_enabled?: boolean; tax_invoice_enabled?: boolean } | null = null;
+    let localGstSettings: { gst_registered?: boolean; is_gst_enabled?: boolean; tax_invoice_enabled?: boolean; default_tax_rate?: number; tax_rate?: number } | null = null;
+    let localFullSettings: RestaurantSettings | null = null;
 
     try {
-      const [cachedPrinterStr, cachedGstStr] = await Promise.all([
+      const [cachedPrinterStr, legacyPrinterStr, cachedGstStr, legacyGstStr, cachedFullStr] = await Promise.all([
         AsyncStorage.getItem(`${STORAGE_KEY_PRINTER_PREFIX}${targetRestId}`),
+        AsyncStorage.getItem(`${LEGACY_STORAGE_KEY_PRINTER_PREFIX}${targetRestId}`),
         AsyncStorage.getItem(`${STORAGE_KEY_GST_PREFIX}${targetRestId}`),
+        AsyncStorage.getItem(`${LEGACY_STORAGE_KEY_GST_PREFIX}${targetRestId}`),
+        AsyncStorage.getItem(`${STORAGE_KEY_FULL_SETTINGS_PREFIX}${targetRestId}`),
       ]);
-      if (cachedPrinterStr) {
-        localPrinterSettings = JSON.parse(cachedPrinterStr);
+      const printerJson = cachedPrinterStr || legacyPrinterStr;
+      if (printerJson) {
+        localPrinterSettings = JSON.parse(printerJson);
       }
-      if (cachedGstStr) {
-        localGstSettings = JSON.parse(cachedGstStr);
+      const gstJson = cachedGstStr || legacyGstStr;
+      if (gstJson) {
+        localGstSettings = JSON.parse(gstJson);
+      }
+      if (cachedFullStr) {
+        localFullSettings = JSON.parse(cachedFullStr);
       }
     } catch (e) {
       // ignore
@@ -216,11 +229,11 @@ export const settingsService = {
 
         // 1. Query tenant-specific settings record (Staff/Admin) or Public Info (Anon/Guest)
         let data: any = null;
-        let error: any = null;
         let publicProf: any = null;
+        let rpcData: any = null;
 
         if (isAuthenticated) {
-          const [res, profRes] = await Promise.all([
+          const [res, profRes, rpcRes] = await Promise.allSettled([
             supabase
               .from('restaurant_settings')
               .select('*')
@@ -231,13 +244,26 @@ export const settingsService = {
               .select('*')
               .eq('restaurant_id', targetRestId)
               .maybeSingle(),
+            supabase.rpc('get_public_restaurant_info', {
+              p_restaurant_id: targetRestId,
+            }),
           ]);
-          data = res.data;
-          error = res.error;
-          publicProf = profRes.data;
+
+          data = res.status === 'fulfilled' ? res.value.data : null;
+          publicProf = profRes.status === 'fulfilled' ? profRes.value.data : null;
+          rpcData = rpcRes.status === 'fulfilled' && !rpcRes.value.error && rpcRes.value.data && typeof rpcRes.value.data === 'object'
+            ? rpcRes.value.data
+            : null;
+
+          // If restaurant_settings query returned null (e.g. non-superadmin RLS or delay), use Security Definer RPC
+          if (!data && rpcData && Object.keys(rpcData).length > 0) {
+            data = rpcData;
+            publicProf = publicProf || rpcData;
+          }
         } else {
           data = await this.getPublicRestaurantInfo(targetRestId);
           publicProf = data;
+          rpcData = data;
         }
 
         // 2. Query restaurant record to get latest banner_url, logo_url, legal_name, and email
@@ -282,30 +308,49 @@ export const settingsService = {
           ? Boolean(data.print_bill_payment_qr)
           : (localPrinterSettings?.print_bill_payment_qr !== undefined ? Boolean(localPrinterSettings.print_bill_payment_qr) : false);
 
-        // Resolve GST & Tax configuration
-        const effectiveGstin = (data?.gstin || '').trim();
+        // Resolve GST & Tax configuration authoritatively
+        const effectiveGstin = ((data?.gstin || rpcData?.gstin || '').trim());
         const rawTaxRate = data?.default_tax_rate !== undefined && data?.default_tax_rate !== null
           ? Number(data.default_tax_rate)
-          : (data?.tax_rate !== undefined && data?.tax_rate !== null ? Number(data.tax_rate) : 0);
+          : (data?.tax_rate !== undefined && data?.tax_rate !== null
+              ? Number(data.tax_rate)
+              : (rpcData?.default_tax_rate !== undefined && rpcData?.default_tax_rate !== null
+                  ? Number(rpcData.default_tax_rate)
+                  : (rpcData?.tax_rate !== undefined && rpcData?.tax_rate !== null
+                      ? Number(rpcData.tax_rate)
+                      : (localGstSettings?.default_tax_rate !== undefined && localGstSettings?.default_tax_rate !== null
+                          ? Number(localGstSettings.default_tax_rate)
+                          : 0))));
         const resolvedTaxRate = (!isNaN(rawTaxRate) && rawTaxRate > 0 && rawTaxRate <= 100) ? rawTaxRate : 0;
 
-        const resolvedGstRegistered: boolean = localGstSettings?.gst_registered !== undefined
-          ? localGstSettings.gst_registered
-          : (data?.gst_registered !== undefined ? Boolean(data.gst_registered) : Boolean(effectiveGstin));
+        // Supabase database record is authoritative. localGstSettings serves as offline/fallback cache only.
+        const resolvedGstRegistered: boolean = data?.gst_registered !== undefined && data?.gst_registered !== null
+          ? Boolean(data.gst_registered)
+          : (rpcData?.gst_registered !== undefined && rpcData?.gst_registered !== null
+              ? Boolean(rpcData.gst_registered)
+              : (effectiveGstin
+                  ? true
+                  : (localGstSettings?.gst_registered !== undefined ? Boolean(localGstSettings.gst_registered) : false)));
 
-        const resolvedIsGstEnabled: boolean = (data?.is_gst_enabled !== undefined && data?.is_gst_enabled !== null
+        const baseIsGst = data?.is_gst_enabled !== undefined && data?.is_gst_enabled !== null
           ? Boolean(data.is_gst_enabled)
-          : (localGstSettings?.is_gst_enabled !== undefined
-              ? Boolean(localGstSettings.is_gst_enabled)
-              : false)) && resolvedGstRegistered && resolvedTaxRate > 0;
+          : (rpcData?.is_gst_enabled !== undefined && rpcData?.is_gst_enabled !== null
+              ? Boolean(rpcData.is_gst_enabled)
+              : (localGstSettings?.is_gst_enabled !== undefined
+                  ? Boolean(localGstSettings.is_gst_enabled)
+                  : false));
+        const resolvedIsGstEnabled: boolean = baseIsGst && resolvedGstRegistered && resolvedTaxRate > 0;
 
-        const resolvedTaxInvoiceEnabled: boolean = (data?.tax_invoice_enabled !== undefined && data?.tax_invoice_enabled !== null
+        const baseTaxInv = data?.tax_invoice_enabled !== undefined && data?.tax_invoice_enabled !== null
           ? Boolean(data.tax_invoice_enabled)
-          : (localGstSettings?.tax_invoice_enabled !== undefined
-              ? Boolean(localGstSettings.tax_invoice_enabled)
-              : false)) && resolvedGstRegistered && resolvedIsGstEnabled && resolvedTaxRate > 0;
+          : (rpcData?.tax_invoice_enabled !== undefined && rpcData?.tax_invoice_enabled !== null
+              ? Boolean(rpcData.tax_invoice_enabled)
+              : (localGstSettings?.tax_invoice_enabled !== undefined
+                  ? Boolean(localGstSettings.tax_invoice_enabled)
+                  : false));
+        const resolvedTaxInvoiceEnabled: boolean = baseTaxInv && resolvedGstRegistered && resolvedIsGstEnabled && resolvedTaxRate > 0;
 
-        // Sync local cache with Supabase values
+        // Sync local environment cache with Supabase values
         AsyncStorage.setItem(
           `${STORAGE_KEY_PRINTER_PREFIX}${targetRestId}`,
           JSON.stringify({
@@ -325,6 +370,8 @@ export const settingsService = {
             gst_registered: resolvedGstRegistered,
             is_gst_enabled: resolvedIsGstEnabled,
             tax_invoice_enabled: resolvedTaxInvoiceEnabled,
+            default_tax_rate: resolvedTaxRate,
+            tax_rate: resolvedTaxRate,
           })
         ).catch(() => {});
 
@@ -393,6 +440,7 @@ export const settingsService = {
             timestamp: Date.now(),
             data: loaded,
           };
+          AsyncStorage.setItem(`${STORAGE_KEY_FULL_SETTINGS_PREFIX}${targetRestId}`, JSON.stringify(loaded)).catch(() => {});
           return loaded;
         } else if (restData) {
           const loaded: RestaurantSettings = {
@@ -423,19 +471,29 @@ export const settingsService = {
             delivery_payment_qr_url: publicProf?.delivery_payment_qr_url || '',
             delivery_upi_id: publicProf?.delivery_upi_id || '',
             delivery_sample_screenshot_url: publicProf?.delivery_sample_screenshot_url || '',
-            default_tax_rate: 0,
-            tax_rate: 0,
+            default_tax_rate: resolvedTaxRate,
+            tax_rate: resolvedTaxRate,
           };
           mockStorage.saveSettings(loaded);
           inMemorySettingsCache[targetRestId] = {
             timestamp: Date.now(),
             data: loaded,
           };
+          AsyncStorage.setItem(`${STORAGE_KEY_FULL_SETTINGS_PREFIX}${targetRestId}`, JSON.stringify(loaded)).catch(() => {});
           return loaded;
         }
       } catch (e) {
         console.warn('Supabase getSettings fallback to local cache:', e);
       }
+    }
+
+    // Network failure fallback: read verified full settings cache for this restaurant and environment
+    if (localFullSettings && (localFullSettings.restaurant_id === targetRestId || localFullSettings.id === targetRestId)) {
+      inMemorySettingsCache[targetRestId] = {
+        timestamp: Date.now(),
+        data: localFullSettings,
+      };
+      return localFullSettings;
     }
 
     const localSettings = mockStorage.getSettings();
@@ -519,7 +577,7 @@ export const settingsService = {
     const targetBillPaymentQrUrl = settings.bill_payment_qr_url !== undefined ? settings.bill_payment_qr_url : current.bill_payment_qr_url;
     const targetPrintBillPaymentQr = settings.print_bill_payment_qr !== undefined ? Boolean(settings.print_bill_payment_qr) : Boolean(current.print_bill_payment_qr);
 
-    // Save to local AsyncStorage cache for instant response
+    // Save to local environment AsyncStorage cache for instant response
     try {
       await Promise.all([
         AsyncStorage.setItem(
@@ -540,6 +598,8 @@ export const settingsService = {
             gst_registered: targetGstRegistered,
             is_gst_enabled: targetIsGstEnabled,
             tax_invoice_enabled: targetTaxInvoiceEnabled,
+            default_tax_rate: validRate,
+            tax_rate: validRate,
           })
         ),
       ]);
@@ -704,6 +764,7 @@ export const settingsService = {
         tax_rate: validRate,
       };
       mockStorage.saveSettings(persisted);
+      AsyncStorage.setItem(`${STORAGE_KEY_FULL_SETTINGS_PREFIX}${targetRestId}`, JSON.stringify(persisted)).catch(() => {});
       try {
         clearMarketplaceRestaurantCache();
       } catch (e) {

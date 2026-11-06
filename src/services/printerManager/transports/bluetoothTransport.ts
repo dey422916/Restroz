@@ -52,18 +52,27 @@ export const bluetoothTransport = {
 
   /**
    * Checks whether Bluetooth permissions are granted.
-   * On Android 12+ (API 31+), requests BLUETOOTH_CONNECT and BLUETOOTH_SCAN.
+   * On Android 12+ (API 31+), requests BLUETOOTH_CONNECT (for printing) and BLUETOOTH_SCAN (for discovery).
    */
-  async requestPermissions(): Promise<boolean> {
+  async requestPermissions(forPrintingOnly: boolean = false): Promise<boolean> {
     if (Platform.OS !== 'android') return true;
 
     try {
       const apiLevel = Number(Platform.Version);
       if (apiLevel >= 31) {
         const connectCheck = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT);
+        if (forPrintingOnly && connectCheck) {
+          return true;
+        }
+
         const scanCheck = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN);
         if (connectCheck && scanCheck) {
           return true;
+        }
+
+        if (forPrintingOnly) {
+          const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT);
+          return granted === PermissionsAndroid.RESULTS.GRANTED;
         }
 
         const granted = await PermissionsAndroid.requestMultiple([
@@ -200,7 +209,7 @@ export const bluetoothTransport = {
       };
     }
 
-    const hasPerm = await this.requestPermissions();
+    const hasPerm = await this.requestPermissions(true);
     if (!hasPerm) {
       return {
         reachable: false,
@@ -211,15 +220,33 @@ export const bluetoothTransport = {
     }
 
     try {
-      // Connect to device using RFCOMM/SPP
-      const connected = await bt.connectToDevice(address, {
-        connectorType: 'rfcomm',
-        delimiter: '',
-      });
+      // Connect to device using RFCOMM/SPP if not already connected
+      let isConnected = false;
+      try {
+        isConnected = await bt.isDeviceConnected(address);
+      } catch (_) {}
+
+      let connected = isConnected;
+      if (!connected) {
+        try {
+          const dev = await bt.connectToDevice(address, {
+            connectorType: 'rfcomm',
+            delimiter: '',
+          });
+          connected = Boolean(dev);
+        } catch (connErr: any) {
+          const msg = (connErr?.message || '').toLowerCase();
+          if (msg.includes('already connected')) {
+            connected = true;
+          } else {
+            throw connErr;
+          }
+        }
+      }
 
       const latency = Date.now() - startTime;
 
-      // Disconnect cleanly
+      // Disconnect cleanly after connection test
       try {
         await bt.disconnectFromDevice(address);
       } catch (_) {}
@@ -301,6 +328,19 @@ export const bluetoothTransport = {
     }
 
     try {
+      const hasPerm = await this.requestPermissions(true);
+      if (!hasPerm) {
+        ACTIVE_BT_PRINTER_LOCKS.delete(printerId);
+        return {
+          success: false,
+          status: 'permission_denied',
+          bytesSent: 0,
+          totalBytes: payload.length,
+          message: 'BLUETOOTH_PERMISSION_DENIED',
+          durationMs: 0,
+        };
+      }
+
       const enabled = await this.isEnabled();
       if (!enabled) {
         ACTIVE_BT_PRINTER_LOCKS.delete(printerId);
@@ -314,22 +354,24 @@ export const bluetoothTransport = {
         };
       }
 
-      // Connect over SPP
-      const connected = await bt.connectToDevice(address, {
-        connectorType: 'rfcomm',
-        delimiter: '',
-      });
+      // Check if already connected over SPP or connect fresh
+      let isConnected = false;
+      try {
+        isConnected = await bt.isDeviceConnected(address);
+      } catch (_) {}
 
-      if (!connected) {
-        ACTIVE_BT_PRINTER_LOCKS.delete(printerId);
-        return {
-          success: false,
-          status: 'unreachable',
-          bytesSent: 0,
-          totalBytes: payload.length,
-          message: `Failed to connect to Bluetooth printer (${address}).`,
-          durationMs: Date.now() - startTime,
-        };
+      if (!isConnected) {
+        try {
+          await bt.connectToDevice(address, {
+            connectorType: 'rfcomm',
+            delimiter: '',
+          });
+        } catch (connErr: any) {
+          const msg = (connErr?.message || '').toLowerCase();
+          if (!msg.includes('already connected')) {
+            throw connErr;
+          }
+        }
       }
 
       // Chunked binary transmission (512-byte slices)
@@ -359,7 +401,10 @@ export const bluetoothTransport = {
         const chunk = payload.subarray(offset, offset + currentChunkSize);
         const base64Chunk = encodeBase64(chunk);
 
-        await bt.writeToDevice(address, base64Chunk, 'base64');
+        const writeOk = await bt.writeToDevice(address, base64Chunk, 'base64');
+        if (writeOk === false) {
+          throw new Error(`Write failed on socket to ${address} at offset ${offset}`);
+        }
         bytesSent += currentChunkSize;
         offset += currentChunkSize;
 
@@ -368,6 +413,9 @@ export const bluetoothTransport = {
           await new Promise((r) => setTimeout(r, 20));
         }
       }
+
+      // Allow 100ms for hardware buffer drainage before disconnect
+      await new Promise((r) => setTimeout(r, 100));
 
       // Disconnect cleanly
       try {

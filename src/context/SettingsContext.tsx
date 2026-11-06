@@ -13,6 +13,9 @@ interface SettingsContextType {
   isOnlineOrdersEnabled: boolean;
   toggleOnlineOrders: (enabled: boolean) => Promise<boolean>;
   loading: boolean;
+  isSettingsVerified: boolean;
+  verifiedRestaurantId: string;
+  isTaxConfigReady: boolean;
 }
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
@@ -23,11 +26,11 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [settings, setSettings] = useState<RestaurantSettings>({
     id: activeRestaurantId || '',
     name: activeRestaurant?.name || 'Restaurant POS',
-    legal_name: activeRestaurant?.legal_name || activeRestaurant?.name || 'Restaurant POS Pvt Ltd',
-    address: activeRestaurant?.address || 'Main Road',
-    phone: activeRestaurant?.phone || '+91 9876543210',
-    email: activeRestaurant?.email || 'contact@restaurant.com',
-    gstin: '36AAAAA0000A1Z5',
+    legal_name: activeRestaurant?.legal_name || activeRestaurant?.name || '',
+    address: activeRestaurant?.address || '',
+    phone: activeRestaurant?.phone || '',
+    email: activeRestaurant?.email || '',
+    gstin: '',
     state: 'West Bengal',
     logo_url: activeRestaurant?.logo_url || '',
     invoice_prefix: 'INV-',
@@ -37,9 +40,14 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     currency_symbol: '₹',
     service_charge_rate: 0.0,
     online_orders_enabled: true,
+    gst_registered: false,
+    is_gst_enabled: false,
+    tax_invoice_enabled: false,
   });
   const [isOnlineOrdersEnabled, setIsOnlineOrdersEnabled] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(true);
+  const [isSettingsVerified, setIsSettingsVerified] = useState<boolean>(false);
+  const [verifiedRestaurantId, setVerifiedRestaurantId] = useState<string>('');
 
   // Keep a ref to activeRestaurant to avoid re-triggering effects when object identity changes
   const activeRestaurantRef = React.useRef(activeRestaurant);
@@ -55,39 +63,55 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
   }, []);
 
-  const fetchLatestSettings = useCallback(async (targetRestId?: string) => {
+  const fetchLatestSettings = useCallback(async (targetRestId?: string, forceRefresh: boolean = false) => {
     const idToFetch = targetRestId || activeRestaurantId;
-    if (!idToFetch || !user?.id) {
+    if (!idToFetch) {
       setLoading(false);
       return;
     }
+    setLoading(true);
     try {
-      const [s, onlineStatus] = await Promise.all([
-        settingsService.getSettings(idToFetch),
+      const [sResult, onlineStatusResult] = await Promise.allSettled([
+        settingsService.getSettings(idToFetch, forceRefresh),
         marketplaceService.getRestaurantOnlineStatus(idToFetch),
       ]);
 
       if (!isMountedRef.current) return;
 
-      setIsOnlineOrdersEnabled(onlineStatus);
+      const s = sResult.status === 'fulfilled' ? sResult.value : null;
+      const onlineStatus = onlineStatusResult.status === 'fulfilled' ? onlineStatusResult.value : true;
 
-      setSettings((prev) => ({
-        ...prev,
-        ...s,
-        name: activeRestaurantRef.current?.name || s.name || prev.name || 'Restaurant POS',
-        legal_name: s.legal_name || activeRestaurantRef.current?.legal_name || s.name || activeRestaurantRef.current?.name || prev.legal_name || '',
-        email: s.email || activeRestaurantRef.current?.email || prev.email || '',
-        logo_url: activeRestaurantRef.current?.logo_url !== undefined
-          ? (activeRestaurantRef.current.logo_url || '')
-          : (s.logo_url || ''),
-        phone: activeRestaurantRef.current?.phone || s.phone || prev.phone || '',
-        address: activeRestaurantRef.current?.address || s.address || prev.address || '',
-        banner_url: s.banner_url || prev.banner_url || '',
-        banner_urls: s.banner_urls && s.banner_urls.length > 0 ? s.banner_urls : (prev.banner_urls || []),
-        gallery_urls: s.gallery_urls && s.gallery_urls.length > 0 ? s.gallery_urls : (prev.gallery_urls || []),
-        restaurant_id: idToFetch,
-        online_orders_enabled: onlineStatus,
-      }));
+      if (s) {
+        setIsOnlineOrdersEnabled(onlineStatus);
+
+        setSettings((prev) => ({
+          ...prev,
+          ...s,
+          gst_registered: s.gst_registered,
+          is_gst_enabled: s.is_gst_enabled,
+          tax_invoice_enabled: s.tax_invoice_enabled,
+          default_tax_rate: s.default_tax_rate,
+          tax_rate: s.tax_rate,
+          cgst_rate: s.cgst_rate,
+          sgst_rate: s.sgst_rate,
+          gstin: s.gstin || '',
+          name: activeRestaurantRef.current?.name || s.name || prev.name || 'Restaurant POS',
+          legal_name: s.legal_name || activeRestaurantRef.current?.legal_name || s.name || activeRestaurantRef.current?.name || prev.legal_name || '',
+          email: s.email || activeRestaurantRef.current?.email || prev.email || '',
+          logo_url: activeRestaurantRef.current?.logo_url !== undefined
+            ? (activeRestaurantRef.current.logo_url || '')
+            : (s.logo_url || ''),
+          phone: activeRestaurantRef.current?.phone || s.phone || prev.phone || '',
+          address: activeRestaurantRef.current?.address || s.address || prev.address || '',
+          banner_url: s.banner_url || prev.banner_url || '',
+          banner_urls: s.banner_urls && s.banner_urls.length > 0 ? s.banner_urls : (prev.banner_urls || []),
+          gallery_urls: s.gallery_urls && s.gallery_urls.length > 0 ? s.gallery_urls : (prev.gallery_urls || []),
+          restaurant_id: idToFetch,
+          online_orders_enabled: onlineStatus,
+        }));
+        setIsSettingsVerified(true);
+        setVerifiedRestaurantId(idToFetch);
+      }
     } catch (e) {
       console.warn('SettingsContext fetch error:', e);
     } finally {
@@ -95,16 +119,21 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setLoading(false);
       }
     }
-  }, [activeRestaurantId, user?.id]);
+  }, [activeRestaurantId]);
 
   useEffect(() => {
-    if (!activeRestaurantId || !user?.id) {
+    if (!activeRestaurantId) {
+      setIsSettingsVerified(false);
+      setVerifiedRestaurantId('');
       setLoading(false);
       return;
     }
 
-    // Initial fetch once per restaurant
-    fetchLatestSettings(activeRestaurantId);
+    setIsSettingsVerified(false);
+    setLoading(true);
+    // Invalidate in-memory settings cache on restaurant switch to ensure fresh load
+    settingsService.clearSettingsCache(activeRestaurantId);
+    fetchLatestSettings(activeRestaurantId, true);
 
     // Exactly one single Realtime channel per activeRestaurantId
     if (isSupabaseConfigured) {
@@ -120,6 +149,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           (payload) => {
             if (payload.new && (payload.new as any).id) {
               const newRec = payload.new as any;
+              settingsService.clearSettingsCache(activeRestaurantId);
               setSettings((prev) => ({
                 ...prev,
                 ...newRec,
@@ -129,8 +159,13 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 cgst_rate: newRec.cgst_rate !== undefined ? Number(newRec.cgst_rate) : prev.cgst_rate,
                 sgst_rate: newRec.sgst_rate !== undefined ? Number(newRec.sgst_rate) : prev.sgst_rate,
                 gstin: newRec.gstin !== undefined ? newRec.gstin : prev.gstin,
+                gst_registered: newRec.gst_registered !== undefined ? Boolean(newRec.gst_registered) : prev.gst_registered,
+                is_gst_enabled: newRec.is_gst_enabled !== undefined ? Boolean(newRec.is_gst_enabled) : prev.is_gst_enabled,
+                tax_invoice_enabled: newRec.tax_invoice_enabled !== undefined ? Boolean(newRec.tax_invoice_enabled) : prev.tax_invoice_enabled,
                 auto_print_kot: newRec.kot_auto_print !== undefined ? Boolean(newRec.kot_auto_print) : prev.auto_print_kot,
               }));
+              setIsSettingsVerified(true);
+              setVerifiedRestaurantId(activeRestaurantId);
             }
           }
         )
@@ -175,6 +210,8 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const updateSettings = async (newSettings: Partial<RestaurantSettings>): Promise<RestaurantSettings> => {
     const updated = await settingsService.saveSettings(newSettings, activeRestaurantId);
     setSettings(updated);
+    setIsSettingsVerified(true);
+    setVerifiedRestaurantId(activeRestaurantId);
     if (activeRestaurantRef.current) {
       activeRestaurantRef.current = {
         ...activeRestaurantRef.current,
@@ -207,7 +244,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const refreshSettings = async (): Promise<RestaurantSettings> => {
     setLoading(true);
-    await fetchLatestSettings();
+    await fetchLatestSettings(activeRestaurantId, true);
     return settings;
   };
 
@@ -220,6 +257,9 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         isOnlineOrdersEnabled,
         toggleOnlineOrders,
         loading,
+        isSettingsVerified,
+        verifiedRestaurantId,
+        isTaxConfigReady: Boolean(isSettingsVerified && verifiedRestaurantId === activeRestaurantId),
       }}
     >
       {children}

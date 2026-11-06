@@ -31,7 +31,16 @@ if (typeof __DEV__ !== 'undefined' && __DEV__) {
 export type DirectTransportType = 'bluetooth' | 'usb' | 'serial' | 'agent';
 export type DirectPrinterRole = 'kot' | 'bill' | 'both';
 export type DirectPaperWidth = '58mm' | '80mm';
-export type DirectPrinterStatus = 'connected' | 'available' | 'reconnect_required' | 'unsupported' | 'offline' | 'disconnected';
+export type DirectPrinterStatus =
+  | 'connected'
+  | 'available'
+  | 'configured'
+  | 'connecting'
+  | 'error'
+  | 'reconnect_required'
+  | 'unsupported'
+  | 'offline'
+  | 'disconnected';
 
 /**
  * Strict role matching rule:

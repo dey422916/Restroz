@@ -340,6 +340,9 @@ export default {
       if (isPrivate || isWorkersDev) {
         // Enforce strict noindex on private screens and preview workers
         newHeaders.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+        newHeaders.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        newHeaders.set('Pragma', 'no-cache');
+        newHeaders.set('Expires', '0');
       } else {
         // Allow public pages
         newHeaders.set('X-Robots-Tag', 'index, follow, max-image-preview:large');

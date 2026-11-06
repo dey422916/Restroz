@@ -363,6 +363,7 @@ export const settingsService = {
             print_bill_payment_qr: resolvedPrintBillPaymentQr,
           })
         ).catch(() => {});
+        AsyncStorage.removeItem(`${LEGACY_STORAGE_KEY_PRINTER_PREFIX}${targetRestId}`).catch(() => {});
 
         AsyncStorage.setItem(
           `${STORAGE_KEY_GST_PREFIX}${targetRestId}`,
@@ -374,6 +375,7 @@ export const settingsService = {
             tax_rate: resolvedTaxRate,
           })
         ).catch(() => {});
+        AsyncStorage.removeItem(`${LEGACY_STORAGE_KEY_GST_PREFIX}${targetRestId}`).catch(() => {});
 
         const cleanLogo = cleanLogoOnly(restLogo || '');
 

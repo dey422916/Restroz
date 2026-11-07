@@ -552,6 +552,14 @@ export const webDirectPrintService = {
     } catch (err) {
       console.warn('[webDirectPrintService] Error saving direct printers:', err);
     }
+
+    // Auto-sync hardware printers to Web Print Station in Supabase
+    if (typeof window !== 'undefined' && restaurantId) {
+      try {
+        const { webPrintStationService } = require('./webPrintStationService');
+        webPrintStationService.syncStationPrinters(restaurantId).catch(() => {});
+      } catch (_) {}
+    }
   },
 
   /**
@@ -1833,8 +1841,8 @@ export const webDirectPrintService = {
               return a.printer_name.localeCompare(b.printer_name);
             });
 
-            // STRICT: Only choose from matchingDevices! NEVER fall back to deviceRows[0]!
-            const chosenDevice = matchingDevices.length > 0 ? matchingDevices[0] : null;
+            // If matchingDevices has a match, use it. If only 1 device is registered for the station, use it.
+            const chosenDevice = matchingDevices.length > 0 ? matchingDevices[0] : (deviceRows.length === 1 ? deviceRows[0] : null);
 
             if (chosenDevice) {
               const is58mmDevice = /58|seznik|925|rpp|mpt|mini/i.test(chosenDevice.printer_name);
@@ -1856,7 +1864,7 @@ export const webDirectPrintService = {
                 role: effectiveRole,
                 isPrimary: Boolean(chosenDevice.is_primary),
                 status: 'connected',
-                statusMessage: `RestroZ Print Agent Online (${agentData.device_name})`,
+                statusMessage: `RestroZ Print Station Online (${agentData.device_name})`,
                 lastConnectedAt: Date.now(),
               };
 
@@ -1880,20 +1888,36 @@ export const webDirectPrintService = {
               target = agentPrinter;
             }
           } else {
-            // Paired agent exists, but no specific printer devices synced yet
-            const defaultQueue = 'POS58 Printer';
+            // Paired agent exists, but no specific printer devices synced in printer_devices yet
+            // Check restaurant_printers table for registered printer name
+            let cloudPrinterName = 'POS58 Printer';
+            let cloudPaperWidth: DirectPaperWidth = '58mm';
+            try {
+              const { data: cloudRow } = await supabase
+                .from('restaurant_printers')
+                .select('name, paper_width')
+                .eq('restaurant_id', restaurantId)
+                .order('is_primary', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+              if (cloudRow?.name) {
+                cloudPrinterName = cloudRow.name;
+                cloudPaperWidth = (cloudRow.paper_width as DirectPaperWidth) || '58mm';
+              }
+            } catch (_) {}
+
             const agentPrinter: ConfiguredDirectPrinter = {
               id: `agent_${agentData.id}_default`,
-              name: defaultQueue,
+              name: cloudPrinterName,
               transport: 'agent',
               agentId: agentData.id,
               agentDeviceName: agentData.device_name,
-              windowsQueueName: defaultQueue,
-              paperWidth: '80mm',
+              windowsQueueName: cloudPrinterName,
+              paperWidth: cloudPaperWidth,
               role: 'both',
               isPrimary: true,
               status: 'connected',
-              statusMessage: `RestroZ Print Agent Online (${agentData.device_name})`,
+              statusMessage: `RestroZ Print Station Online (${agentData.device_name})`,
               lastConnectedAt: Date.now(),
             };
             target = agentPrinter;

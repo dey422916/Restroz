@@ -174,7 +174,28 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
             };
           });
 
-        setPrinters(mapped);
+        const agent = await webDirectPrintService.getPairedAgent(restaurantId);
+        setPairedAgent(agent);
+
+        if (mapped.length === 0 && agent && agent.installedPrinters && agent.installedPrinters.length > 0) {
+          const centralPrinters: ConfiguredDirectPrinter[] = agent.installedPrinters.map((pName) => ({
+            id: `agent_${agent.id}_${pName.replace(/\s+/g, '_')}`,
+            name: pName,
+            transport: 'agent',
+            agentId: agent.id,
+            agentDeviceName: agent.deviceName,
+            windowsQueueName: pName,
+            paperWidth: /58|seznik|925|rpp|mini/i.test(pName) ? '58mm' : '80mm',
+            role: 'both',
+            isPrimary: true,
+            status: 'connected',
+            statusMessage: `Ready • Counter Station Printer (${agent.deviceName})`,
+            lastConnectedAt: Date.now(),
+          }));
+          setPrinters(centralPrinters);
+        } else {
+          setPrinters(mapped);
+        }
       }
     } catch (err: any) {
       console.warn('[SeznikPrinterManagement] Error loading printers/agent:', err);
@@ -767,7 +788,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
   const handleCardTestPrint = async (printer: ConfiguredDirectPrinter) => {
     setTestingPrinterId(printer.id);
     try {
-      if (Platform.OS === 'web') {
+      if (Platform.OS === 'web' || printer.transport === 'agent') {
         console.log(
           `[PRINTER_IDENTITY_AUDIT]\n` +
           `UI Printer ID: ${printer.id}\n` +
@@ -777,8 +798,10 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
         );
         const result = await webDirectPrintService.printTest(printer, settings, restaurantId);
         showToast('success', 'Test Print Sent', result.message || 'Test print dispatched successfully!');
-        const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
-        setPrinters(updatedList);
+        if (Platform.OS === 'web') {
+          const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
+          setPrinters(updatedList);
+        }
       } else {
         setPrinters((prev) =>
           prev.map((p) =>

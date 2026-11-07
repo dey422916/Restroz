@@ -8,12 +8,70 @@ import {
 
 export interface WebStationStatus {
   isActive: boolean;
+  isMobileStation: boolean;
   restaurantId: string | null;
   agentId: string | null;
   agentToken: string | null;
   pairedPrinters: string[];
   lastHeartbeat: number | null;
   processedJobCount: number;
+  osInfo: string;
+}
+
+/**
+ * Generates or retrieves a persistent browser-unique station identifier.
+ * Ensures multi-device setups (Admin Mobile vs Staff Laptop) do not collide
+ * on the same print_agents row in Supabase.
+ */
+function getBrowserStationDeviceId(restaurantId: string): string {
+  const STORAGE_KEY = `@restroz_station_browser_uid_${restaurantId}`;
+  let uid = '';
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      uid = window.localStorage.getItem(STORAGE_KEY) || '';
+      if (!uid) {
+        uid = Math.random().toString(36).substring(2, 9) + Date.now().toString(36).substring(4);
+        window.localStorage.setItem(STORAGE_KEY, uid);
+      }
+    } catch (_) {
+      uid = 'web_' + Date.now();
+    }
+  } else {
+    uid = 'node_' + Date.now();
+  }
+  return `web_station_${restaurantId}_${uid}`;
+}
+
+/**
+ * Detects device platform and browser context for accurate reporting in print_agents.
+ */
+function getStationClientInfo(): { isMobile: boolean; osInfo: string; displayNameSuffix: string } {
+  if (typeof navigator === 'undefined') {
+    return { isMobile: false, osInfo: 'Browser Web Station', displayNameSuffix: 'Web Station' };
+  }
+  const ua = navigator.userAgent || '';
+  const isAndroid = /Android/i.test(ua);
+  const isIOS = /iPhone|iPad|iPod/i.test(ua);
+  const isMobile = isAndroid || isIOS || /Mobile/i.test(ua);
+
+  let osInfo = 'Desktop Chrome Web Station';
+  let displayNameSuffix = 'Web Station';
+
+  if (isAndroid) {
+    osInfo = 'Android Chrome Web Station';
+    displayNameSuffix = 'Mobile Station';
+  } else if (isIOS) {
+    osInfo = 'iOS Safari Web Station';
+    displayNameSuffix = 'Mobile Station';
+  } else if (/Windows/i.test(ua)) {
+    osInfo = 'Windows Chrome Web Station';
+    displayNameSuffix = 'Desktop Station';
+  } else if (/Mac/i.test(ua)) {
+    osInfo = 'macOS Web Station';
+    displayNameSuffix = 'Desktop Station';
+  }
+
+  return { isMobile, osInfo, displayNameSuffix };
 }
 
 class WebPrintStationService {
@@ -27,22 +85,51 @@ class WebPrintStationService {
   private inFlightJobIds = new Set<string>();
   private processedJobCount = 0;
   private isInitialized = false;
+  private lastHeartbeatTime: number | null = null;
+  private clientInfo = getStationClientInfo();
+  private wakeLockSentinel: any = null;
+  private visibilityHandler: any = null;
+  private focusHandler: any = null;
+  private beforeUnloadHandler: any = null;
 
   /**
    * Starts the Web Print Station for the given restaurant.
    * Runs ONLY on Web browsers.
    * If local direct hardware printers (Bluetooth / USB / Serial) are connected,
    * registers the browser session as the restaurant's active Print Station in Supabase
-   * and listens for incoming print jobs from staff mobile devices.
+   * and listens for incoming print jobs from staff mobile/laptop devices.
    */
-  async start(restaurantId?: string | null, restaurantName?: string): Promise<void> {
+  async start(
+    restaurantId?: string | null,
+    restaurantName?: string,
+    overridePrinters?: ConfiguredDirectPrinter[]
+  ): Promise<void> {
     if (Platform.OS !== 'web' || !restaurantId) {
       return;
     }
 
-    // If already active for this restaurant, check if we need to sync printers
-    if (this.activeRestaurantId === restaurantId && this.agentToken) {
-      await this.syncStationPrinters(restaurantId, restaurantName);
+    // Refresh client info
+    this.clientInfo = getStationClientInfo();
+
+    // Check if this browser has any locally configured hardware printers
+    const localPrinters = overridePrinters || webDirectPrintService.getSavedPrinters(restaurantId);
+    const hardwarePrinters = localPrinters.filter(
+      (p) => p.transport === 'bluetooth' || p.transport === 'usb' || p.transport === 'serial'
+    );
+
+    if (hardwarePrinters.length === 0) {
+      if (this.isInitialized) {
+        this.stop();
+      }
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[WEB_PRINT_STATION] No local hardware printers configured — station idle.');
+      }
+      return;
+    }
+
+    // If already initialized for this restaurant, keep listeners active and sync printers
+    if (this.activeRestaurantId === restaurantId && this.agentToken && this.isInitialized) {
+      await this.syncStationPrinters(restaurantId, restaurantName, hardwarePrinters);
       return;
     }
 
@@ -50,22 +137,14 @@ class WebPrintStationService {
     this.stop();
     this.activeRestaurantId = restaurantId;
 
-    // Check if this browser has any locally configured hardware printers
-    const localPrinters = webDirectPrintService.getSavedPrinters(restaurantId);
-    const hardwarePrinters = localPrinters.filter(
-      (p) => p.transport === 'bluetooth' || p.transport === 'usb' || p.transport === 'serial'
-    );
-
-    if (hardwarePrinters.length === 0) {
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log('[WEB_PRINT_STATION] No local hardware printers configured — station idle.');
-      }
-      return;
-    }
-
     try {
       // 1. Ensure Agent is registered and paired in Supabase
       await this.ensureStationRegistered(restaurantId, restaurantName, hardwarePrinters);
+
+      if (!this.agentId || !this.agentToken) {
+        console.warn('[WEB_PRINT_STATION] Agent registration incomplete. Station cannot activate.');
+        return;
+      }
 
       // 2. Start Realtime Subscription
       this.subscribeToRealtimeJobs(restaurantId);
@@ -73,14 +152,25 @@ class WebPrintStationService {
       // 3. Start Polling Fallback (every 3.5 seconds)
       this.startPolling(restaurantId);
 
-      // 4. Start Heartbeat (every 30 seconds)
-      this.startHeartbeat(restaurantId, restaurantName);
+      // 4. Start Heartbeat (every 20 seconds) & send initial pulse immediately
+      this.startHeartbeat(restaurantId);
+      await this.sendImmediateHeartbeat();
+
+      // 5. Attach Browser Lifecycle Listeners (Mobile background resume, focus, unload)
+      this.attachLifecycleListeners(restaurantId);
+
+      // 6. Request Screen WakeLock on mobile browsers to keep station responsive
+      if (this.clientInfo.isMobile) {
+        this.requestWakeLock().catch(() => {});
+      }
 
       this.isInitialized = true;
       console.log(
         `[WEB_PRINT_STATION_STARTED]\n` +
         `Restaurant ID: ${restaurantId}\n` +
+        `Device Name: ${restaurantName ? `${restaurantName} (${this.clientInfo.displayNameSuffix})` : 'Counter Station'}\n` +
         `Agent ID: ${this.agentId}\n` +
+        `OS Info: ${this.clientInfo.osInfo}\n` +
         `Hardware Printers: ${hardwarePrinters.map((p) => p.name).join(', ')}\n` +
         `Listening for Staff Jobs: YES`
       );
@@ -97,14 +187,16 @@ class WebPrintStationService {
     restaurantName?: string,
     hardwarePrinters: ConfiguredDirectPrinter[] = []
   ): Promise<void> {
-    const stationDeviceId = `web_station_${restaurantId}`;
-    const displayName = restaurantName ? `${restaurantName} (Counter Station)` : 'Counter Web Station';
+    const stationDeviceId = getBrowserStationDeviceId(restaurantId);
+    const displayName = restaurantName
+      ? `${restaurantName} (${this.clientInfo.displayNameSuffix})`
+      : `Counter ${this.clientInfo.displayNameSuffix}`;
 
-    // Call register_print_agent
+    // Call register_print_agent RPC
     const { data: reg, error: regErr } = await supabase.rpc('register_print_agent', {
       p_device_id: stationDeviceId,
       p_device_name: displayName,
-      p_os_info: 'Chrome Web Station',
+      p_os_info: this.clientInfo.osInfo,
       p_agent_version: '1.0.0',
     });
 
@@ -153,10 +245,16 @@ class WebPrintStationService {
       (p) => p.transport === 'bluetooth' || p.transport === 'usb' || p.transport === 'serial'
     );
 
-    if (hardwarePrinters.length === 0) return;
+    if (hardwarePrinters.length === 0) {
+      if (this.isInitialized) {
+        this.stop();
+      }
+      return;
+    }
 
-    if (!this.agentToken) {
-      await this.ensureStationRegistered(restId, restaurantName, hardwarePrinters);
+    // If station is not initialized yet, initialize the full station lifecycle
+    if (!this.isInitialized || !this.agentToken) {
+      await this.start(restId, restaurantName, hardwarePrinters);
       return;
     }
 
@@ -276,22 +374,135 @@ class WebPrintStationService {
   }
 
   /**
-   * Heartbeat interval (every 30s) keeping station online in print_agents.
+   * Heartbeat interval (every 20s) keeping station online in print_agents.
    */
-  private startHeartbeat(restaurantId: string, restaurantName?: string): void {
+  private startHeartbeat(restaurantId: string): void {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = setInterval(async () => {
-      if (!this.activeRestaurantId || !this.agentId) return;
+      await this.sendImmediateHeartbeat();
+    }, 20000);
+  }
+
+  /**
+   * Sends an immediate heartbeat pulse to Supabase to keep status = 'online' and last_seen fresh.
+   */
+  private async sendImmediateHeartbeat(): Promise<void> {
+    if (!this.activeRestaurantId || !this.agentId) return;
+    try {
+      const nowIso = new Date().toISOString();
+      await supabase
+        .from('print_agents')
+        .update({
+          status: 'online',
+          last_seen: nowIso,
+        })
+        .eq('id', this.agentId);
+      this.lastHeartbeatTime = Date.now();
+    } catch (_) {}
+  }
+
+  /**
+   * Attaches mobile browser lifecycle listeners (resume from background, focus, beforeunload).
+   */
+  private attachLifecycleListeners(restaurantId: string): void {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+
+    this.detachLifecycleListeners();
+
+    this.visibilityHandler = () => {
+      if (document.visibilityState === 'visible') {
+        this.handleResume(restaurantId);
+      }
+    };
+    document.addEventListener('visibilitychange', this.visibilityHandler);
+
+    this.focusHandler = () => {
+      this.handleResume(restaurantId);
+    };
+    window.addEventListener('focus', this.focusHandler);
+
+    this.beforeUnloadHandler = () => {
+      this.markStationOffline();
+    };
+    window.addEventListener('beforeunload', this.beforeUnloadHandler);
+  }
+
+  private detachLifecycleListeners(): void {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+
+    if (this.visibilityHandler) {
+      document.removeEventListener('visibilitychange', this.visibilityHandler);
+      this.visibilityHandler = null;
+    }
+    if (this.focusHandler) {
+      window.removeEventListener('focus', this.focusHandler);
+      this.focusHandler = null;
+    }
+    if (this.beforeUnloadHandler) {
+      window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+      this.beforeUnloadHandler = null;
+    }
+  }
+
+  /**
+   * Resumes station operation when mobile browser returns to the foreground.
+   */
+  private async handleResume(restaurantId: string): Promise<void> {
+    if (!this.isInitialized) return;
+
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      console.log('[WEB_PRINT_STATION] Mobile browser resumed foreground — pulsing heartbeat & polling jobs.');
+    }
+
+    // 1. Refresh heartbeat immediately
+    await this.sendImmediateHeartbeat();
+
+    // 2. Poll pending jobs immediately
+    await this.pollPendingJobs(restaurantId);
+
+    // 3. Re-request wake lock if mobile
+    if (this.clientInfo.isMobile && !this.wakeLockSentinel) {
+      this.requestWakeLock().catch(() => {});
+    }
+  }
+
+  /**
+   * Requests Screen WakeLock on mobile browsers so the tab doesn't sleep while acting as a station.
+   */
+  private async requestWakeLock(): Promise<void> {
+    if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
       try {
-        await supabase
-          .from('print_agents')
-          .update({
-            status: 'online',
-            last_seen: new Date().toISOString(),
-          })
-          .eq('id', this.agentId);
+        this.wakeLockSentinel = await (navigator as any).wakeLock.request('screen');
+        this.wakeLockSentinel.addEventListener('release', () => {
+          this.wakeLockSentinel = null;
+        });
       } catch (_) {}
-    }, 30000);
+    }
+  }
+
+  private async releaseWakeLock(): Promise<void> {
+    if (this.wakeLockSentinel) {
+      try {
+        await this.wakeLockSentinel.release();
+      } catch (_) {}
+      this.wakeLockSentinel = null;
+    }
+  }
+
+  /**
+   * Marks this agent as offline in Supabase.
+   */
+  async markStationOffline(): Promise<void> {
+    if (!this.agentId) return;
+    try {
+      await supabase
+        .from('print_agents')
+        .update({
+          status: 'offline',
+          last_seen: new Date().toISOString(),
+        })
+        .eq('id', this.agentId);
+    } catch (_) {}
   }
 
   /**
@@ -476,6 +687,10 @@ class WebPrintStationService {
    * Stops the Web Print Station and clears timers.
    */
   stop(): void {
+    this.markStationOffline().catch(() => {});
+    this.releaseWakeLock().catch(() => {});
+    this.detachLifecycleListeners();
+
     if (this.realtimeChannel) {
       try {
         supabase.removeChannel(this.realtimeChannel);
@@ -509,12 +724,14 @@ class WebPrintStationService {
 
     return {
       isActive: this.isInitialized && Boolean(this.agentToken),
+      isMobileStation: this.clientInfo.isMobile,
       restaurantId: this.activeRestaurantId,
       agentId: this.agentId,
       agentToken: this.agentToken,
       pairedPrinters: hw,
-      lastHeartbeat: Date.now(),
+      lastHeartbeat: this.lastHeartbeatTime,
       processedJobCount: this.processedJobCount,
+      osInfo: this.clientInfo.osInfo,
     };
   }
 }

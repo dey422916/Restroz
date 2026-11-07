@@ -98,6 +98,7 @@ export interface PrintAgentInfo {
   status: 'online' | 'offline' | 'printing' | 'error';
   isPaired: boolean;
   lastSeen: string;
+  osInfo?: string;
   installedPrinters?: string[];
 }
 
@@ -557,7 +558,7 @@ export const webDirectPrintService = {
     if (typeof window !== 'undefined' && restaurantId) {
       try {
         const { webPrintStationService } = require('./webPrintStationService');
-        webPrintStationService.syncStationPrinters(restaurantId).catch(() => {});
+        webPrintStationService.start(restaurantId).catch(() => {});
       } catch (_) {}
     }
   },
@@ -1202,37 +1203,59 @@ export const webDirectPrintService = {
   },
 
   /**
-   * Retrieves paired Print Agent for the restaurant from Supabase
+   * Retrieves paired Print Agent for the restaurant from Supabase.
+   * Accurately determines online/offline status by validating that last_seen heartbeat
+   * was received within the last 90 seconds. Prefers genuinely live stations.
    */
   async getPairedAgent(restaurantId: string): Promise<PrintAgentInfo | null> {
     try {
-      const { data, error } = await supabase
+      const { data: allAgents, error } = await supabase
         .from('print_agents')
         .select('*')
         .eq('restaurant_id', restaurantId)
         .eq('is_paired', true)
-        .order('last_seen', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .order('last_seen', { ascending: false });
 
-      if (error || !data) return null;
+      if (error || !allAgents || allAgents.length === 0) return null;
 
-      // Also get printer devices for this agent
+      const now = Date.now();
+      // First look for a genuinely live agent (status: 'online' and heartbeat within 90s)
+      const liveAgent = allAgents.find((a: any) => {
+        if (a.status !== 'online' || !a.last_seen) return false;
+        const diffMs = now - new Date(a.last_seen).getTime();
+        return diffMs >= 0 && diffMs < 90000;
+      });
+
+      // Prefer live agent; otherwise fallback to the most recently registered agent
+      const data = liveAgent || allAgents[0];
+
+      // Calculate effective live status
+      const isActuallyOnline = Boolean(
+        data.status === 'online' &&
+        data.last_seen &&
+        (now - new Date(data.last_seen).getTime() < 90000)
+      );
+
+      // Also get active printer devices for this agent
       const { data: devices } = await supabase
         .from('printer_devices')
         .select('printer_name')
-        .eq('agent_id', data.id);
+        .eq('agent_id', data.id)
+        .eq('is_active', true);
 
       const queueList = (devices || []).map((d: any) => d.printer_name);
-      console.log(`[webDirectPrintService] getPairedAgent -> pairedAgentId: ${data.id}, printerDevices.length: ${queueList.length}, names:`, queueList);
+      console.log(
+        `[webDirectPrintService] getPairedAgent -> pairedAgentId: ${data.id}, deviceName: "${data.device_name}", live: ${isActuallyOnline}, os: "${data.os_info}", queues: ${queueList.length}`
+      );
 
       return {
         id: data.id,
         deviceId: data.device_id,
         deviceName: data.device_name,
-        status: data.status,
+        status: isActuallyOnline ? 'online' : 'offline',
         isPaired: data.is_paired,
         lastSeen: data.last_seen,
+        osInfo: data.os_info,
         installedPrinters: queueList,
       };
     } catch (err) {
@@ -1796,18 +1819,27 @@ export const webDirectPrintService = {
       isFallback = Boolean(target && primary && target.id !== primary.id);
     }
 
-    // Remote Print Agent resolution for mobile/waiter clients:
-    // If no local ready printer is found and a restaurantId is available, query Supabase for the restaurant's active Print Agent and registered printer devices.
+    // Remote Print Station / Agent resolution for mobile/laptop clients:
+    // If no local ready printer is found and a restaurantId is available, query Supabase for the restaurant's active Print Station/Agent.
+    // Strictly verify that the station is online AND actively pulsing heartbeats within 90 seconds.
     if (!target && restaurantId) {
       try {
-        const { data: agentData } = await supabase
+        const { data: allAgents } = await supabase
           .from('print_agents')
-          .select('id, device_id, device_name, status, is_paired, last_seen')
+          .select('id, device_id, device_name, status, is_paired, last_seen, os_info')
           .eq('restaurant_id', restaurantId)
           .eq('is_paired', true)
-          .order('last_seen', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+          .order('last_seen', { ascending: false });
+
+        const now = Date.now();
+        // Strictly filter for genuinely live stations: status === 'online' AND last_seen within 90s
+        const liveAgents = (allAgents || []).filter((a: any) => {
+          if (a.status !== 'online' || !a.last_seen) return false;
+          const diffMs = now - new Date(a.last_seen).getTime();
+          return diffMs >= 0 && diffMs < 90000;
+        });
+
+        const agentData = liveAgents[0] || null;
 
         if (agentData) {
           const { data: deviceRows } = await supabase

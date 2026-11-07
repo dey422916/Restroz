@@ -99,10 +99,33 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
     try {
       if (Platform.OS === 'web') {
         const list = await webDirectPrintService.restorePrinters(restaurantId);
-        setPrinters(list);
-
         const agent = await webDirectPrintService.getPairedAgent(restaurantId);
         setPairedAgent(agent);
+
+        // If this web client (e.g. Staff Laptop) has no local hardware printers,
+        // display the central Print Station printers configured for the restaurant.
+        if (list.length === 0 && agent && agent.installedPrinters && agent.installedPrinters.length > 0) {
+          const isAgentOnline = agent.status === 'online';
+          const centralPrinters: ConfiguredDirectPrinter[] = agent.installedPrinters.map((pName) => ({
+            id: `agent_${agent.id}_${pName.replace(/\s+/g, '_')}`,
+            name: pName,
+            transport: 'agent',
+            agentId: agent.id,
+            agentDeviceName: agent.deviceName,
+            windowsQueueName: pName,
+            paperWidth: /58|seznik|925|rpp|mini/i.test(pName) ? '58mm' : '80mm',
+            role: 'both',
+            isPrimary: true,
+            status: isAgentOnline ? 'connected' : 'offline',
+            statusMessage: isAgentOnline
+              ? `Ready • Counter Station Printer (${agent.deviceName})`
+              : `Station Offline • Inactive (${agent.deviceName})`,
+            lastConnectedAt: Date.now(),
+          }));
+          setPrinters(centralPrinters);
+        } else {
+          setPrinters(list);
+        }
       } else {
         const devicePrinters = await devicePrinterBindingService.getDevicePrinters();
         const bindings = await devicePrinterBindingService.getAllDeviceBindings();
@@ -178,6 +201,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
         setPairedAgent(agent);
 
         if (mapped.length === 0 && agent && agent.installedPrinters && agent.installedPrinters.length > 0) {
+          const isAgentOnline = agent.status === 'online';
           const centralPrinters: ConfiguredDirectPrinter[] = agent.installedPrinters.map((pName) => ({
             id: `agent_${agent.id}_${pName.replace(/\s+/g, '_')}`,
             name: pName,
@@ -188,8 +212,10 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
             paperWidth: /58|seznik|925|rpp|mini/i.test(pName) ? '58mm' : '80mm',
             role: 'both',
             isPrimary: true,
-            status: 'connected',
-            statusMessage: `Ready • Counter Station Printer (${agent.deviceName})`,
+            status: isAgentOnline ? 'connected' : 'offline',
+            statusMessage: isAgentOnline
+              ? `Ready • Counter Station Printer (${agent.deviceName})`
+              : `Station Offline • Inactive (${agent.deviceName})`,
             lastConnectedAt: Date.now(),
           }));
           setPrinters(centralPrinters);
@@ -1026,7 +1052,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
       case 'serial':
         return <Text style={styles.transportBadgeSerial}>WEB SERIAL (COM)</Text>;
       case 'agent':
-        return <Text style={styles.transportBadgeAgent}>RESTROZ PRINT AGENT</Text>;
+        return <Text style={styles.transportBadgeAgent}>PRINT STATION RELAY</Text>;
       case 'lan':
       case 'wifi':
         return <Text style={styles.transportBadgeTcp}>NETWORK (LAN/WIFI)</Text>;
@@ -1062,55 +1088,85 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
         )}
       </View>
 
-      {/* Paired Windows Print Agent Banner */}
-      {pairedAgent && (
-        <View style={styles.agentBanner}>
-          <View style={styles.agentInfoRow}>
-            <View style={styles.agentLeftCol}>
-              <View style={styles.agentTitleRow}>
-                <Text style={styles.agentName}>{pairedAgent.deviceName}</Text>
-                <View style={pairedAgent.status === 'online' ? styles.agentOnlineBadge : styles.agentOfflineBadge}>
-                  <Text style={pairedAgent.status === 'online' ? styles.agentOnlineText : styles.agentOfflineText}>
-                    {pairedAgent.status === 'online' ? '● PRINT AGENT READY' : '○ PRINT AGENT OFFLINE'}
-                  </Text>
+      {/* Paired Print Station / Agent Banner */}
+      {pairedAgent && (() => {
+        const isOnline = pairedAgent.status === 'online';
+        const osLower = (pairedAgent.osInfo || '').toLowerCase();
+        const devLower = (pairedAgent.deviceId || '').toLowerCase();
+        const isMobileStation = osLower.includes('mobile') || osLower.includes('android') || osLower.includes('ios');
+        const isWebStation = osLower.includes('web station') || osLower.includes('chrome') || devLower.startsWith('web_station_');
+        const isWindowsService = !isMobileStation && !isWebStation;
+
+        const stationTypeTitle = isMobileStation
+          ? '📱 Mobile Web Print Station'
+          : isWebStation
+          ? '🌐 Browser Web Print Station'
+          : '🖥️ Windows Print Agent';
+
+        const queueLabel = isWindowsService ? 'Installed Windows Queues' : 'Connected Station Printers';
+        const onlineBadgeLabel = isOnline
+          ? (isWindowsService ? '● PRINT AGENT READY' : '● STATION READY')
+          : (isWindowsService ? '○ PRINT AGENT OFFLINE' : '○ STATION OFFLINE');
+
+        return (
+          <View style={[styles.agentBanner, !isOnline && { borderLeftColor: '#71717a' }]}>
+            <View style={styles.agentInfoRow}>
+              <View style={styles.agentLeftCol}>
+                <View style={styles.agentTitleRow}>
+                  <Text style={styles.agentName}>{pairedAgent.deviceName}</Text>
+                  <View style={isOnline ? styles.agentOnlineBadge : styles.agentOfflineBadge}>
+                    <Text style={isOnline ? styles.agentOnlineText : styles.agentOfflineText}>
+                      {onlineBadgeLabel}
+                    </Text>
+                  </View>
                 </View>
+                <Text style={styles.agentSub}>
+                  {stationTypeTitle} • {queueLabel}:{' '}
+                  {pairedAgent.installedPrinters && pairedAgent.installedPrinters.length > 0
+                    ? `${pairedAgent.installedPrinters.length} (${pairedAgent.installedPrinters.join(', ')})`
+                    : isPollingQueues
+                    ? 'Scanning printers...'
+                    : 'No queues synced'}
+                </Text>
+                {isMobileStation && isOnline && (
+                  <Text style={[styles.agentSub, { color: '#fb923c', marginTop: 4, fontWeight: '500' }]}>
+                    💡 Keep this tab open & screen awake on this mobile device so staff print jobs can be received in real time.
+                  </Text>
+                )}
+                {!isOnline && (
+                  <Text style={[styles.agentSub, { color: '#f87171', marginTop: 4, fontWeight: '500' }]}>
+                    ⚠️ Station is currently offline. Open RestroZ in Chrome on your printing device to resume receiving print jobs.
+                  </Text>
+                )}
               </View>
-              <Text style={styles.agentSub}>
-                Installed Windows Queues:{' '}
-                {pairedAgent.installedPrinters && pairedAgent.installedPrinters.length > 0
-                  ? `${pairedAgent.installedPrinters.length} (${pairedAgent.installedPrinters.join(', ')})`
-                  : isPollingQueues
-                  ? 'Loading Windows printers...'
-                  : 'Scanning...'}
-              </Text>
-            </View>
-            <View style={styles.agentActionsRow}>
-              {canManage && (
-                <TouchableOpacity
-                  style={[styles.smallRefreshBtn, isPollingQueues && { opacity: 0.6 }]}
-                  onPress={() => pairedAgent && pollAgentQueues(pairedAgent.id)}
-                  disabled={isPollingQueues}
-                >
-                  <Text style={styles.smallRefreshBtnText}>⟳ Refresh Queues</Text>
-                </TouchableOpacity>
-              )}
-              {canManage && (
-                <TouchableOpacity
-                  style={styles.unpairBtn}
-                  onPress={handleUnpairAgent}
-                  disabled={isUnpairingAgent}
-                >
-                  {isUnpairingAgent ? (
-                    <ActivityIndicator color="#ef4444" size="small" />
-                  ) : (
-                    <Text style={styles.unpairBtnText}>Disconnect</Text>
-                  )}
-                </TouchableOpacity>
-              )}
+              <View style={styles.agentActionsRow}>
+                {canManage && (
+                  <TouchableOpacity
+                    style={[styles.smallRefreshBtn, isPollingQueues && { opacity: 0.6 }]}
+                    onPress={() => pairedAgent && pollAgentQueues(pairedAgent.id)}
+                    disabled={isPollingQueues}
+                  >
+                    <Text style={styles.smallRefreshBtnText}>⟳ Refresh Queues</Text>
+                  </TouchableOpacity>
+                )}
+                {canManage && (
+                  <TouchableOpacity
+                    style={styles.unpairBtn}
+                    onPress={handleUnpairAgent}
+                    disabled={isUnpairingAgent}
+                  >
+                    {isUnpairingAgent ? (
+                      <ActivityIndicator color="#ef4444" size="small" />
+                    ) : (
+                      <Text style={styles.unpairBtnText}>Disconnect</Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           </View>
-        </View>
-      )}
+        );
+      })()}
 
       {/* Loading */}
       {isLoading ? (

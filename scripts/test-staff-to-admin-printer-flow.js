@@ -298,8 +298,24 @@ async function runTest() {
     });
     assert(Boolean(unauthInsertErr), 'Unauthenticated direct INSERT to print_jobs is strictly DENIED by RLS');
 
-    // 13. Clean up test agent and jobs
-    console.log('\n[STEP 13] Cleaning up Test Station & Jobs...');
+    // 13. UI Layout & Station Banner Removal Verification
+    console.log('\n[STEP 13] Verifying Clean Printer Devices UI & No Desktop Station Card...');
+    const componentCode = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'SeznikPrinterManagementSection.tsx'), 'utf-8');
+
+    // Confirm Desktop Station / Windows Print Agent banner is NOT rendered in main tree
+    const hasAgentBannerInMainUI = componentCode.includes('styles.agentBanner');
+    assert(!hasAgentBannerInMainUI, 'Desktop Station / Print Agent banner card is completely REMOVED from main UI');
+
+    // Confirm "Scanning..." text is not hardcoded in the main UI
+    const hasEndlessScanning = componentCode.includes("Installed Windows Queues: Scanning...");
+    assert(!hasEndlessScanning, 'Endless "Installed Windows Queues: Scanning..." state is ELIMINATED');
+
+    // Confirm KOT & BILL role text formatting
+    const hasKotAndBillFormatting = componentCode.includes("p.role === 'both' ? 'KOT & BILL'");
+    assert(hasKotAndBillFormatting, 'Role badge displays "KOT & BILL" when role is both');
+
+    // 14. Clean up test agent and jobs
+    console.log('\n[STEP 14] Cleaning up Test Station & Jobs...');
     await adminA.client.from('print_jobs').delete().eq('agent_id', agentId);
     await adminA.client.from('printer_devices').delete().eq('agent_id', agentId);
     await adminA.client.from('print_agents').delete().eq('id', agentId);

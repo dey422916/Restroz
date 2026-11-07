@@ -111,10 +111,13 @@ class WebPrintStationService {
     // Refresh client info
     this.clientInfo = getStationClientInfo();
 
-    // Check if this browser has any locally configured hardware printers
+    // Check if this browser has any locally configured hardware printers that are active (not disconnected)
     const localPrinters = overridePrinters || webDirectPrintService.getSavedPrinters(restaurantId);
     const hardwarePrinters = localPrinters.filter(
-      (p) => p.transport === 'bluetooth' || p.transport === 'usb' || p.transport === 'serial'
+      (p) =>
+        (p.transport === 'bluetooth' || p.transport === 'usb' || p.transport === 'serial') &&
+        p.status !== 'disconnected' &&
+        p.status !== 'unsupported'
     );
 
     if (hardwarePrinters.length === 0) {
@@ -242,10 +245,29 @@ class WebPrintStationService {
 
     const printers = overridePrinters || webDirectPrintService.getSavedPrinters(restId);
     const hardwarePrinters = printers.filter(
-      (p) => p.transport === 'bluetooth' || p.transport === 'usb' || p.transport === 'serial'
+      (p) =>
+        (p.transport === 'bluetooth' || p.transport === 'usb' || p.transport === 'serial') &&
+        p.status !== 'disconnected' &&
+        p.status !== 'unsupported'
     );
 
     if (hardwarePrinters.length === 0) {
+      if (this.agentId) {
+        try {
+          await supabase
+            .from('printer_devices')
+            .update({ is_active: false, is_online: false, updated_at: new Date().toISOString() })
+            .eq('agent_id', this.agentId);
+        } catch (_) {}
+      }
+      if (this.agentToken) {
+        try {
+          await supabase.rpc('sync_print_agent_printers', {
+            p_agent_token: this.agentToken,
+            p_printers: [],
+          });
+        } catch (_) {}
+      }
       if (this.isInitialized) {
         this.stop();
       }
@@ -270,10 +292,33 @@ class WebPrintStationService {
         };
       });
 
+      // 1. Deactivate any previously registered queues for this station
+      if (this.agentId) {
+        try {
+          await supabase
+            .from('printer_devices')
+            .update({ is_active: false, is_online: false, updated_at: new Date().toISOString() })
+            .eq('agent_id', this.agentId);
+        } catch (_) {}
+      }
+
+      // 2. Upsert current active printers via RPC
       const { error } = await supabase.rpc('sync_print_agent_printers', {
         p_agent_token: this.agentToken,
         p_printers: printerPayload,
       });
+
+      // 3. Mark the active printers as is_active: true
+      if (this.agentId) {
+        const activeNames = printerPayload.map((p) => p.printer_name);
+        try {
+          await supabase
+            .from('printer_devices')
+            .update({ is_active: true, is_online: true, updated_at: new Date().toISOString() })
+            .eq('agent_id', this.agentId)
+            .in('printer_name', activeNames);
+        } catch (_) {}
+      }
 
       if (error) {
         console.warn('[WEB_PRINT_STATION] sync_print_agent_printers error:', error);
@@ -389,6 +434,21 @@ class WebPrintStationService {
   private async sendImmediateHeartbeat(): Promise<void> {
     if (!this.activeRestaurantId || !this.agentId) return;
     try {
+      // 1. If agentToken is present, call poll_pending_print_jobs RPC which updates heartbeat under SECURITY DEFINER
+      if (this.agentToken) {
+        const { data: pollRes } = await supabase.rpc('poll_pending_print_jobs', {
+          p_agent_token: this.agentToken,
+        });
+        this.lastHeartbeatTime = Date.now();
+        if (pollRes?.jobs && Array.isArray(pollRes.jobs) && pollRes.jobs.length > 0) {
+          for (const job of pollRes.jobs) {
+            await this.processJob(job);
+          }
+        }
+        return;
+      }
+
+      // 2. Fallback direct table update
       const nowIso = new Date().toISOString();
       await supabase
         .from('print_agents')
@@ -588,10 +648,12 @@ class WebPrintStationService {
         `Target Printer: ${job.printer_name}`
       );
 
-      // 2. Resolve local connected hardware printer
+      // 2. Resolve local connected hardware printer (excluding disconnected printers)
       const localPrinters = webDirectPrintService.getSavedPrinters(restId);
       const hardwarePrinters = localPrinters.filter(
-        (p) => p.transport === 'bluetooth' || p.transport === 'usb' || p.transport === 'serial'
+        (p) =>
+          (p.transport === 'bluetooth' || p.transport === 'usb' || p.transport === 'serial') &&
+          p.status !== 'disconnected'
       );
 
       if (hardwarePrinters.length === 0) {

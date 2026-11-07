@@ -680,6 +680,16 @@ export const webDirectPrintService = {
     }
 
     const updated = saved.map((p) => {
+      // 0. If printer was explicitly disconnected by user, strictly PRESERVE 'disconnected' status
+      if (p.status === 'disconnected') {
+        return {
+          ...p,
+          status: 'disconnected' as DirectPrinterStatus,
+          statusMessage: p.statusMessage || 'Disconnected by user.',
+          errorMessage: undefined,
+        };
+      }
+
       // 1. Bluetooth
       if (p.transport === 'bluetooth') {
         if (!this.isBluetoothSupported()) {
@@ -1352,7 +1362,8 @@ export const webDirectPrintService = {
   },
 
   /**
-   * Disconnects / removes a configured direct printer from the current restaurant's store and clears live BLE/hardware sessions.
+   * Disconnects a configured direct printer: closes live GATT/hardware sessions,
+   * updates status to 'disconnected', but strictly preserves saved printer configuration.
    */
   async disconnectPrinter(printerId: string, restaurantId?: string | null): Promise<void> {
     const list = this.getSavedPrinters(restaurantId);
@@ -1424,17 +1435,39 @@ export const webDirectPrintService = {
       }
     }
 
-    const updated = list.filter((p) => {
+    // Preserve saved configuration but transition status to 'disconnected'
+    const updated = list.map((p) => {
       const isMatch =
         p.id === printerId ||
         (target && (p.id === target.id || (target.bluetoothDeviceId && p.bluetoothDeviceId === target.bluetoothDeviceId)));
-      return !isMatch;
+      if (isMatch) {
+        return {
+          ...p,
+          status: 'disconnected' as DirectPrinterStatus,
+          statusMessage: 'Disconnected by user.',
+          errorMessage: undefined,
+          lastError: null,
+        };
+      }
+      return p;
     });
 
     this.savePrinters(updated, restaurantId);
 
     if (target) {
-      notifyStatusChange(target, 'disconnected', `Printer "${target.name}" removed.`);
+      notifyStatusChange(
+        { ...target, status: 'disconnected', statusMessage: 'Disconnected by user.' },
+        'disconnected',
+        `Printer "${target.name}" disconnected.`
+      );
+    }
+
+    // Inform Web Print Station to de-register this queue
+    if (typeof window !== 'undefined' && restaurantId) {
+      try {
+        const { webPrintStationService } = require('./webPrintStationService');
+        webPrintStationService.syncStationPrinters(restaurantId, undefined, updated).catch(() => {});
+      } catch (_) {}
     }
 
     console.log(
@@ -1442,12 +1475,97 @@ export const webDirectPrintService = {
       `Printer: ${target ? target.name : printerId}\n` +
       `Printer ID: ${target ? target.id : printerId}\n` +
       `Restaurant ID: ${restaurantId || 'default'}\n` +
-      `Storage key: ${getStorageKey(restaurantId)}\n` +
-      `Removed from saved config: YES\n` +
-      `BLE session disconnected: ${gattDisconnected ? 'YES' : 'NO'}\n` +
-      `BLE session removed: YES\n` +
-      `Runtime store removed: YES\n` +
-      `Remaining printers: ${updated.length}`
+      `GATT Disconnected: ${gattDisconnected ? 'YES' : 'NO'}\n` +
+      `Status: DISCONNECTED\n` +
+      `Saved config preserved: YES`
+    );
+  },
+
+  /**
+   * Reconnects a disconnected direct printer (initiates user-prompt or auto-reconnect).
+   */
+  async reconnectPrinter(
+    printer: ConfiguredDirectPrinter,
+    restaurantId?: string | null
+  ): Promise<ConfiguredDirectPrinter> {
+    const restId = restaurantId || (printer as any).restaurantId || null;
+    if (printer.transport === 'bluetooth') {
+      const session = await this.getOrRecoverBleSession(printer, true, restId);
+      const updated: ConfiguredDirectPrinter = {
+        ...printer,
+        deviceId: session.device?.id || printer.deviceId,
+        bluetoothDeviceId: session.device?.id || printer.bluetoothDeviceId || printer.deviceId,
+        name: session.device?.name || printer.name,
+        serviceUuid: session.serviceUuid || printer.serviceUuid,
+        characteristicUuid: session.characteristicUuid || printer.characteristicUuid,
+        status: 'connected',
+        statusMessage: 'Bluetooth connected.',
+        errorMessage: undefined,
+        lastConnectedAt: Date.now(),
+      };
+      this.updatePrinter(updated, restId);
+
+      // Start/sync web station
+      if (typeof window !== 'undefined' && restId) {
+        try {
+          const { webPrintStationService } = require('./webPrintStationService');
+          webPrintStationService.start(restId).catch(() => {});
+        } catch (_) {}
+      }
+
+      notifyStatusChange(updated, 'connected', `Bluetooth printer "${printer.name}" reconnected.`);
+      return updated;
+    } else if (printer.transport === 'usb') {
+      const updated: ConfiguredDirectPrinter = {
+        ...printer,
+        status: 'connected',
+        statusMessage: 'USB connected.',
+        errorMessage: undefined,
+        lastConnectedAt: Date.now(),
+      };
+      this.updatePrinter(updated, restId);
+      notifyStatusChange(updated, 'connected', `USB printer "${printer.name}" reconnected.`);
+      return updated;
+    } else if (printer.transport === 'serial') {
+      const updated: ConfiguredDirectPrinter = {
+        ...printer,
+        status: 'available',
+        statusMessage: 'Serial printer ready.',
+        errorMessage: undefined,
+        lastConnectedAt: Date.now(),
+      };
+      this.updatePrinter(updated, restId);
+      notifyStatusChange(updated, 'connected', `Serial printer "${printer.name}" reconnected.`);
+      return updated;
+    }
+    return printer;
+  },
+
+  /**
+   * Deletes a configured printer from saved configuration entirely.
+   */
+  async deletePrinter(printerId: string, restaurantId?: string | null): Promise<void> {
+    // 1. Physically disconnect first
+    await this.disconnectPrinter(printerId, restaurantId);
+
+    // 2. Remove completely from saved storage
+    const currentList = this.getSavedPrinters(restaurantId);
+    const filtered = currentList.filter((p) => p.id !== printerId);
+    this.savePrinters(filtered, restaurantId);
+
+    // 3. Sync station
+    if (typeof window !== 'undefined' && restaurantId) {
+      try {
+        const { webPrintStationService } = require('./webPrintStationService');
+        webPrintStationService.syncStationPrinters(restaurantId, undefined, filtered).catch(() => {});
+      } catch (_) {}
+    }
+
+    console.log(
+      `[PRINTER_DELETE]\n` +
+      `Printer ID: ${printerId}\n` +
+      `Restaurant ID: ${restaurantId || 'default'}\n` +
+      `Removed from saved configuration: YES`
     );
   },
 
@@ -1852,8 +1970,7 @@ export const webDirectPrintService = {
             const currentSaved = this.getSavedPrinters(restaurantId);
             let matchingDevices = deviceRows.filter((d: any) => {
               if (isManual) return true;
-              const localMatch = currentSaved.find((p) => p.windowsQueueName === d.printer_name || p.name === d.printer_name);
-              const effectiveRole = localMatch?.role || d.role;
+              const effectiveRole = d.role || 'both';
               return isPrinterRoleEligible(effectiveRole, role);
             });
 
@@ -1882,8 +1999,7 @@ export const webDirectPrintService = {
                 ? '58mm'
                 : ((chosenDevice.paper_width as DirectPaperWidth) || '80mm');
 
-              const localMatch = currentSaved.find((p) => p.windowsQueueName === chosenDevice.printer_name || p.name === chosenDevice.printer_name);
-              const effectiveRole = (localMatch?.role || chosenDevice.role || role) as DirectPrinterRole;
+              const effectiveRole = (chosenDevice.role || role || 'both') as DirectPrinterRole;
 
               const agentPrinter: ConfiguredDirectPrinter = {
                 id: `agent_${agentData.id}_${chosenDevice.printer_name.replace(/\s+/g, '_')}`,

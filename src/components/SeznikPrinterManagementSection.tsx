@@ -85,6 +85,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
   const [portInput, setPortInput] = useState('9100');
 
   // Edit Modal State
+  const [reconnectingPrinterId, setReconnectingPrinterId] = useState<string | null>(null);
   const [editingPrinter, setEditingPrinter] = useState<ConfiguredDirectPrinter | null>(null);
   const [editRole, setEditRole] = useState<DirectPrinterRole>('both');
   const [editPaperWidth, setEditPaperWidth] = useState<DirectPaperWidth>('80mm');
@@ -125,6 +126,18 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
           setPrinters(centralPrinters);
         } else {
           setPrinters(list);
+          const connectedHardware = list.filter(
+            (p) =>
+              (p.transport === 'bluetooth' || p.transport === 'usb' || p.transport === 'serial') &&
+              p.status !== 'disconnected' &&
+              p.status !== 'unsupported'
+          );
+          if (connectedHardware.length > 0 && restaurantId) {
+            try {
+              const { webPrintStationService } = require('../services/webPrintStationService');
+              webPrintStationService.start(restaurantId, undefined, connectedHardware).catch(() => {});
+            } catch (_) {}
+          }
         }
       } else {
         const devicePrinters = await devicePrinterBindingService.getDevicePrinters();
@@ -156,7 +169,10 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
             let status: DirectPrinterStatus = 'configured';
             let statusMessage: string | undefined;
 
-            if (p.connection_type === 'bluetooth') {
+            if (p.is_active === false) {
+              status = 'disconnected';
+              statusMessage = 'Disconnected by user.';
+            } else if (p.connection_type === 'bluetooth') {
               const mac = binding?.bluetooth_mac_address || (p as any).bluetooth_mac_address;
               if (!mac) {
                 status = 'reconnect_required';
@@ -909,15 +925,46 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
     try {
       if (Platform.OS === 'web') {
         await webDirectPrintService.disconnectPrinter(printer.id, restaurantId);
-        const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
-        setPrinters(updatedList);
+      } else {
+        await devicePrinterBindingService.disconnectDevicePrinter(printer.id);
+      }
+      showToast('info', 'Printer Disconnected', `Disconnected "${printer.name}".`);
+      await loadPrintersAndAgent();
+    } catch (err: any) {
+      showToast('error', 'Disconnect Error', err.message || 'Could not disconnect printer.');
+    }
+  };
+
+  const handleReconnect = async (printer: ConfiguredDirectPrinter) => {
+    if (!canManage) return;
+    setReconnectingPrinterId(printer.id);
+    try {
+      if (Platform.OS === 'web') {
+        await webDirectPrintService.reconnectPrinter(printer, restaurantId);
+      } else {
+        await devicePrinterBindingService.reconnectDevicePrinter(printer.id);
+      }
+      showToast('success', 'Printer Connected', `Connected to "${printer.name}".`);
+      await loadPrintersAndAgent();
+    } catch (err: any) {
+      showToast('error', 'Reconnect Error', err.message || 'Could not reconnect printer.');
+    } finally {
+      setReconnectingPrinterId(null);
+    }
+  };
+
+  const handleDelete = async (printer: ConfiguredDirectPrinter) => {
+    if (!canManage) return;
+    try {
+      if (Platform.OS === 'web') {
+        await webDirectPrintService.deletePrinter(printer.id, restaurantId);
       } else {
         await devicePrinterBindingService.removeDevicePrinter(printer.id);
       }
       showToast('info', 'Printer Removed', `Removed "${printer.name}" from configured printers.`);
       await loadPrintersAndAgent();
     } catch (err: any) {
-      showToast('error', 'Disconnect Error', err.message || 'Could not remove printer.');
+      showToast('error', 'Delete Error', err.message || 'Could not remove printer.');
     }
   };
 
@@ -1160,17 +1207,31 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
               ) : null}
 
               <View style={styles.cardActions}>
-                <TouchableOpacity
-                  style={[styles.cardBtn, styles.testBtn]}
-                  onPress={() => handleCardTestPrint(p)}
-                  disabled={testingPrinterId === p.id}
-                >
-                  {testingPrinterId === p.id ? (
-                    <ActivityIndicator color="#22c55e" size="small" />
-                  ) : (
-                    <Text style={styles.testBtnText}>Test Print</Text>
-                  )}
-                </TouchableOpacity>
+                {p.status === 'connected' || p.status === 'available' || p.status === 'configured' ? (
+                  <TouchableOpacity
+                    style={[styles.cardBtn, styles.testBtn]}
+                    onPress={() => handleCardTestPrint(p)}
+                    disabled={testingPrinterId === p.id}
+                  >
+                    {testingPrinterId === p.id ? (
+                      <ActivityIndicator color="#22c55e" size="small" />
+                    ) : (
+                      <Text style={styles.testBtnText}>Test Print</Text>
+                    )}
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={[styles.cardBtn, styles.reconnectBtn]}
+                    onPress={() => handleReconnect(p)}
+                    disabled={reconnectingPrinterId === p.id}
+                  >
+                    {reconnectingPrinterId === p.id ? (
+                      <ActivityIndicator color="#60a5fa" size="small" />
+                    ) : (
+                      <Text style={styles.reconnectBtnText}>Reconnect</Text>
+                    )}
+                  </TouchableOpacity>
+                )}
 
                 {canManage && (
                   <>
@@ -1180,12 +1241,21 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
                     >
                       <Text style={styles.editBtnText}>Configure</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.cardBtn, styles.deleteBtn]}
-                      onPress={() => handleDisconnect(p)}
-                    >
-                      <Text style={styles.deleteBtnText}>Disconnect</Text>
-                    </TouchableOpacity>
+                    {p.status === 'connected' || p.status === 'available' || p.status === 'configured' ? (
+                      <TouchableOpacity
+                        style={[styles.cardBtn, styles.disconnectBtn]}
+                        onPress={() => handleDisconnect(p)}
+                      >
+                        <Text style={styles.disconnectBtnText}>Disconnect</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity
+                        style={[styles.cardBtn, styles.deleteBtn]}
+                        onPress={() => handleDelete(p)}
+                      >
+                        <Text style={styles.deleteBtnText}>Delete</Text>
+                      </TouchableOpacity>
+                    )}
                   </>
                 )}
               </View>
@@ -2171,6 +2241,24 @@ const styles = StyleSheet.create({
   },
   editBtnText: {
     color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
+  },
+  reconnectBtn: {
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+  },
+  reconnectBtnText: {
+    color: '#60a5fa',
+    fontSize: 12,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
+  },
+  disconnectBtn: {
+    backgroundColor: 'rgba(234, 179, 8, 0.12)',
+  },
+  disconnectBtnText: {
+    color: '#fbbf24',
     fontSize: 12,
     fontWeight: '600',
     ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),

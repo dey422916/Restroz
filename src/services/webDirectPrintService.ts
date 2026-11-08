@@ -98,7 +98,6 @@ export interface PrintAgentInfo {
   status: 'online' | 'offline' | 'printing' | 'error';
   isPaired: boolean;
   lastSeen: string;
-  osInfo?: string;
   installedPrinters?: string[];
 }
 
@@ -386,127 +385,45 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * Normalizes a printer name for cross-transport and case-insensitive matching.
- * e.g. "Seznik-Veer_9394", "Seznik-Veer 9394", and "seznik veer 9394" all normalize to "seznikveer9394".
- */
-function normalizePrinterName(name?: string | null): string {
-  return (name || '').trim().toLowerCase().replace(/[\s_.\-]+/g, '');
-}
-
-/**
  * Deduplicates configured printer records by BLE device identity, ID, or normalized name.
- * Strictly guarantees that each physical printer has AT MOST ONE card:
- * 1. Direct hardware connection (Bluetooth, USB, Serial) ALWAYS takes precedence over
- *    a Print Station Relay ('agent') entry with the same name.
- * 2. Merges status to ensure 'connected' status and primary flags are preserved without duplicates.
+ * Merges status to ensure 'connected' status and primary flags are preserved without duplicates.
  */
 function deduplicatePrinters(printers: ConfiguredDirectPrinter[]): ConfiguredDirectPrinter[] {
-  if (!printers || printers.length <= 1) {
-    return printers || [];
-  }
-
-  // Pre-sort so that direct hardware connections come before remote relay agent entries,
-  // and 'connected' printers come before disconnected ones.
-  const transportPriority = (t: string): number => {
-    switch (t) {
-      case 'bluetooth':
-      case 'usb':
-      case 'serial':
-        return 1; // Hardware direct takes top priority on this device
-      case 'agent':
-        return 2; // Remote station relay
-      default:
-        return 3;
-    }
-  };
-
-  const statusPriority = (s: string): number => {
-    switch (s) {
-      case 'connected':
-        return 1;
-      case 'available':
-        return 2;
-      case 'configured':
-        return 3;
-      case 'reconnect_required':
-        return 4;
-      case 'disconnected':
-        return 5;
-      case 'offline':
-        return 6;
-      case 'unsupported':
-      case 'error':
-        return 7;
-      default:
-        return 8;
-    }
-  };
-
-  // Sort stable copy: hardware direct first, connected first, primary first
-  const sorted = [...printers].sort((a, b) => {
-    const tpDiff = transportPriority(a.transport) - transportPriority(b.transport);
-    if (tpDiff !== 0) return tpDiff;
-
-    const stDiff = statusPriority(a.status) - statusPriority(b.status);
-    if (stDiff !== 0) return stDiff;
-
-    const primDiff = (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0);
-    if (primDiff !== 0) return primDiff;
-
-    return 0;
-  });
-
   const result: ConfiguredDirectPrinter[] = [];
-  const seenIds = new Set<string>();
   const seenBleKeys = new Set<string>();
-  const seenNormNames = new Set<string>();
+  const seenIds = new Set<string>();
 
-  for (const p of sorted) {
+  for (const p of printers) {
     if (seenIds.has(p.id)) continue;
 
-    const devKey = (p.bluetoothDeviceId || p.deviceId || '').trim();
-    const normName = normalizePrinterName(p.name);
-
-    // Cross-transport deduplication by normalized printer name:
-    // e.g. "Seznik-Veer_9394" (bluetooth) vs "Seznik-Veer 9394" (agent relay)
-    if (normName && seenNormNames.has(normName)) {
-      const existingIdx = result.findIndex(
-        (r) => normalizePrinterName(r.name) === normName
-      );
-      if (existingIdx >= 0) {
-        const existing = result[existingIdx];
-        if (p.isPrimary && !existing.isPrimary) {
-          result[existingIdx].isPrimary = true;
+    if (p.transport === 'bluetooth') {
+      const devKey = (p.bluetoothDeviceId || p.deviceId || '').trim();
+      const normName = (p.name || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+      const bleKey = devKey || normName;
+      if (bleKey) {
+        if (seenBleKeys.has(bleKey)) {
+          const existingIdx = result.findIndex(
+            (r) =>
+              r.transport === 'bluetooth' &&
+              ((devKey && (r.bluetoothDeviceId === devKey || r.deviceId === devKey)) ||
+                (normName && (r.name || '').trim().toLowerCase().replace(/[\s_-]+/g, '') === normName))
+          );
+          if (existingIdx >= 0) {
+            const existing = result[existingIdx];
+            if (p.status === 'connected' && existing.status !== 'connected') {
+              result[existingIdx] = { ...existing, ...p };
+            }
+            if (p.isPrimary) {
+              result[existingIdx].isPrimary = true;
+            }
+          }
+          continue;
         }
-        if (p.status === 'connected' && existing.status !== 'connected' && p.transport === existing.transport) {
-          result[existingIdx] = { ...existing, ...p };
-        }
+        seenBleKeys.add(bleKey);
       }
-      continue;
     }
 
-    // BLE key deduplication (for multiple BLE sessions / MAC addresses)
-    if (devKey && seenBleKeys.has(devKey)) {
-      const existingIdx = result.findIndex(
-        (r) => (r.bluetoothDeviceId && r.bluetoothDeviceId === devKey) || (r.deviceId && r.deviceId === devKey)
-      );
-      if (existingIdx >= 0) {
-        const existing = result[existingIdx];
-        if (p.isPrimary && !existing.isPrimary) {
-          result[existingIdx].isPrimary = true;
-        }
-        if (p.status === 'connected' && existing.status !== 'connected') {
-          result[existingIdx] = { ...existing, ...p };
-        }
-      }
-      continue;
-    }
-
-    // Mark as seen
     seenIds.add(p.id);
-    if (devKey) seenBleKeys.add(devKey);
-    if (normName) seenNormNames.add(normName);
-
     result.push(p);
   }
 
@@ -635,14 +552,6 @@ export const webDirectPrintService = {
     } catch (err) {
       console.warn('[webDirectPrintService] Error saving direct printers:', err);
     }
-
-    // Auto-sync hardware printers to Web Print Station in Supabase
-    if (typeof window !== 'undefined' && restaurantId) {
-      try {
-        const { webPrintStationService } = require('./webPrintStationService');
-        webPrintStationService.start(restaurantId).catch(() => {});
-      } catch (_) {}
-    }
   },
 
   /**
@@ -762,16 +671,6 @@ export const webDirectPrintService = {
     }
 
     const updated = saved.map((p) => {
-      // 0. If printer was explicitly disconnected by user, strictly PRESERVE 'disconnected' status
-      if (p.status === 'disconnected') {
-        return {
-          ...p,
-          status: 'disconnected' as DirectPrinterStatus,
-          statusMessage: p.statusMessage || 'Disconnected by user.',
-          errorMessage: undefined,
-        };
-      }
-
       // 1. Bluetooth
       if (p.transport === 'bluetooth') {
         if (!this.isBluetoothSupported()) {
@@ -906,9 +805,8 @@ export const webDirectPrintService = {
       return p;
     });
 
-    const deduped = deduplicatePrinters(updated);
-    this.savePrinters(deduped, restaurantId);
-    return deduped;
+    this.savePrinters(updated, restaurantId);
+    return updated;
   },
 
   /**
@@ -1296,59 +1194,37 @@ export const webDirectPrintService = {
   },
 
   /**
-   * Retrieves paired Print Agent for the restaurant from Supabase.
-   * Accurately determines online/offline status by validating that last_seen heartbeat
-   * was received within the last 90 seconds. Prefers genuinely live stations.
+   * Retrieves paired Print Agent for the restaurant from Supabase
    */
   async getPairedAgent(restaurantId: string): Promise<PrintAgentInfo | null> {
     try {
-      const { data: allAgents, error } = await supabase
+      const { data, error } = await supabase
         .from('print_agents')
         .select('*')
         .eq('restaurant_id', restaurantId)
         .eq('is_paired', true)
-        .order('last_seen', { ascending: false });
+        .order('last_seen', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-      if (error || !allAgents || allAgents.length === 0) return null;
+      if (error || !data) return null;
 
-      const now = Date.now();
-      // First look for a genuinely live agent (status: 'online' and heartbeat within 90s)
-      const liveAgent = allAgents.find((a: any) => {
-        if (a.status !== 'online' || !a.last_seen) return false;
-        const diffMs = now - new Date(a.last_seen).getTime();
-        return diffMs >= 0 && diffMs < 90000;
-      });
-
-      // Prefer live agent; otherwise fallback to the most recently registered agent
-      const data = liveAgent || allAgents[0];
-
-      // Calculate effective live status
-      const isActuallyOnline = Boolean(
-        data.status === 'online' &&
-        data.last_seen &&
-        (now - new Date(data.last_seen).getTime() < 90000)
-      );
-
-      // Also get active printer devices for this agent
+      // Also get printer devices for this agent
       const { data: devices } = await supabase
         .from('printer_devices')
         .select('printer_name')
-        .eq('agent_id', data.id)
-        .eq('is_active', true);
+        .eq('agent_id', data.id);
 
       const queueList = (devices || []).map((d: any) => d.printer_name);
-      console.log(
-        `[webDirectPrintService] getPairedAgent -> pairedAgentId: ${data.id}, deviceName: "${data.device_name}", live: ${isActuallyOnline}, os: "${data.os_info}", queues: ${queueList.length}`
-      );
+      console.log(`[webDirectPrintService] getPairedAgent -> pairedAgentId: ${data.id}, printerDevices.length: ${queueList.length}, names:`, queueList);
 
       return {
         id: data.id,
         deviceId: data.device_id,
         deviceName: data.device_name,
-        status: isActuallyOnline ? 'online' : 'offline',
+        status: data.status,
         isPaired: data.is_paired,
         lastSeen: data.last_seen,
-        osInfo: data.os_info,
         installedPrinters: queueList,
       };
     } catch (err) {
@@ -1445,8 +1321,7 @@ export const webDirectPrintService = {
   },
 
   /**
-   * Disconnects a configured direct printer: closes live GATT/hardware sessions,
-   * updates status to 'disconnected', but strictly preserves saved printer configuration.
+   * Disconnects / removes a configured direct printer from the current restaurant's store and clears live BLE/hardware sessions.
    */
   async disconnectPrinter(printerId: string, restaurantId?: string | null): Promise<void> {
     const list = this.getSavedPrinters(restaurantId);
@@ -1518,39 +1393,17 @@ export const webDirectPrintService = {
       }
     }
 
-    // Preserve saved configuration but transition status to 'disconnected'
-    const updated = list.map((p) => {
+    const updated = list.filter((p) => {
       const isMatch =
         p.id === printerId ||
         (target && (p.id === target.id || (target.bluetoothDeviceId && p.bluetoothDeviceId === target.bluetoothDeviceId)));
-      if (isMatch) {
-        return {
-          ...p,
-          status: 'disconnected' as DirectPrinterStatus,
-          statusMessage: 'Disconnected by user.',
-          errorMessage: undefined,
-          lastError: null,
-        };
-      }
-      return p;
+      return !isMatch;
     });
 
     this.savePrinters(updated, restaurantId);
 
     if (target) {
-      notifyStatusChange(
-        { ...target, status: 'disconnected', statusMessage: 'Disconnected by user.' },
-        'disconnected',
-        `Printer "${target.name}" disconnected.`
-      );
-    }
-
-    // Inform Web Print Station to de-register this queue
-    if (typeof window !== 'undefined' && restaurantId) {
-      try {
-        const { webPrintStationService } = require('./webPrintStationService');
-        webPrintStationService.syncStationPrinters(restaurantId, undefined, updated).catch(() => {});
-      } catch (_) {}
+      notifyStatusChange(target, 'disconnected', `Printer "${target.name}" removed.`);
     }
 
     console.log(
@@ -1558,97 +1411,12 @@ export const webDirectPrintService = {
       `Printer: ${target ? target.name : printerId}\n` +
       `Printer ID: ${target ? target.id : printerId}\n` +
       `Restaurant ID: ${restaurantId || 'default'}\n` +
-      `GATT Disconnected: ${gattDisconnected ? 'YES' : 'NO'}\n` +
-      `Status: DISCONNECTED\n` +
-      `Saved config preserved: YES`
-    );
-  },
-
-  /**
-   * Reconnects a disconnected direct printer (initiates user-prompt or auto-reconnect).
-   */
-  async reconnectPrinter(
-    printer: ConfiguredDirectPrinter,
-    restaurantId?: string | null
-  ): Promise<ConfiguredDirectPrinter> {
-    const restId = restaurantId || (printer as any).restaurantId || null;
-    if (printer.transport === 'bluetooth') {
-      const session = await this.getOrRecoverBleSession(printer, true, restId);
-      const updated: ConfiguredDirectPrinter = {
-        ...printer,
-        deviceId: session.device?.id || printer.deviceId,
-        bluetoothDeviceId: session.device?.id || printer.bluetoothDeviceId || printer.deviceId,
-        name: session.device?.name || printer.name,
-        serviceUuid: session.serviceUuid || printer.serviceUuid,
-        characteristicUuid: session.characteristicUuid || printer.characteristicUuid,
-        status: 'connected',
-        statusMessage: 'Bluetooth connected.',
-        errorMessage: undefined,
-        lastConnectedAt: Date.now(),
-      };
-      this.updatePrinter(updated, restId);
-
-      // Start/sync web station
-      if (typeof window !== 'undefined' && restId) {
-        try {
-          const { webPrintStationService } = require('./webPrintStationService');
-          webPrintStationService.start(restId).catch(() => {});
-        } catch (_) {}
-      }
-
-      notifyStatusChange(updated, 'connected', `Bluetooth printer "${printer.name}" reconnected.`);
-      return updated;
-    } else if (printer.transport === 'usb') {
-      const updated: ConfiguredDirectPrinter = {
-        ...printer,
-        status: 'connected',
-        statusMessage: 'USB connected.',
-        errorMessage: undefined,
-        lastConnectedAt: Date.now(),
-      };
-      this.updatePrinter(updated, restId);
-      notifyStatusChange(updated, 'connected', `USB printer "${printer.name}" reconnected.`);
-      return updated;
-    } else if (printer.transport === 'serial') {
-      const updated: ConfiguredDirectPrinter = {
-        ...printer,
-        status: 'available',
-        statusMessage: 'Serial printer ready.',
-        errorMessage: undefined,
-        lastConnectedAt: Date.now(),
-      };
-      this.updatePrinter(updated, restId);
-      notifyStatusChange(updated, 'connected', `Serial printer "${printer.name}" reconnected.`);
-      return updated;
-    }
-    return printer;
-  },
-
-  /**
-   * Deletes a configured printer from saved configuration entirely.
-   */
-  async deletePrinter(printerId: string, restaurantId?: string | null): Promise<void> {
-    // 1. Physically disconnect first
-    await this.disconnectPrinter(printerId, restaurantId);
-
-    // 2. Remove completely from saved storage
-    const currentList = this.getSavedPrinters(restaurantId);
-    const filtered = currentList.filter((p) => p.id !== printerId);
-    this.savePrinters(filtered, restaurantId);
-
-    // 3. Sync station
-    if (typeof window !== 'undefined' && restaurantId) {
-      try {
-        const { webPrintStationService } = require('./webPrintStationService');
-        webPrintStationService.syncStationPrinters(restaurantId, undefined, filtered).catch(() => {});
-      } catch (_) {}
-    }
-
-    console.log(
-      `[PRINTER_DELETE]\n` +
-      `Printer ID: ${printerId}\n` +
-      `Restaurant ID: ${restaurantId || 'default'}\n` +
-      `Removed from saved configuration: YES`
+      `Storage key: ${getStorageKey(restaurantId)}\n` +
+      `Removed from saved config: YES\n` +
+      `BLE session disconnected: ${gattDisconnected ? 'YES' : 'NO'}\n` +
+      `BLE session removed: YES\n` +
+      `Runtime store removed: YES\n` +
+      `Remaining printers: ${updated.length}`
     );
   },
 
@@ -2003,9 +1771,9 @@ export const webDirectPrintService = {
         (p) => (p.status === 'connected' || p.status === 'available') && (isPrinterRoleEligible(p.role, role) || isManual)
       );
 
-      // Sort by local direct printing preference over remote relay: USB > Bluetooth > Serial > Agent
+      // Sort by silent automatic printing preference: Agent > USB > Serial > Bluetooth
       readyPrinters.sort((a, b) => {
-        const transportWeight: Record<string, number> = { usb: 1, bluetooth: 2, serial: 3, agent: 4 };
+        const transportWeight: Record<string, number> = { agent: 1, usb: 2, serial: 3, bluetooth: 4 };
         const twA = transportWeight[a.transport] || 99;
         const twB = transportWeight[b.transport] || 99;
         if (twA !== twB) return twA - twB;
@@ -2020,27 +1788,18 @@ export const webDirectPrintService = {
       isFallback = Boolean(target && primary && target.id !== primary.id);
     }
 
-    // Remote Print Station / Agent resolution for mobile/laptop clients:
-    // If no local ready printer is found and a restaurantId is available, query Supabase for the restaurant's active Print Station/Agent.
-    // Strictly verify that the station is online AND actively pulsing heartbeats within 90 seconds.
+    // Remote Print Agent resolution for mobile/waiter clients:
+    // If no local ready printer is found and a restaurantId is available, query Supabase for the restaurant's active Print Agent and registered printer devices.
     if (!target && restaurantId) {
       try {
-        const { data: allAgents } = await supabase
+        const { data: agentData } = await supabase
           .from('print_agents')
-          .select('id, device_id, device_name, status, is_paired, last_seen, os_info')
+          .select('id, device_id, device_name, status, is_paired, last_seen')
           .eq('restaurant_id', restaurantId)
           .eq('is_paired', true)
-          .order('last_seen', { ascending: false });
-
-        const now = Date.now();
-        // Strictly filter for genuinely live stations: status === 'online' AND last_seen within 90s
-        const liveAgents = (allAgents || []).filter((a: any) => {
-          if (a.status !== 'online' || !a.last_seen) return false;
-          const diffMs = now - new Date(a.last_seen).getTime();
-          return diffMs >= 0 && diffMs < 90000;
-        });
-
-        const agentData = liveAgents[0] || null;
+          .order('last_seen', { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
         if (agentData) {
           const { data: deviceRows } = await supabase
@@ -2053,7 +1812,8 @@ export const webDirectPrintService = {
             const currentSaved = this.getSavedPrinters(restaurantId);
             let matchingDevices = deviceRows.filter((d: any) => {
               if (isManual) return true;
-              const effectiveRole = d.role || 'both';
+              const localMatch = currentSaved.find((p) => p.windowsQueueName === d.printer_name || p.name === d.printer_name);
+              const effectiveRole = localMatch?.role || d.role;
               return isPrinterRoleEligible(effectiveRole, role);
             });
 
@@ -2073,8 +1833,8 @@ export const webDirectPrintService = {
               return a.printer_name.localeCompare(b.printer_name);
             });
 
-            // If matchingDevices has a match, use it. If only 1 device is registered for the station, use it.
-            const chosenDevice = matchingDevices.length > 0 ? matchingDevices[0] : (deviceRows.length === 1 ? deviceRows[0] : null);
+            // STRICT: Only choose from matchingDevices! NEVER fall back to deviceRows[0]!
+            const chosenDevice = matchingDevices.length > 0 ? matchingDevices[0] : null;
 
             if (chosenDevice) {
               const is58mmDevice = /58|seznik|925|rpp|mpt|mini/i.test(chosenDevice.printer_name);
@@ -2082,7 +1842,8 @@ export const webDirectPrintService = {
                 ? '58mm'
                 : ((chosenDevice.paper_width as DirectPaperWidth) || '80mm');
 
-              const effectiveRole = (chosenDevice.role || role || 'both') as DirectPrinterRole;
+              const localMatch = currentSaved.find((p) => p.windowsQueueName === chosenDevice.printer_name || p.name === chosenDevice.printer_name);
+              const effectiveRole = (localMatch?.role || chosenDevice.role || role) as DirectPrinterRole;
 
               const agentPrinter: ConfiguredDirectPrinter = {
                 id: `agent_${agentData.id}_${chosenDevice.printer_name.replace(/\s+/g, '_')}`,
@@ -2095,13 +1856,15 @@ export const webDirectPrintService = {
                 role: effectiveRole,
                 isPrimary: Boolean(chosenDevice.is_primary),
                 status: 'connected',
-                statusMessage: `RestroZ Print Station Online (${agentData.device_name})`,
+                statusMessage: `RestroZ Print Agent Online (${agentData.device_name})`,
                 lastConnectedAt: Date.now(),
               };
 
-              // Note: Remote station printers are returned as in-memory routing targets
-              // and must NOT be saved into the local device's persistent storage,
-              // preventing ghost duplicate cards on host stations or staff devices.
+              // Cache in memory / local store for this restaurant
+              const exists = currentSaved.find((p) => p.id === agentPrinter.id);
+              if (!exists) {
+                this.savePrinters([...currentSaved, agentPrinter], restaurantId);
+              }
 
               if (typeof __DEV__ !== 'undefined' && __DEV__) {
                 console.log(
@@ -2117,36 +1880,20 @@ export const webDirectPrintService = {
               target = agentPrinter;
             }
           } else {
-            // Paired agent exists, but no specific printer devices synced in printer_devices yet
-            // Check restaurant_printers table for registered printer name
-            let cloudPrinterName = 'POS58 Printer';
-            let cloudPaperWidth: DirectPaperWidth = '58mm';
-            try {
-              const { data: cloudRow } = await supabase
-                .from('restaurant_printers')
-                .select('name, paper_width')
-                .eq('restaurant_id', restaurantId)
-                .order('is_primary', { ascending: false })
-                .limit(1)
-                .maybeSingle();
-              if (cloudRow?.name) {
-                cloudPrinterName = cloudRow.name;
-                cloudPaperWidth = (cloudRow.paper_width as DirectPaperWidth) || '58mm';
-              }
-            } catch (_) {}
-
+            // Paired agent exists, but no specific printer devices synced yet
+            const defaultQueue = 'POS58 Printer';
             const agentPrinter: ConfiguredDirectPrinter = {
               id: `agent_${agentData.id}_default`,
-              name: cloudPrinterName,
+              name: defaultQueue,
               transport: 'agent',
               agentId: agentData.id,
               agentDeviceName: agentData.device_name,
-              windowsQueueName: cloudPrinterName,
-              paperWidth: cloudPaperWidth,
+              windowsQueueName: defaultQueue,
+              paperWidth: '80mm',
               role: 'both',
               isPrimary: true,
               status: 'connected',
-              statusMessage: `RestroZ Print Station Online (${agentData.device_name})`,
+              statusMessage: `RestroZ Print Agent Online (${agentData.device_name})`,
               lastConnectedAt: Date.now(),
             };
             target = agentPrinter;

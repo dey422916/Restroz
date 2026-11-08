@@ -43,42 +43,6 @@ type WizardStep =
   | 'android_network_input'
   | 'configure_test';
 
-/**
- * Ensures strictly ONE card per physical printer is displayed in the UI:
- * - Direct hardware (Bluetooth, USB, Serial) takes precedence over Agent relay.
- * - Merges primary flag and online status for display.
- */
-function deduplicateDisplayPrinters(items: ConfiguredDirectPrinter[]): ConfiguredDirectPrinter[] {
-  if (!items || items.length <= 1) return items || [];
-  const norm = (n?: string | null) => (n || '').trim().toLowerCase().replace(/[\s_.\-]+/g, '');
-  const isHardware = (t: string) => t === 'bluetooth' || t === 'usb' || t === 'serial';
-
-  const sorted = [...items].sort((a, b) => {
-    const aHw = isHardware(a.transport) ? 0 : 1;
-    const bHw = isHardware(b.transport) ? 0 : 1;
-    if (aHw !== bHw) return aHw - bHw;
-    if (a.status === 'connected' && b.status !== 'connected') return -1;
-    if (b.status === 'connected' && a.status !== 'connected') return 1;
-    if (a.isPrimary && !b.isPrimary) return -1;
-    if (b.isPrimary && !a.isPrimary) return 1;
-    return 0;
-  });
-
-  const result: ConfiguredDirectPrinter[] = [];
-  const seenNorm = new Set<string>();
-
-  for (const p of sorted) {
-    const key = norm(p.name);
-    if (key && seenNorm.has(key)) {
-      continue;
-    }
-    if (key) seenNorm.add(key);
-    result.push(p);
-  }
-
-  return result;
-}
-
 export const SeznikPrinterManagementSection: React.FC<Props> = ({
   restaurantId,
   canManage,
@@ -121,7 +85,6 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
   const [portInput, setPortInput] = useState('9100');
 
   // Edit Modal State
-  const [reconnectingPrinterId, setReconnectingPrinterId] = useState<string | null>(null);
   const [editingPrinter, setEditingPrinter] = useState<ConfiguredDirectPrinter | null>(null);
   const [editRole, setEditRole] = useState<DirectPrinterRole>('both');
   const [editPaperWidth, setEditPaperWidth] = useState<DirectPaperWidth>('80mm');
@@ -136,45 +99,10 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
     try {
       if (Platform.OS === 'web') {
         const list = await webDirectPrintService.restorePrinters(restaurantId);
+        setPrinters(list);
+
         const agent = await webDirectPrintService.getPairedAgent(restaurantId);
         setPairedAgent(agent);
-
-        // If this web client (e.g. Staff Laptop) has no local hardware printers,
-        // display the central Print Station printers configured for the restaurant.
-        if (list.length === 0 && agent && agent.installedPrinters && agent.installedPrinters.length > 0) {
-          const isAgentOnline = agent.status === 'online';
-          const centralPrinters: ConfiguredDirectPrinter[] = agent.installedPrinters.map((pName) => ({
-            id: `agent_${agent.id}_${pName.replace(/\s+/g, '_')}`,
-            name: pName,
-            transport: 'agent',
-            agentId: agent.id,
-            agentDeviceName: agent.deviceName,
-            windowsQueueName: pName,
-            paperWidth: /58|seznik|925|rpp|mini/i.test(pName) ? '58mm' : '80mm',
-            role: 'both',
-            isPrimary: true,
-            status: isAgentOnline ? 'connected' : 'offline',
-            statusMessage: isAgentOnline
-              ? `Ready • Counter Station Printer (${agent.deviceName})`
-              : `Station Offline • Inactive (${agent.deviceName})`,
-            lastConnectedAt: Date.now(),
-          }));
-          setPrinters(deduplicateDisplayPrinters(centralPrinters));
-        } else {
-          setPrinters(deduplicateDisplayPrinters(list));
-          const connectedHardware = list.filter(
-            (p) =>
-              (p.transport === 'bluetooth' || p.transport === 'usb' || p.transport === 'serial') &&
-              p.status !== 'disconnected' &&
-              p.status !== 'unsupported'
-          );
-          if (connectedHardware.length > 0 && restaurantId) {
-            try {
-              const { webPrintStationService } = require('../services/webPrintStationService');
-              webPrintStationService.start(restaurantId, undefined, connectedHardware).catch(() => {});
-            } catch (_) {}
-          }
-        }
       } else {
         const devicePrinters = await devicePrinterBindingService.getDevicePrinters();
         const bindings = await devicePrinterBindingService.getAllDeviceBindings();
@@ -205,10 +133,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
             let status: DirectPrinterStatus = 'configured';
             let statusMessage: string | undefined;
 
-            if (p.is_active === false) {
-              status = 'disconnected';
-              statusMessage = 'Disconnected by user.';
-            } else if (p.connection_type === 'bluetooth') {
+            if (p.connection_type === 'bluetooth') {
               const mac = binding?.bluetooth_mac_address || (p as any).bluetooth_mac_address;
               if (!mac) {
                 status = 'reconnect_required';
@@ -249,31 +174,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
             };
           });
 
-        const agent = await webDirectPrintService.getPairedAgent(restaurantId);
-        setPairedAgent(agent);
-
-        if (mapped.length === 0 && agent && agent.installedPrinters && agent.installedPrinters.length > 0) {
-          const isAgentOnline = agent.status === 'online';
-          const centralPrinters: ConfiguredDirectPrinter[] = agent.installedPrinters.map((pName) => ({
-            id: `agent_${agent.id}_${pName.replace(/\s+/g, '_')}`,
-            name: pName,
-            transport: 'agent',
-            agentId: agent.id,
-            agentDeviceName: agent.deviceName,
-            windowsQueueName: pName,
-            paperWidth: /58|seznik|925|rpp|mini/i.test(pName) ? '58mm' : '80mm',
-            role: 'both',
-            isPrimary: true,
-            status: isAgentOnline ? 'connected' : 'offline',
-            statusMessage: isAgentOnline
-              ? `Ready • Counter Station Printer (${agent.deviceName})`
-              : `Station Offline • Inactive (${agent.deviceName})`,
-            lastConnectedAt: Date.now(),
-          }));
-          setPrinters(deduplicateDisplayPrinters(centralPrinters));
-        } else {
-          setPrinters(deduplicateDisplayPrinters(mapped));
-        }
+        setPrinters(mapped);
       }
     } catch (err: any) {
       console.warn('[SeznikPrinterManagement] Error loading printers/agent:', err);
@@ -297,7 +198,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
         );
       }
       const saved = webDirectPrintService.getSavedPrinters(restaurantId);
-      setPrinters(deduplicateDisplayPrinters(saved));
+      setPrinters(saved);
     });
     return unsubscribe;
   }, [showToast, restaurantId]);
@@ -535,15 +436,14 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
   const pollAgentQueues = useCallback(async (agentId: string) => {
     setIsPollingQueues(true);
     try {
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 6; i++) {
         const queues = await webDirectPrintService.refreshAgentQueues(agentId);
         if (queues.length > 0) {
           setPairedAgent((prev) => (prev ? { ...prev, installedPrinters: queues } : null));
           break;
         }
-        await new Promise((r) => setTimeout(r, 800));
+        await new Promise((r) => setTimeout(r, 1000));
       }
-    } catch (_) {
     } finally {
       setIsPollingQueues(false);
     }
@@ -867,7 +767,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
   const handleCardTestPrint = async (printer: ConfiguredDirectPrinter) => {
     setTestingPrinterId(printer.id);
     try {
-      if (Platform.OS === 'web' || printer.transport === 'agent') {
+      if (Platform.OS === 'web') {
         console.log(
           `[PRINTER_IDENTITY_AUDIT]\n` +
           `UI Printer ID: ${printer.id}\n` +
@@ -877,12 +777,8 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
         );
         const result = await webDirectPrintService.printTest(printer, settings, restaurantId);
         showToast('success', 'Test Print Sent', result.message || 'Test print dispatched successfully!');
-        if (Platform.OS === 'web') {
-          const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
-          if (updatedList.length > 0) {
-            setPrinters(deduplicateDisplayPrinters(updatedList));
-          }
-        }
+        const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
+        setPrinters(updatedList);
       } else {
         setPrinters((prev) =>
           prev.map((p) =>
@@ -963,46 +859,15 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
     try {
       if (Platform.OS === 'web') {
         await webDirectPrintService.disconnectPrinter(printer.id, restaurantId);
-      } else {
-        await devicePrinterBindingService.disconnectDevicePrinter(printer.id);
-      }
-      showToast('info', 'Printer Disconnected', `Disconnected "${printer.name}".`);
-      await loadPrintersAndAgent();
-    } catch (err: any) {
-      showToast('error', 'Disconnect Error', err.message || 'Could not disconnect printer.');
-    }
-  };
-
-  const handleReconnect = async (printer: ConfiguredDirectPrinter) => {
-    if (!canManage) return;
-    setReconnectingPrinterId(printer.id);
-    try {
-      if (Platform.OS === 'web') {
-        await webDirectPrintService.reconnectPrinter(printer, restaurantId);
-      } else {
-        await devicePrinterBindingService.reconnectDevicePrinter(printer.id);
-      }
-      showToast('success', 'Printer Connected', `Connected to "${printer.name}".`);
-      await loadPrintersAndAgent();
-    } catch (err: any) {
-      showToast('error', 'Reconnect Error', err.message || 'Could not reconnect printer.');
-    } finally {
-      setReconnectingPrinterId(null);
-    }
-  };
-
-  const handleDelete = async (printer: ConfiguredDirectPrinter) => {
-    if (!canManage) return;
-    try {
-      if (Platform.OS === 'web') {
-        await webDirectPrintService.deletePrinter(printer.id, restaurantId);
+        const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
+        setPrinters(updatedList);
       } else {
         await devicePrinterBindingService.removeDevicePrinter(printer.id);
       }
       showToast('info', 'Printer Removed', `Removed "${printer.name}" from configured printers.`);
       await loadPrintersAndAgent();
     } catch (err: any) {
-      showToast('error', 'Delete Error', err.message || 'Could not remove printer.');
+      showToast('error', 'Disconnect Error', err.message || 'Could not remove printer.');
     }
   };
 
@@ -1138,7 +1003,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
       case 'serial':
         return <Text style={styles.transportBadgeSerial}>WEB SERIAL (COM)</Text>;
       case 'agent':
-        return <Text style={styles.transportBadgeAgent}>PRINT STATION RELAY</Text>;
+        return <Text style={styles.transportBadgeAgent}>RESTROZ PRINT AGENT</Text>;
       case 'lan':
       case 'wifi':
         return <Text style={styles.transportBadgeTcp}>NETWORK (LAN/WIFI)</Text>;
@@ -1173,6 +1038,56 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
           </TouchableOpacity>
         )}
       </View>
+
+      {/* Paired Windows Print Agent Banner */}
+      {pairedAgent && (
+        <View style={styles.agentBanner}>
+          <View style={styles.agentInfoRow}>
+            <View style={styles.agentLeftCol}>
+              <View style={styles.agentTitleRow}>
+                <Text style={styles.agentName}>{pairedAgent.deviceName}</Text>
+                <View style={pairedAgent.status === 'online' ? styles.agentOnlineBadge : styles.agentOfflineBadge}>
+                  <Text style={pairedAgent.status === 'online' ? styles.agentOnlineText : styles.agentOfflineText}>
+                    {pairedAgent.status === 'online' ? '● PRINT AGENT READY' : '○ PRINT AGENT OFFLINE'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.agentSub}>
+                Installed Windows Queues:{' '}
+                {pairedAgent.installedPrinters && pairedAgent.installedPrinters.length > 0
+                  ? `${pairedAgent.installedPrinters.length} (${pairedAgent.installedPrinters.join(', ')})`
+                  : isPollingQueues
+                  ? 'Loading Windows printers...'
+                  : 'Scanning...'}
+              </Text>
+            </View>
+            <View style={styles.agentActionsRow}>
+              {canManage && (
+                <TouchableOpacity
+                  style={[styles.smallRefreshBtn, isPollingQueues && { opacity: 0.6 }]}
+                  onPress={() => pairedAgent && pollAgentQueues(pairedAgent.id)}
+                  disabled={isPollingQueues}
+                >
+                  <Text style={styles.smallRefreshBtnText}>⟳ Refresh Queues</Text>
+                </TouchableOpacity>
+              )}
+              {canManage && (
+                <TouchableOpacity
+                  style={styles.unpairBtn}
+                  onPress={handleUnpairAgent}
+                  disabled={isUnpairingAgent}
+                >
+                  {isUnpairingAgent ? (
+                    <ActivityIndicator color="#ef4444" size="small" />
+                  ) : (
+                    <Text style={styles.unpairBtnText}>Disconnect</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
+      )}
 
       {/* Loading */}
       {isLoading ? (
@@ -1232,7 +1147,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
                     <Text style={styles.metaText}>•</Text>
                     <Text style={styles.metaText}>{p.paperWidth}</Text>
                     <Text style={styles.metaText}>•</Text>
-                    <Text style={styles.metaText}>{p.role === 'both' ? 'KOT & BILL' : p.role.toUpperCase()}</Text>
+                    <Text style={styles.metaText}>{p.role.toUpperCase()}</Text>
                   </View>
                 </View>
                 <View style={styles.printerStatusBox}>
@@ -1245,31 +1160,17 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
               ) : null}
 
               <View style={styles.cardActions}>
-                {p.status === 'connected' || p.status === 'available' || p.status === 'configured' ? (
-                  <TouchableOpacity
-                    style={[styles.cardBtn, styles.testBtn]}
-                    onPress={() => handleCardTestPrint(p)}
-                    disabled={testingPrinterId === p.id}
-                  >
-                    {testingPrinterId === p.id ? (
-                      <ActivityIndicator color="#22c55e" size="small" />
-                    ) : (
-                      <Text style={styles.testBtnText}>Test Print</Text>
-                    )}
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity
-                    style={[styles.cardBtn, styles.reconnectBtn]}
-                    onPress={() => handleReconnect(p)}
-                    disabled={reconnectingPrinterId === p.id}
-                  >
-                    {reconnectingPrinterId === p.id ? (
-                      <ActivityIndicator color="#60a5fa" size="small" />
-                    ) : (
-                      <Text style={styles.reconnectBtnText}>Reconnect</Text>
-                    )}
-                  </TouchableOpacity>
-                )}
+                <TouchableOpacity
+                  style={[styles.cardBtn, styles.testBtn]}
+                  onPress={() => handleCardTestPrint(p)}
+                  disabled={testingPrinterId === p.id}
+                >
+                  {testingPrinterId === p.id ? (
+                    <ActivityIndicator color="#22c55e" size="small" />
+                  ) : (
+                    <Text style={styles.testBtnText}>Test Print</Text>
+                  )}
+                </TouchableOpacity>
 
                 {canManage && (
                   <>
@@ -1279,21 +1180,12 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
                     >
                       <Text style={styles.editBtnText}>Configure</Text>
                     </TouchableOpacity>
-                    {p.status === 'connected' || p.status === 'available' || p.status === 'configured' ? (
-                      <TouchableOpacity
-                        style={[styles.cardBtn, styles.disconnectBtn]}
-                        onPress={() => handleDisconnect(p)}
-                      >
-                        <Text style={styles.disconnectBtnText}>Disconnect</Text>
-                      </TouchableOpacity>
-                    ) : (
-                      <TouchableOpacity
-                        style={[styles.cardBtn, styles.deleteBtn]}
-                        onPress={() => handleDelete(p)}
-                      >
-                        <Text style={styles.deleteBtnText}>Delete</Text>
-                      </TouchableOpacity>
-                    )}
+                    <TouchableOpacity
+                      style={[styles.cardBtn, styles.deleteBtn]}
+                      onPress={() => handleDisconnect(p)}
+                    >
+                      <Text style={styles.deleteBtnText}>Disconnect</Text>
+                    </TouchableOpacity>
                   </>
                 )}
               </View>
@@ -2279,24 +2171,6 @@ const styles = StyleSheet.create({
   },
   editBtnText: {
     color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '600',
-    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
-  },
-  reconnectBtn: {
-    backgroundColor: 'rgba(59, 130, 246, 0.12)',
-  },
-  reconnectBtnText: {
-    color: '#60a5fa',
-    fontSize: 12,
-    fontWeight: '600',
-    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),
-  },
-  disconnectBtn: {
-    backgroundColor: 'rgba(234, 179, 8, 0.12)',
-  },
-  disconnectBtnText: {
-    color: '#fbbf24',
     fontSize: 12,
     fontWeight: '600',
     ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' as any } : {}),

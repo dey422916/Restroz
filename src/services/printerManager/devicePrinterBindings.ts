@@ -127,40 +127,6 @@ export const devicePrinterBindingService = {
   },
 
   /**
-   * Disconnects a printer definition from device-local active usage without removing it.
-   */
-  async disconnectDevicePrinter(printerId: string): Promise<void> {
-    if (!printerId) return;
-    try {
-      const list = await this.getDevicePrinters();
-      const idx = list.findIndex((p) => p.id === printerId);
-      if (idx !== -1) {
-        list[idx] = { ...list[idx], is_active: false, updated_at: new Date().toISOString() };
-        await AsyncStorage.setItem(STORAGE_KEY_DEVICE_PRINTERS, JSON.stringify(list));
-      }
-    } catch (err) {
-      console.warn('[devicePrinterBindings] Error disconnecting device printer:', err);
-    }
-  },
-
-  /**
-   * Reconnects a printer definition in device-local storage.
-   */
-  async reconnectDevicePrinter(printerId: string): Promise<void> {
-    if (!printerId) return;
-    try {
-      const list = await this.getDevicePrinters();
-      const idx = list.findIndex((p) => p.id === printerId);
-      if (idx !== -1) {
-        list[idx] = { ...list[idx], is_active: true, updated_at: new Date().toISOString() };
-        await AsyncStorage.setItem(STORAGE_KEY_DEVICE_PRINTERS, JSON.stringify(list));
-      }
-    } catch (err) {
-      console.warn('[devicePrinterBindings] Error reconnecting device printer:', err);
-    }
-  },
-
-  /**
    * Removes a printer definition from device-local storage.
    */
   async removeDevicePrinter(printerId: string): Promise<void> {

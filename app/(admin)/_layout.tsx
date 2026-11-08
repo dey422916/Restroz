@@ -9,7 +9,6 @@ import { subscriptionService, SubscriptionAccessStatus } from '../../src/service
 import { SubscriptionLockOverlay } from '../../src/components/common/SubscriptionLockOverlay';
 import { RegisterCloseReminderModal } from '../../src/components/common/RegisterCloseReminderModal';
 import { useNewOrderTracker } from '../../src/hooks/useNewOrderTracker';
-import { webPrintStationService } from '../../src/services/webPrintStationService';
 
 export default function AdminLayout() {
   const insets = useSafeAreaInsets();
@@ -39,12 +38,6 @@ export default function AdminLayout() {
   useEffect(() => {
     verifySubscription();
   }, [activeRestaurantId]);
-
-  useEffect(() => {
-    if (Platform.OS === 'web' && activeRestaurantId) {
-      webPrintStationService.start(activeRestaurantId, activeRestaurant?.name).catch(console.warn);
-    }
-  }, [activeRestaurantId, activeRestaurant?.name]);
 
   const currentPath = (pathname || '').trim();
   const isAdminRoute =

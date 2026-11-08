@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { Platform } from 'react-native';
 import { RestaurantSettings } from '../types';
 import { settingsService } from '../services/api/settingsService';
 import { marketplaceService } from '../services/api/marketplaceService';
@@ -207,27 +206,6 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       };
     }
   }, [activeRestaurantId, user?.id, fetchLatestSettings]);
-
-  // On Web Desktop/Mobile, if this browser has locally configured hardware printers (Bluetooth / USB / Serial),
-  // automatically start the Web Print Station so incoming staff print jobs are received and printed immediately.
-  useEffect(() => {
-    if (Platform.OS === 'web' && activeRestaurantId && typeof window !== 'undefined') {
-      try {
-        const { webDirectPrintService } = require('../services/webDirectPrintService');
-        const { webPrintStationService } = require('../services/webPrintStationService');
-        const saved = webDirectPrintService.getSavedPrinters(activeRestaurantId);
-        const connected = (saved || []).filter(
-          (p: any) =>
-            (p.transport === 'bluetooth' || p.transport === 'usb' || p.transport === 'serial') &&
-            p.status !== 'disconnected' &&
-            p.status !== 'unsupported'
-        );
-        if (connected.length > 0) {
-          webPrintStationService.start(activeRestaurantId, activeRestaurant?.name, connected).catch(() => {});
-        }
-      } catch (_) {}
-    }
-  }, [activeRestaurantId, activeRestaurant?.name]);
 
   const updateSettings = async (newSettings: Partial<RestaurantSettings>): Promise<RestaurantSettings> => {
     const updated = await settingsService.saveSettings(newSettings, activeRestaurantId);

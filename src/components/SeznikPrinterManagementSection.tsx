@@ -43,6 +43,42 @@ type WizardStep =
   | 'android_network_input'
   | 'configure_test';
 
+/**
+ * Ensures strictly ONE card per physical printer is displayed in the UI:
+ * - Direct hardware (Bluetooth, USB, Serial) takes precedence over Agent relay.
+ * - Merges primary flag and online status for display.
+ */
+function deduplicateDisplayPrinters(items: ConfiguredDirectPrinter[]): ConfiguredDirectPrinter[] {
+  if (!items || items.length <= 1) return items || [];
+  const norm = (n?: string | null) => (n || '').trim().toLowerCase().replace(/[\s_.\-]+/g, '');
+  const isHardware = (t: string) => t === 'bluetooth' || t === 'usb' || t === 'serial';
+
+  const sorted = [...items].sort((a, b) => {
+    const aHw = isHardware(a.transport) ? 0 : 1;
+    const bHw = isHardware(b.transport) ? 0 : 1;
+    if (aHw !== bHw) return aHw - bHw;
+    if (a.status === 'connected' && b.status !== 'connected') return -1;
+    if (b.status === 'connected' && a.status !== 'connected') return 1;
+    if (a.isPrimary && !b.isPrimary) return -1;
+    if (b.isPrimary && !a.isPrimary) return 1;
+    return 0;
+  });
+
+  const result: ConfiguredDirectPrinter[] = [];
+  const seenNorm = new Set<string>();
+
+  for (const p of sorted) {
+    const key = norm(p.name);
+    if (key && seenNorm.has(key)) {
+      continue;
+    }
+    if (key) seenNorm.add(key);
+    result.push(p);
+  }
+
+  return result;
+}
+
 export const SeznikPrinterManagementSection: React.FC<Props> = ({
   restaurantId,
   canManage,
@@ -123,9 +159,9 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
               : `Station Offline • Inactive (${agent.deviceName})`,
             lastConnectedAt: Date.now(),
           }));
-          setPrinters(centralPrinters);
+          setPrinters(deduplicateDisplayPrinters(centralPrinters));
         } else {
-          setPrinters(list);
+          setPrinters(deduplicateDisplayPrinters(list));
           const connectedHardware = list.filter(
             (p) =>
               (p.transport === 'bluetooth' || p.transport === 'usb' || p.transport === 'serial') &&
@@ -234,9 +270,9 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
               : `Station Offline • Inactive (${agent.deviceName})`,
             lastConnectedAt: Date.now(),
           }));
-          setPrinters(centralPrinters);
+          setPrinters(deduplicateDisplayPrinters(centralPrinters));
         } else {
-          setPrinters(mapped);
+          setPrinters(deduplicateDisplayPrinters(mapped));
         }
       }
     } catch (err: any) {
@@ -261,7 +297,7 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
         );
       }
       const saved = webDirectPrintService.getSavedPrinters(restaurantId);
-      setPrinters(saved);
+      setPrinters(deduplicateDisplayPrinters(saved));
     });
     return unsubscribe;
   }, [showToast, restaurantId]);
@@ -843,7 +879,9 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
         showToast('success', 'Test Print Sent', result.message || 'Test print dispatched successfully!');
         if (Platform.OS === 'web') {
           const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
-          setPrinters(updatedList);
+          if (updatedList.length > 0) {
+            setPrinters(deduplicateDisplayPrinters(updatedList));
+          }
         }
       } else {
         setPrinters((prev) =>

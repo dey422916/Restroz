@@ -386,45 +386,127 @@ if (typeof window !== 'undefined') {
 }
 
 /**
+ * Normalizes a printer name for cross-transport and case-insensitive matching.
+ * e.g. "Seznik-Veer_9394", "Seznik-Veer 9394", and "seznik veer 9394" all normalize to "seznikveer9394".
+ */
+function normalizePrinterName(name?: string | null): string {
+  return (name || '').trim().toLowerCase().replace(/[\s_.\-]+/g, '');
+}
+
+/**
  * Deduplicates configured printer records by BLE device identity, ID, or normalized name.
- * Merges status to ensure 'connected' status and primary flags are preserved without duplicates.
+ * Strictly guarantees that each physical printer has AT MOST ONE card:
+ * 1. Direct hardware connection (Bluetooth, USB, Serial) ALWAYS takes precedence over
+ *    a Print Station Relay ('agent') entry with the same name.
+ * 2. Merges status to ensure 'connected' status and primary flags are preserved without duplicates.
  */
 function deduplicatePrinters(printers: ConfiguredDirectPrinter[]): ConfiguredDirectPrinter[] {
-  const result: ConfiguredDirectPrinter[] = [];
-  const seenBleKeys = new Set<string>();
-  const seenIds = new Set<string>();
+  if (!printers || printers.length <= 1) {
+    return printers || [];
+  }
 
-  for (const p of printers) {
+  // Pre-sort so that direct hardware connections come before remote relay agent entries,
+  // and 'connected' printers come before disconnected ones.
+  const transportPriority = (t: string): number => {
+    switch (t) {
+      case 'bluetooth':
+      case 'usb':
+      case 'serial':
+        return 1; // Hardware direct takes top priority on this device
+      case 'agent':
+        return 2; // Remote station relay
+      default:
+        return 3;
+    }
+  };
+
+  const statusPriority = (s: string): number => {
+    switch (s) {
+      case 'connected':
+        return 1;
+      case 'available':
+        return 2;
+      case 'configured':
+        return 3;
+      case 'reconnect_required':
+        return 4;
+      case 'disconnected':
+        return 5;
+      case 'offline':
+        return 6;
+      case 'unsupported':
+      case 'error':
+        return 7;
+      default:
+        return 8;
+    }
+  };
+
+  // Sort stable copy: hardware direct first, connected first, primary first
+  const sorted = [...printers].sort((a, b) => {
+    const tpDiff = transportPriority(a.transport) - transportPriority(b.transport);
+    if (tpDiff !== 0) return tpDiff;
+
+    const stDiff = statusPriority(a.status) - statusPriority(b.status);
+    if (stDiff !== 0) return stDiff;
+
+    const primDiff = (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0);
+    if (primDiff !== 0) return primDiff;
+
+    return 0;
+  });
+
+  const result: ConfiguredDirectPrinter[] = [];
+  const seenIds = new Set<string>();
+  const seenBleKeys = new Set<string>();
+  const seenNormNames = new Set<string>();
+
+  for (const p of sorted) {
     if (seenIds.has(p.id)) continue;
 
-    if (p.transport === 'bluetooth') {
-      const devKey = (p.bluetoothDeviceId || p.deviceId || '').trim();
-      const normName = (p.name || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
-      const bleKey = devKey || normName;
-      if (bleKey) {
-        if (seenBleKeys.has(bleKey)) {
-          const existingIdx = result.findIndex(
-            (r) =>
-              r.transport === 'bluetooth' &&
-              ((devKey && (r.bluetoothDeviceId === devKey || r.deviceId === devKey)) ||
-                (normName && (r.name || '').trim().toLowerCase().replace(/[\s_-]+/g, '') === normName))
-          );
-          if (existingIdx >= 0) {
-            const existing = result[existingIdx];
-            if (p.status === 'connected' && existing.status !== 'connected') {
-              result[existingIdx] = { ...existing, ...p };
-            }
-            if (p.isPrimary) {
-              result[existingIdx].isPrimary = true;
-            }
-          }
-          continue;
+    const devKey = (p.bluetoothDeviceId || p.deviceId || '').trim();
+    const normName = normalizePrinterName(p.name);
+
+    // Cross-transport deduplication by normalized printer name:
+    // e.g. "Seznik-Veer_9394" (bluetooth) vs "Seznik-Veer 9394" (agent relay)
+    if (normName && seenNormNames.has(normName)) {
+      const existingIdx = result.findIndex(
+        (r) => normalizePrinterName(r.name) === normName
+      );
+      if (existingIdx >= 0) {
+        const existing = result[existingIdx];
+        if (p.isPrimary && !existing.isPrimary) {
+          result[existingIdx].isPrimary = true;
         }
-        seenBleKeys.add(bleKey);
+        if (p.status === 'connected' && existing.status !== 'connected' && p.transport === existing.transport) {
+          result[existingIdx] = { ...existing, ...p };
+        }
       }
+      continue;
     }
 
+    // BLE key deduplication (for multiple BLE sessions / MAC addresses)
+    if (devKey && seenBleKeys.has(devKey)) {
+      const existingIdx = result.findIndex(
+        (r) => (r.bluetoothDeviceId && r.bluetoothDeviceId === devKey) || (r.deviceId && r.deviceId === devKey)
+      );
+      if (existingIdx >= 0) {
+        const existing = result[existingIdx];
+        if (p.isPrimary && !existing.isPrimary) {
+          result[existingIdx].isPrimary = true;
+        }
+        if (p.status === 'connected' && existing.status !== 'connected') {
+          result[existingIdx] = { ...existing, ...p };
+        }
+      }
+      continue;
+    }
+
+    // Mark as seen
     seenIds.add(p.id);
+    if (devKey) seenBleKeys.add(devKey);
+    if (normName) seenNormNames.add(normName);
+
     result.push(p);
   }
 
@@ -824,8 +906,9 @@ export const webDirectPrintService = {
       return p;
     });
 
-    this.savePrinters(updated, restaurantId);
-    return updated;
+    const deduped = deduplicatePrinters(updated);
+    this.savePrinters(deduped, restaurantId);
+    return deduped;
   },
 
   /**
@@ -1920,9 +2003,9 @@ export const webDirectPrintService = {
         (p) => (p.status === 'connected' || p.status === 'available') && (isPrinterRoleEligible(p.role, role) || isManual)
       );
 
-      // Sort by silent automatic printing preference: Agent > USB > Serial > Bluetooth
+      // Sort by local direct printing preference over remote relay: USB > Bluetooth > Serial > Agent
       readyPrinters.sort((a, b) => {
-        const transportWeight: Record<string, number> = { agent: 1, usb: 2, serial: 3, bluetooth: 4 };
+        const transportWeight: Record<string, number> = { usb: 1, bluetooth: 2, serial: 3, agent: 4 };
         const twA = transportWeight[a.transport] || 99;
         const twB = transportWeight[b.transport] || 99;
         if (twA !== twB) return twA - twB;
@@ -2016,11 +2099,9 @@ export const webDirectPrintService = {
                 lastConnectedAt: Date.now(),
               };
 
-              // Cache in memory / local store for this restaurant
-              const exists = currentSaved.find((p) => p.id === agentPrinter.id);
-              if (!exists) {
-                this.savePrinters([...currentSaved, agentPrinter], restaurantId);
-              }
+              // Note: Remote station printers are returned as in-memory routing targets
+              // and must NOT be saved into the local device's persistent storage,
+              // preventing ghost duplicate cards on host stations or staff devices.
 
               if (typeof __DEV__ !== 'undefined' && __DEV__) {
                 console.log(

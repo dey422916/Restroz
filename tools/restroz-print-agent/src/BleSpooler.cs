@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.IO.Ports;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Win32;
 using Windows.Foundation;
 using Windows.Devices.Enumeration;
 using Windows.Devices.Bluetooth;
@@ -44,6 +47,9 @@ namespace RestroZPrintAgent
         private static readonly Guid SERVICE_FF00 = new Guid("0000ff00-0000-1000-8000-00805f9b34fb");
         private static readonly Guid CHAR_FF02 = new Guid("0000ff02-0000-1000-8000-00805f9b34fb");
 
+        private static readonly Guid SERVICE_FFE0 = new Guid("0000ffe0-0000-1000-8000-00805f9b34fb");
+        private static readonly Guid CHAR_FFE1 = new Guid("0000ffe1-0000-1000-8000-00805f9b34fb");
+
         private static readonly Guid SERVICE_18F0 = new Guid("000018f0-0000-1000-8000-00805f9b34fb");
         private static readonly Guid CHAR_2AF1 = new Guid("00002af1-0000-1000-8000-00805f9b34fb");
 
@@ -52,6 +58,9 @@ namespace RestroZPrintAgent
 
         private static readonly Guid SERVICE_FFF0 = new Guid("0000fff0-0000-1000-8000-00805f9b34fb");
         private static readonly Guid CHAR_FFF2 = new Guid("0000fff2-0000-1000-8000-00805f9b34fb");
+
+        private static readonly Guid SERVICE_NORDIC = new Guid("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
+        private static readonly Guid CHAR_NORDIC_TX = new Guid("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
 
         // Single concurrent BLE print job lock per printer destination
         private static readonly object _bleLock = new object();
@@ -113,30 +122,35 @@ namespace RestroZPrintAgent
                         }
                     }
 
-                    // Always ensure Seznik-Veer_925C is resolved if paired on Windows (60:6E:41:62:92:5C)
-                    ulong seznikMac = 0x606E4162925C;
-                    bool hasSeznik = result.Exists(p => p.BluetoothAddress == seznikMac || p.Name.IndexOf("seznik", StringComparison.OrdinalIgnoreCase) >= 0);
-                    if (!hasSeznik)
+                    // Always ensure Seznik-Veer devices are resolved if paired on Windows (9394: 60:6E:41:62:93:94, 925C: 60:6E:41:62:92:5C)
+                    ulong[] candidateSezniks = new ulong[] { 0x606E41629394UL, 0x606E4162925CUL };
+                    foreach (var sMac in candidateSezniks)
                     {
-                        try
+                        bool hasMac = result.Exists(p => p.BluetoothAddress == sMac);
+                        if (!hasMac)
                         {
-                            var seznikOp = BluetoothLEDevice.FromBluetoothAddressAsync(seznikMac);
-                            using (var sDev = seznikOp.ToTask().GetAwaiter().GetResult())
+                            try
                             {
-                                if (sDev != null)
+                                var seznikOp = BluetoothLEDevice.FromBluetoothAddressAsync(sMac);
+                                using (var sDev = seznikOp.ToTask().GetAwaiter().GetResult())
                                 {
-                                    result.Add(new BlePrinterInfo
+                                    if (sDev != null)
                                     {
-                                        Name = string.IsNullOrEmpty(sDev.Name) ? "Seznik-Veer_925C" : sDev.Name,
-                                        BluetoothAddress = seznikMac,
-                                        MacAddressFormatted = "60:6E:41:62:92:5C",
-                                        DeviceId = sDev.DeviceId,
-                                        DisplayName = (string.IsNullOrEmpty(sDev.Name) ? "Seznik-Veer_925C" : sDev.Name) + " [Native BLE]"
-                                    });
+                                        string defaultName = (sMac == 0x606E41629394UL) ? "Seznik-Veer_9394" : "Seznik-Veer_925C";
+                                        string devName = string.IsNullOrEmpty(sDev.Name) ? defaultName : sDev.Name;
+                                        result.Add(new BlePrinterInfo
+                                        {
+                                            Name = devName,
+                                            BluetoothAddress = sMac,
+                                            MacAddressFormatted = FormatMac(sMac),
+                                            DeviceId = sDev.DeviceId,
+                                            DisplayName = devName + " [Native BLE]"
+                                        });
+                                    }
                                 }
                             }
+                            catch { }
                         }
-                        catch { }
                     }
 
                     _cachedBlePrinters.Clear();
@@ -171,6 +185,132 @@ namespace RestroZPrintAgent
             }
         }
 
+        public static ulong ParseBluetoothAddressFromName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return 0;
+            string clean = name.Replace("[Native BLE]", "").Replace("[BLE]", "").Trim();
+
+            // 1. Direct hex MAC format XX:XX:XX:XX:XX:XX or XXXXXXXXXXXX
+            string stripped = clean.Replace(":", "").Replace("-", "").Trim();
+            if (stripped.Length == 12)
+            {
+                try
+                {
+                    return Convert.ToUInt64(stripped, 16);
+                }
+                catch { }
+            }
+
+            // 2. Trailing 4-hex suffix (e.g. Seznik-Veer_9394, Seznik-Veer_925C)
+            var match = Regex.Match(clean, @"_([0-9a-fA-F]{4})\b");
+            if (match.Success)
+            {
+                try
+                {
+                    ulong suffix = Convert.ToUInt64(match.Groups[1].Value, 16);
+                    return 0x606E41620000UL | suffix;
+                }
+                catch { }
+            }
+
+            return 0;
+        }
+
+        public static List<string> GetBluetoothComPorts(string printerName, ulong macAddress)
+        {
+            var ports = new List<string>();
+            try
+            {
+                string macHex = macAddress != 0 ? macAddress.ToString("X12") : null;
+                using (var baseKey = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\BTHENUM"))
+                {
+                    if (baseKey != null)
+                    {
+                        foreach (var subKeyName in baseKey.GetSubKeyNames())
+                        {
+                            if (subKeyName.IndexOf("1101", StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                using (var sppKey = baseKey.OpenSubKey(subKeyName))
+                                {
+                                    if (sppKey != null)
+                                    {
+                                        foreach (var devInstance in sppKey.GetSubKeyNames())
+                                        {
+                                            using (var devKey = sppKey.OpenSubKey(devInstance + @"\Device Parameters"))
+                                            {
+                                                if (devKey != null)
+                                                {
+                                                    object portVal = devKey.GetValue("PortName");
+                                                    if (portVal != null)
+                                                    {
+                                                        string portStr = portVal.ToString();
+                                                        if (macHex != null && devInstance.IndexOf(macHex, StringComparison.OrdinalIgnoreCase) >= 0)
+                                                        {
+                                                            ports.Insert(0, portStr);
+                                                        }
+                                                        else if (!ports.Contains(portStr))
+                                                        {
+                                                            ports.Add(portStr);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[BleSpooler] Registry COM lookup: " + ex.Message);
+            }
+            return ports;
+        }
+
+        public static bool TrySendBytesViaBluetoothSerial(string printerName, byte[] bytes, out string error)
+        {
+            error = null;
+            try
+            {
+                ulong mac = ParseBluetoothAddressFromName(printerName);
+                var ports = GetBluetoothComPorts(printerName, mac);
+                if (ports.Count == 0)
+                {
+                    ports.AddRange(SerialPort.GetPortNames());
+                }
+
+                foreach (var portName in ports)
+                {
+                    try
+                    {
+                        using (var port = new SerialPort(portName, 9600, Parity.None, 8, StopBits.One))
+                        {
+                            port.ReadTimeout = 1500;
+                            port.WriteTimeout = 3000;
+                            port.Open();
+                            port.Write(bytes, 0, bytes.Length);
+                            Thread.Sleep(100);
+                            port.Close();
+                            Console.WriteLine(string.Format("[BleSpooler] Successfully sent {0} bytes to {1} via {2}", bytes.Length, printerName, portName));
+                            return true;
+                        }
+                    }
+                    catch (Exception portEx)
+                    {
+                        error = string.Format("{0}: {1}", portName, portEx.Message);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+            }
+            return false;
+        }
+
         public static bool SendBytesToBlePrinter(string targetPrinterName, byte[] bytes, out string errorMessage)
         {
             errorMessage = null;
@@ -183,16 +323,37 @@ namespace RestroZPrintAgent
             // Destination Locking: ensure only one print job writes to BLE hardware at a time
             lock (_bleLock)
             {
+                // 1. Primary: WinRT BLE GATT
                 try
                 {
-                    return SendBytesToBlePrinterInternalAsync(targetPrinterName, bytes).GetAwaiter().GetResult();
+                    bool ok = SendBytesToBlePrinterInternalAsync(targetPrinterName, bytes).GetAwaiter().GetResult();
+                    if (ok) return true;
                 }
                 catch (Exception ex)
                 {
-                    errorMessage = ex.Message;
-                    Console.WriteLine(string.Format("[BleSpooler] Transmission error to '{0}': {1}", targetPrinterName, ex.Message));
-                    return false;
+                    Console.WriteLine(string.Format("[BleSpooler] WinRT BLE GATT transmission error to '{0}': {1}", targetPrinterName, ex.Message));
                 }
+
+                // 2. Secondary: Bluetooth Classic SPP (SerialPort)
+                try
+                {
+                    string sppError;
+                    if (TrySendBytesViaBluetoothSerial(targetPrinterName, bytes, out sppError))
+                    {
+                        return true;
+                    }
+                    if (!string.IsNullOrEmpty(sppError))
+                    {
+                        Console.WriteLine(string.Format("[BleSpooler] Bluetooth SPP fallback failed: {0}", sppError));
+                    }
+                }
+                catch (Exception sppEx)
+                {
+                    Console.WriteLine(string.Format("[BleSpooler] Bluetooth SPP exception: {0}", sppEx.Message));
+                }
+
+                errorMessage = string.Format("Could not transmit to Bluetooth printer '{0}'. Device may be disconnected, out of range, or powered off.", targetPrinterName);
+                return false;
             }
         }
 
@@ -214,10 +375,16 @@ namespace RestroZPrintAgent
                 }
             }
 
-            // Default fallback for Seznik-Veer_925C
+            // Dynamic resolution from printer name
+            if (targetAddress == 0)
+            {
+                targetAddress = ParseBluetoothAddressFromName(cleanName);
+            }
+
+            // Default fallback for Seznik-Veer
             if (targetAddress == 0 && cleanName.IndexOf("seznik", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                targetAddress = 0x606E4162925C;
+                targetAddress = 0x606E41629394UL;
             }
 
             if (targetAddress == 0)
@@ -256,9 +423,11 @@ namespace RestroZPrintAgent
                 var candidateServices = new[]
                 {
                     new { Service = SERVICE_FF00, Char = CHAR_FF02 },
+                    new { Service = SERVICE_FFE0, Char = CHAR_FFE1 },
                     new { Service = SERVICE_18F0, Char = CHAR_2AF1 },
                     new { Service = SERVICE_ISSC, Char = CHAR_ISSC_WRITE },
-                    new { Service = SERVICE_FFF0, Char = CHAR_FFF2 }
+                    new { Service = SERVICE_FFF0, Char = CHAR_FFF2 },
+                    new { Service = SERVICE_NORDIC, Char = CHAR_NORDIC_TX }
                 };
 
                 foreach (var pair in candidateServices)

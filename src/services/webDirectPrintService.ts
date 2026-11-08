@@ -805,6 +805,37 @@ export const webDirectPrintService = {
       return p;
     });
 
+    if (updated.length === 0 && restaurantId && agentOnline && pairedAgentId) {
+      try {
+        const { data: dbDevices } = await supabase
+          .from('printer_devices')
+          .select('*')
+          .eq('agent_id', pairedAgentId)
+          .eq('is_active', true);
+
+        if (dbDevices && dbDevices.length > 0) {
+          const agentPrinters: ConfiguredDirectPrinter[] = dbDevices.map((d: any) => ({
+            id: `agent_${pairedAgentId}_${d.printer_name.replace(/\s+/g, '_')}`,
+            name: d.printer_name,
+            transport: 'agent',
+            agentId: pairedAgentId,
+            agentDeviceName: agentName,
+            windowsQueueName: d.printer_name,
+            paperWidth: d.paper_width || '58mm',
+            role: d.role || 'both',
+            isPrimary: Boolean(d.is_primary),
+            status: 'connected',
+            statusMessage: `RestroZ Print Agent Online (${agentName})`,
+            lastConnectedAt: Date.now(),
+          }));
+          this.savePrinters(agentPrinters, restaurantId);
+          return agentPrinters;
+        }
+      } catch (e) {
+        console.warn('[webDirectPrintService] Could not auto-sync agent printers:', e);
+      }
+    }
+
     this.savePrinters(updated, restaurantId);
     return updated;
   },

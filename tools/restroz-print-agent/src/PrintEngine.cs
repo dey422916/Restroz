@@ -278,8 +278,41 @@ namespace RestroZPrintAgent
 
                 if (isBle)
                 {
-                    // Route to Native WinRT BLE Spooler
+                    // Route to Native WinRT BLE / SPP Spooler
                     success = BleSpooler.SendBytesToBlePrinter(job.PrinterName, rawBytes, out spoolError);
+                    if (!success)
+                    {
+                        // Fallback: check if an installed thermal Windows print queue exists (e.g. POS58 Printer)
+                        try
+                        {
+                            var winPrinters = Spooler.GetInstalledPrinters();
+                            string fallbackPrinter = null;
+                            foreach (var wp in winPrinters)
+                            {
+                                string wpLower = wp.ToLowerInvariant();
+                                if (wpLower.Contains("pos") || wpLower.Contains("seznik") || wpLower.Contains("thermal") || wpLower.Contains("receipt"))
+                                {
+                                    fallbackPrinter = wp;
+                                    break;
+                                }
+                            }
+                            if (!string.IsNullOrEmpty(fallbackPrinter))
+                            {
+                                Log(string.Format("Bluetooth printer '{0}' unreachable; attempting fallback to Windows queue '{1}'...", job.PrinterName, fallbackPrinter));
+                                string winErr;
+                                success = Spooler.SendBytesToPrinter(fallbackPrinter, rawBytes, job.JobTitle ?? "RestroZ Print Job", Log, out winErr);
+                                if (success)
+                                {
+                                    spoolError = null;
+                                    Log(string.Format("Fallback print SUCCESS via Windows queue '{0}'!", fallbackPrinter));
+                                }
+                            }
+                        }
+                        catch (Exception fbEx)
+                        {
+                            Log("Fallback to Windows spooler failed: " + fbEx.Message);
+                        }
+                    }
                 }
                 else
                 {

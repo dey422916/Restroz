@@ -174,6 +174,20 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
             };
           });
 
+        if (mapped.length === 0 && restaurantId) {
+          try {
+            const agent = await webDirectPrintService.getPairedAgent(restaurantId);
+            setPairedAgent(agent);
+            if (agent && agent.status === 'online') {
+              const agentPrinters = await webDirectPrintService.restorePrinters(restaurantId);
+              setPrinters(agentPrinters);
+              return;
+            }
+          } catch (agentErr) {
+            console.warn('[SeznikPrinterManagement] Could not fetch central agent printers on Android:', agentErr);
+          }
+        }
+
         setPrinters(mapped);
       }
     } catch (err: any) {
@@ -767,18 +781,21 @@ export const SeznikPrinterManagementSection: React.FC<Props> = ({
   const handleCardTestPrint = async (printer: ConfiguredDirectPrinter) => {
     setTestingPrinterId(printer.id);
     try {
-      if (Platform.OS === 'web') {
+      if (Platform.OS === 'web' || printer.transport === 'agent') {
         console.log(
           `[PRINTER_IDENTITY_AUDIT]\n` +
           `UI Printer ID: ${printer.id}\n` +
           `UI Printer Name: ${printer.name}\n` +
+          `UI Transport: ${printer.transport}\n` +
           `UI deviceId: ${printer.deviceId || 'N/A'}\n` +
           `UI bluetoothDeviceId: ${printer.bluetoothDeviceId || 'N/A'}`
         );
         const result = await webDirectPrintService.printTest(printer, settings, restaurantId);
         showToast('success', 'Test Print Sent', result.message || 'Test print dispatched successfully!');
-        const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
-        setPrinters(updatedList);
+        if (Platform.OS === 'web') {
+          const updatedList = webDirectPrintService.getSavedPrinters(restaurantId);
+          setPrinters(updatedList);
+        }
       } else {
         setPrinters((prev) =>
           prev.map((p) =>

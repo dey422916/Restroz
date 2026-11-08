@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator, Image, useWindowDimensions, Platform } from 'react-native';
 import { useSettings } from '../../src/context/SettingsContext';
 import { useAuth } from '../../src/context/AuthContext';
@@ -29,6 +29,7 @@ import {
   getIndianPhoneValidationError,
   isValidGSTIN,
   getGSTINValidationError,
+  validateGSTIN,
 } from '../../src/utils/validation';
 
 import {
@@ -145,6 +146,11 @@ export default function SettingsScreen() {
   const [isUploadingBanner, setIsUploadingBanner] = useState(false);
   const [showUrlModal, setShowUrlModal] = useState(false);
   const [customBannerUrl, setCustomBannerUrl] = useState('');
+
+  // GSTIN Validation state for real-time feedback
+  const gstinValidation = useMemo(() => {
+    return validateGSTIN(gstin, { required: gstRegistered && isGstEnabled });
+  }, [gstin, gstRegistered, isGstEnabled]);
 
 
   // Reset dirty state on restaurant switch so form values reload cleanly from settings
@@ -701,6 +707,7 @@ export default function SettingsScreen() {
 
     const numRate = parseFloat(taxRate);
 
+    // Validate GST parameters and strict GSTIN rules
     if (gstRegistered && isGstEnabled) {
       if (isNaN(numRate) || numRate <= 0 || numRate > 100) {
         showToast('error', 'Invalid GST Rate', 'Enter a valid GST rate greater than 0% before enabling GST collection.');
@@ -712,9 +719,30 @@ export default function SettingsScreen() {
         Alert.alert('GSTIN Required', 'Please enter a valid GSTIN before enabling GST billing.');
         return;
       }
-      if (!isValidGSTIN(gstin.trim())) {
-        showToast('error', 'Invalid GSTIN Format', 'GSTIN must be a valid 15-character Indian GST identification number (e.g. 36AAAAA0000A1Z5).');
-        Alert.alert('Invalid GSTIN Format', 'GSTIN must be a valid 15-character Indian GST identification number (e.g. 36AAAAA0000A1Z5).');
+      const vResult = validateGSTIN(gstin.trim(), { required: true });
+      if (!vResult.isValid) {
+        showToast('error', 'Invalid GSTIN', vResult.error || 'Please enter a valid 15-character GSTIN.');
+        Alert.alert('Invalid GSTIN', vResult.error || 'Please enter a valid 15-character GSTIN.');
+        return;
+      }
+    } else if (gstRegistered) {
+      if (!gstin.trim()) {
+        showToast('error', 'GSTIN Required', 'Please enter a valid GSTIN for the registered business.');
+        Alert.alert('GSTIN Required', 'Please enter a valid GSTIN for the registered business.');
+        return;
+      }
+      const vResult = validateGSTIN(gstin.trim(), { required: true });
+      if (!vResult.isValid) {
+        showToast('error', 'Invalid GSTIN', vResult.error || 'Please enter a valid 15-character GSTIN.');
+        Alert.alert('Invalid GSTIN', vResult.error || 'Please enter a valid 15-character GSTIN.');
+        return;
+      }
+    } else if (gstin.trim()) {
+      // Unregistered business: GSTIN is optional, but if entered/edited, it must be valid or cleared
+      const vResult = validateGSTIN(gstin.trim(), { required: false });
+      if (!vResult.isValid) {
+        showToast('error', 'Invalid GSTIN', vResult.error || 'Please enter a valid 15-character GSTIN or clear the field.');
+        Alert.alert('Invalid GSTIN', vResult.error || 'Please enter a valid 15-character GSTIN or clear the field.');
         return;
       }
     }
@@ -727,7 +755,7 @@ export default function SettingsScreen() {
       setIsSavingGst(true);
 
       const persisted = await updateSettings({
-        gstin: gstin.trim(),
+        gstin: gstin.trim().toUpperCase(),
         default_tax_rate: validatedRate,
         tax_rate: validatedRate,
         gst_registered: gstRegistered,
@@ -1897,6 +1925,12 @@ export default function SettingsScreen() {
                             Alert.alert('GSTIN Required', 'Please enter a valid GSTIN before enabling GST billing.');
                             return;
                           }
+                          const vCheck = validateGSTIN(gstin.trim(), { required: true });
+                          if (!vCheck.isValid) {
+                            showToast('error', 'Invalid GSTIN', vCheck.error || 'Please enter a valid 15-character GSTIN before enabling GST billing.');
+                            Alert.alert('Invalid GSTIN', vCheck.error || 'Please enter a valid 15-character GSTIN before enabling GST billing.');
+                            return;
+                          }
                           setIsGstEnabled(true);
                         } else {
                           setIsGstEnabled(false);
@@ -1966,19 +2000,37 @@ export default function SettingsScreen() {
                   <View style={styles.formCol}>
                     <Text style={styles.label}>GSTIN (GST Number)</Text>
                     <TextInput
-                      style={styles.input}
+                      style={[
+                        styles.input,
+                        !gstinValidation.isValid && Boolean(gstin.trim()) && { borderColor: '#ef4444', borderWidth: 1.5 },
+                      ]}
                       value={gstin}
                       onChangeText={(v) => {
-                        setGstin(v.toUpperCase());
+                        const upper = v.toUpperCase();
+                        setGstin(upper);
                         setIsDirty(true);
                       }}
-                      placeholder="e.g. 36AAAAA0000A1Z5"
+                      maxLength={15}
+                      placeholder="e.g. 27AAPFU0939F1ZV"
                       placeholderTextColor="#94a3b8"
                       autoCapitalize="characters"
+                      autoCorrect={false}
                     />
-                    <Text style={styles.helperText}>
-                      15-digit GSTIN on receipts.
-                    </Text>
+                    {!gstinValidation.isValid && Boolean(gstin.trim()) && (
+                      <Text style={{ color: '#ef4444', fontSize: 10.5, marginTop: 3, fontWeight: '700' }}>
+                        ⚠️ {gstinValidation.error}
+                      </Text>
+                    )}
+                    {gstinValidation.isValid && gstin.trim().length === 15 && (
+                      <Text style={{ color: '#16a34a', fontSize: 10.5, marginTop: 3, fontWeight: '700' }}>
+                        ✓ Valid GSTIN format{gstinValidation.stateName ? ` (${gstinValidation.stateName})` : ''}
+                      </Text>
+                    )}
+                    {(!gstin.trim() || (!gstinValidation.isValid && !gstin.trim())) && (
+                      <Text style={styles.helperText}>
+                        15-digit GSTIN on receipts.{gstRegistered ? ' Required for GST billing.' : ''}
+                      </Text>
+                    )}
                   </View>
 
                   <View style={styles.formCol}>

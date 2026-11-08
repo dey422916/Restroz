@@ -51,19 +51,29 @@ function assert(condition, testName, details = '') {
   }
 }
 
-// 1. GSTIN Format Validation Tests
-console.log('--- 1. 15-Character GSTIN Validation Tests ---');
-assert(isValidGSTIN('36AAAAA0000A1Z5') === true, 'Standard 15-character GSTIN is valid');
-assert(isValidGSTIN('19ABCDE1234F1Z5') === true, 'West Bengal 15-character GSTIN is valid');
-assert(isValidGSTIN('07AAAAA0000A1Z5') === true, 'Delhi 15-character GSTIN is valid');
+// 1. GSTIN Format & Strict Checksum Validation Tests
+console.log('--- 1. 15-Character GSTIN Validation & Checksum Tests ---');
+assert(isValidGSTIN('36AAAAA0000A1Z3') === true, 'Standard 15-character GSTIN with valid checksum 3 is valid');
+assert(isValidGSTIN('27AAPFU0939F1ZV') === true, 'Maharashtra 15-character GSTIN with valid checksum V is valid');
+assert(isValidGSTIN('29AAACR4849R1ZH') === true, 'Karnataka 15-character GSTIN with valid checksum H is valid');
+assert(isValidGSTIN('19ABCDE1234F1ZX') === true, 'West Bengal 15-character GSTIN with valid checksum X is valid');
+assert(isValidGSTIN('07AAAAA0000A1Z4') === true, 'Delhi 15-character GSTIN with valid checksum 4 is valid');
+assert(isValidGSTIN('27aapfu0939f1zv') === true, 'Lowercase GSTIN is automatically converted to uppercase');
+assert(isValidGSTIN(' 27AAPFU0939F1ZV ') === true, 'Accidental leading/trailing whitespace is trimmed');
+
+// Invalid Checksum & Structure Rejection
+assert(isValidGSTIN('36AAAAA0000A1Z5') === false, 'Invalid checksum (5 instead of 3) is rejected');
+assert(getGSTINValidationError('36AAAAA0000A1Z5') === 'Invalid GSTIN checksum. Please verify the GSTIN.', 'Invalid checksum returns exact error message');
 assert(isValidGSTIN('688095422') === false, '9-digit legacy GSTIN is invalid format');
+assert(getGSTINValidationError('688095422') === 'GSTIN must contain exactly 15 characters.', '9-digit legacy returns exact length error message');
 assert(isValidGSTIN('12345') === false, 'Short number is invalid');
 assert(isValidGSTIN('') === false, 'Empty string is invalid');
-assert(isValidGSTIN('36AAAAA0000A1Z599') === false, '17-character string is invalid');
-assert(isValidGSTIN('36AAAAA0000A15Z') === false, 'Invalid structure (checksum missing) is invalid');
+assert(isValidGSTIN('36AAAAA0000A1Z399') === false, '17-character string is invalid');
+assert(isValidGSTIN('36AAAAA0000A15Z') === false, 'Invalid structure (Z misplaced) is invalid');
+assert(isValidGSTIN('00AAAAA0000A1Z0') === false, 'Invalid state code 00 is invalid');
+assert(isValidGSTIN('27AAPFU-0939F1Z') === false, 'Hyphens/special characters are rejected');
 
-assert(getGSTINValidationError('36AAAAA0000A1Z5') === null, 'Valid GSTIN returns null error');
-assert(typeof getGSTINValidationError('688095422') === 'string', 'Invalid GSTIN returns error message');
+assert(getGSTINValidationError('27AAPFU0939F1ZV') === null, 'Valid GSTIN returns null error');
 assert(typeof getGSTINValidationError('', true) === 'string', 'Required empty GSTIN returns error message');
 
 // 2. Authoritative Settings Resolution Logic Test

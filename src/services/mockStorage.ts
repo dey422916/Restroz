@@ -29,7 +29,7 @@ export const DEFAULT_SETTINGS: RestaurantSettings = {
   address: 'Road No. 36, Jubilee Hills, Hyderabad - 500033',
   phone: '+91 98765 43210',
   email: 'contact@ratnadeepfoods.com',
-  gstin: '36AAAAA0000A1Z5',
+  gstin: '36AAAAA0000A1Z3',
   state: 'Telangana',
   logo_url: '',
   invoice_prefix: 'INV-',

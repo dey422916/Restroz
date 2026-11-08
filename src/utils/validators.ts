@@ -178,7 +178,40 @@ export const INDIAN_GST_STATE_CODES: Record<string, string> = {
   '37': 'Andhra Pradesh',
   '38': 'Ladakh',
   '97': 'Other Territory',
+  '99': 'Centre Jurisdiction',
 };
+
+/**
+ * Official Indian GSTIN Base-36 Character Set (0-9 followed by A-Z)
+ */
+export const GSTIN_CHARSET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+/**
+ * Calculates the official Indian GSTIN 15th character checksum (Luhn mod 36 algorithm)
+ * based on the first 14 characters of the GSTIN.
+ */
+export function calculateGSTINChecksum(gstin14: string): string | null {
+  if (!gstin14 || typeof gstin14 !== 'string' || gstin14.length !== 14) return null;
+  const upper = gstin14.toUpperCase();
+  let totalSum = 0;
+  const mod = 36;
+
+  for (let i = 0; i < 14; i++) {
+    const char = upper.charAt(i);
+    const codePoint = GSTIN_CHARSET.indexOf(char);
+    if (codePoint === -1) return null;
+
+    // Alternating multiplier: 1 for even index (0, 2, 4...), 2 for odd index (1, 3, 5...)
+    const factor = (i % 2 === 0) ? 1 : 2;
+    const weighted = codePoint * factor;
+    // Sum quotient and remainder in base 36
+    totalSum += Math.floor(weighted / mod) + (weighted % mod);
+  }
+
+  const remainder = totalSum % mod;
+  const checkCodePoint = (mod - remainder) % mod;
+  return GSTIN_CHARSET.charAt(checkCodePoint);
+}
 
 /**
  * Extracts Indian state code and state name from the first 2 digits of a GSTIN.
@@ -199,15 +232,7 @@ export function getStateFromGSTIN(gstin?: string | null): { stateCode: string; s
  * Standard Indian GSTIN Format Validation
  * Format: 2 digits (state code), 5 letters (PAN), 4 digits, 1 letter, 1 alphanumeric, 'Z', 1 alphanumeric checksum
  */
-export const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/i;
-
-export function isValidGSTIN(gstin?: string | null): boolean {
-  if (!gstin) return false;
-  const clean = gstin.trim().toUpperCase();
-  if (clean.length !== 15 || !GSTIN_REGEX.test(clean)) return false;
-  const stateCode = clean.substring(0, 2);
-  return Boolean(INDIAN_GST_STATE_CODES[stateCode]);
-}
+export const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
 
 export interface GSTINValidationResult {
   isValid: boolean;
@@ -215,37 +240,157 @@ export interface GSTINValidationResult {
   error?: string | null;
   stateCode?: string;
   stateName?: string;
+  pan?: string;
+  entityCode?: string;
+  checksum?: string;
+  expectedChecksum?: string;
 }
 
+export type GSTINValidationOptions = {
+  required?: boolean;
+  selectedStateCode?: string | null;
+};
+
+/**
+ * Strict Official Indian GSTIN Validator
+ * 
+ * Enforces:
+ * 1. Exactly 15 characters
+ * 2. Positions 1-2: Valid 2-digit Indian state/UT code
+ * 3. Positions 3-12: Valid 10-character PAN format (5 letters, 4 digits, 1 letter)
+ * 4. Position 13: Valid entity code (1-9 or A-Z)
+ * 5. Position 14: Must be 'Z'
+ * 6. Position 15: Official Luhn mod 36 checksum calculation
+ * 7. Disallows internal spaces, hyphens, or special characters
+ * 8. Trims accidental leading/trailing spaces and normalizes lowercase to uppercase
+ */
 export function validateGSTIN(
   gstin?: string | null,
-  selectedStateCode?: string | null
+  optionsOrStateCode?: string | null | GSTINValidationOptions
 ): GSTINValidationResult {
+  const isRequired = typeof optionsOrStateCode === 'object' && optionsOrStateCode !== null
+    ? Boolean(optionsOrStateCode.required)
+    : false;
+  const selectedStateCode = typeof optionsOrStateCode === 'string'
+    ? optionsOrStateCode
+    : (optionsOrStateCode && typeof optionsOrStateCode === 'object' ? optionsOrStateCode.selectedStateCode : null);
+
   if (!gstin || !gstin.trim()) {
-    return { isValid: true }; // Optional field: valid if empty
+    if (isRequired) {
+      const err = 'GSTIN is required (15 characters).';
+      return { isValid: false, message: err, error: err };
+    }
+    return { isValid: true, error: null, message: '' };
   }
+
+  // Trim accidental leading/trailing spaces and uppercase
   const clean = gstin.trim().toUpperCase();
+
+  // 1. Length check: exactly 15 characters
   if (clean.length !== 15) {
-    const err = 'GSTIN must be exactly 15 characters long.';
+    const err = 'GSTIN must contain exactly 15 characters.';
     return { isValid: false, message: err, error: err };
   }
-  if (!GSTIN_REGEX.test(clean)) {
-    const err = 'Invalid GSTIN format. Example: 19AAAAA0000A1Z5';
+
+  // 2. Reject internal spaces or disallowed characters
+  if (!/^[0-9A-Z]{15}$/.test(clean)) {
+    const err = 'Invalid GSTIN format. Please check the number.';
     return { isValid: false, message: err, error: err };
   }
+
+  // 3. State code validation (Positions 1-2)
   const stateCode = clean.substring(0, 2);
   const stateName = INDIAN_GST_STATE_CODES[stateCode];
   if (!stateName) {
-    const err = `Invalid GSTIN state code prefix "${stateCode}".`;
-    return { isValid: false, message: err, error: err };
+    const err = 'Invalid GSTIN format. Please check the number.';
+    return { isValid: false, message: err, error: err, stateCode };
   }
+
+  // 4. PAN structure validation (Positions 3-12)
+  const panSegment = clean.substring(2, 12);
+  if (!/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(panSegment)) {
+    const err = 'Invalid GSTIN format. Please check the number.';
+    return { isValid: false, message: err, error: err, stateCode, stateName, pan: panSegment };
+  }
+
+  // 5. Entity code validation (Position 13: 1-9 or A-Z)
+  const entityCode = clean.charAt(12);
+  if (!/^[1-9A-Z]$/.test(entityCode)) {
+    const err = 'Invalid GSTIN format. Please check the number.';
+    return { isValid: false, message: err, error: err, stateCode, stateName, entityCode };
+  }
+
+  // 6. Default 'Z' character (Position 14)
+  const char14 = clean.charAt(13);
+  if (char14 !== 'Z') {
+    const err = 'Invalid GSTIN format. Please check the number.';
+    return { isValid: false, message: err, error: err, stateCode, stateName };
+  }
+
+  // 7. Official Luhn mod 36 Checksum validation (Position 15)
+  const expectedChecksum = calculateGSTINChecksum(clean.substring(0, 14));
+  const actualChecksum = clean.charAt(14);
+  if (!expectedChecksum || actualChecksum !== expectedChecksum) {
+    const err = 'Invalid GSTIN checksum. Please verify the GSTIN.';
+    return {
+      isValid: false,
+      message: err,
+      error: err,
+      stateCode,
+      stateName,
+      pan: panSegment,
+      entityCode,
+      checksum: actualChecksum,
+      expectedChecksum: expectedChecksum || undefined,
+    };
+  }
+
+  // 8. Match billing state if selectedStateCode is provided
   if (selectedStateCode && selectedStateCode.trim()) {
     const normSelected = selectedStateCode.trim().padStart(2, '0');
     if (normSelected !== stateCode) {
       const err = `GSTIN state code prefix (${stateCode} - ${stateName}) does not match selected billing state code (${normSelected}).`;
-      return { isValid: false, message: err, error: err, stateCode, stateName };
+      return {
+        isValid: false,
+        message: err,
+        error: err,
+        stateCode,
+        stateName,
+        pan: panSegment,
+        entityCode,
+        checksum: actualChecksum,
+      };
     }
   }
-  return { isValid: true, message: 'GSTIN format valid', stateCode, stateName };
+
+  return {
+    isValid: true,
+    message: '✓ Valid GSTIN format',
+    error: null,
+    stateCode,
+    stateName,
+    pan: panSegment,
+    entityCode,
+    checksum: actualChecksum,
+  };
+}
+
+/**
+ * Validates whether a GSTIN string conforms to the strict Indian 15-character format and checksum.
+ */
+export function isValidGSTIN(gstin?: string | null): boolean {
+  if (!gstin || typeof gstin !== 'string') return false;
+  const trimmed = gstin.trim();
+  if (!trimmed) return false;
+  const result = validateGSTIN(trimmed);
+  return result.isValid;
+}
+
+/**
+ * Returns an inline validation error message for a GSTIN field, or null if valid.
+ */
+export function getGSTINValidationError(value?: string | null, required: boolean = false): string | null {
+  const result = validateGSTIN(value, { required });
+  return result.isValid ? null : (result.error || 'Invalid GSTIN format.');
 }
 

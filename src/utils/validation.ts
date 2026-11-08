@@ -169,40 +169,30 @@ export function formatIndianPhoneDisplay(value?: string | null): string {
   return value.trim();
 }
 
-/**
- * Standard Indian GSTIN regex:
- * Exactly 15 alphanumeric characters:
- * - 2 digits (State code, 01 to 38)
- * - 5 uppercase letters (PAN alphabets 1-5)
- * - 4 digits (PAN numbers 6-9)
- * - 1 uppercase letter (PAN character 10)
- * - 1 alphanumeric character (Entity code: 1-9, A-Z)
- * - 1 uppercase letter 'Z' by default
- * - 1 alphanumeric check digit (0-9, A-Z)
- */
-export const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+import {
+  GSTIN_REGEX,
+  GSTIN_CHARSET,
+  INDIAN_GST_STATE_CODES,
+  calculateGSTINChecksum,
+  getStateFromGSTIN,
+  validateGSTIN,
+  isValidGSTIN,
+  getGSTINValidationError,
+  GSTINValidationResult,
+  GSTINValidationOptions,
+} from './validators';
 
-/**
- * Validates whether a GSTIN string conforms to the required Indian 15-character format.
- */
-export function isValidGSTIN(value?: string | null): boolean {
-  if (!value || typeof value !== 'string') return false;
-  const trimmed = value.trim().toUpperCase();
-  if (trimmed.length !== 15) return false;
-  return GSTIN_REGEX.test(trimmed);
-}
+export {
+  GSTIN_REGEX,
+  GSTIN_CHARSET,
+  INDIAN_GST_STATE_CODES,
+  calculateGSTINChecksum,
+  getStateFromGSTIN,
+  validateGSTIN,
+  isValidGSTIN,
+  getGSTINValidationError,
+  GSTINValidationResult,
+  GSTINValidationOptions,
+};
 
-/**
- * Returns an inline validation error message for a GSTIN field, or null if valid.
- */
-export function getGSTINValidationError(value?: string | null, required: boolean = false): string | null {
-  const trimmed = (value || '').trim().toUpperCase();
-  if (!trimmed) {
-    return required ? 'GSTIN is required (15 characters, e.g. 36AAAAA0000A1Z5)' : null;
-  }
-  if (!isValidGSTIN(trimmed)) {
-    return 'Enter a valid 15-character GSTIN (e.g. 36AAAAA0000A1Z5)';
-  }
-  return null;
-}
 

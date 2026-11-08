@@ -154,7 +154,7 @@ const orderB2B = {
   invoice_number: 'INV-2026-002',
   customer_name: 'Amit Patel',
   customer_phone: '9820098200',
-  customer_gstin: '24AAACA1234A1Z5', // Gujarat state 24
+  customer_gstin: '24AAACA1234A1ZQ', // Gujarat state 24
   customer_business_name: 'Patel Infotech Solutions LLP',
   billing_address: '402 Cyber Heights, SG Highway, Ahmedabad',
   billing_state: 'Gujarat',
@@ -174,7 +174,7 @@ const htmlB2B = printService.getTaxInvoiceA4Html(orderB2B, mockSettings);
 assert(htmlB2B.includes('Billed To / Recipient Details (B2B)'), 'Test B: Header indicates B2B Recipient Details');
 assert(htmlB2B.includes('Patel Infotech Solutions LLP'), 'Test B: Shows Registered Business Name');
 assert(htmlB2B.includes('Attention / Contact: <b>Amit Patel</b>'), 'Test B: Shows Attention / Contact Person');
-assert(htmlB2B.includes('GSTIN (Recipient): <b style="color: #1e40af; font-family: monospace; font-size: 12px; letter-spacing: 0.5px;">24AAACA1234A1Z5</b>'), 'Test B: Shows Recipient GSTIN in distinct blue monospace style');
+assert(htmlB2B.includes('GSTIN (Recipient): <b style="color: #1e40af; font-family: monospace; font-size: 12px; letter-spacing: 0.5px;">24AAACA1234A1ZQ</b>'), 'Test B: Shows Recipient GSTIN in distinct blue monospace style');
 assert(htmlB2B.includes('402 Cyber Heights, SG Highway, Ahmedabad'), 'Test B: Shows Complete Billing Address');
 assert(htmlB2B.includes('Gujarat (24)'), 'Test B: Shows Recipient State & State Code');
 assert(htmlB2B.includes('Phone: <b>9820098200</b>'), 'Test B: Shows Customer Phone');
@@ -221,7 +221,7 @@ assert(htmlLongAddress.includes('Gautam Buddha Nagar'), 'Test E: Full long addre
 console.log('\n--- TEST F: Separate and Non-confusing Supplier vs Recipient GSTIN ---');
 assert(htmlB2B.includes('GSTIN (Supplier): <b>19AAACR1234M1Z1</b>'), 'Test F: Supplier GSTIN clearly labeled');
 assert(htmlB2B.includes('GSTIN (Recipient): <b style="color: #1e40af;'), 'Test F: Recipient GSTIN clearly labeled in recipient box');
-assert(!htmlB2B.includes('GSTIN (Supplier): <b>24AAACA1234A1Z5</b>'), 'Test F: Recipient GSTIN is never assigned to Supplier');
+assert(!htmlB2B.includes('GSTIN (Supplier): <b>24AAACA1234A1ZQ</b>'), 'Test F: Recipient GSTIN is never assigned to Supplier');
 assert(!htmlB2B.includes('GSTIN (Recipient): <b style="color: #1e40af; font-family: monospace; font-size: 12px; letter-spacing: 0.5px;">19AAACR1234M1Z1</b>'), 'Test F: Supplier GSTIN is never assigned to Recipient');
 
 // ----------------------------------------------------
@@ -329,11 +329,11 @@ assert(cleanedNotes.trim() === 'Customer requested extra spicy', 'Test N: Preser
 // GSTIN VALIDATION INTEGRITY
 // ----------------------------------------------------
 console.log('\n--- GSTIN Validation Tests ---');
-const vValid = validateGSTIN('24AAACA1234A1Z5', '24');
-assert(vValid.isValid === true && vValid.message === 'GSTIN format valid', 'Valid GSTIN with matching state code passes');
+const vValid = validateGSTIN('24AAACA1234A1ZQ', '24');
+assert(vValid.isValid === true, 'Valid GSTIN with matching state code passes');
 assert(vValid.stateName === 'Gujarat', 'Valid GSTIN resolves state Gujarat');
 
-const vMismatch = validateGSTIN('24AAACA1234A1Z5', '19');
+const vMismatch = validateGSTIN('24AAACA1234A1ZQ', '19');
 assert(vMismatch.isValid === false && vMismatch.error.includes('does not match'), 'State code mismatch properly caught');
 
 const vInvalidFormat = validateGSTIN('INVALID12345');

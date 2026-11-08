@@ -6,6 +6,7 @@ import { restaurantService } from './restaurantService';
 import { parseBannerUrls } from '../../utils/mediaUtils';
 import { storageService } from './storageService';
 import { clearMarketplaceRestaurantCache } from './sharedRestaurantUtils';
+import { validateGSTIN, isValidGSTIN } from '../../utils/validators';
 
 const STORAGE_KEY_PRINTER_PREFIX = `@restaurant_printer_settings_${APP_ENV}_`;
 const STORAGE_KEY_GST_PREFIX = `@restaurant_gst_settings_${APP_ENV}_`;
@@ -572,6 +573,31 @@ export const settingsService = {
     // Rule D: Tax Invoice Labeling can ONLY be ON if Include GST is ON and valid GST rate > 0
     if (!targetIsGstEnabled) {
       targetTaxInvoiceEnabled = false;
+    }
+
+    // Strict GSTIN Validation (Backend & API Guard)
+    if (settings.gstin !== undefined) {
+      const candidateGstin = (settings.gstin || '').trim().toUpperCase();
+      if (candidateGstin) {
+        const vResult = validateGSTIN(candidateGstin, { required: false });
+        if (!vResult.isValid) {
+          throw new Error(vResult.error || 'Invalid GSTIN format or checksum.');
+        }
+        settings.gstin = candidateGstin;
+        updated.gstin = candidateGstin;
+      } else {
+        if (targetGstRegistered && targetIsGstEnabled) {
+          throw new Error('GSTIN is required when GST billing is enabled.');
+        }
+        settings.gstin = '';
+        updated.gstin = '';
+      }
+    } else if (settings.is_gst_enabled === true && targetIsGstEnabled) {
+      // Enabling GST collection requires an existing valid GSTIN in database
+      const existingGstin = (current.gstin || '').trim();
+      if (!existingGstin || !isValidGSTIN(existingGstin)) {
+        throw new Error('A valid 15-character GSTIN is required before enabling GST billing.');
+      }
     }
 
     const targetBillLogoUrl = settings.bill_logo_url !== undefined ? settings.bill_logo_url : current.bill_logo_url;
